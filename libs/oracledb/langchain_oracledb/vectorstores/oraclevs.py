@@ -20,6 +20,7 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    TypedDict,
     TypeVar,
     Union,
     cast,
@@ -50,6 +51,56 @@ logging.basicConfig(
 
 # Define a type variable that can be any kind of function
 T = TypeVar("T", bound=Callable[..., Any])
+
+
+class FilterCondition(TypedDict):
+    key: str
+    oper: str
+    value: str
+
+
+class FilterGroup(TypedDict, total=False):
+    _and: Optional[List[Union["FilterCondition", "FilterGroup"]]]
+    _or: Optional[List[Union["FilterCondition", "FilterGroup"]]]
+
+
+def _convert_oper_to_sql(oper: str) -> str:
+    oper_map = {"EQ": "==", "GT": ">", "LT": "<", "GTE": ">=", "LTE": "<="}
+    if oper not in oper_map:
+        raise ValueError("Filter operation {} not supported".format(oper))
+    return oper_map.get(oper, "==")
+
+
+def _generate_condition(condition: FilterCondition) -> str:
+    key = condition["key"]
+    oper = _convert_oper_to_sql(condition["oper"])
+    value = condition["value"]
+    if isinstance(value, str):
+        value = f'"{value}"'
+    return f"JSON_EXISTS(metadata, '$.{key}?(@ {oper} {value})')"
+
+
+def _generate_where_clause(db_filter: Union[FilterCondition, FilterGroup]) -> str:
+    if "key" in db_filter:  # Identify as FilterCondition
+        return _generate_condition(cast(FilterCondition, db_filter))
+
+    if "_and" in db_filter and db_filter["_and"] is not None:
+        and_conditions = [
+            _generate_where_clause(cond)
+            for cond in db_filter["_and"]
+            if isinstance(cond, dict)
+        ]
+        return "(" + " AND ".join(and_conditions) + ")"
+
+    if "_or" in db_filter and db_filter["_or"] is not None:
+        or_conditions = [
+            _generate_where_clause(cond)
+            for cond in db_filter["_or"]
+            if isinstance(cond, dict)
+        ]
+        return "(" + " OR ".join(or_conditions) + ")"
+
+    raise ValueError(f"Invalid filter structure: {db_filter}")
 
 
 def _get_connection(client: Any) -> Connection | None:
@@ -95,7 +146,7 @@ def _handle_exceptions(func: T) -> T:
 def _table_exists(connection: Connection, table_name: str) -> bool:
     try:
         with connection.cursor() as cursor:
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            cursor.execute(f"SELECT 1 FROM {table_name} WHERE ROWNUM < 1")
             return True
     except oracledb.DatabaseError as ex:
         err_obj = ex.args
@@ -446,6 +497,7 @@ class OracleVS(VectorStore):
                 vectors = OracleVS(connection, embeddings, table_name, query)
     """
 
+    @_handle_exceptions
     def __init__(
         self,
         client: Any,
@@ -494,39 +546,30 @@ class OracleVS(VectorStore):
             if _compare_version(oracledb.__version__, "2.1.0"):
                 self.insert_mode = "clob"
 
-        try:
-            """Initialize with oracledb client."""
-            self.client = client
-            """Initialize with necessary components."""
-            if not isinstance(embedding_function, Embeddings):
-                logger.warning(
-                    "`embedding_function` is expected to be an Embeddings "
-                    "object, support "
-                    "for passing in a function will soon be removed."
-                )
-            self.embedding_function = embedding_function
-            self.query = query
-            embedding_dim = self.get_embedding_dimension()
+        self.json_insert_mode = "clob"
+        if (
+            hasattr(connection, "thin") and connection.thin
+        ) or oracledb.clientversion()[0] >= 21:
+            self.json_insert_mode = "json"
+            self.json_type = oracledb.DB_TYPE_JSON
 
-            self.table_name = table_name
-            self.distance_strategy = distance_strategy
-            self.params = params
-            _create_table(connection, table_name, embedding_dim)
-        except oracledb.DatabaseError as db_err:
-            logger.exception(f"Database error occurred while create table: {db_err}")
-            raise RuntimeError(
-                "Failed to create table due to a database error."
-            ) from db_err
-        except ValueError as val_err:
-            logger.exception(f"Validation error: {val_err}")
-            raise RuntimeError(
-                "Failed to create table due to a validation error."
-            ) from val_err
-        except Exception as ex:
-            logger.exception("An unexpected error occurred while creating the index.")
-            raise RuntimeError(
-                "Failed to create table due to an unexpected error."
-            ) from ex
+        """Initialize with oracledb client."""
+        self.client = client
+        """Initialize with necessary components."""
+        if not isinstance(embedding_function, Embeddings):
+            logger.warning(
+                "`embedding_function` is expected to be an Embeddings "
+                "object, support "
+                "for passing in a function will soon be removed."
+            )
+        self.embedding_function = embedding_function
+        self.query = query
+        embedding_dim = self.get_embedding_dimension()
+
+        self.table_name = table_name
+        self.distance_strategy = distance_strategy
+        self.params = params
+        _create_table(connection, table_name, embedding_dim)
 
     @property
     def embeddings(self) -> Optional[Embeddings]:
@@ -616,14 +659,28 @@ class OracleVS(VectorStore):
         docs: List[Tuple[Any, Any, Any, Any]]
         if self.insert_mode == "clob":
             docs = [
-                (id_, json.dumps(embedding), json.dumps(metadata), text)
+                (
+                    id_,
+                    json.dumps(embedding),
+                    json.dumps(metadata)
+                    if self.json_insert_mode != "json"
+                    else metadata,
+                    text,
+                )
                 for id_, embedding, metadata, text in zip(
                     processed_ids, embeddings, metadatas, texts
                 )
             ]
         else:
             docs = [
-                (id_, array.array("f", embedding), json.dumps(metadata), text)
+                (
+                    id_,
+                    array.array("f", embedding),
+                    json.dumps(metadata)
+                    if self.json_insert_mode != "json"
+                    else metadata,
+                    text,
+                )
                 for id_, embedding, metadata, text in zip(
                     processed_ids, embeddings, metadatas, texts
                 )
@@ -633,6 +690,8 @@ class OracleVS(VectorStore):
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
         with connection.cursor() as cursor:
+            if self.json_insert_mode == "json":
+                cursor.setinputsizes(None, None, self.json_type, None)
             cursor.executemany(
                 f"INSERT INTO {self.table_name} (id, embedding, metadata, "
                 f"text) VALUES (:1, :2, :3, :4)",
@@ -719,7 +778,9 @@ class OracleVS(VectorStore):
         else:
             embedding_arr = array.array("f", embedding)
 
-        query = f"""
+        db_filter: Optional[FilterGroup] = kwargs.get("db_filter", None)
+        if db_filter is None:
+            query = f"""
             SELECT id,
               text,
               metadata,
@@ -728,7 +789,20 @@ class OracleVS(VectorStore):
             FROM {self.table_name}
             ORDER BY distance
             FETCH APPROX FIRST {k} ROWS ONLY
-        """
+            """
+        else:
+            where_clause = _generate_where_clause(db_filter)
+            query = f"""
+            SELECT id,
+              text,
+              metadata,
+              vector_distance(embedding, :embedding,
+              {_get_distance_function(self.distance_strategy)}) as distance
+            FROM {self.table_name}
+            WHERE {where_clause}
+            ORDER BY distance
+            FETCH APPROX FIRST {k} ROWS ONLY
+            """
 
         # Execute the query
         connection = _get_connection(self.client)
@@ -740,7 +814,7 @@ class OracleVS(VectorStore):
 
             # Filter results if filter is provided
             for result in results:
-                metadata = dict(result[2]) if isinstance(result[2], dict) else {}
+                metadata = metadata = result[2] or {}
 
                 # Apply filtering based on the 'filter' dictionary
                 if filter:
@@ -785,19 +859,32 @@ class OracleVS(VectorStore):
 
         documents = []
 
-        query = f"""
+        db_filter: Optional[FilterGroup] = kwargs.get("db_filter", None)
+        if db_filter is None:
+            query = f"""
             SELECT id,
               text,
               metadata,
-              vector_distance(embedding, :embedding, {
-            _get_distance_function(self.distance_strategy)
-        }) as distance,
+              vector_distance(embedding, :embedding, {_get_distance_function(
+                self.distance_strategy)}) as distance,
               embedding
             FROM {self.table_name}
             ORDER BY distance
             FETCH APPROX FIRST {k} ROWS ONLY
-        """
-
+            """
+        else:
+            where_clause = _generate_where_clause(db_filter)
+            query = f"""
+            SELECT id,
+              text,
+              metadata,
+              vector_distance(embedding, :embedding, {_get_distance_function(
+                self.distance_strategy)}) as distance, embedding
+            FROM {self.table_name}
+            WHERE {where_clause}
+            ORDER BY distance
+            FETCH APPROX FIRST {k} ROWS ONLY
+            """
         # Execute the query
         connection = _get_connection(self.client)
         if connection is None:
@@ -808,7 +895,7 @@ class OracleVS(VectorStore):
 
             for result in results:
                 page_content_str = self._get_clob_value(result[1])
-                metadata = result[2] if isinstance(result[2], dict) else {}
+                metadata = result[2] or {}
 
                 # Apply filter if provided and matches; otherwise, add all
                 # documents

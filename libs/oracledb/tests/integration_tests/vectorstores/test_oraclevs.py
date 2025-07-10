@@ -954,3 +954,127 @@ def test_perform_search_test() -> None:
     drop_table_purge(connection, "TB13")
     drop_table_purge(connection, "TB14")
     drop_table_purge(connection, "TB15")
+
+
+##################################
+##### perform_filter_search ######
+##################################
+def test_db_filter_test() -> None:
+    try:
+        import oracledb
+    except ImportError:
+        return
+
+    try:
+        connection = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
+    vs_1 = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_2 = OracleVS(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
+    vs_3 = OracleVS(connection, model1, "TB12", DistanceStrategy.COSINE)
+    vs_4 = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_5 = OracleVS(connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT)
+    vs_6 = OracleVS(connection, model1, "TB15", DistanceStrategy.COSINE)
+
+    # vector store lists:
+    vs_list = [vs_1, vs_2, vs_3, vs_4, vs_5, vs_6]
+
+    for i, vs in enumerate(vs_list):
+        # insert data
+        texts = ["Strawberry", "Banana", "Blueberry", "Grape", "Watermelon"]
+        metadatas = [
+            {"id": "st", "order": 1},
+            {"id": "ba", "order": 2},
+            {"id": "bl", "order": 3},
+            {"id": "gr", "order": 4},
+            {"id": "wa", "order": 5},
+        ]
+
+        vs.add_texts(texts, metadatas)
+
+        # create index
+        if i == 1 or i == 2 or i == 3:
+            create_index(connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"})
+        else:
+            create_index(connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"})
+
+        # perform search
+        query = "Strawberry"
+
+        filter = {"id": ["bl"]}
+        db_filter = {"key": "id", "oper": "EQ", "value": "bl"}  # FilterCondition
+
+        # similarity_search without filter
+        result = vs.similarity_search(query, 1)
+        assert result[0].metadata["id"] == "st"
+
+        # similarity_search with filter
+        result = vs.similarity_search(query, 1, filter=filter)
+        assert len(result) == 0
+
+        # similarity_search with db_filter
+        result = vs.similarity_search(query, 1, db_filter=db_filter)
+        assert result[0].metadata["id"] == "bl"
+
+        # similarity_search with filter and db_filter
+        result = vs.similarity_search(query, 1, filter=filter, db_filter=db_filter)
+        assert result[0].metadata["id"] == "bl"
+
+        # nested db filter
+        db_filter_nested = {
+            "_or": [
+                {"key": "id", "oper": "EQ", "value": "ba"},  # FilterCondition
+                {
+                    "_and": [  # FilterGroup
+                        {"key": "order", "oper": "LTE", "value": 4},
+                        {"key": "id", "oper": "EQ", "value": "st"},
+                    ]
+                },
+            ]
+        }
+
+        # similarity_search with db_filter
+        result = vs.similarity_search(query, 1, db_filter=db_filter_nested)
+        assert result[0].metadata["id"] == "st"
+
+        exception_occurred = False
+        try:
+            db_filter_exc = {
+                "_xor": [  # Incorrect operation _xor
+                    {"key": "id", "oper": "EQ", "value": "ba"},
+                    {"key": "order", "oper": "LTE", "value": 4},
+                ]
+            }
+            result = vs.similarity_search(query, 1, db_filter=db_filter_exc)
+        except ValueError:
+            exception_occurred = True
+
+        assert exception_occurred
+
+        exception_occurred = False
+        try:
+            db_filter_exc = {
+                "_or": [
+                    {
+                        "key": "id",
+                        "oper": "XEQ",
+                        "value": "ba",
+                    },  # Incorrect operation XEQ
+                    {"key": "order", "oper": "LTE", "value": 4},
+                ]
+            }
+            result = vs.similarity_search(query, 1, db_filter=db_filter_exc)
+        except ValueError:
+            exception_occurred = True
+
+        assert exception_occurred
+
+    drop_table_purge(connection, "TB10")
+    drop_table_purge(connection, "TB11")
+    drop_table_purge(connection, "TB12")
+    drop_table_purge(connection, "TB13")
+    drop_table_purge(connection, "TB14")
+    drop_table_purge(connection, "TB15")
