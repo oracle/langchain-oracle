@@ -110,47 +110,40 @@ class OracleSummary:
                     results.append(str(summary.getvalue()))
 
             elif isinstance(docs, List):
-                results = []
+                docs_input = []
+                params = json.dumps(self.summary_params)
+                summary = cursor.var(oracledb.DB_TYPE_CLOB, arraysize=len(docs))
 
-                for doc in docs:
-                    summary = cursor.var(oracledb.DB_TYPE_CLOB)
+                for i, doc in enumerate(docs):
                     if isinstance(doc, str):
-                        cursor.execute(
-                            """
-                            declare
-                                input clob;
-                            begin
-                                input := :data;
-                                :summ := dbms_vector_chain.utl_to_summary(input, 
-                                            json(:params));
-                            end;""",
-                            data=doc,
-                            params=json.dumps(self.summary_params),
-                            summ=summary,
-                        )
-
+                        docs_input.append((doc, params))
                     elif isinstance(doc, Document):
-                        cursor.execute(
-                            """
-                            declare
-                                input clob;
-                            begin
-                                input := :data;
-                                :summ := dbms_vector_chain.utl_to_summary(input, 
-                                            json(:params));
-                            end;""",
-                            data=doc.page_content,
-                            params=json.dumps(self.summary_params),
-                            summ=summary,
-                        )
-
+                        docs_input.append((doc.page_content, params))
                     else:
                         raise Exception("Invalid input type")
 
-                    if summary is None:
-                        results.append("")
-                    else:
-                        results.append(str(summary.getvalue()))
+                cursor.setinputsizes(None, None, summary)
+
+                cursor.executemany(
+                    """
+                    declare
+                        input clob;
+                        summ clob;
+                    begin
+                        input := :1;
+                        summ := dbms_vector_chain.utl_to_summary(input, 
+                                    json(:2));
+                        :3 := summ;
+                    end;""",
+                    docs_input,
+                )
+
+                value = summary.getvalue(i)
+
+                results = [
+                    "" if value is None else str(value)
+                    for i in range(summary.actual_elements)
+                ]
 
             else:
                 raise Exception("Invalid input type")

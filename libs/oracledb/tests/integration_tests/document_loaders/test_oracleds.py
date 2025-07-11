@@ -344,6 +344,15 @@ def test_summary_test() -> None:
         if len(summaries) == 0:
             sys.exit(1)
 
+        summaries = summary.get_summary([doc, doc])
+
+        if len(summaries) != 2:
+            sys.exit(1)
+
+        # verify
+        if len(summaries) == 0:
+            sys.exit(1)
+
         # provider : Database, glevel : Sentence
         summary_params = {"provider": "database", "glevel": "Sentence"}
 
