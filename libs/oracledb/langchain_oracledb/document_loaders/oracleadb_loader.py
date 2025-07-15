@@ -50,23 +50,23 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         :param metadata: metadata used in document
         :param parameters: bind variable to use in query
         """
-        # Mandatory required arguments.
+        # mandatory required arguments.
         self.query = query
         self.user = user
         self.password = password
 
-        # Schema
+        # schema
         self.schema = schema
 
         # TNS connection Method
         self.tns_name = tns_name
         self.config_dir = config_dir
 
-        # Wallet configuration is required for mTLS connection
+        # wallet configuration is required for mTLS connection
         self.wallet_location = wallet_location
         self.wallet_password = wallet_password
 
-        # Connection String connection method
+        # connection string connection method
         self.connection_string = connection_string
 
         # metadata column

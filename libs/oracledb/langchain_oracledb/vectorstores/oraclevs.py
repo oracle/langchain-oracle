@@ -51,7 +51,7 @@ logging.basicConfig(
 )
 
 
-# Define a type variable that can be any kind of function
+# define a type variable that can be any kind of function
 T = TypeVar("T", bound=Callable[..., Any])
 
 
@@ -83,7 +83,7 @@ def _generate_condition(condition: FilterCondition) -> str:
 
 
 def _generate_where_clause(db_filter: Union[FilterCondition, FilterGroup]) -> str:
-    if "key" in db_filter:  # Identify as FilterCondition
+    if "key" in db_filter:  # identify as FilterCondition
         return _generate_condition(cast(FilterCondition, db_filter))
 
     if "_and" in db_filter and db_filter["_and"] is not None:
@@ -145,17 +145,17 @@ def _handle_exceptions(func: T) -> T:
         try:
             return func(*args, **kwargs)
         except RuntimeError as db_err:
-            # Handle a known type of error (e.g., DB-related) specifically
+            # handle a known type of error (e.g., DB-related) specifically
             logger.exception("DB-related error occurred.")
             raise RuntimeError(
                 "Failed due to a DB issue: {}".format(db_err)
             ) from db_err
         except ValueError as val_err:
-            # Handle another known type of error specifically
+            # handle another known type of error specifically
             logger.exception("Validation error.")
             raise ValueError("Validation failed: {}".format(val_err)) from val_err
         except Exception as e:
-            # Generic handler for all other exceptions
+            # generic handler for all other exceptions
             logger.exception("An unexpected error occurred: {}".format(e))
             raise RuntimeError("Unexpected error: {}".format(e)) from e
 
@@ -187,24 +187,24 @@ async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
 
 
 def _compare_version(version: str, target_version: str) -> bool:
-    # Split both version strings into parts
+    # split both version strings into parts
     version_parts = [int(part) for part in version.split(".")]
     target_parts = [int(part) for part in target_version.split(".")]
 
-    # Compare each part
+    # compare each part
     for v, t in zip(version_parts, target_parts):
         if v < t:
-            return True  # Current version is less
+            return True  # current version is less
         elif v > t:
-            return False  # Current version is greater
+            return False  # current version is greater
 
-    # If all parts equal so far, check if version has fewer parts than target_version
+    # if all parts equal so far, check if version has fewer parts than target_version
     return len(version_parts) < len(target_parts)
 
 
 @_handle_exceptions
 def _index_exists(connection: Connection, index_name: str) -> bool:
-    # Check if the index exists
+    # check if the index exists
     query = """
         SELECT index_name 
         FROM all_indexes 
@@ -212,17 +212,17 @@ def _index_exists(connection: Connection, index_name: str) -> bool:
         """
 
     with connection.cursor() as cursor:
-        # Execute the query
+        # execute the query
         cursor.execute(query, idx_name=index_name.upper())
         result = cursor.fetchone()
 
-        # Check if the index exists
+        # check if the index exists
     return result is not None
 
 
 @_handle_exceptions
 async def _aindex_exists(connection: AsyncConnection, index_name: str) -> bool:
-    # Check if the index exists
+    # check if the index exists
     query = """
         SELECT index_name 
         FROM all_indexes 
@@ -230,16 +230,16 @@ async def _aindex_exists(connection: AsyncConnection, index_name: str) -> bool:
         """
 
     with connection.cursor() as cursor:
-        # Execute the query
+        # execute the query
         await cursor.execute(query, idx_name=index_name.upper())
         result = await cursor.fetchone()
 
-        # Check if the index exists
+        # check if the index exists
     return result is not None
 
 
 def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
-    # Dictionary to map distance strategies to their corresponding function
+    # dictionary to map distance strategies to their corresponding function
     # names
     distance_strategy2function = {
         DistanceStrategy.EUCLIDEAN_DISTANCE: "EUCLIDEAN",
@@ -247,11 +247,11 @@ def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
         DistanceStrategy.COSINE: "COSINE",
     }
 
-    # Attempt to return the corresponding distance function
+    # attempt to return the corresponding distance function
     if distance_strategy in distance_strategy2function:
         return distance_strategy2function[distance_strategy]
 
-    # If it's an unsupported distance strategy, raise an error
+    # if it's an unsupported distance strategy, raise an error
     raise ValueError(f"Unsupported distance strategy: {distance_strategy}")
 
 
@@ -358,7 +358,7 @@ def _get_hnsw_index_ddl(
 
     if params:
         config = params.copy()
-        # Ensure compulsory parts are included
+        # ensure compulsory parts are included
         for compulsory_key in ["idx_name", "parallel"]:
             if compulsory_key not in config:
                 if compulsory_key == "idx_name":
@@ -368,21 +368,21 @@ def _get_hnsw_index_ddl(
                 else:
                     config[compulsory_key] = defaults[compulsory_key]
 
-        # Validate keys in config against defaults
+        # validate keys in config against defaults
         for key in config:
             if key not in defaults:
                 raise ValueError(f"Invalid parameter: {key}")
     else:
         config = defaults
 
-    # Base SQL statement
+    # base SQL statement
     idx_name = config["idx_name"]
     base_sql = (
         f"create vector index {idx_name} on {table_name}(embedding) "
         f"ORGANIZATION INMEMORY NEIGHBOR GRAPH"
     )
 
-    # Optional parts depending on parameters
+    # optional parts depending on parameters
     accuracy_part = " WITH TARGET ACCURACY {accuracy}" if ("accuracy" in config) else ""
     distance_part = f" DISTANCE {_get_distance_function(distance_strategy)}"
 
@@ -405,14 +405,14 @@ def _get_hnsw_index_ddl(
             "neighbors}, efConstruction {efConstruction})"
         )
 
-    # Always included part for parallel
+    # always included part for parallel
     parallel_part = " parallel {parallel}"
 
-    # Combine all parts
+    # combine all parts
     ddl_assembly = (
         base_sql + accuracy_part + distance_part + parameters_part + parallel_part
     )
-    # Format the SQL with values from the params dictionary
+    # format the SQL with values from the params dictionary
     ddl = ddl_assembly.format(**config)
 
     return idx_name, ddl
@@ -427,7 +427,7 @@ def _create_hnsw_index(
 ) -> None:
     idx_name, ddl = _get_hnsw_index_ddl(table_name, distance_strategy, params)
 
-    # Check if the index exists
+    # check if the index exists
     if not _index_exists(connection, idx_name):
         with connection.cursor() as cursor:
             cursor.execute(ddl)
@@ -441,7 +441,7 @@ def _get_ivf_index_ddl(
     distance_strategy: DistanceStrategy,
     params: Optional[dict[str, Any]] = None,
 ) -> Tuple[str, str]:
-    # Default configuration
+    # default configuration
     defaults = {
         "idx_name": "IVF",
         "idx_type": "IVF",
@@ -452,7 +452,7 @@ def _get_ivf_index_ddl(
 
     if params:
         config = params.copy()
-        # Ensure compulsory parts are included
+        # ensure compulsory parts are included
         for compulsory_key in ["idx_name", "parallel"]:
             if compulsory_key not in config:
                 if compulsory_key == "idx_name":
@@ -462,21 +462,21 @@ def _get_ivf_index_ddl(
                 else:
                     config[compulsory_key] = defaults[compulsory_key]
 
-        # Validate keys in config against defaults
+        # validate keys in config against defaults
         for key in config:
             if key not in defaults:
                 raise ValueError(f"Invalid parameter: {key}")
     else:
         config = defaults
 
-    # Base SQL statement
+    # base SQL statement
     idx_name = config["idx_name"]
     base_sql = (
         f"CREATE VECTOR INDEX {idx_name} ON {table_name}(embedding) "
         f"ORGANIZATION NEIGHBOR PARTITIONS"
     )
 
-    # Optional parts depending on parameters
+    # optional parts depending on parameters
     accuracy_part = " WITH TARGET ACCURACY {accuracy}" if ("accuracy" in config) else ""
     distance_part = f" DISTANCE {_get_distance_function(distance_strategy)}"
 
@@ -487,14 +487,14 @@ def _get_ivf_index_ddl(
             f" partitions {config['neighbor_part']})"
         )
 
-    # Always included part for parallel
+    # always included part for parallel
     parallel_part = f" PARALLEL {config['parallel']}"
 
-    # Combine all parts
+    # combine all parts
     ddl_assembly = (
         base_sql + accuracy_part + distance_part + parameters_part + parallel_part
     )
-    # Format the SQL with values from the params dictionary
+    # format the SQL with values from the params dictionary
     ddl = ddl_assembly.format(**config)
 
     return idx_name, ddl
@@ -509,7 +509,7 @@ def _create_ivf_index(
 ) -> None:
     idx_name, ddl = _get_ivf_index_ddl(table_name, distance_strategy, params)
 
-    # Check if the index exists
+    # check if the index exists
     if not _index_exists(connection, idx_name):
         with connection.cursor() as cursor:
             cursor.execute(ddl)
@@ -569,7 +569,7 @@ async def _acreate_hnsw_index(
 ) -> None:
     idx_name, ddl = _get_hnsw_index_ddl(table_name, distance_strategy, params)
 
-    # Check if the index exists
+    # check if the index exists
     if not await _aindex_exists(connection, idx_name):
         with connection.cursor() as cursor:
             await cursor.execute(ddl)
@@ -587,7 +587,7 @@ async def _acreate_ivf_index(
 ) -> None:
     idx_name, ddl = _get_ivf_index_ddl(table_name, distance_strategy, params)
 
-    # Check if the index exists
+    # check if the index exists
     if not await _aindex_exists(connection, idx_name):
         with connection.cursor() as cursor:
             await cursor.execute(ddl)
@@ -700,19 +700,19 @@ def get_processed_ids(
     ids: Optional[List[str]] = None,
 ) -> List[str]:
     if ids:
-        # If ids are provided, hash them to maintain consistency
+        # if ids are provided, hash them to maintain consistency
         processed_ids = [
             hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in ids
         ]
     elif metadatas and all("id" in metadata for metadata in metadatas):
-        # If no ids are provided but metadatas with ids are, generate
+        # if no ids are provided but metadatas with ids are, generate
         # ids from metadatas
         processed_ids = [
             hashlib.sha256(metadata["id"].encode()).hexdigest()[:16].upper()
             for metadata in metadatas
         ]
     else:
-        # Generate new ids if none are provided
+        # generate new ids if none are provided
         generated_ids = [
             str(uuid.uuid4()) for _ in texts
         ]  # uuid4 is more standard for random UUIDs
@@ -730,15 +730,15 @@ def _get_delete_ddl(
     if ids is None:
         raise ValueError("No ids provided to delete.")
 
-    # Compute SHA-256 hashes of the ids and truncate them
+    # compute SHA-256 hashes of the ids and truncate them
     hashed_ids = [hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in ids]
 
-    # Constructing the SQL statement with individual placeholders
+    # constructing the SQL statement with individual placeholders
     placeholders = ", ".join([":id" + str(i + 1) for i in range(len(hashed_ids))])
 
     ddl = f"DELETE FROM {table_name} WHERE id IN ({placeholders})"
 
-    # Preparing bind variables
+    # preparing bind variables
     bind_vars = {f"id{i}": hashed_id for i, hashed_id in enumerate(hashed_ids, start=1)}
 
     return ddl, bind_vars
@@ -750,13 +750,13 @@ def mmr_from_docs_embeddings(
     k: int = 4,
     lambda_mult: float = 0.5,
 ) -> List[Tuple[Document, float]]:
-    # If you need to split documents and scores for processing (e.g.,
+    # if you need to split documents and scores for processing (e.g.,
     # for MMR calculation)
     documents, scores, embeddings = (
         zip(*docs_scores_embeddings) if docs_scores_embeddings else ([], [], [])
     )
 
-    # Assume maximal_marginal_relevance method accepts embeddings and
+    # assume maximal_marginal_relevance method accepts embeddings and
     # scores, and returns indices of selected docs
     mmr_selected_indices = maximal_marginal_relevance(
         np.array(embedding, dtype=np.float32),
@@ -765,7 +765,7 @@ def mmr_from_docs_embeddings(
         lambda_mult=lambda_mult,
     )
 
-    # Filter documents based on MMR-selected indices and map scores
+    # filter documents based on MMR-selected indices and map scores
     mmr_selected_documents_with_scores = [
         (documents[i], scores[i]) for i in mmr_selected_indices
     ]
@@ -971,9 +971,9 @@ class OracleVS(VectorStore):
             self.json_insert_mode = "json"
             self.json_type = oracledb.DB_TYPE_JSON
 
-        """Initialize with oracledb client."""
+        # initialize with oracledb client.
         self.client = client
-        """Initialize with necessary components."""
+        # initialize with necessary components.
         if not isinstance(embedding_function, Embeddings):
             logger.warning(
                 "`embedding_function` is expected to be an Embeddings "
@@ -1003,21 +1003,21 @@ class OracleVS(VectorStore):
         )
 
     def get_embedding_dimension(self) -> int:
-        # Embed the single document by wrapping it in a list
+        # embed the single document by wrapping it in a list
         embedded_document = self._embed_documents(
             [self.query if self.query is not None else ""]
         )
 
-        # Get the first (and only) embedding's dimension
+        # get the first (and only) embedding's dimension
         return len(embedded_document[0])
 
     async def aget_embedding_dimension(self) -> int:
-        # Embed the single document by wrapping it in a list
+        # embed the single document by wrapping it in a list
         embedded_document = await self._aembed_documents(
             [self.query if self.query is not None else ""]
         )
 
-        # Get the first (and only) embedding's dimension
+        # get the first (and only) embedding's dimension
         return len(embedded_document[0])
 
     def _embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -1293,7 +1293,7 @@ class OracleVS(VectorStore):
                 if isinstance(raw_data, bytes):
                     clob_value = raw_data.decode(
                         "utf-8"
-                    )  # Specify the correct encoding
+                    )  # specify the correct encoding
                 else:
                     clob_value = raw_data
             elif isinstance(result, str):
@@ -1311,7 +1311,7 @@ class OracleVS(VectorStore):
                 if isinstance(raw_data, bytes):
                     clob_value = raw_data.decode(
                         "utf-8"
-                    )  # Specify the correct encoding
+                    )  # specify the correct encoding
                 else:
                     clob_value = raw_data
             elif isinstance(result, str):
@@ -1345,7 +1345,7 @@ class OracleVS(VectorStore):
             return_embeddings=False,
         )
 
-        # Execute the query
+        # execute the query
         connection = _get_connection(self.client)
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
@@ -1353,7 +1353,7 @@ class OracleVS(VectorStore):
             cursor.execute(query, embedding=embedding_arr)
             results = cursor.fetchall()
 
-            # Filter results if filter is provided
+            # filter results if filter is provided
             for result in results:
                 metadata = result[2] or {}
 
@@ -1365,7 +1365,7 @@ class OracleVS(VectorStore):
                 )
                 distance = result[3]
 
-                # Apply filtering based on the 'filter' dictionary
+                # apply filtering based on the 'filter' dictionary
                 if not filter or all(
                     metadata.get(key) in value for key, value in filter.items()
                 ):
@@ -1399,12 +1399,12 @@ class OracleVS(VectorStore):
         )
 
         async def context(connection: Any) -> List:
-            # Execute the query
+            # execute the query
             with connection.cursor() as cursor:
                 await cursor.execute(query, embedding=embedding_arr)
                 results = await cursor.fetchall()
 
-                # Filter results if filter is provided
+                # filter results if filter is provided
                 for result in results:
                     metadata = result[2] or {}
 
@@ -1418,7 +1418,7 @@ class OracleVS(VectorStore):
                     )
                     distance = result[3]
 
-                    # Apply filtering based on the 'filter' dictionary
+                    # apply filtering based on the 'filter' dictionary
                     if not filter or all(
                         metadata.get(key) in value for key, value in filter.items()
                     ):
@@ -1453,7 +1453,7 @@ class OracleVS(VectorStore):
             return_embeddings=True,
         )
 
-        # Execute the query
+        # execute the query
         connection = _get_connection(self.client)
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
@@ -1465,7 +1465,7 @@ class OracleVS(VectorStore):
                 page_content_str = self._get_clob_value(result[1])
                 metadata = result[2] or {}
 
-                # Apply filter if provided and matches; otherwise, add all
+                # apply filter if provided and matches; otherwise, add all
                 # documents
                 if not filter or all(
                     metadata.get(key) in value for key, value in filter.items()
@@ -1475,7 +1475,7 @@ class OracleVS(VectorStore):
                     )
                     distance = result[3]
 
-                    # Assuming result[4] is already in the correct format;
+                    # assuming result[4] is already in the correct format;
                     # adjust if necessary
                     current_embedding = (
                         np.array(result[4], dtype=np.float32)
@@ -1513,7 +1513,7 @@ class OracleVS(VectorStore):
         )
 
         async def context(connection: Any) -> List:
-            # Execute the query
+            # execute the query
             with connection.cursor() as cursor:
                 await cursor.execute(query, embedding=embedding_arr)
                 results = await cursor.fetchall()
@@ -1522,7 +1522,7 @@ class OracleVS(VectorStore):
                     page_content_str = await self._aget_clob_value(result[1])
                     metadata = result[2] or {}
 
-                    # Apply filter if provided and matches; otherwise, add all
+                    # apply filter if provided and matches; otherwise, add all
                     # documents
                     if not filter or all(
                         metadata.get(key) in value for key, value in filter.items()
@@ -1532,7 +1532,7 @@ class OracleVS(VectorStore):
                         )
                         distance = result[3]
 
-                        # Assuming result[4] is already in the correct format;
+                        # assuming result[4] is already in the correct format;
                         # adjust if necessary
                         current_embedding = (
                             np.array(result[4], dtype=np.float32)
@@ -1582,11 +1582,11 @@ class OracleVS(VectorStore):
             relevance and score for each.
         """
 
-        # Fetch documents and their scores
+        # fetch documents and their scores
         docs_scores_embeddings = self.similarity_search_by_vector_returning_embeddings(
             embedding, fetch_k, filter=filter
         )
-        # Assuming documents_with_scores is a list of tuples (Document, score)
+        # assuming documents_with_scores is a list of tuples (Document, score)
         mmr_selected_documents_with_scores = mmr_from_docs_embeddings(
             docs_scores_embeddings, embedding, k, lambda_mult
         )
@@ -1629,13 +1629,13 @@ class OracleVS(VectorStore):
             relevance and score for each.
         """
 
-        # Fetch documents and their scores
+        # fetch documents and their scores
         docs_scores_embeddings = (
             await self.asimilarity_search_by_vector_returning_embeddings(
                 embedding, fetch_k, filter=filter
             )
         )
-        # Assuming documents_with_scores is a list of tuples (Document, score)
+        # assuming documents_with_scores is a list of tuples (Document, score)
         mmr_selected_documents_with_scores = mmr_from_docs_embeddings(
             docs_scores_embeddings, embedding, k, lambda_mult
         )

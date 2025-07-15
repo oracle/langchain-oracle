@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 class OracleEmbeddings(BaseModel, Embeddings):
     """Get Embeddings"""
 
-    """Oracle Connection"""
+    # Oracle connection
     conn: Any = None
-    """Embedding Parameters"""
+    # embedding parameters
     params: Dict[str, Any]
-    """Proxy"""
+    # proxy
     proxy: Optional[str] = None
 
     def __init__(self, **kwargs: Any):

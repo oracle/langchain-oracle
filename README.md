@@ -24,13 +24,13 @@ Welcome to the official repository for LangChain integration with [Oracle Cloud 
 For OCI services:
 
 ```bash
-pip install -U langchain-oci
+python -m pip install -U langchain-oci
 ```
 
 For Oracle AI Vector Search services:
 
 ```bash
-pip install -U langchain-oracledb
+python -m pip install -U langchain-oracledb
 ```
 
 ---
