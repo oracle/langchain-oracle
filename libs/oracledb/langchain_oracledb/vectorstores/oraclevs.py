@@ -7,7 +7,6 @@ import array
 import functools
 import hashlib
 import inspect
-import json
 import logging
 import os
 import uuid
@@ -144,18 +143,53 @@ def _handle_exceptions(func: T) -> T:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
-        except RuntimeError as db_err:
-            # handle a known type of error (e.g., DB-related) specifically
+        except oracledb.Error as db_err:
+            # Handle a known type of error (e.g., DB-related) specifically
             logger.exception("DB-related error occurred.")
             raise RuntimeError(
-                "Failed due to a DB issue: {}".format(db_err)
+                "Failed due to a DB error: {}".format(db_err)
             ) from db_err
+        except RuntimeError as runtime_err:
+            # Handle a runtime error
+            logger.exception("Runtime error occurred.")
+            raise RuntimeError(
+                "Failed due to a runtime error: {}".format(runtime_err)
+            ) from runtime_err
         except ValueError as val_err:
-            # handle another known type of error specifically
+            # Handle another known type of error specifically
             logger.exception("Validation error.")
             raise ValueError("Validation failed: {}".format(val_err)) from val_err
         except Exception as e:
-            # generic handler for all other exceptions
+            # Generic handler for all other exceptions
+            logger.exception("An unexpected error occurred: {}".format(e))
+            raise RuntimeError("Unexpected error: {}".format(e)) from e
+
+    return cast(T, wrapper)
+
+
+def _ahandle_exceptions(func: T) -> T:
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await func(*args, **kwargs)
+        except oracledb.Error as db_err:
+            # Handle a known type of error (e.g., DB-related) specifically
+            logger.exception("DB-related error occurred.")
+            raise RuntimeError(
+                "Failed due to a DB error: {}".format(db_err)
+            ) from db_err
+        except RuntimeError as runtime_err:
+            # Handle a runtime error
+            logger.exception("Runtime error occurred.")
+            raise RuntimeError(
+                "Failed due to a runtime error: {}".format(runtime_err)
+            ) from runtime_err
+        except ValueError as val_err:
+            # Handle another known type of error specifically
+            logger.exception("Validation error.")
+            raise ValueError("Validation failed: {}".format(val_err)) from val_err
+        except Exception as e:
+            # Generic handler for all other exceptions
             logger.exception("An unexpected error occurred: {}".format(e))
             raise RuntimeError("Unexpected error: {}".format(e)) from e
 
@@ -165,7 +199,7 @@ def _handle_exceptions(func: T) -> T:
 def _table_exists(connection: Connection, table_name: str) -> bool:
     try:
         with connection.cursor() as cursor:
-            cursor.execute(f"select 1 from {table_name} where ROWNUM < 1")
+            cursor.execute(f"SELECT 1 FROM {table_name} WHERE ROWNUM < 1")
             return True
     except oracledb.DatabaseError as ex:
         err_obj = ex.args
@@ -177,7 +211,7 @@ def _table_exists(connection: Connection, table_name: str) -> bool:
 async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
     try:
         with connection.cursor() as cursor:
-            await cursor.execute(f"select 1 from {table_name} where ROWNUM < 1")
+            await cursor.execute(f"SELECT 1 FROM {table_name} WHERE ROWNUM < 1")
             return True
     except oracledb.DatabaseError as ex:
         err_obj = ex.args
@@ -186,52 +220,65 @@ async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
         raise
 
 
-def _compare_version(version: str, target_version: str) -> bool:
-    # split both version strings into parts
-    version_parts = [int(part) for part in version.split(".")]
-    target_parts = [int(part) for part in target_version.split(".")]
-
-    # compare each part
-    for v, t in zip(version_parts, target_parts):
-        if v < t:
-            return True  # current version is less
-        elif v > t:
-            return False  # current version is greater
-
-    # if all parts equal so far, check if version has fewer parts than target_version
-    return len(version_parts) < len(target_parts)
+def _normalize_oracle_identifier(name: str) -> str:
+    name = name.strip()
+    if name.startswith('"') and name.endswith('"'):
+        return name
+    else:
+        return name.upper()
 
 
 @_handle_exceptions
-def _index_exists(connection: Connection, index_name: str) -> bool:
+def _index_exists(
+    connection: Connection, index_name: str, table_name: Optional[str] = None
+) -> bool:
     # check if the index exists
-    query = """
+    query = f"""
         SELECT index_name 
         FROM all_indexes 
-        WHERE upper(index_name) = upper(:idx_name)
+        WHERE index_name = :idx_name
+        {"AND table_name = :table_name" if table_name else ""} 
         """
 
     with connection.cursor() as cursor:
         # execute the query
-        cursor.execute(query, idx_name=index_name.upper())
+        if table_name:
+            cursor.execute(
+                query,
+                idx_name=_normalize_oracle_identifier(index_name),
+                table_name=_normalize_oracle_identifier(table_name),
+            )
+        else:
+            cursor.execute(query, idx_name=_normalize_oracle_identifier(index_name))
         result = cursor.fetchone()
 
         # check if the index exists
     return result is not None
 
 
-@_handle_exceptions
-async def _aindex_exists(connection: AsyncConnection, index_name: str) -> bool:
+async def _aindex_exists(
+    connection: AsyncConnection, index_name: str, table_name: Optional[str] = None
+) -> bool:
     # check if the index exists
-    query = """
-        SELECT index_name 
+    query = f"""
+        SELECT index_name,  table_name
         FROM all_indexes 
-        WHERE upper(index_name) = upper(:idx_name)
+        WHERE index_name = :idx_name
+        {"AND table_name = :table_name" if table_name else ""} 
         """
 
     with connection.cursor() as cursor:
         # execute the query
-        await cursor.execute(query, idx_name=index_name.upper())
+        if table_name:
+            await cursor.execute(
+                query,
+                idx_name=_normalize_oracle_identifier(index_name),
+                table_name=_normalize_oracle_identifier(table_name),
+            )
+        else:
+            await cursor.execute(
+                query, idx_name=_normalize_oracle_identifier(index_name)
+            )
         result = await cursor.fetchone()
 
         # check if the index exists
@@ -286,7 +333,6 @@ def _create_table(connection: Connection, table_name: str, embedding_dim: int) -
         logger.info("Table already exists...")
 
 
-@_handle_exceptions
 async def _acreate_table(
     connection: AsyncConnection, table_name: str, embedding_dim: int
 ) -> None:
@@ -428,7 +474,7 @@ def _create_hnsw_index(
     idx_name, ddl = _get_hnsw_index_ddl(table_name, distance_strategy, params)
 
     # check if the index exists
-    if not _index_exists(connection, idx_name):
+    if not _index_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             cursor.execute(ddl)
             logger.info("Index created successfully...")
@@ -510,7 +556,7 @@ def _create_ivf_index(
     idx_name, ddl = _get_ivf_index_ddl(table_name, distance_strategy, params)
 
     # check if the index exists
-    if not _index_exists(connection, idx_name):
+    if not _index_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             cursor.execute(ddl)
         logger.info("Index created successfully...")
@@ -518,7 +564,7 @@ def _create_ivf_index(
         logger.info("Index already exists...")
 
 
-@_handle_exceptions
+@_ahandle_exceptions
 async def acreate_index(
     client: Any,
     vector_store: OracleVS,
@@ -560,7 +606,6 @@ async def acreate_index(
     return
 
 
-@_handle_exceptions
 async def _acreate_hnsw_index(
     connection: AsyncConnection,
     table_name: str,
@@ -570,7 +615,7 @@ async def _acreate_hnsw_index(
     idx_name, ddl = _get_hnsw_index_ddl(table_name, distance_strategy, params)
 
     # check if the index exists
-    if not await _aindex_exists(connection, idx_name):
+    if not await _aindex_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             await cursor.execute(ddl)
             logger.info("Index created successfully...")
@@ -578,7 +623,6 @@ async def _acreate_hnsw_index(
         logger.info("Index already exists...")
 
 
-@_handle_exceptions
 async def _acreate_ivf_index(
     connection: AsyncConnection,
     table_name: str,
@@ -588,7 +632,7 @@ async def _acreate_ivf_index(
     idx_name, ddl = _get_ivf_index_ddl(table_name, distance_strategy, params)
 
     # check if the index exists
-    if not await _aindex_exists(connection, idx_name):
+    if not await _aindex_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             await cursor.execute(ddl)
         logger.info("Index created successfully...")
@@ -601,7 +645,7 @@ def drop_table_purge(client: Any, table_name: str) -> None:
     """Drop a table and purge it from the database.
 
     Args:
-        client: The OracleDB connection object.
+        client: oracledb connection object.
         table_name: The name of the table to drop.
 
     Raises:
@@ -620,12 +664,12 @@ def drop_table_purge(client: Any, table_name: str) -> None:
     return
 
 
-@_handle_exceptions
+@_ahandle_exceptions
 async def adrop_table_purge(client: Any, table_name: str) -> None:
     """Drop a table and purge it from the database.
 
     Args:
-        client: The OracleDB connection object.
+        client: oracledb connection object.
         table_name: The name of the table to drop.
 
     Raises:
@@ -669,7 +713,7 @@ def drop_index_if_exists(client: Any, index_name: str) -> None:
     return
 
 
-@_handle_exceptions
+@_ahandle_exceptions
 async def adrop_index_if_exists(client: Any, index_name: str) -> None:
     """Drop an index if it exists.
 
@@ -800,7 +844,6 @@ def _get_similarity_search_query(
     return query
 
 
-@_handle_exceptions
 async def _handle_context(
     client: Any,
     context: Callable[
@@ -881,7 +924,7 @@ class OracleVS(VectorStore):
         _create_table(connection, table_name, embedding_dim)
 
     @classmethod
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def acreate(
         cls,
         client: Any,
@@ -931,45 +974,20 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.insert_mode = "array"
-
-        if hasattr(connection, "thin") and connection.thin:
-            if oracledb.__version__ == "2.1.0":
+        if not (hasattr(connection, "thin") and connection.thin):
+            if oracledb.clientversion()[:2] < (23, 4):
                 raise Exception(
-                    "Oracle DB python thin client driver version 2.1.0 not supported"
-                )
-            elif _compare_version(oracledb.__version__, "2.2.0"):
-                self.insert_mode = "clob"
-            else:
-                self.insert_mode = "array"
-        else:
-            if (_compare_version(oracledb.__version__, "2.1.0")) and (
-                not (
-                    _compare_version(
-                        ".".join(map(str, oracledb.clientversion())), "23.4"
-                    )
-                )
-            ):
-                raise Exception(
-                    "Oracle DB python thick client driver version earlier than "
-                    "2.1.0 not supported with client libraries greater than "
-                    "equal to 23.4"
+                    f"Oracle DB client driver version {oracledb.clientversion()} not \
+                    supported, must be >=23.4 for vector support"
                 )
 
-            if _compare_version(".".join(map(str, oracledb.clientversion())), "23.4"):
-                self.insert_mode = "clob"
-            else:
-                self.insert_mode = "array"
+        db_version = tuple([int(v) for v in connection.version.split(".")])
 
-            if _compare_version(oracledb.__version__, "2.1.0"):
-                self.insert_mode = "clob"
-
-        self.json_insert_mode = "clob"
-        if (
-            hasattr(connection, "thin") and connection.thin
-        ) or oracledb.clientversion()[0] >= 21:
-            self.json_insert_mode = "json"
-            self.json_type = oracledb.DB_TYPE_JSON
+        if db_version < (23, 4):
+            raise Exception(
+                f"Oracle DB version {oracledb.__version__} not supported, \
+                must be >=23.4 for vector support"
+            )
 
         # initialize with oracledb client.
         self.client = client
@@ -1080,42 +1098,23 @@ class OracleVS(VectorStore):
         if not metadatas:
             metadatas = [{} for _ in texts]
 
-        docs: List[Tuple[Any, Any, Any, Any]]
-        if self.insert_mode == "clob":
-            docs = [
-                (
-                    id_,
-                    json.dumps(embedding),
-                    json.dumps(metadata)
-                    if self.json_insert_mode != "json"
-                    else metadata,
-                    text,
-                )
-                for id_, embedding, metadata, text in zip(
-                    processed_ids, embeddings, metadatas, texts
-                )
-            ]
-        else:
-            docs = [
-                (
-                    id_,
-                    array.array("f", embedding),
-                    json.dumps(metadata)
-                    if self.json_insert_mode != "json"
-                    else metadata,
-                    text,
-                )
-                for id_, embedding, metadata, text in zip(
-                    processed_ids, embeddings, metadatas, texts
-                )
-            ]
+        docs: List[Tuple[Any, Any, Any, Any]] = [
+            (
+                id_,
+                array.array("f", embedding),
+                metadata,
+                text,
+            )
+            for id_, embedding, metadata, text in zip(
+                processed_ids, embeddings, metadatas, texts
+            )
+        ]
 
         connection = _get_connection(self.client)
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
         with connection.cursor() as cursor:
-            if self.json_insert_mode == "json":
-                cursor.setinputsizes(None, None, self.json_type, None)
+            cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
             cursor.executemany(
                 f"INSERT INTO {self.table_name} (id, embedding, metadata, "
                 f"text) VALUES (:1, :2, :3, :4)",
@@ -1124,7 +1123,7 @@ class OracleVS(VectorStore):
             connection.commit()
         return processed_ids
 
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def aadd_texts(
         self,
         texts: Iterable[str],
@@ -1149,42 +1148,23 @@ class OracleVS(VectorStore):
         if not metadatas:
             metadatas = [{} for _ in texts]
 
-        docs: List[Tuple[Any, Any, Any, Any]]
-        if self.insert_mode == "clob":
-            docs = [
-                (
-                    id_,
-                    json.dumps(embedding),
-                    json.dumps(metadata)
-                    if self.json_insert_mode != "json"
-                    else metadata,
-                    text,
-                )
-                for id_, embedding, metadata, text in zip(
-                    processed_ids, embeddings, metadatas, texts
-                )
-            ]
-        else:
-            docs = [
-                (
-                    id_,
-                    array.array("f", embedding),
-                    json.dumps(metadata)
-                    if self.json_insert_mode != "json"
-                    else metadata,
-                    text,
-                )
-                for id_, embedding, metadata, text in zip(
-                    processed_ids, embeddings, metadatas, texts
-                )
-            ]
+        docs: List[Tuple[Any, Any, Any, Any]] = [
+            (
+                id_,
+                array.array("f", embedding),
+                metadata,
+                text,
+            )
+            for id_, embedding, metadata, text in zip(
+                processed_ids, embeddings, metadatas, texts
+            )
+        ]
 
         async def context(connection: Any) -> None:
             if connection is None:
                 raise ValueError("Failed to acquire a connection.")
             with connection.cursor() as cursor:
-                if self.json_insert_mode == "json":
-                    cursor.setinputsizes(None, None, self.json_type, None)
+                cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
                 await cursor.executemany(
                     f"INSERT INTO {self.table_name} (id, embedding, metadata, "
                     f"text) VALUES (:1, :2, :3, :4)",
@@ -1284,7 +1264,6 @@ class OracleVS(VectorStore):
         )
         return docs_and_scores
 
-    @_handle_exceptions
     def _get_clob_value(self, result: Any) -> str:
         clob_value = ""
         if result:
@@ -1302,7 +1281,6 @@ class OracleVS(VectorStore):
                 raise Exception("Unexpected type:", type(result))
         return clob_value
 
-    @_handle_exceptions
     async def _aget_clob_value(self, result: Any) -> str:
         clob_value = ""
         if result:
@@ -1330,11 +1308,7 @@ class OracleVS(VectorStore):
     ) -> List[Tuple[Document, float]]:
         docs_and_scores = []
 
-        embedding_arr: Any
-        if self.insert_mode == "clob":
-            embedding_arr = json.dumps(embedding)
-        else:
-            embedding_arr = array.array("f", embedding)
+        embedding_arr: Any = array.array("f", embedding)
 
         db_filter: Optional[FilterGroup] = kwargs.get("db_filter", None)
         query = _get_similarity_search_query(
@@ -1373,7 +1347,7 @@ class OracleVS(VectorStore):
 
         return docs_and_scores
 
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def asimilarity_search_by_vector_with_relevance_scores(
         self,
         embedding: List[float],
@@ -1383,11 +1357,7 @@ class OracleVS(VectorStore):
     ) -> List[Tuple[Document, float]]:
         docs_and_scores = []
 
-        embedding_arr: Any
-        if self.insert_mode == "clob":
-            embedding_arr = json.dumps(embedding)
-        else:
-            embedding_arr = array.array("f", embedding)
+        embedding_arr: Any = array.array("f", embedding)
 
         db_filter: Optional[FilterGroup] = kwargs.get("db_filter", None)
         query = _get_similarity_search_query(
@@ -1436,11 +1406,7 @@ class OracleVS(VectorStore):
         filter: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
-        embedding_arr: Any
-        if self.insert_mode == "clob":
-            embedding_arr = json.dumps(embedding)
-        else:
-            embedding_arr = array.array("f", embedding)
+        embedding_arr: Any = array.array("f", embedding)
 
         documents = []
 
@@ -1487,7 +1453,7 @@ class OracleVS(VectorStore):
 
         return documents
 
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def asimilarity_search_by_vector_returning_embeddings(
         self,
         embedding: List[float],
@@ -1495,11 +1461,7 @@ class OracleVS(VectorStore):
         filter: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
-        embedding_arr: Any
-        if self.insert_mode == "clob":
-            embedding_arr = json.dumps(embedding)
-        else:
-            embedding_arr = array.array("f", embedding)
+        embedding_arr: Any = array.array("f", embedding)
 
         documents = []
 
@@ -1546,7 +1508,6 @@ class OracleVS(VectorStore):
 
         return await _handle_context(self.client, context)
 
-    @_handle_exceptions
     def max_marginal_relevance_search_with_score_by_vector(
         self,
         embedding: List[float],
@@ -1593,7 +1554,6 @@ class OracleVS(VectorStore):
 
         return mmr_selected_documents_with_scores
 
-    @_handle_exceptions
     async def amax_marginal_relevance_search_with_score_by_vector(
         self,
         embedding: List[float],
@@ -1642,7 +1602,6 @@ class OracleVS(VectorStore):
 
         return mmr_selected_documents_with_scores
 
-    @_handle_exceptions
     def max_marginal_relevance_search_by_vector(
         self,
         embedding: List[float],
@@ -1677,7 +1636,6 @@ class OracleVS(VectorStore):
         )
         return [doc for doc, _ in docs_and_scores]
 
-    @_handle_exceptions
     async def amax_marginal_relevance_search_by_vector(
         self,
         embedding: List[float],
@@ -1758,7 +1716,7 @@ class OracleVS(VectorStore):
         )
         return documents
 
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def amax_marginal_relevance_search(
         self,
         query: str,
@@ -1820,7 +1778,7 @@ class OracleVS(VectorStore):
             cursor.execute(ddl, bind_vars)
             connection.commit()
 
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def adelete(self, ids: Optional[List[str]] = None, **kwargs: Any) -> None:
         """Delete by vector IDs.
         Args:
@@ -1883,8 +1841,6 @@ class OracleVS(VectorStore):
             params,
         ) = OracleVS._from_texts_helper(texts, embedding, metadatas, **kwargs)
 
-        drop_table_purge(client, table_name)
-
         vss = cls(
             client=client,
             embedding_function=embedding,
@@ -1898,7 +1854,7 @@ class OracleVS(VectorStore):
         return vss
 
     @classmethod
-    @_handle_exceptions
+    @_ahandle_exceptions
     async def afrom_texts(
         cls: Type[OracleVS],
         texts: Iterable[str],
@@ -1913,8 +1869,6 @@ class OracleVS(VectorStore):
             query,
             params,
         ) = OracleVS._from_texts_helper(texts, embedding, metadatas, **kwargs)
-
-        await adrop_table_purge(client, table_name)
 
         vss = await OracleVS.acreate(
             client=client,

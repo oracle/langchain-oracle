@@ -2,6 +2,8 @@
 
 # import required modules
 import asyncio
+import logging
+import os
 import sys
 import threading
 
@@ -747,7 +749,7 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 5. idx_name passed empty
     # Expectation:ORA-01741: illegal zero-length identifier
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -826,7 +828,7 @@ async def test_create_hnsw_index_test_async() -> None:
     await adrop_index_if_exists(connection, "idx11")
     await adrop_table_purge(connection, "TB9")
     # index not created:
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -844,7 +846,7 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
 
     # index not created:
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -861,7 +863,7 @@ async def test_create_hnsw_index_test_async() -> None:
         )
         await adrop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -878,7 +880,7 @@ async def test_create_hnsw_index_test_async() -> None:
         )
         await adrop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -897,7 +899,7 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
     # with negative values/out-of-bound values for all 4 of them, we get the same errors
     # Expectation:Index not created
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -942,7 +944,7 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 11. index_name as <schema_name.index_name>
     # Expectation:U1 not present
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -963,7 +965,7 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 12. Index_name size >129
     # Expectation:Index not created
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -1403,7 +1405,7 @@ async def test_add_texts_test_async() -> None:
         ids10 = texts
         await vs_obj.aadd_texts(texts, ids=ids10)
 
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         task_1 = asyncio.create_task(add1("Sri Ram"))
         task_2 = asyncio.create_task(add1("Sri Ram"))
         await asyncio.gather(task_1, task_2)
@@ -1412,7 +1414,7 @@ async def test_add_texts_test_async() -> None:
 
     # 8. create object with table name of type <schema_name.table_name>
     # Expectation:U1 does not exist
-    with pytest.raises(oracledb.Error):
+    with pytest.raises(RuntimeError):
         vs_obj = await OracleVS.acreate(
             connection, model, "U1.TB14", DistanceStrategy.DOT_PRODUCT
         )
@@ -2083,7 +2085,7 @@ async def test_db_filter_test_async() -> None:
 
 
 @pytest.mark.asyncio
-async def atest_add_texts_pool_test() -> None:
+async def test_add_texts_pool_test() -> None:
     POOLS_MAX = 4
 
     try:
@@ -2278,8 +2280,6 @@ async def test_from_texts_lobs_async() -> None:
         distance_strategy=DistanceStrategy.COSINE,
     )
 
-    await acreate_index(connection, vs, {"idx_type": "HNSW", "idx_name": "IDX1"})
-
     query = "What is a tablespace?"
 
     # 1. Test when oracledb.defaults.fetch_lobs is set to False
@@ -2293,3 +2293,167 @@ async def test_from_texts_lobs_async() -> None:
     await adrop_table_purge(connection, "TB10")
 
     oracledb.defaults.fetch_lobs = True
+
+
+##################################
+##### test_index_table_case  #####
+##################################
+
+
+def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
+    try:
+        connection = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+
+    drop_table_purge(connection, "TB1")
+    drop_table_purge(connection, "TB2")
+
+    # LOGGER = logging.getLogger(__name__)
+
+    texts = ["Rohan", "Shailendra"]
+    metadata = [
+        {"id": "100", "link": "Document Example Test 1"},
+        {"id": "101", "link": "Document Example Test 2"},
+    ]
+    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+
+    with caplog.at_level(logging.INFO):
+        vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+
+    assert "Table created successfully..." in caplog.text
+
+    with caplog.at_level(logging.INFO):
+        OracleVS(connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+
+    assert "Table already exists..." in caplog.text
+
+    with caplog.at_level(logging.INFO):
+        vs_obj2 = OracleVS(
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+
+    assert "Table created successfully..." in caplog.text
+
+    vs_obj.add_texts(texts, metadata)
+
+    with caplog.at_level(logging.INFO):
+        create_index(
+            connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
+
+    assert "Index created successfully..." in caplog.text
+
+    with caplog.at_level(logging.INFO):
+        create_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    assert "Index already exists..." in caplog.text
+
+    with pytest.raises(
+        RuntimeError, match="name is already used by an existing object"
+    ):
+        create_index(
+            connection, vs_obj2, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    drop_index_if_exists(connection, "hnsw_idx2")
+
+    with caplog.at_level(logging.INFO):
+        create_index(
+            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
+        )
+
+    assert "Index created successfully..." in caplog.text
+
+    with pytest.raises(RuntimeError, match="such column list already indexed"):
+        create_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    drop_table_purge(connection, "TB1")
+    drop_table_purge(connection, "TB2")
+
+
+@pytest.mark.asyncio
+async def test_insdex_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
+    try:
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
+    except Exception:
+        sys.exit(1)
+
+    await adrop_table_purge(connection, "TB1")
+    await adrop_table_purge(connection, "TB2")
+
+    # LOGGER = logging.getLogger(__name__)
+
+    texts = ["Rohan", "Shailendra"]
+    metadata = [
+        {"id": "100", "link": "Document Example Test 1"},
+        {"id": "101", "link": "Document Example Test 2"},
+    ]
+    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+
+    with caplog.at_level(logging.INFO):
+        vs_obj = await OracleVS.acreate(
+            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+
+    assert "Table created successfully..." in caplog.text
+
+    with caplog.at_level(logging.INFO):
+        await OracleVS.acreate(
+            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+
+    assert "Table already exists..." in caplog.text
+
+    with caplog.at_level(logging.INFO):
+        vs_obj2 = await OracleVS.acreate(
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+
+    assert "Table created successfully..." in caplog.text
+
+    await vs_obj.aadd_texts(texts, metadata)
+
+    with caplog.at_level(logging.INFO):
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
+
+    assert "Index created successfully..." in caplog.text
+
+    with caplog.at_level(logging.INFO):
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    assert "Index already exists..." in caplog.text
+
+    with pytest.raises(
+        RuntimeError, match="name is already used by an existing object"
+    ):
+        await acreate_index(
+            connection, vs_obj2, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    await adrop_index_if_exists(connection, "hnsw_idx2")
+
+    with caplog.at_level(logging.INFO):
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
+        )
+
+    assert "Index created successfully..." in caplog.text
+
+    with pytest.raises(RuntimeError, match="such column list already indexed"):
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    await adrop_table_purge(connection, "TB1")
+    await adrop_table_purge(connection, "TB2")
