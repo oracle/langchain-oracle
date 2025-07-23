@@ -1,3 +1,10 @@
+# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""
+test_oracleadb.py
+
+Unit tests for OracleAutonomousDatabaseLoader.
+"""
 from typing import Dict, List
 from unittest.mock import MagicMock, patch
 

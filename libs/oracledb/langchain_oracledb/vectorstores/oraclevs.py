@@ -1,6 +1,11 @@
-# Copyright (c) 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""
+oraclevs.py
 
+Provides integration between Oracle Vector Database and 
+LangChain for vector storage and search.
+"""
 from __future__ import annotations
 
 import array
@@ -328,9 +333,9 @@ def _create_table(connection: Connection, table_name: str, embedding_dim: int) -
             )
             ddl = f"CREATE TABLE {table_name} ({ddl_body})"
             cursor.execute(ddl)
-        logger.info("Table created successfully...")
+        logger.info(f"Table {table_name} created successfully...")
     else:
-        logger.info("Table already exists...")
+        logger.info(f"Table {table_name} already exists...")
 
 
 async def _acreate_table(
@@ -345,9 +350,9 @@ async def _acreate_table(
             )
             ddl = f"CREATE TABLE {table_name} ({ddl_body})"
             await cursor.execute(ddl)
-        logger.info("Table created successfully...")
+        logger.info(f"Table {table_name} created successfully...")
     else:
-        logger.info("Table already exists...")
+        logger.info(f"Table {table_name} already exists...")
 
 
 @_handle_exceptions
@@ -477,9 +482,9 @@ def _create_hnsw_index(
     if not _index_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             cursor.execute(ddl)
-            logger.info("Index created successfully...")
+            logger.info(f"Index {idx_name} created successfully...")
     else:
-        logger.info("Index already exists...")
+        logger.info(f"Index {idx_name} already exists...")
 
 
 def _get_ivf_index_ddl(
@@ -559,9 +564,9 @@ def _create_ivf_index(
     if not _index_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             cursor.execute(ddl)
-        logger.info("Index created successfully...")
+        logger.info(f"Index {idx_name} created successfully...")
     else:
-        logger.info("Index already exists...")
+        logger.info(f"Index {idx_name} already exists...")
 
 
 @_ahandle_exceptions
@@ -618,9 +623,9 @@ async def _acreate_hnsw_index(
     if not await _aindex_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             await cursor.execute(ddl)
-            logger.info("Index created successfully...")
+            logger.info(f"Index {idx_name} created successfully...")
     else:
-        logger.info("Index already exists...")
+        logger.info(f"Index {idx_name} already exists...")
 
 
 async def _acreate_ivf_index(
@@ -635,9 +640,9 @@ async def _acreate_ivf_index(
     if not await _aindex_exists(connection, idx_name, table_name):
         with connection.cursor() as cursor:
             await cursor.execute(ddl)
-        logger.info("Index created successfully...")
+        logger.info(f"Index {idx_name} created successfully...")
     else:
-        logger.info("Index already exists...")
+        logger.info(f"Index {idx_name} already exists...")
 
 
 @_handle_exceptions
@@ -658,9 +663,9 @@ def drop_table_purge(client: Any, table_name: str) -> None:
         with connection.cursor() as cursor:
             ddl = f"DROP TABLE {table_name} PURGE"
             cursor.execute(ddl)
-        logger.info("Table dropped successfully...")
+        logger.info(f"Table {table_name} dropped successfully...")
     else:
-        logger.info("Table not found...")
+        logger.info(f"Table {table_name} not found...")
     return
 
 
@@ -681,9 +686,9 @@ async def adrop_table_purge(client: Any, table_name: str) -> None:
             with connection.cursor() as cursor:
                 ddl = f"DROP TABLE {table_name} PURGE"
                 await cursor.execute(ddl)
-            logger.info("Table dropped successfully...")
+            logger.info(f"Table {table_name} dropped successfully...")
         else:
-            logger.info("Table not found...")
+            logger.info(f"Table {table_name} not found...")
 
     await _handle_context(client, context)
     return

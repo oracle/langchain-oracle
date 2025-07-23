@@ -1,9 +1,15 @@
-"""Test Oracle AI Vector Search functionality."""
+# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""
+test_oraclevs.py
+
+Test Oracle AI Vector Search functionality integration 
+with OracleVS.
+"""
 
 # import required modules
 import asyncio
 import logging
-import os
 import sys
 import threading
 
@@ -2321,19 +2327,19 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO):
         vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
 
-    assert "Table created successfully..." in caplog.text
+    assert "Table TB1 created successfully..." in caplog.text
 
     with caplog.at_level(logging.INFO):
         OracleVS(connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE)
 
-    assert "Table already exists..." in caplog.text
+    assert "Table Tb1 already exists..." in caplog.text
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = OracleVS(
             connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table created successfully..." in caplog.text
+    assert "Table TB2 created successfully..." in caplog.text
 
     vs_obj.add_texts(texts, metadata)
 
@@ -2342,14 +2348,14 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
             connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
         )
 
-    assert "Index created successfully..." in caplog.text
+    assert "Index hnsw_idx2 created successfully..." in caplog.text
 
     with caplog.at_level(logging.INFO):
         create_index(
             connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
         )
 
-    assert "Index already exists..." in caplog.text
+    assert "Index HNSW_idx2 already exists..." in caplog.text
 
     with pytest.raises(
         RuntimeError, match="name is already used by an existing object"
@@ -2365,7 +2371,7 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
             connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
         )
 
-    assert "Index created successfully..." in caplog.text
+    assert 'Index "hnsw_idx2" created successfully...' in caplog.text
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
         create_index(
@@ -2377,7 +2383,7 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.asyncio
-async def test_insdex_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
+async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
     try:
         connection = await oracledb.connect_async(
             user=username, password=password, dsn=dsn
@@ -2402,21 +2408,21 @@ async def test_insdex_table_case_async(caplog: pytest.LogCaptureFixture) -> None
             connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table created successfully..." in caplog.text
+    assert "Table TB1 created successfully..." in caplog.text
 
     with caplog.at_level(logging.INFO):
         await OracleVS.acreate(
             connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table already exists..." in caplog.text
+    assert "Table Tb1 already exists..." in caplog.text
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = await OracleVS.acreate(
             connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table created successfully..." in caplog.text
+    assert "Table TB2 created successfully..." in caplog.text
 
     await vs_obj.aadd_texts(texts, metadata)
 
@@ -2425,14 +2431,14 @@ async def test_insdex_table_case_async(caplog: pytest.LogCaptureFixture) -> None
             connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
         )
 
-    assert "Index created successfully..." in caplog.text
+    assert "Index hnsw_idx2 created successfully..." in caplog.text
 
     with caplog.at_level(logging.INFO):
         await acreate_index(
             connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
         )
 
-    assert "Index already exists..." in caplog.text
+    assert "Index HNSW_idx2 already exists..." in caplog.text
 
     with pytest.raises(
         RuntimeError, match="name is already used by an existing object"
@@ -2448,7 +2454,7 @@ async def test_insdex_table_case_async(caplog: pytest.LogCaptureFixture) -> None
             connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
         )
 
-    assert "Index created successfully..." in caplog.text
+    assert 'Index "hnsw_idx2" created successfully...' in caplog.text
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
         await acreate_index(

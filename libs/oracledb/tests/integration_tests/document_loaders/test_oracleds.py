@@ -1,9 +1,13 @@
-# Authors:
-#   Sudhir Kumar (sudhirkk)
-#
-# -----------------------------------------------------------------------------
-# test_oracleds.py
-# -----------------------------------------------------------------------------
+# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""
+test_oracleds.py
+
+Unit tests for OracleDocLoader and OracleTextSplitter.
+
+Authors: 
+    - Sudhir Kumar (sudhirkk)
+"""
 import sys
 
 from langchain_oracledb.document_loaders.oracleai import (
