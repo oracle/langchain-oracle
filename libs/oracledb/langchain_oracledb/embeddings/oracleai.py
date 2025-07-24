@@ -122,12 +122,12 @@ class OracleEmbeddings(BaseModel, Embeddings):
 
             vector_array_type = self.conn.gettype("SYS.VECTOR_ARRAY_T")
             inputs = vector_array_type.newobject(chunks)
+            cursor.setinputsizes(None, oracledb.DB_TYPE_JSON)
             cursor.execute(
                 "select t.* "
-                + "from dbms_vector_chain.utl_to_embeddings(:content, "
-                + "json(:params)) t",
-                content=inputs,
-                params=json.dumps(self.params),
+                + "from dbms_vector_chain.utl_to_embeddings(:1, "
+                + "json(:2)) t",
+                [inputs, self.params],
             )
 
             for row in cursor:
