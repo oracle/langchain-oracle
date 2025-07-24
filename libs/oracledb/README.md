@@ -161,31 +161,20 @@ Load documents from Oracle Autonomous Database using `OracleAutonomousDatabaseLo
 from langchain_oracledb.document_loaders import OracleAutonomousDatabaseLoader
 from settings import s
 
-SQL_QUERY = "select prod_id, time_id from sh.costs fetch first 5 rows only"
+SQL_QUERY = "select channel_id, channel_desc from sh.channels where channel_desc = :1 fetch first 5 rows only"
 
-doc_loader_1 = OracleAutonomousDatabaseLoader(
+doc_loader = OracleAutonomousDatabaseLoader(
     query=SQL_QUERY,
     user=s.USERNAME,
     password=s.PASSWORD,
     schema=s.SCHEMA,
-    config_dir=s.CONFIG_DIR,
-    wallet_location=s.WALLET_LOCATION,
-    wallet_password=s.PASSWORD,
-    tns_name=s.TNS_NAME,
+    dsn=s.DSN,
+    parameters=["Direct Sales"],
 )
-doc_1 = doc_loader_1.load()
-
-doc_loader_2 = OracleAutonomousDatabaseLoader(
-    query=SQL_QUERY,
-    user=s.USERNAME,
-    password=s.PASSWORD,
-    schema=s.SCHEMA,
-    connection_string=s.CONNECTION_STRING,
-    wallet_location=s.WALLET_LOCATION,
-    wallet_password=s.PASSWORD,
-)
-doc_2 = doc_loader_2.load()
+doc = doc_loader.load()
 ```
+
+With mutual TLS authentication (mTLS), wallet_location and wallet_password are required to create the connection, user can create connection by providing either connection string or tns configuration details. With TLS authentication, wallet_location and wallet_password are not required. Bind variable option is provided by argument "parameters".
 
 ### Embeddings
 

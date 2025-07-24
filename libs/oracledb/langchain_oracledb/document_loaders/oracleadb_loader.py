@@ -16,10 +16,10 @@ from langchain_core.documents import Document
 
 class OracleAutonomousDatabaseLoader(BaseLoader):
     """
-    Load from oracle adb
+    Load from Oracle ADB
 
-    Autonomous Database connection can be made by either connection_string
-    or tns name. wallet_location and wallet_password are required
+    Autonomous Database connection can be made by connection_string
+    or tns alias. wallet_location and wallet_password are required
     for TLS connection.
     Each document will represent one row of the query result.
     Columns are written into the `page_content` and 'metadata' in
@@ -34,13 +34,12 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         password: str,
         *,
         schema: Optional[str] = None,
-        tns_name: Optional[str] = None,
+        dsn: Optional[str] = None,
         config_dir: Optional[str] = None,
         wallet_location: Optional[str] = None,
         wallet_password: Optional[str] = None,
-        connection_string: Optional[str] = None,
         metadata: Optional[List[str]] = None,
-        parameters: Optional[Union[list, tuple, dict]] = None,
+        parameter: Optional[Union[list, tuple, dict]] = None,
     ):
         """
         init method
@@ -48,52 +47,40 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         :param user: username
         :param password: user password
         :param schema: schema to run in database
-        :param tns_name: tns name in tnsname.ora
-        :param config_dir: directory of config files(tnsname.ora, wallet)
-        :param wallet_location: location of wallet
-        :param wallet_password: password of wallet
-        :param connection_string: connection string to connect to adb instance
+        :param dsn: data source name used to identify the oracle database to connect to
+        :param config_dir: directory of config files(tnsname.ora, ewallet.pem)
+        :param wallet_location: location of ewallet.pem, not required for TLS connections
+        :param wallet_password: password of wallet, not required for TLS connections
         :param metadata: metadata used in document
-        :param parameters: bind variable to use in query
+        :param parameter: bind variable to use in query
         """
-        # mandatory required arguments.
+        # Mandatory required arguments.
         self.query = query
         self.user = user
         self.password = password
 
-        # schema
+        # Schema
         self.schema = schema
 
         # TNS connection Method
-        self.tns_name = tns_name
         self.config_dir = config_dir
 
-        # wallet configuration is required for mTLS connection
+        # Wallet configuration is required for mTLS connection
         self.wallet_location = wallet_location
         self.wallet_password = wallet_password
-
-        # connection string connection method
-        self.connection_string = connection_string
 
         # metadata column
         self.metadata = metadata
 
-        # parameters, e.g bind variable
-        self.parameters = parameters
+        # parameter, e.g bind variable
+        self.parameter = parameter
 
         # dsn
-        self.dsn: Optional[str]
-        self._set_dsn()
-
-    def _set_dsn(self) -> None:
-        if self.connection_string:
-            self.dsn = self.connection_string
-        elif self.tns_name:
-            self.dsn = self.tns_name
+        self.dsn = dsn
 
     def _run_query(self) -> List[Dict[str, Any]]:
         connect_param = {"user": self.user, "password": self.password, "dsn": self.dsn}
-        if self.dsn == self.tns_name:
+        if self.config_dir:
             connect_param["config_dir"] = self.config_dir
         if self.wallet_location and self.wallet_password:
             connect_param["wallet_location"] = self.wallet_location
@@ -103,9 +90,9 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
             connection = oracledb.connect(**connect_param)
             cursor = connection.cursor()
             if self.schema:
-                cursor.execute(f"alter session set current_schema={self.schema}")
-            if self.parameters:
-                cursor.execute(self.query, self.parameters)
+                connection.current_schema = self.schema
+            if self.parameter:
+                cursor.execute(self.query, self.parameter)
             else:
                 cursor.execute(self.query)
             columns = [col[0] for col in cursor.description]
