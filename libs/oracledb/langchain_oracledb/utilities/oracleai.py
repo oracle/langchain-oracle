@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 """OracleSummary class"""
 
 
+def output_type_handler(cursor: Any, metadata: Any) -> Any:
+    if metadata.type_code is oracledb.DB_TYPE_CLOB:
+        return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
+    if metadata.type_code is oracledb.DB_TYPE_BLOB:
+        return cursor.var(oracledb.DB_TYPE_LONG_RAW, arraysize=cursor.arraysize)
+    if metadata.type_code is oracledb.DB_TYPE_NCLOB:
+        return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
+
+
 class OracleSummary:
     """Get Summary
     Args:
@@ -57,8 +66,8 @@ class OracleSummary:
 
         results: List[str] = []
         try:
-            oracledb.defaults.fetch_lobs = False
             cursor = self.conn.cursor()
+            cursor.outputtypehandler = output_type_handler
 
             if self.proxy:
                 cursor.execute(

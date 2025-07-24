@@ -871,6 +871,15 @@ async def _handle_context(
         return await context(connection)
 
 
+def output_type_string_handler(cursor: Any, metadata: Any) -> Any:
+    if metadata.type_code is oracledb.DB_TYPE_CLOB:
+        return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
+    if metadata.type_code is oracledb.DB_TYPE_BLOB:
+        return cursor.var(oracledb.DB_TYPE_LONG_RAW, arraysize=cursor.arraysize)
+    if metadata.type_code is oracledb.DB_TYPE_NCLOB:
+        return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
+
+
 class OracleVS(VectorStore):
     """`OracleVS` vector store.
 
@@ -1269,40 +1278,6 @@ class OracleVS(VectorStore):
         )
         return docs_and_scores
 
-    def _get_clob_value(self, result: Any) -> str:
-        clob_value = ""
-        if result:
-            if isinstance(result, oracledb.LOB):
-                raw_data = result.read()
-                if isinstance(raw_data, bytes):
-                    clob_value = raw_data.decode(
-                        "utf-8"
-                    )  # specify the correct encoding
-                else:
-                    clob_value = raw_data
-            elif isinstance(result, str):
-                clob_value = result
-            else:
-                raise Exception("Unexpected type:", type(result))
-        return clob_value
-
-    async def _aget_clob_value(self, result: Any) -> str:
-        clob_value = ""
-        if result:
-            if isinstance(result, oracledb.AsyncLOB):
-                raw_data = await result.read()
-                if isinstance(raw_data, bytes):
-                    clob_value = raw_data.decode(
-                        "utf-8"
-                    )  # specify the correct encoding
-                else:
-                    clob_value = raw_data
-            elif isinstance(result, str):
-                clob_value = result
-            else:
-                raise Exception("Unexpected type:", type(result))
-        return clob_value
-
     @_handle_exceptions
     def similarity_search_by_vector_with_relevance_scores(
         self,
@@ -1329,6 +1304,7 @@ class OracleVS(VectorStore):
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
         with connection.cursor() as cursor:
+            cursor.outputtypehandler = output_type_string_handler
             cursor.execute(query, embedding=embedding_arr)
             results = cursor.fetchall()
 
@@ -1337,9 +1313,7 @@ class OracleVS(VectorStore):
                 metadata = result[2] or {}
 
                 doc = Document(
-                    page_content=(
-                        self._get_clob_value(result[1]) if result[1] is not None else ""
-                    ),
+                    page_content=(result[1] if result[1] is not None else ""),
                     metadata=metadata,
                 )
                 distance = result[3]
@@ -1376,6 +1350,7 @@ class OracleVS(VectorStore):
         async def context(connection: Any) -> List:
             # execute the query
             with connection.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
                 await cursor.execute(query, embedding=embedding_arr)
                 results = await cursor.fetchall()
 
@@ -1384,11 +1359,7 @@ class OracleVS(VectorStore):
                     metadata = result[2] or {}
 
                     doc = Document(
-                        page_content=(
-                            await self._aget_clob_value(result[1])
-                            if result[1] is not None
-                            else ""
-                        ),
+                        page_content=(result[1] if result[1] is not None else ""),
                         metadata=metadata,
                     )
                     distance = result[3]
@@ -1429,11 +1400,12 @@ class OracleVS(VectorStore):
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
         with connection.cursor() as cursor:
+            cursor.outputtypehandler = output_type_string_handler
             cursor.execute(query, embedding=embedding_arr)
             results = cursor.fetchall()
 
             for result in results:
-                page_content_str = self._get_clob_value(result[1])
+                page_content_str = result[1]
                 metadata = result[2] or {}
 
                 # apply filter if provided and matches; otherwise, add all
@@ -1482,11 +1454,12 @@ class OracleVS(VectorStore):
         async def context(connection: Any) -> List:
             # execute the query
             with connection.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
                 await cursor.execute(query, embedding=embedding_arr)
                 results = await cursor.fetchall()
 
                 for result in results:
-                    page_content_str = await self._aget_clob_value(result[1])
+                    page_content_str = result[1]
                     metadata = result[2] or {}
 
                     # apply filter if provided and matches; otherwise, add all
