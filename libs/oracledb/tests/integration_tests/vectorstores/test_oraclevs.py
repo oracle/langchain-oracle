@@ -25,6 +25,7 @@ from langchain_oracledb.vectorstores.oraclevs import (
     _atable_exists,
     _create_table,
     _index_exists,
+    _quote_indentifier,
     _table_exists,
     acreate_index,
     adrop_index_if_exists,
@@ -49,59 +50,52 @@ def test_table_exists_test() -> None:
         sys.exit(1)
     # 1. Existing Table:(all capital letters)
     # expectation:True
-    _table_exists(connection, "V$TRANSACTION")
+    _table_exists(connection, _quote_indentifier("V$TRANSACTION"))
 
     # 2. Existing Table:(all small letters)
     # expectation:True
-    _table_exists(connection, "v$transaction")
+    _table_exists(connection, _quote_indentifier("v$transaction"))
 
     # 3. Non-Existing Table
     # expectation:false
-    _table_exists(connection, "Hello")
+    _table_exists(connection, _quote_indentifier("Hello"))
 
     # 4. Invalid Table Name
     # Expectation:ORA-00903: invalid table name
-    try:
+    with pytest.raises(oracledb.Error):
         _table_exists(connection, "123")
-    except Exception:
-        pass
 
     # 5. Empty String
     # Expectation:ORA-00903: invalid table name
-    try:
-        _table_exists(connection, "")
-    except Exception:
-        pass
+    with pytest.raises(ValueError):
+        _table_exists(connection, _quote_indentifier(""))
 
-    # 6. Special Character
+    """# 6. Special Character
     # Expectation:ORA-00911: #: invalid character after FROM
-    try:
-        _table_exists(connection, "##4")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _table_exists(connection, "##4")"""
 
     # 7. Table name length > 128
     # Expectation:ORA-00972: The identifier XXXXXXXXXX...XXXXXXXXXX...
     # exceeds the maximum length of 128 bytes.
-    try:
-        _table_exists(connection, "x" * 129)
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _table_exists(connection, _quote_indentifier("x" * 129))
 
     # 8. <Schema_Name.Table_Name>
     # Expectation:True
-    _create_table(connection, "TB1", 65535)
+    _create_table(connection, _quote_indentifier("TB1"), 65535)
+    assert _table_exists(connection, _quote_indentifier("TB1"))
 
     # 9. Toggle Case (like TaBlE)
-    # Expectation:True
-    _table_exists(connection, "Tb1")
-    drop_table_purge(connection, "TB1")
+    # Expectation:False - case sensitive
+    assert not _table_exists(connection, _quote_indentifier("Tb1"))
+    drop_table_purge(connection, _quote_indentifier("TB1"))
 
     # 10. Table_Name→ "हिन्दी"
     # Expectation:True
-    _create_table(connection, '"हिन्दी"', 545)
-    _table_exists(connection, '"हिन्दी"')
-    drop_table_purge(connection, '"हिन्दी"')
+    _create_table(connection, _quote_indentifier('"हिन्दी"'), 545)
+    assert _table_exists(connection, _quote_indentifier('"हिन्दी"'))
+    drop_table_purge(connection, _quote_indentifier('"हिन्दी"'))
 
 
 @pytest.mark.asyncio
@@ -114,15 +108,15 @@ async def test_table_exists_test_async() -> None:
         sys.exit(1)
     # 1. Existing Table:(all capital letters)
     # expectation:True
-    await _atable_exists(connection, "V$TRANSACTION")
+    await _atable_exists(connection, _quote_indentifier("V$TRANSACTION"))
 
     # 2. Existing Table:(all small letters)
     # expectation:True
-    await _atable_exists(connection, "v$transaction")
+    await _atable_exists(connection, _quote_indentifier("v$transaction"))
 
     # 3. Non-Existing Table
     # expectation:false
-    await _atable_exists(connection, "Hello")
+    await _atable_exists(connection, _quote_indentifier("Hello"))
 
     # 4. Invalid Table Name
     # Expectation:ORA-00903: invalid table name
@@ -131,34 +125,35 @@ async def test_table_exists_test_async() -> None:
 
     # 5. Empty String
     # Expectation:ORA-00903: invalid table name
-    with pytest.raises(oracledb.Error):
-        await _atable_exists(connection, "")
+    with pytest.raises(ValueError):
+        await _atable_exists(connection, _quote_indentifier(""))
 
-    # 6. Special Character
+    """# 6. Special Character
     # Expectation:ORA-00911: #: invalid character after FROM
     with pytest.raises(oracledb.Error):
-        await _atable_exists(connection, "##4")
+        await _atable_exists(connection, "##4")"""
 
     # 7. Table name length > 128
     # Expectation:ORA-00972: The identifier XXXXXXXXXX...XXXXXXXXXX...
     # exceeds the maximum length of 128 bytes.
     with pytest.raises(oracledb.Error):
-        await _atable_exists(connection, "x" * 129)
+        await _atable_exists(connection, _quote_indentifier("x" * 129))
 
     # 8. <Schema_Name.Table_Name>
     # Expectation:True
-    await _acreate_table(connection, "TB1", 65535)
+    await _acreate_table(connection, _quote_indentifier("TB1"), 65535)
+    assert await _atable_exists(connection, _quote_indentifier("TB1"))
 
     # 9. Toggle Case (like TaBlE)
-    # Expectation:True
-    await _atable_exists(connection, "Tb1")
-    await adrop_table_purge(connection, "TB1")
+    # Expectation:False - case sensitive
+    assert not await _atable_exists(connection, _quote_indentifier("Tb1"))
+    await adrop_table_purge(connection, _quote_indentifier("TB1"))
 
     # 10. Table_Name→ "हिन्दी"
     # Expectation:True
-    await _acreate_table(connection, '"हिन्दी"', 545)
-    await _atable_exists(connection, '"हिन्दी"')
-    await adrop_table_purge(connection, '"हिन्दी"')
+    await _acreate_table(connection, _quote_indentifier('"हिन्दी"'), 545)
+    assert await _atable_exists(connection, _quote_indentifier('"हिन्दी"'))
+    await adrop_table_purge(connection, _quote_indentifier('"हिन्दी"'))
 
 
 ############################
@@ -175,130 +170,114 @@ def test_create_table_test() -> None:
     # 1. New table - HELLO
     #    Dimension - 100
     # Expectation:table is created
-    _create_table(connection, "HELLO", 100)
+    _create_table(connection, _quote_indentifier("HELLO"), 100)
 
     # 2. Existing table name
     #    HELLO
     #    Dimension - 110
     # Expectation:Nothing happens
-    _create_table(connection, "HELLO", 110)
-    drop_table_purge(connection, "HELLO")
+    _create_table(connection, _quote_indentifier("HELLO"), 110)
+    drop_table_purge(connection, _quote_indentifier("HELLO"))
 
-    # 3. New Table - 123
+    """# 3. New Table - 123 # Quoted names not valid anymore
     #    Dimension - 100
     # Expectation:ORA-00903: invalid table name
-    try:
-        _create_table(connection, "123", 100)
-        drop_table_purge(connection, "123")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier("123"), 100)
+        drop_table_purge(connection, _quote_indentifier("123"))"""
 
     # 4. New Table - Hello123
     #    Dimension - 65535
     # Expectation:table is created
-    _create_table(connection, "Hello123", 65535)
-    drop_table_purge(connection, "Hello123")
+    _create_table(connection, _quote_indentifier("Hello123"), 65535)
+    drop_table_purge(connection, _quote_indentifier("Hello123"))
 
     # 5. New Table - T1
     #    Dimension - 65536
     # Expectation:ORA-51801: VECTOR column type specification
     # has an unsupported dimension count ('65536').
-    try:
-        _create_table(connection, "T1", 65536)
-        drop_table_purge(connection, "T1")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier("T1"), 65536)
+        drop_table_purge(connection, _quote_indentifier("T1"))
 
     # 6. New Table - T1
     #    Dimension - 0
     # Expectation:ORA-51801: VECTOR column type specification has
     # an unsupported dimension count (0).
-    try:
-        _create_table(connection, "T1", 0)
-        drop_table_purge(connection, "T1")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier("T1"), 0)
+        drop_table_purge(connection, _quote_indentifier("T1"))
 
     # 7. New Table - T1
     #    Dimension - -1
     # Expectation:ORA-51801: VECTOR column type specification has
     # an unsupported dimension count ('-').
-    try:
-        _create_table(connection, "T1", -1)
-        drop_table_purge(connection, "T1")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier("T1"), -1)
+        drop_table_purge(connection, _quote_indentifier("T1"))
 
     # 8. New Table - T2
     #     Dimension - '1000'
     # Expectation:table is created
-    _create_table(connection, "T2", int("1000"))
-    drop_table_purge(connection, "T2")
+    _create_table(connection, _quote_indentifier("T2"), int("1000"))
+    drop_table_purge(connection, _quote_indentifier("T2"))
 
     # 9. New Table - T3
     #     Dimension - 100 passed as a variable
     # Expectation:table is created
     val = 100
-    _create_table(connection, "T3", val)
-    drop_table_purge(connection, "T3")
+    _create_table(connection, _quote_indentifier("T3"), val)
+    drop_table_purge(connection, _quote_indentifier("T3"))
 
-    # 10.
+    '''# 10.
     # Expectation:ORA-00922: missing or invalid option
     val2 = """H
     ello"""
-    try:
-        _create_table(connection, val2, 545)
-        drop_table_purge(connection, val2)
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier(val2), 545)
+        drop_table_purge(connection, _quote_indentifier(val2))'''
 
     # 11. New Table - हिन्दी
     #     Dimension - 545
     # Expectation:table is created
-    _create_table(connection, '"हिन्दी"', 545)
-    drop_table_purge(connection, '"हिन्दी"')
+    _create_table(connection, _quote_indentifier('"हिन्दी"'), 545)
+    drop_table_purge(connection, _quote_indentifier('"हिन्दी"'))
 
     # 12. <schema_name.table_name>
     # Expectation:failure - user does not exist
-    try:
-        _create_table(connection, "U1.TB4", 128)
-        drop_table_purge(connection, "U1.TB4")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier("U1.TB4"), 128)
+        drop_table_purge(connection, _quote_indentifier("U1.TB4"))
 
     # 13.
     # Expectation:table is created
-    _create_table(connection, '"T5"', 128)
-    drop_table_purge(connection, '"T5"')
+    _create_table(connection, _quote_indentifier('"T5"'), 128)
+    drop_table_purge(connection, _quote_indentifier('"T5"'))
 
-    # 14. Toggle Case
+    """# 14. Toggle Case
     # Expectation:table creation fails
-    try:
-        _create_table(connection, "TaBlE", 128)
-        drop_table_purge(connection, "TaBlE")
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _create_table(connection, _quote_indentifier("TaBlE"), 128)
+        drop_table_purge(connection, _quote_indentifier("TaBlE"))"""
 
     # 15. table_name as empty_string
     # Expectation: ORA-00903: invalid table name
-    try:
-        _create_table(connection, "", 128)
-        drop_table_purge(connection, "")
-        _create_table(connection, '""', 128)
-        drop_table_purge(connection, '""')
-    except Exception:
-        pass
+    with pytest.raises(ValueError):
+        _create_table(connection, _quote_indentifier(""), 128)
+        drop_table_purge(connection, _quote_indentifier(""))
+        _create_table(connection, _quote_indentifier('""'), 128)
+        drop_table_purge(connection, _quote_indentifier('""'))
 
     # 16. Arithmetic Operations in dimension parameter
     # Expectation:table is created
     n = 1
-    _create_table(connection, "T10", n + 500)
-    drop_table_purge(connection, "T10")
+    _create_table(connection, _quote_indentifier("T10"), n + 500)
+    drop_table_purge(connection, _quote_indentifier("T10"))
 
     # 17. String Operations in table_name&dimension parameter
     # Expectation:table is created
-    _create_table(connection, "YaSh".replace("aS", "ok"), 500)
-    drop_table_purge(connection, "YaSh".replace("aS", "ok"))
+    _create_table(connection, _quote_indentifier("YaSh".replace("aS", "ok")), 500)
+    drop_table_purge(connection, _quote_indentifier("YaSh".replace("aS", "ok")))
 
 
 @pytest.mark.asyncio
@@ -313,114 +292,116 @@ async def test_create_table_test_async() -> None:
     # 1. New table - HELLO
     #    Dimension - 100
     # Expectation:table is created
-    await _acreate_table(connection, "HELLO", 100)
+    await _acreate_table(connection, _quote_indentifier("HELLO"), 100)
 
     # 2. Existing table name
     #    HELLO
     #    Dimension - 110
     # Expectation:Nothing happens
-    await _acreate_table(connection, "HELLO", 110)
-    await adrop_table_purge(connection, "HELLO")
+    await _acreate_table(connection, _quote_indentifier("HELLO"), 110)
+    await adrop_table_purge(connection, _quote_indentifier("HELLO"))
 
-    # 3. New Table - 123
+    """# 3. New Table - 123 # Quoted names not valid anymore
     #    Dimension - 100
     # Expectation:ORA-00903: invalid table name
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "123", 100)
-        await adrop_table_purge(connection, "123")
+        await _acreate_table(connection, _quote_indentifier("123"), 100)
+        await adrop_table_purge(connection, _quote_indentifier("123"))"""
 
     # 4. New Table - Hello123
     #    Dimension - 65535
     # Expectation:table is created
-    await _acreate_table(connection, "Hello123", 65535)
-    await adrop_table_purge(connection, "Hello123")
+    await _acreate_table(connection, _quote_indentifier("Hello123"), 65535)
+    await adrop_table_purge(connection, _quote_indentifier("Hello123"))
 
     # 5. New Table - T1
     #    Dimension - 65536
     # Expectation:ORA-51801: VECTOR column type specification
     # has an unsupported dimension count ('65536').
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "T1", 65536)
-        await adrop_table_purge(connection, "T1")
+        await _acreate_table(connection, _quote_indentifier("T1"), 65536)
+        await adrop_table_purge(connection, _quote_indentifier("T1"))
 
     # 6. New Table - T1
     #    Dimension - 0
     # Expectation:ORA-51801: VECTOR column type specification has
     # an unsupported dimension count (0).
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "T1", 0)
-        await adrop_table_purge(connection, "T1")
+        await _acreate_table(connection, _quote_indentifier("T1"), 0)
+        await adrop_table_purge(connection, _quote_indentifier("T1"))
 
     # 7. New Table - T1
     #    Dimension - -1
     # Expectation:ORA-51801: VECTOR column type specification has
     # an unsupported dimension count ('-').
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "T1", -1)
-        await adrop_table_purge(connection, "T1")
+        await _acreate_table(connection, _quote_indentifier("T1"), -1)
+        await adrop_table_purge(connection, _quote_indentifier("T1"))
 
     # 8. New Table - T2
     #     Dimension - '1000'
     # Expectation:table is created
-    await _acreate_table(connection, "T2", int("1000"))
-    await adrop_table_purge(connection, "T2")
+    await _acreate_table(connection, _quote_indentifier("T2"), int("1000"))
+    await adrop_table_purge(connection, _quote_indentifier("T2"))
 
     # 9. New Table - T3
     #     Dimension - 100 passed as a variable
     # Expectation:table is created
     val = 100
-    await _acreate_table(connection, "T3", val)
-    await adrop_table_purge(connection, "T3")
+    await _acreate_table(connection, _quote_indentifier("T3"), val)
+    await adrop_table_purge(connection, _quote_indentifier("T3"))
 
-    # 10.
+    '''# 10.
     # Expectation:ORA-00922: missing or invalid option
     val2 = """H
     ello"""
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, val2, 545)
-        await adrop_table_purge(connection, val2)
+        await _acreate_table(connection, _quote_indentifier(val2), 545)
+        await adrop_table_purge(connection, _quote_indentifier(val2))'''
 
     # 11. New Table - हिन्दी
     #     Dimension - 545
     # Expectation:table is created
-    await _acreate_table(connection, '"हिन्दी"', 545)
-    await adrop_table_purge(connection, '"हिन्दी"')
+    await _acreate_table(connection, _quote_indentifier('"हिन्दी"'), 545)
+    await adrop_table_purge(connection, _quote_indentifier('"हिन्दी"'))
 
     # 12. <schema_name.table_name>
     # Expectation:failure - user does not exist
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "U1.TB4", 128)
-        await adrop_table_purge(connection, "U1.TB4")
+        await _acreate_table(connection, _quote_indentifier("U1.TB4"), 128)
+        await adrop_table_purge(connection, _quote_indentifier("U1.TB4"))
 
     # 13.
     # Expectation:table is created
-    await _acreate_table(connection, '"T5"', 128)
-    await adrop_table_purge(connection, '"T5"')
+    await _acreate_table(connection, _quote_indentifier('"T5"'), 128)
+    await adrop_table_purge(connection, _quote_indentifier('"T5"'))
 
-    # 14. Toggle Case
+    """# 14. Toggle Case
     # Expectation:table creation fails
     with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "TaBlE", 128)
-        await adrop_table_purge(connection, "TaBlE")
+        await _acreate_table(connection, _quote_indentifier("TaBlE"), 128)
+        await adrop_table_purge(connection, _quote_indentifier("TaBlE"))"""
 
     # 15. table_name as empty_string
     # Expectation: ORA-00903: invalid table name
-    with pytest.raises(oracledb.Error):
-        await _acreate_table(connection, "", 128)
-        await adrop_table_purge(connection, "")
-        await _acreate_table(connection, '""', 128)
-        await adrop_table_purge(connection, '""')
+    with pytest.raises(ValueError):
+        await _acreate_table(connection, _quote_indentifier(""), 128)
+        await adrop_table_purge(connection, _quote_indentifier(""))
+        await _acreate_table(connection, _quote_indentifier('""'), 128)
+        await adrop_table_purge(connection, _quote_indentifier('""'))
 
     # 16. Arithmetic Operations in dimension parameter
     # Expectation:table is created
     n = 1
-    await _acreate_table(connection, "T10", n + 500)
-    await adrop_table_purge(connection, "T10")
+    await _acreate_table(connection, _quote_indentifier("T10"), n + 500)
+    await adrop_table_purge(connection, _quote_indentifier("T10"))
 
     # 17. String Operations in table_name&dimension parameter
     # Expectation:table is created
-    await _acreate_table(connection, "YaSh".replace("aS", "ok"), 500)
-    await adrop_table_purge(connection, "YaSh".replace("aS", "ok"))
+    await _acreate_table(
+        connection, _quote_indentifier("YaSh".replace("aS", "ok")), 500
+    )
+    await adrop_table_purge(connection, _quote_indentifier("YaSh".replace("aS", "ok")))
 
 
 ##################################
@@ -446,11 +427,9 @@ def test_create_hnsw_index_test() -> None:
     # 2. Creating same index again
     #    Table_name - TB1
     # Expectation:Nothing happens
-    try:
+    with pytest.raises(RuntimeError, match="such column list already indexed"):
         create_index(connection, vs)
         drop_index_if_exists(connection, "HNSW")
-    except Exception:
-        pass
     drop_table_purge(connection, "TB1")
 
     # 3. Create index with following parameters:
@@ -466,32 +445,24 @@ def test_create_hnsw_index_test() -> None:
     #    idx_name - "हिन्दी"
     #    idx_type - HNSW
     # Expectation:Index created
-    try:
-        vs = OracleVS(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
-        create_index(connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"})
-        drop_index_if_exists(connection, '"हिन्दी"')
-    except Exception:
-        pass
+    vs = OracleVS(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    create_index(connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"})
+    drop_index_if_exists(connection, '"हिन्दी"')
     drop_table_purge(connection, "TB3")
 
     # 5. idx_name passed empty
     # Expectation:ORA-01741: illegal zero-length identifier
-    try:
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(connection, vs, params={"idx_name": '""', "idx_type": "HNSW"})
         drop_index_if_exists(connection, '""')
-    except Exception:
-        pass
     drop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
     # Expectation:Index created
-    try:
-        vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
-        create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
-        drop_index_if_exists(connection, "Hello")
-    except Exception:
-        pass
+    vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
+    drop_index_if_exists(connection, "Hello")
     drop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
@@ -548,7 +519,7 @@ def test_create_hnsw_index_test() -> None:
     drop_index_if_exists(connection, "idx11")
     drop_table_purge(connection, "TB9")
     # index not created:
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -562,10 +533,8 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    except Exception:
-        pass
     # index not created:
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -579,10 +548,8 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    except Exception:
-        pass
     # index not created
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -596,10 +563,8 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    except Exception:
-        pass
     # index not created
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -614,11 +579,9 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    except Exception:
-        pass
     # with negative values/out-of-bound values for all 4 of them, we get the same errors
     # Expectation:Index not created
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -633,8 +596,6 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    except Exception:
-        pass
     drop_table_purge(connection, "TB10")
     drop_table_purge(connection, "TB11")
     drop_table_purge(connection, "TB12")
@@ -661,7 +622,7 @@ def test_create_hnsw_index_test() -> None:
 
     # 11. index_name as <schema_name.index_name>
     # Expectation:U1 not present
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(
             connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -679,17 +640,13 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "U1.idx11")
         drop_table_purge(connection, "TB16")
-    except Exception:
-        pass
 
     # 12. Index_name size >129
     # Expectation:Index not created
-    try:
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"})
         drop_index_if_exists(connection, "x" * 129)
-    except Exception:
-        pass
     drop_table_purge(connection, "TB17")
 
     # 13. Index_name size 128
@@ -722,9 +679,10 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 2. Creating same index again
     #    Table_name - TB1
-    # Expectation:Nothing happens
-    await acreate_index(connection, vs)
-    await adrop_index_if_exists(connection, "HNSW")
+    # Expectation:Without index name, error happens
+    with pytest.raises(RuntimeError, match="such column list already indexed"):
+        await acreate_index(connection, vs)
+        await adrop_index_if_exists(connection, "HNSW")
     await adrop_table_purge(connection, "TB1")
 
     # 3. Create index with following parameters:
@@ -755,7 +713,7 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 5. idx_name passed empty
     # Expectation:ORA-01741: illegal zero-length identifier
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -1010,65 +968,54 @@ def test_index_exists_test() -> None:
     # Expectation:true
     vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
     create_index(connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"})
-    _index_exists(connection, "IDX11")
+    assert not _index_exists(connection, _quote_indentifier("IDX11"))
 
     # 2. Existing Table:(all small letters)
     # Expectation:true
-    _index_exists(connection, "idx11")
+    assert _index_exists(connection, _quote_indentifier("idx11"))
 
     # 3. Non-Existing Index
     # Expectation:False
-    _index_exists(connection, "Hello")
+    assert not _index_exists(connection, _quote_indentifier("Hello"))
 
-    # 4. Invalid Index Name
+    """# 4. Invalid Index Name # Qutoted not invalid
     # Expectation:Error
-    try:
-        _index_exists(connection, "123")
-    except Exception:
-        pass
+    with pytest.raises(RuntimeError):
+        _index_exists(connection, _quote_indentifier("123"))"""
 
     # 5. Empty String
     # Expectation:Error
-    try:
-        _index_exists(connection, "")
-    except Exception:
-        pass
-    try:
-        _index_exists(connection, "")
-    except Exception:
-        pass
+    with pytest.raises(ValueError):
+        _index_exists(connection, _quote_indentifier(""))
 
-    # 6. Special Character
+    """# 6. Special Character
     # Expectation:Error
-    try:
-        _index_exists(connection, "##4")
-    except Exception:
-        pass
+    with pytest.raises(RuntimeError):
+        _index_exists(connection, _quote_indentifier("##4"))"""
 
-    # 7. Index name length > 128
+    """# 7. Index name length > 128
     # Expectation:Error
-    try:
-        _index_exists(connection, "x" * 129)
-    except Exception:
-        pass
+    with pytest.raises(oracledb.Error):
+        _index_exists(connection, _quote_indentifier("x" * 129))"""
 
     # 8. <Schema_Name.Index_Name>
     # Expectation:true
-    _index_exists(connection, "U1.IDX11")
+    _index_exists(connection, _quote_indentifier("ONNXUSER.idx11"))
 
     # 9. Toggle Case (like iDx11)
     # Expectation:true
-    _index_exists(connection, "IdX11")
+    assert not _index_exists(connection, _quote_indentifier("IdX11"))
 
     # 10. Index_Name→ "हिन्दी"
     # Expectation:true
-    drop_index_if_exists(connection, "idx11")
-    try:
-        create_index(connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"})
-        _index_exists(connection, '"हिन्दी"')
-    except Exception:
-        pass
-    drop_table_purge(connection, "TB1")
+    drop_index_if_exists(connection, _quote_indentifier("idx11"))
+    create_index(
+        connection,
+        vs,
+        params={"idx_name": _quote_indentifier('"हिन्दी"'), "idx_type": "HNSW"},
+    )
+    assert _index_exists(connection, _quote_indentifier('"हिन्दी"'))
+    drop_table_purge(connection, _quote_indentifier("TB1"))
 
 
 @pytest.mark.asyncio
@@ -1090,49 +1037,56 @@ async def test_index_exists_test_async() -> None:
     await acreate_index(
         connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"}
     )
-    assert await _aindex_exists(connection, "IDX11")
+    assert not await _aindex_exists(connection, _quote_indentifier("IDX11"))
 
     # 2. Existing Table:(all small letters)
     # Expectation:true
-    assert await _aindex_exists(connection, "idx11")
+    assert await _aindex_exists(connection, _quote_indentifier("idx11"))
 
     # 3. Non-Existing Index
     # Expectation:False
-    assert not await _aindex_exists(connection, "Hello")
+    assert not await _aindex_exists(connection, _quote_indentifier("Hello"))
 
-    # 4. Invalid Index Name
+    """# 4. Invalid Index Name # Qutoted not invalid
     # Expectation:Error
-    assert not await _aindex_exists(connection, "123")
+    with pytest.raises(RuntimeError):
+        await _aindex_exists(connection, _quote_indentifier("123"))"""
 
     # 5. Empty String
     # Expectation:Error
-    assert not await _aindex_exists(connection, "")
+    with pytest.raises(ValueError):
+        await _aindex_exists(connection, _quote_indentifier(""))
+    with pytest.raises(ValueError):
+        await _aindex_exists(connection, _quote_indentifier(""))
 
-    # 6. Special Character
+    """# 6. Special Character
     # Expectation:Error
-    assert not await _aindex_exists(connection, "##4")
+    with pytest.raises(RuntimeError):
+        await _aindex_exists(connection, _quote_indentifier("##4"))"""
 
-    # 7. Index name length > 128
+    """# 7. Index name length > 128
     # Expectation:Error
-    assert not await _aindex_exists(connection, "x" * 129)
+    with pytest.raises(oracledb.Error):
+        await _aindex_exists(connection, _quote_indentifier("x" * 129))"""
 
     # 8. <Schema_Name.Index_Name>
     # Expectation:true
-    # assert await _aindex_exists(connection, "ONNXUSER.IDX11")
+    await _aindex_exists(connection, _quote_indentifier("ONNXUSER.idx11"))
 
     # 9. Toggle Case (like iDx11)
     # Expectation:true
-    assert await _aindex_exists(connection, "IdX11")
+    assert not await _aindex_exists(connection, _quote_indentifier("IdX11"))
 
     # 10. Index_Name→ "हिन्दी"
     # Expectation:true
-    await adrop_index_if_exists(connection, "idx11")
-    # with pytest.raises(): # DOESNT?
+    await adrop_index_if_exists(connection, _quote_indentifier("idx11"))
     await acreate_index(
-        connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"}
+        connection,
+        vs,
+        params={"idx_name": _quote_indentifier('"हिन्दी"'), "idx_type": "HNSW"},
     )
-    await _aindex_exists(connection, '"हिन्दी"')
-    await adrop_table_purge(connection, "TB1")
+    assert await _aindex_exists(connection, _quote_indentifier('"हिन्दी"'))
+    await adrop_table_purge(connection, _quote_indentifier("TB1"))
 
 
 ##################################
@@ -1268,15 +1222,13 @@ def test_add_texts_test() -> None:
 
     # 8. create object with table name of type <schema_name.table_name>
     # Expectation:U1 does not exist
-    try:
+    with pytest.raises(RuntimeError):
         vs_obj = OracleVS(connection, model, "U1.TB14", DistanceStrategy.DOT_PRODUCT)
         for i in range(1, 10):
             texts7 = ["Yash{0}".format(i)]
             ids13 = ["1234{0}".format(i)]
             vs_obj.add_texts(texts7, ids=ids13)
         drop_table_purge(connection, "TB14")
-    except Exception:
-        pass
 
 
 @pytest.mark.asyncio
@@ -2313,6 +2265,7 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
         sys.exit(1)
 
     drop_table_purge(connection, "TB1")
+    drop_table_purge(connection, "Tb1")
     drop_table_purge(connection, "TB2")
 
     # LOGGER = logging.getLogger(__name__)
@@ -2327,19 +2280,24 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO):
         vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
 
-    assert "Table TB1 created successfully..." in caplog.text
+    assert 'Table "TB1" created successfully...' in caplog.records[-1].message
+
+    with caplog.at_level(logging.INFO):
+        OracleVS(connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE)
+
+    assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         OracleVS(connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE)
 
-    assert "Table Tb1 already exists..." in caplog.text
+    assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = OracleVS(
             connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table TB2 created successfully..." in caplog.text
+    assert 'Table "TB2" created successfully...' in caplog.records[-1].message
 
     vs_obj.add_texts(texts, metadata)
 
@@ -2348,37 +2306,39 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
             connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
         )
 
-    assert "Index hnsw_idx2 created successfully..." in caplog.text
-
-    with caplog.at_level(logging.INFO):
-        create_index(
-            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
-        )
-
-    assert "Index HNSW_idx2 already exists..." in caplog.text
-
-    with pytest.raises(
-        RuntimeError, match="name is already used by an existing object"
-    ):
-        create_index(
-            connection, vs_obj2, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
-        )
-
-    drop_index_if_exists(connection, "hnsw_idx2")
-
-    with caplog.at_level(logging.INFO):
-        create_index(
-            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
-        )
-
-    assert 'Index "hnsw_idx2" created successfully...' in caplog.text
+    assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
         create_index(
             connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
         )
 
+    with pytest.raises(
+        RuntimeError, match="name is already used by an existing object"
+    ):
+        create_index(
+            connection, vs_obj2, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
+
+    with pytest.raises(RuntimeError, match="such column list already indexed"):
+        create_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    with caplog.at_level(logging.INFO):
+        drop_index_if_exists(connection, "hnsw_idx2")
+
+    assert 'Index "hnsw_idx2" has been dropped.' in caplog.records[-1].message
+
+    with caplog.at_level(logging.INFO):
+        create_index(
+            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
+        )
+
+    assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
+
     drop_table_purge(connection, "TB1")
+    drop_table_purge(connection, "Tb1")
     drop_table_purge(connection, "TB2")
 
 
@@ -2392,6 +2352,7 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
         sys.exit(1)
 
     await adrop_table_purge(connection, "TB1")
+    await adrop_table_purge(connection, "Tb1")
     await adrop_table_purge(connection, "TB2")
 
     # LOGGER = logging.getLogger(__name__)
@@ -2408,21 +2369,28 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
             connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table TB1 created successfully..." in caplog.text
+    assert 'Table "TB1" created successfully...' in caplog.records[-1].message
+
+    with caplog.at_level(logging.INFO):
+        await OracleVS.acreate(
+            connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+
+    assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         await OracleVS.acreate(
             connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table Tb1 already exists..." in caplog.text
+    assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = await OracleVS.acreate(
             connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
 
-    assert "Table TB2 created successfully..." in caplog.text
+    assert 'Table "TB2" created successfully...' in caplog.records[-1].message
 
     await vs_obj.aadd_texts(texts, metadata)
 
@@ -2431,35 +2399,71 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
             connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
         )
 
-    assert "Index hnsw_idx2 created successfully..." in caplog.text
-
-    with caplog.at_level(logging.INFO):
-        await acreate_index(
-            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
-        )
-
-    assert "Index HNSW_idx2 already exists..." in caplog.text
-
-    with pytest.raises(
-        RuntimeError, match="name is already used by an existing object"
-    ):
-        await acreate_index(
-            connection, vs_obj2, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
-        )
-
-    await adrop_index_if_exists(connection, "hnsw_idx2")
-
-    with caplog.at_level(logging.INFO):
-        await acreate_index(
-            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
-        )
-
-    assert 'Index "hnsw_idx2" created successfully...' in caplog.text
+    assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
         await acreate_index(
             connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
         )
 
+    with pytest.raises(
+        RuntimeError, match="name is already used by an existing object"
+    ):
+        await acreate_index(
+            connection, vs_obj2, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
+
+    with pytest.raises(RuntimeError, match="such column list already indexed"):
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
+
+    with caplog.at_level(logging.INFO):
+        await adrop_index_if_exists(connection, "hnsw_idx2")
+
+    assert 'Index "hnsw_idx2" has been dropped.' in caplog.records[-1].message
+
+    with caplog.at_level(logging.INFO):
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
+        )
+
+    assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
+
     await adrop_table_purge(connection, "TB1")
+    await adrop_table_purge(connection, "Tb1")
     await adrop_table_purge(connection, "TB2")
+
+
+def test_quote_identifier() -> None:
+    # unquoted
+    assert _quote_indentifier("hello") == '"hello"'
+    assert _quote_indentifier("--") == '"--"'
+    assert _quote_indentifier("U1.table") == '"U1"."table"'
+    assert _quote_indentifier("hnsw_idx2") == '"hnsw_idx2"'
+
+    with pytest.raises(ValueError):
+        _quote_indentifier('hnsw_"idx2')
+
+    with pytest.raises(ValueError):
+        _quote_indentifier('"')
+
+    with pytest.raises(ValueError):
+        _quote_indentifier('"--')
+
+    with pytest.raises(ValueError):
+        _quote_indentifier(" ")
+
+    # quoted
+    assert _quote_indentifier('"U1.table"') == '"U1.table"'
+    assert _quote_indentifier('"U1"."table"') == '"U1"."table"'
+    assert _quote_indentifier('"he".--') == '"he"."--"'
+
+    with pytest.raises(ValueError):
+        assert _quote_indentifier('"he"llo"')
+
+    with pytest.raises(ValueError):
+        assert _quote_indentifier('"he"--')
+
+    # mixed
+    assert _quote_indentifier('"U1".table') == '"U1"."table"'

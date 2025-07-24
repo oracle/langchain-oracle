@@ -14,6 +14,7 @@ import hashlib
 import inspect
 import logging
 import os
+import re
 import uuid
 from collections.abc import Awaitable
 from typing import (
@@ -225,12 +226,20 @@ async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
         raise
 
 
-def _normalize_oracle_identifier(name: str) -> str:
+def _quote_indentifier(name: str) -> str:
     name = name.strip()
-    if name.startswith('"') and name.endswith('"'):
-        return name
-    else:
-        return name.upper()
+    reg = r'^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$'
+    pattern_validate = re.compile(reg)
+
+    if not pattern_validate.match(name):
+        raise ValueError(f"Identifier name {name} is not valid.")
+
+    pattern_match = r'"([^"]+)"|([^".]+)'
+    groups = re.findall(pattern_match, name)
+    groups = [m[0] or m[1] for m in groups]
+    groups = [f'"{g}"' for g in groups]
+
+    return ".".join(groups)
 
 
 @_handle_exceptions
@@ -245,16 +254,21 @@ def _index_exists(
         {"AND table_name = :table_name" if table_name else ""} 
         """
 
+    # this is an internal method, index_name and table_name comes with double quotes
+    index_name = index_name.replace('"', "")
+    if table_name:
+        table_name = table_name.replace('"', "")
+
     with connection.cursor() as cursor:
         # execute the query
         if table_name:
             cursor.execute(
                 query,
-                idx_name=_normalize_oracle_identifier(index_name),
-                table_name=_normalize_oracle_identifier(table_name),
+                idx_name=index_name,
+                table_name=table_name,
             )
         else:
-            cursor.execute(query, idx_name=_normalize_oracle_identifier(index_name))
+            cursor.execute(query, idx_name=index_name)
         result = cursor.fetchone()
 
         # check if the index exists
@@ -272,18 +286,21 @@ async def _aindex_exists(
         {"AND table_name = :table_name" if table_name else ""} 
         """
 
+    # this is an internal method, index_name and table_name comes with double quotes
+    index_name = index_name.replace('"', "")
+    if table_name:
+        table_name = table_name.replace('"', "")
+
     with connection.cursor() as cursor:
         # execute the query
         if table_name:
             await cursor.execute(
                 query,
-                idx_name=_normalize_oracle_identifier(index_name),
-                table_name=_normalize_oracle_identifier(table_name),
+                idx_name=index_name,
+                table_name=table_name,
             )
         else:
-            await cursor.execute(
-                query, idx_name=_normalize_oracle_identifier(index_name)
-            )
+            await cursor.execute(query, idx_name=index_name)
         result = await cursor.fetchone()
 
         # check if the index exists
@@ -309,7 +326,7 @@ def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
 
 def _get_index_name(base_name: str) -> str:
     unique_id = str(uuid.uuid4()).replace("-", "")
-    return f"{base_name}_{unique_id}"
+    return f'"{base_name}_{unique_id}"'
 
 
 def _get_table_dict(embedding_dim: int) -> Dict:
@@ -322,7 +339,6 @@ def _get_table_dict(embedding_dim: int) -> Dict:
     return cols_dict
 
 
-@_handle_exceptions
 def _create_table(connection: Connection, table_name: str, embedding_dim: int) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
@@ -365,6 +381,8 @@ def create_index(
     if connection is None:
         raise ValueError("Failed to acquire a connection.")
     if params:
+        if "idx_name" in params:
+            params["idx_name"] = _quote_indentifier(params["idx_name"])
         if params["idx_type"] == "HNSW":
             _create_hnsw_index(
                 connection,
@@ -425,6 +443,7 @@ def _get_hnsw_index_ddl(
                 raise ValueError(f"Invalid parameter: {key}")
     else:
         config = defaults
+        config["idx_name"] = _get_index_name(str(config["idx_name"]))
 
     # base SQL statement
     idx_name = config["idx_name"]
@@ -519,6 +538,7 @@ def _get_ivf_index_ddl(
                 raise ValueError(f"Invalid parameter: {key}")
     else:
         config = defaults
+        config["idx_name"] = _get_index_name(str(config["idx_name"]))
 
     # base SQL statement
     idx_name = config["idx_name"]
@@ -577,6 +597,8 @@ async def acreate_index(
 ) -> None:
     async def context(connection: Any) -> None:
         if params:
+            if "idx_name" in params:
+                params["idx_name"] = _quote_indentifier(params["idx_name"])
             if params["idx_type"] == "HNSW":
                 await _acreate_hnsw_index(
                     connection,
@@ -657,6 +679,7 @@ def drop_table_purge(client: Any, table_name: str) -> None:
         RuntimeError: If an error occurs while dropping the table.
     """
     connection = _get_connection(client)
+    table_name = _quote_indentifier(table_name)
     if connection is None:
         raise ValueError("Failed to acquire a connection.")
     if _table_exists(connection, table_name):
@@ -680,6 +703,7 @@ async def adrop_table_purge(client: Any, table_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the table.
     """
+    table_name = _quote_indentifier(table_name)
 
     async def context(connection: Any) -> None:
         if await _atable_exists(connection, table_name):
@@ -706,6 +730,7 @@ def drop_index_if_exists(client: Any, index_name: str) -> None:
         RuntimeError: If an error occurs while dropping the index.
     """
     connection = _get_connection(client)
+    index_name = _quote_indentifier(index_name)
     if connection is None:
         raise ValueError("Failed to acquire a connection.")
     if _index_exists(connection, index_name):
@@ -729,6 +754,7 @@ async def adrop_index_if_exists(client: Any, index_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
+    index_name = _quote_indentifier(index_name)
 
     async def context(connection: Any) -> None:
         if await _aindex_exists(connection, index_name):
@@ -874,8 +900,6 @@ async def _handle_context(
 def output_type_string_handler(cursor: Any, metadata: Any) -> Any:
     if metadata.type_code is oracledb.DB_TYPE_CLOB:
         return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
-    if metadata.type_code is oracledb.DB_TYPE_BLOB:
-        return cursor.var(oracledb.DB_TYPE_LONG_RAW, arraysize=cursor.arraysize)
     if metadata.type_code is oracledb.DB_TYPE_NCLOB:
         return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
 
@@ -911,7 +935,7 @@ class OracleVS(VectorStore):
             Callable[[str], List[float]],
             Embeddings,
         ],
-        table_name: str,
+        table_name: str,  # case sensitive
         distance_strategy: DistanceStrategy = DistanceStrategy.EUCLIDEAN_DISTANCE,
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
@@ -935,7 +959,7 @@ class OracleVS(VectorStore):
         )
 
         embedding_dim = self.get_embedding_dimension()
-        _create_table(connection, table_name, embedding_dim)
+        _create_table(connection, self.table_name, embedding_dim)
 
     @classmethod
     @_ahandle_exceptions
@@ -969,7 +993,7 @@ class OracleVS(VectorStore):
             )
 
             embedding_dim = await self.aget_embedding_dimension()
-            await _acreate_table(connection, table_name, embedding_dim)
+            await _acreate_table(connection, self.table_name, embedding_dim)
 
         await _handle_context(client, context)
 
@@ -1014,7 +1038,7 @@ class OracleVS(VectorStore):
             )
         self.embedding_function = embedding_function
         self.query = query
-        self.table_name = table_name
+        self.table_name = _quote_indentifier(table_name)
         self.distance_strategy = distance_strategy
         self.params = params
 
@@ -1311,9 +1335,13 @@ class OracleVS(VectorStore):
             # filter results if filter is provided
             for result in results:
                 metadata = result[2] or {}
+                page_content_str = result[1] if result[1] is not None else ""
+
+                if not isinstance(page_content_str, str):
+                    raise Exception("Unexpected type:", type(page_content_str))
 
                 doc = Document(
-                    page_content=(result[1] if result[1] is not None else ""),
+                    page_content=page_content_str,
                     metadata=metadata,
                 )
                 distance = result[3]
@@ -1357,9 +1385,12 @@ class OracleVS(VectorStore):
                 # filter results if filter is provided
                 for result in results:
                     metadata = result[2] or {}
+                    page_content_str = result[1] if result[1] is not None else ""
+                    if not isinstance(page_content_str, str):
+                        raise Exception("Unexpected type:", type(page_content_str))
 
                     doc = Document(
-                        page_content=(result[1] if result[1] is not None else ""),
+                        page_content=page_content_str,
                         metadata=metadata,
                     )
                     distance = result[3]
@@ -1405,7 +1436,9 @@ class OracleVS(VectorStore):
             results = cursor.fetchall()
 
             for result in results:
-                page_content_str = result[1]
+                page_content_str = result[1] if result[1] is not None else ""
+                if not isinstance(page_content_str, str):
+                    raise Exception("Unexpected type:", type(page_content_str))
                 metadata = result[2] or {}
 
                 # apply filter if provided and matches; otherwise, add all
@@ -1459,7 +1492,9 @@ class OracleVS(VectorStore):
                 results = await cursor.fetchall()
 
                 for result in results:
-                    page_content_str = result[1]
+                    page_content_str = result[1] if result[1] is not None else ""
+                    if not isinstance(page_content_str, str):
+                        raise Exception("Unexpected type:", type(page_content_str))
                     metadata = result[2] or {}
 
                     # apply filter if provided and matches; otherwise, add all
