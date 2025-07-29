@@ -14,9 +14,10 @@ license = "UPL"
 python = ">=3.9,<4.0"
 langchain-core = ">=0.3.15,<0.4"
 langchain-openai = ">=0.3.9"
-oci = ">=2.144.0"
-oracle-ads = ">=2.13.3"
+oci = ">=2.155.1"
+oracle-ads = ">=2.13.16"
 pydantic = ">=2,<3"
+aiohttp = ">=3.12.14"
 
 [tool.poetry.group.test]
 optional = true
