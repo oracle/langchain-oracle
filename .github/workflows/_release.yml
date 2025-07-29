@@ -32,7 +32,7 @@ jobs:
       - name: Build distribution 📦
         run: |
           pip install build
-          make dist
+          python -m build
       - name: Validate
         run: |
           pip install dist/*.whl
