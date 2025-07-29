@@ -20,6 +20,9 @@ jobs:
   build-n-publish:
     name: Build and publish Python 🐍 distribution 📦 to PyPI
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/oci  # Set default for all steps
     environment:
       name: pypi
       url: https://pypi.org/p/langchain-oci
