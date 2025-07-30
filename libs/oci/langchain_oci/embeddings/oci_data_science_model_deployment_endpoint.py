@@ -1,13 +1,13 @@
 # Copyright (c) 2025 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
+from typing import Any, Callable, Dict, List, Mapping, Optional
+
+import requests
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.llms import create_base_retry_decorator
 from langchain_core.utils import get_from_dict_or_env
 from pydantic import BaseModel, Field, model_validator
-import requests
-from typing import Any, Callable, Dict, List, Mapping, Optional
-
 
 DEFAULT_HEADER = {
     "Content-Type": "application/json",
@@ -39,7 +39,7 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
             embeddings = OCIModelDeploymentEndpointEmbeddings(
                 endpoint="https://modeldeployment.us-ashburn-1.oci.customer-oci.com/<md_ocid>/predict",
             )
-    """ # noqa: E501
+    """  # noqa: E501
 
     auth: dict = Field(default_factory=dict, exclude=True)
     """ADS auth dictionary for OCI authentication:

@@ -3,10 +3,10 @@
 
 """LLM for OCI data science model deployment endpoint."""
 
-from contextlib import asynccontextmanager
 import json
 import logging
 import traceback
+from contextlib import asynccontextmanager
 from typing import (
     Any,
     AsyncGenerator,
@@ -793,6 +793,7 @@ class OCIModelDeploymentTGI(OCIModelDeploymentLLM):
             )
 
     """
+
     max_tokens: int = 256
     """Denotes the number of tokens to predict per generation."""
 
@@ -943,6 +944,7 @@ class OCIModelDeploymentVLLM(OCIModelDeploymentLLM):
             )
 
     """
+
     max_tokens: int = 256
     """Denotes the number of tokens to predict per generation."""
 

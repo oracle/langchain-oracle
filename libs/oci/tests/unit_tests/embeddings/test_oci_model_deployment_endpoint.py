@@ -1,8 +1,9 @@
 """Test OCI Data Science Model Deployment Endpoint."""
 
-import responses
 import pytest
+import responses
 from pytest_mock import MockerFixture
+
 from langchain_oci.embeddings import OCIModelDeploymentEndpointEmbeddings
 
 
@@ -17,11 +18,7 @@ def test_embedding_call(mocker: MockerFixture) -> None:
         responses.POST,
         endpoint,
         json={
-            "data": [
-                {
-                    "embedding": expected_output
-                }
-            ],
+            "data": [{"embedding": expected_output}],
         },
         status=200,
     )
