@@ -53,7 +53,7 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         :param wallet_password: password of wallet, not required for TLS connections
         :param metadata: metadata used in document
         :param parameter: bind variable to use in query
-        """
+        """  # noqa: E501
         # Mandatory required arguments.
         self.query = query
         self.user = user

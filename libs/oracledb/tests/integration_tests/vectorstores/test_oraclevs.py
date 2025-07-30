@@ -39,6 +39,14 @@ username = ""
 password = ""
 dsn = ""
 
+try:
+    oracledb.connect(user=username, password=password, dsn=dsn)
+except Exception as e:
+    pytest.skip(
+        allow_module_level=True,
+        reason=f"Database connection failed: {e}, skipping tests.",
+    )
+
 
 ############################
 ####### table_exists #######

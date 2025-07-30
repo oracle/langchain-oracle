@@ -54,7 +54,7 @@ def test_oracle_loader_load(mock_query: MagicMock) -> None:
         query="Test query",
         user="Test user",
         password="Test password",
-        connection_string="Test connection string",
+        dsn="Test connection string",
         metadata=["FIELD1"],
     )
 
