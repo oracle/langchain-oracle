@@ -51,6 +51,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_function
+from oci.generative_ai_inference import models
 from pydantic import BaseModel, ConfigDict
 
 from langchain_oci.llms.oci_generative_ai import OCIGenAIBase
@@ -360,6 +361,19 @@ class CohereProvider(Provider):
                 oci_chat_history.append(
                     self.oci_chat_message[role](
                         message=msg_content, tool_calls=tool_calls
+                    )
+                )
+            elif isinstance(msg, ToolMessage):
+                oci_chat_history.append(
+                    self.oci_chat_message[self.get_role(msg)](
+                        tool_results=[
+                            models.CohereToolResult(
+                                call=models.CohereToolCall(
+                                    name=msg.name, parameters={}
+                                ),
+                                outputs=[{"output": msg.content}],
+                            )
+                        ],
                     )
                 )
 
