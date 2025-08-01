@@ -381,6 +381,9 @@ class CohereProvider(Provider):
         for message in reversed(messages):
             current_turn.append(message)
             if isinstance(message, HumanMessage):
+                if len(messages) > i and isinstance(messages[len(messages) - i - 2], ToolMessage):
+                    # add dummy message to avoid the error about ToolMessage needing to be followed by an AI message
+                    oci_chat_history.append(self.oci_chat_message['CHATBOT'](message=" "))
                 break
         current_turn = list(reversed(current_turn))
 
