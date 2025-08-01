@@ -2,7 +2,7 @@ import json
 import sys
 from typing import Dict
 
-LIB_DIRS = ["libs/oci"]
+LIB_DIRS = ["libs/oci", "libs/oracledb"]
 
 if __name__ == "__main__":
     files = sys.argv[1:]

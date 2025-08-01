@@ -10,6 +10,9 @@ Authors:
 """
 import sys
 
+import oracledb
+import pytest
+
 from langchain_oracledb.document_loaders.oracleai import (
     OracleDocLoader,
     OracleTextSplitter,
@@ -24,14 +27,17 @@ uname = ""
 passwd = ""
 v_dsn = ""
 
+try:
+    oracledb.connect(user=uname, password=passwd, dsn=v_dsn)
+except Exception as e:
+    pytest.skip(
+        allow_module_level=True,
+        reason=f"Database connection failed: {e}, skipping tests.",
+    )
+
 
 ### Test loader #####
 def test_loader_test() -> None:
-    try:
-        import oracledb
-    except ImportError:
-        return
-
     try:
         # oracle connection
         connection = oracledb.connect(user=uname, password=passwd, dsn=v_dsn)
@@ -131,11 +137,6 @@ def test_loader_test() -> None:
 
 ### Test splitter ####
 def test_splitter_test() -> None:
-    try:
-        import oracledb
-    except ImportError:
-        return
-
     try:
         # oracle connection
         connection = oracledb.connect(user=uname, password=passwd, dsn=v_dsn)
@@ -311,11 +312,6 @@ def test_splitter_test() -> None:
 
 #### Test summary ####
 def test_summary_test() -> None:
-    try:
-        import oracledb
-    except ImportError:
-        return
-
     try:
         # oracle connection
         connection = oracledb.connect(user=uname, password=passwd, dsn=v_dsn)
