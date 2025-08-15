@@ -12,8 +12,8 @@ license = "UPL"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
-langchain-core = "<1.0.0,>=0.3.66"
-langchain = "<1.0.0,>=0.3.26"
+langchain-core = ">=0.3.20,<1.0.0"
+langchain = ">=0.3.20,<1.0.0"
 oci = ">=2.139.0"
 pydantic = ">=2,<3"
 # aiohttp = ">=3.12.14"
