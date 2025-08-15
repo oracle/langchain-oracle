@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-oci"
-version = "0.1.3"
+version = "0.1.4"
 description = "An integration package connecting OCI and LangChain"
 authors = []
 readme = "README.md"
@@ -12,10 +12,11 @@ license = "UPL"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
-langchain-core = ">=0.3.15,<0.4"
-oci = ">=2.155.1"
+langchain-core = "<1.0.0,>=0.3.66"
+langchain = "<1.0.0,>=0.3.26"
+oci = ">=2.139.0"
 pydantic = ">=2,<3"
-aiohttp = ">=3.12.14"
+# aiohttp = ">=3.12.14"
 
 [tool.poetry.group.test]
 optional = true
