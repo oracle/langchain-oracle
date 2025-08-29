@@ -18,6 +18,7 @@ import pytest
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores.utils import DistanceStrategy
 
+from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.vectorstores.oraclevs import (
     OracleVS,
     _acreate_table,
@@ -51,6 +52,8 @@ except Exception as e:
 ############################
 ####### table_exists #######
 ############################
+
+
 def test_table_exists_test() -> None:
     try:
         connection = oracledb.connect(user=username, password=password, dsn=dsn)
@@ -1676,26 +1679,32 @@ def test_perform_search_test() -> None:
         # perform search
         query = "YashB"
 
-        filter = {"id": ["106", "108", "yash"]}
+        db_filter: dict = {
+            "$or": [  # dict
+                {"id": "106"},
+                {"id": "108"},
+                {"id": "yash"},
+            ]
+        }
 
         # similarity_searh without filter
         vs.similarity_search(query, 2)
 
         # similarity_searh with filter
-        vs.similarity_search(query, 2, filter=filter)
+        vs.similarity_search(query, 2, db_filter=db_filter)
 
         # Similarity search with relevance score
         vs.similarity_search_with_score(query, 2)
 
         # Similarity search with relevance score with filter
-        vs.similarity_search_with_score(query, 2, filter=filter)
+        vs.similarity_search_with_score(query, 2, db_filter=db_filter)
 
         # Max marginal relevance search
         vs.max_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
 
         # Max marginal relevance search with filter
         vs.max_marginal_relevance_search(
-            query, 2, fetch_k=20, lambda_mult=0.5, filter=filter
+            query, 2, fetch_k=20, lambda_mult=0.5, db_filter=db_filter
         )
 
     drop_table_purge(connection, "TB10")
@@ -1762,26 +1771,32 @@ async def test_perform_search_test_async() -> None:
         # perform search
         query = "YashB"
 
-        filter = {"id": ["106", "108", "yash"]}
+        db_filter: dict = {
+            "$or": [  # dict
+                {"id": "106"},
+                {"id": "108"},
+                {"id": "yash"},
+            ]
+        }
 
         # similarity_searh without filter
         await vs.asimilarity_search(query, 2)
 
         # similarity_searh with filter
-        await vs.asimilarity_search(query, 2, filter=filter)
+        await vs.asimilarity_search(query, 2, db_filter=db_filter)
 
         # Similarity search with relevance score
         await vs.asimilarity_search_with_score(query, 2)
 
         # Similarity search with relevance score with filter
-        await vs.asimilarity_search_with_score(query, 2, filter=filter)
+        await vs.asimilarity_search_with_score(query, 2, db_filter=db_filter)
 
         # Max marginal relevance search
         await vs.amax_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
 
         # Max marginal relevance search with filter
         await vs.amax_marginal_relevance_search(
-            query, 2, fetch_k=20, lambda_mult=0.5, filter=filter
+            query, 2, fetch_k=20, lambda_mult=0.5, db_filter=db_filter
         )
 
     await adrop_table_purge(connection, "TB10")
@@ -1795,6 +1810,19 @@ async def test_perform_search_test_async() -> None:
 ##################################
 ##### perform_filter_search ######
 ##################################
+
+FILTERED_FUNCTIONS = [
+    "similarity_search",
+    "similarity_search_by_vector",
+    "similarity_search_with_score",
+    "similarity_search_by_vector_with_relevance_scores",
+    "similarity_search_by_vector_returning_embeddings",
+    "max_marginal_relevance_search_with_score_by_vector",
+    "max_marginal_relevance_search_by_vector",
+    "max_marginal_relevance_search",
+]
+
+
 def test_db_filter_test() -> None:
     try:
         connection = oracledb.connect(user=username, password=password, dsn=dsn)
@@ -1803,6 +1831,13 @@ def test_db_filter_test() -> None:
     model1 = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
+    drop_table_purge(connection, "TB10")
+    drop_table_purge(connection, "TB11")
+    drop_table_purge(connection, "TB12")
+    drop_table_purge(connection, "TB13")
+    drop_table_purge(connection, "TB14")
+    drop_table_purge(connection, "TB15")
+
     vs_1 = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
     vs_2 = OracleVS(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
     vs_3 = OracleVS(connection, model1, "TB12", DistanceStrategy.COSINE)
@@ -1835,48 +1870,51 @@ def test_db_filter_test() -> None:
         # perform search
         query = "Strawberry"
 
-        filter = {"id": ["bl"]}
-        db_filter = {"key": "id", "oper": "EQ", "value": "bl"}  # FilterCondition
-
-        # similarity_search without filter
-        result = vs.similarity_search(query, 1)
-        assert result[0].metadata["id"] == "st"
-
-        # similarity_search with filter
-        result = vs.similarity_search(query, 1, filter=filter)
-        assert len(result) == 0
-
-        # similarity_search with db_filter
-        result = vs.similarity_search(query, 1, db_filter=db_filter)
-        assert result[0].metadata["id"] == "bl"
-
-        # similarity_search with filter and db_filter
-        result = vs.similarity_search(query, 1, filter=filter, db_filter=db_filter)
-        assert result[0].metadata["id"] == "bl"
+        db_filter: dict = {"id": {"$eq": "bl"}}  # dict
 
         # nested db filter
-        db_filter_nested = {
-            "_or": [
-                {"key": "id", "oper": "EQ", "value": "ba"},  # FilterCondition
+        db_filter_nested: dict = {
+            "$or": [
+                {"id": "ba"},  # dict
                 {
-                    "_and": [  # FilterGroup
-                        {"key": "order", "oper": "LTE", "value": 4},
-                        {"key": "id", "oper": "EQ", "value": "st"},
+                    "$and": [  # dict
+                        {"order": {"$lte": 4}},
+                        {"id": "st"},
                     ]
                 },
             ]
         }
 
-        # similarity_search with db_filter
-        result = vs.similarity_search(query, 1, db_filter=db_filter_nested)
-        assert result[0].metadata["id"] == "st"
+        for filtered_function in FILTERED_FUNCTIONS:
+            method = getattr(vs, filtered_function)
+
+            query_emb: list[float] | str = query
+            if "_by_vector" in filtered_function:
+                query_emb = vs.embedding_function.embed_query(query)  # type: ignore[union-attr]
+
+            # search without filter
+            result = method(query_emb, k=1)
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "st"
+
+            # search with filter
+            result = method(query_emb, k=5, db_filter=db_filter)
+            assert len(result) == 1
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "bl"
+
+            # search with nested filter
+            result = method(query_emb, k=5, db_filter=db_filter_nested)
+            assert len(result) == 2
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "st"
 
         exception_occurred = False
         try:
-            db_filter_exc = {
+            db_filter_exc: dict = {  # type: ignore[typeddict-unknown-key]
                 "_xor": [  # Incorrect operation _xor
-                    {"key": "id", "oper": "EQ", "value": "ba"},
-                    {"key": "order", "oper": "LTE", "value": 4},
+                    {"order": {"$lte": 4}},
+                    {"id": "st"},
                 ]
             }
             result = vs.similarity_search(query, 1, db_filter=db_filter_exc)
@@ -1888,13 +1926,9 @@ def test_db_filter_test() -> None:
         exception_occurred = False
         try:
             db_filter_exc = {
-                "_or": [
-                    {
-                        "key": "id",
-                        "oper": "XEQ",
-                        "value": "ba",
-                    },  # Incorrect operation XEQ
-                    {"key": "order", "oper": "LTE", "value": 4},
+                "$or": [
+                    {"order": {"$xeq": 4}},  # Incorrect operation XEQ
+                    {"id": "st"},
                 ]
             }
             result = vs.similarity_search(query, 1, db_filter=db_filter_exc)
@@ -1967,50 +2001,51 @@ async def test_db_filter_test_async() -> None:
         # perform search
         query = "Strawberry"
 
-        filter = {"id": ["bl"]}
-        db_filter = {"key": "id", "oper": "EQ", "value": "bl"}  # FilterCondition
-
-        # similarity_search without filter
-        result = await vs.asimilarity_search(query, 1)
-        assert result[0].metadata["id"] == "st"
-
-        # similarity_search with filter
-        result = await vs.asimilarity_search(query, 1, filter=filter)
-        assert len(result) == 0
-
-        # similarity_search with db_filter
-        result = await vs.asimilarity_search(query, 1, db_filter=db_filter)
-        assert result[0].metadata["id"] == "bl"
-
-        # similarity_search with filter and db_filter
-        result = await vs.asimilarity_search(
-            query, 1, filter=filter, db_filter=db_filter
-        )
-        assert result[0].metadata["id"] == "bl"
+        db_filter: dict = {"id": {"$eq": "bl"}}  # dict
 
         # nested db filter
-        db_filter_nested = {
-            "_or": [
-                {"key": "id", "oper": "EQ", "value": "ba"},  # FilterCondition
+        db_filter_nested: dict = {
+            "$or": [
+                {"id": "ba"},  # dict
                 {
-                    "_and": [  # FilterGroup
-                        {"key": "order", "oper": "LTE", "value": 4},
-                        {"key": "id", "oper": "EQ", "value": "st"},
+                    "$and": [  # dict
+                        {"order": {"$lte": 4}},
+                        {"id": "st"},
                     ]
                 },
             ]
         }
 
-        # similarity_search with db_filter
-        result = await vs.asimilarity_search(query, 1, db_filter=db_filter_nested)
-        assert result[0].metadata["id"] == "st"
+        for filtered_function in FILTERED_FUNCTIONS:
+            method = getattr(vs, "a" + filtered_function)
+
+            query_emb: list[float] | str = query
+            if "_by_vector" in filtered_function:
+                query_emb = vs.embedding_function.embed_query(query)  # type: ignore[union-attr]
+
+            # search without filter
+            result = await method(query_emb, k=1)
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "st"
+
+            # search with filter
+            result = await method(query_emb, k=5, db_filter=db_filter)
+            assert len(result) == 1
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "bl"
+
+            # search with nested filter
+            result = await method(query_emb, k=5, db_filter=db_filter_nested)
+            assert len(result) == 2
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "st"
 
         exception_occurred = False
         try:
-            db_filter_exc = {
+            db_filter_exc: dict = {  # type: ignore[typeddict-unknown-key]
                 "_xor": [  # Incorrect operation _xor
-                    {"key": "id", "oper": "EQ", "value": "ba"},
-                    {"key": "order", "oper": "LTE", "value": 4},
+                    {"order": {"$lte": 4}},
+                    {"id": "st"},
                 ]
             }
             result = await vs.asimilarity_search(query, 1, db_filter=db_filter_exc)
@@ -2022,15 +2057,12 @@ async def test_db_filter_test_async() -> None:
         exception_occurred = False
         try:
             db_filter_exc = {
-                "_or": [
-                    {
-                        "key": "id",
-                        "oper": "XEQ",
-                        "value": "ba",
-                    },  # Incorrect operation XEQ
-                    {"key": "order", "oper": "LTE", "value": 4},
+                "$or": [
+                    {"order": {"$xeq": 4}},  # Incorrect operation XEQ
+                    {"id": "st"},
                 ]
             }
+
             result = await vs.asimilarity_search(query, 1, db_filter=db_filter_exc)
         except ValueError:
             exception_occurred = True
@@ -2443,12 +2475,92 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
     await adrop_table_purge(connection, "TB2")
 
 
+##################################
+##### test_oracle_embeddings  ####
+##################################
+
+
+def test_oracle_embeddings() -> None:
+    try:
+        connection = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+
+    drop_table_purge(connection, "TB1")
+
+    texts = ["Database Document", "Code Document"]
+    metadata = [
+        {"id": "100", "link": "Document Example Test 1"},
+        {"id": "101", "link": "Document Example Test 2"},
+    ]
+    embedder_params = {"provider": "database", "model": "allminilm"}
+    proxy = ""
+
+    # instance
+    model = OracleEmbeddings(conn=connection, params=embedder_params, proxy=proxy)
+
+    vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+
+    vs_obj.add_texts(texts, metadata)
+    res = vs_obj.similarity_search("database", 1)
+
+    assert "Database" in res[0].page_content
+
+    drop_table_purge(connection, "TB1")
+
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_oracle_embeddings_async(caplog: pytest.LogCaptureFixture) -> None:
+    try:
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
+
+        connection_sync = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+
+    await adrop_table_purge(connection, "TB1")
+
+    texts = ["Database Document", "Code Document"]
+    metadata = [
+        {"id": "100", "link": "Document Example Test 1"},
+        {"id": "101", "link": "Document Example Test 2"},
+    ]
+    embedder_params = {"provider": "database", "model": "allminilm"}
+    proxy = ""
+
+    # instance
+    model = OracleEmbeddings(conn=connection_sync, params=embedder_params, proxy=proxy)
+
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+
+    await vs_obj.aadd_texts(texts, metadata)
+    res = await vs_obj.asimilarity_search("database", 1)
+
+    assert "Database" in res[0].page_content
+
+    await adrop_table_purge(connection, "TB1")
+
+    await connection.close()
+
+
+##################################
+##### test_quote_identifier  #####
+##################################
+
+
 def test_quote_identifier() -> None:
     # unquoted
     assert _quote_indentifier("hello") == '"hello"'
     assert _quote_indentifier("--") == '"--"'
     assert _quote_indentifier("U1.table") == '"U1"."table"'
     assert _quote_indentifier("hnsw_idx2") == '"hnsw_idx2"'
+    assert _quote_indentifier("'") == '"\'"'
 
     with pytest.raises(ValueError):
         _quote_indentifier('hnsw_"idx2')
@@ -2475,3 +2587,390 @@ def test_quote_identifier() -> None:
 
     # mixed
     assert _quote_indentifier('"U1".table') == '"U1"."table"'
+
+
+##################################
+########## test_filters  #########
+##################################
+
+
+def test_filters() -> None:
+    try:
+        connection = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+
+    def model1(_) -> list[float]:  # type: ignore[no-untyped-def]
+        return [0.1, 0.2, 0.3]
+
+    # model1 = lambda x: [0.1, 0.2, 0.3]
+
+    drop_table_purge(connection, "TB10")
+
+    vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+
+    texts = ["Strawberry", "Banana", "Blueberry"]
+    metadatas = [
+        {
+            "id": "1",
+            "name": "Jason",
+            "age": 45,
+            "address": [
+                {
+                    "street": "25 A street",
+                    "city": "Mono Vista",
+                    "zip": 94088,
+                    "state": "CA",
+                }
+            ],
+            "drinks": "tea",
+        },
+        {
+            "id": "2",
+            "name": "Mary",
+            "age": 50,
+            "address": [
+                {
+                    "street": "15 C street",
+                    "city": "Mono Vista",
+                    "zip": 97090,
+                    "state": "OR",
+                },
+                {
+                    "street": "30 ABC avenue",
+                    "city": "Markstown",
+                    "zip": 90001,
+                    "state": "CA",
+                },
+            ],
+        },
+        {"id": "3", "name": "Mark", "age": 65, "drinks": ["soda", "tea"]},
+    ]
+
+    vs.add_texts(texts, metadatas)
+
+    filter_res: list[tuple[dict, list[str]]] = [
+        ({"drinks": {"$exists": True}}, ["1", "3"]),
+        ({"address.zip": 94088}, ["1"]),
+        ({"name": {"$eq": "Jason"}}, ["1"]),
+        ({"drinks": {"$ne": "tea"}}, ["3"]),  # exits and not equal
+        ({"drinks": {"$eq": ["soda", "tea"]}}, ["3"]),
+        ({"drinks": {"$ne": ["soda", "tea"]}}, ["1"]),
+        (
+            {
+                "address[0]": {
+                    "$eq": {
+                        "street": "25 A street",
+                        "city": "Mono Vista",
+                        "zip": 94088,
+                        "state": "CA",
+                    }
+                }
+            },
+            ["1"],
+        ),
+        (
+            {
+                "address[0]": {
+                    "$ne": {
+                        "street": "25 A street",
+                        "city": "Mono Vista",
+                        "zip": 94088,
+                        "state": "CA",
+                    }
+                }
+            },
+            ["2"],
+        ),
+        (
+            {"$or": [{"drinks": {"$exists": False}}, {"drinks": {"$ne": "tea"}}]},
+            ["2", "3"],
+        ),
+        (
+            {
+                "$or": [
+                    {"drinks": {"$exists": False}},
+                    {"drinks": {"$ne": ["soda", "tea"]}},
+                ]
+            },
+            ["1", "2"],
+        ),
+        ({"age": {"$gt": 45, "$lt": 55}}, ["2"]),
+        ({"age": {"$gt": 45}}, ["2", "3"]),
+        ({"age": {"$lt": 55}}, ["1", "2"]),
+        ({"age": {"$gte": 65}}, ["3"]),
+        ({"age": {"$lte": 50}}, ["1", "2"]),
+        ({"age": {"$between": [49, 51]}}, ["2"]),
+        ({"name": {"$startsWith": "Mar"}}, ["2", "3"]),
+        ({"name": {"$hasSubstring": "ar"}}, ["2", "3"]),
+        ({"name": {"$instr": "ar"}}, ["2", "3"]),
+        ({"name": {"$regex": ".*ar.*"}}, ["2", "3"]),
+        ({"name": {"$like": "%ar%"}}, ["2", "3"]),
+        ({"name": {"$in": ["Mark", "Mary"]}}, ["2", "3"]),
+        ({"name": {"$nin": ["Mark", "Mary"]}}, ["1"]),
+        ({"drinks": {"$all": ["tea", "soda"]}}, ["3"]),
+        ({"drinks": {"$all": ["tea"]}}, ["1", "3"]),
+        ({"drinks": {"$not": {"$all": ["tea", "soda"]}}}, ["1", "2"]),
+        ({"address[*].zip": {"$in": [94088, 1]}}, ["1"]),
+        ({"address[1].zip": 90001}, ["2"]),
+        ({"drinks[0,1]": "soda"}, ["3"]),
+        ({"drinks[1 to 2]": "soda"}, []),
+        ({"drinks": "tea"}, ["1", "3"]),
+        ({"drinks[*]": "tea"}, ["1", "3"]),
+        ({"name": "Jason"}, ["1"]),
+        ({"address.zip": {"$not": {"$eq": "90001"}}}, ["1", "3"]),
+        ({"age": {"$not": {"$gt": 46, "$lt": 65}}}, ["1", "3"]),
+        ({"$and": [{"name": {"$startsWith": "Ja"}}, {"drinks": "tea"}]}, ["1"]),
+        ({"name": {"$startsWith": "Ja"}, "drinks": "tea"}, ["1"]),
+        ({"$or": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["2", "3"]),
+        ({"$nor": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["1"]),
+        (
+            {
+                "$and": [
+                    {"age": {"$gte": 60}},
+                    {"$or": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                ]
+            },
+            ["3"],
+        ),
+        (
+            {
+                "$or": [
+                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
+                ]
+            },
+            ["1", "3"],
+        ),
+        (
+            {
+                "age": 65,
+                "$or": [
+                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
+                ],
+            },
+            ["3"],
+        ),
+        (
+            {
+                "age": 65,
+                "name": {"$regex": "*rk"},
+                "$or": [
+                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
+                ],
+            },
+            ["3"],
+        ),
+    ]
+
+    for _f, _r in filter_res:
+        # search with filter
+        result = vs.similarity_search("Hello", k=3, db_filter=_f)
+        ids = [res.metadata["id"] for res in result]
+
+        assert set(ids) == set(_r)
+
+    with pytest.raises(ValueError, match="Invalid metadata key"):
+        _f = {"ss')--": "HELLOE"}
+        result = vs.similarity_search("Hello", k=3, db_filter=_f)
+
+    with pytest.raises(ValueError, match="Invalid operator"):
+        _f = {"drinks": {"$neq": ["soda", "tea"]}}
+        result = vs.similarity_search("Hello", k=3, db_filter=_f)
+
+    drop_table_purge(connection, "TB10")
+
+
+async def test_filters_async() -> None:
+    try:
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
+    except Exception:
+        sys.exit(1)
+
+    def model1(_) -> list[float]:  # type: ignore[no-untyped-def]
+        return [0.1, 0.2, 0.3]
+
+    # model1 = lambda x: [0.1, 0.2, 0.3]
+
+    await adrop_table_purge(connection, "TB10")
+
+    vs = await OracleVS.acreate(
+        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+
+    texts = ["Strawberry", "Banana", "Blueberry"]
+    metadatas = [
+        {
+            "id": "1",
+            "name": "Jason",
+            "age": 45,
+            "address": [
+                {
+                    "street": "25 A street",
+                    "city": "Mono Vista",
+                    "zip": 94088,
+                    "state": "CA",
+                }
+            ],
+            "drinks": "tea",
+        },
+        {
+            "id": "2",
+            "name": "Mary",
+            "age": 50,
+            "address": [
+                {
+                    "street": "15 C street",
+                    "city": "Mono Vista",
+                    "zip": 97090,
+                    "state": "OR",
+                },
+                {
+                    "street": "30 ABC avenue",
+                    "city": "Markstown",
+                    "zip": 90001,
+                    "state": "CA",
+                },
+            ],
+        },
+        {"id": "3", "name": "Mark", "age": 65, "drinks": ["soda", "tea"]},
+    ]
+
+    await vs.aadd_texts(texts, metadatas)
+
+    filter_res: list[tuple[dict, list[str]]] = [
+        ({"drinks": {"$exists": True}}, ["1", "3"]),
+        ({"address.zip": 94088}, ["1"]),
+        ({"name": {"$eq": "Jason"}}, ["1"]),
+        ({"drinks": {"$ne": "tea"}}, ["3"]),  # exits and not equal
+        ({"drinks": {"$eq": ["soda", "tea"]}}, ["3"]),
+        ({"drinks": {"$ne": ["soda", "tea"]}}, ["1"]),
+        (
+            {
+                "address[0]": {
+                    "$eq": {
+                        "street": "25 A street",
+                        "city": "Mono Vista",
+                        "zip": 94088,
+                        "state": "CA",
+                    }
+                }
+            },
+            ["1"],
+        ),
+        (
+            {
+                "address[0]": {
+                    "$ne": {
+                        "street": "25 A street",
+                        "city": "Mono Vista",
+                        "zip": 94088,
+                        "state": "CA",
+                    }
+                }
+            },
+            ["2"],
+        ),
+        (
+            {"$or": [{"drinks": {"$exists": False}}, {"drinks": {"$ne": "tea"}}]},
+            ["2", "3"],
+        ),
+        (
+            {
+                "$or": [
+                    {"drinks": {"$exists": False}},
+                    {"drinks": {"$ne": ["soda", "tea"]}},
+                ]
+            },
+            ["1", "2"],
+        ),
+        ({"age": {"$gt": 45, "$lt": 55}}, ["2"]),
+        ({"age": {"$gt": 45}}, ["2", "3"]),
+        ({"age": {"$lt": 55}}, ["1", "2"]),
+        ({"age": {"$gte": 65}}, ["3"]),
+        ({"age": {"$lte": 50}}, ["1", "2"]),
+        ({"age": {"$between": [49, 51]}}, ["2"]),
+        ({"name": {"$startsWith": "Mar"}}, ["2", "3"]),
+        ({"name": {"$hasSubstring": "ar"}}, ["2", "3"]),
+        ({"name": {"$instr": "ar"}}, ["2", "3"]),
+        ({"name": {"$regex": ".*ar.*"}}, ["2", "3"]),
+        ({"name": {"$like": "%ar%"}}, ["2", "3"]),
+        ({"name": {"$in": ["Mark", "Mary"]}}, ["2", "3"]),
+        ({"name": {"$nin": ["Mark", "Mary"]}}, ["1"]),
+        ({"drinks": {"$all": ["tea", "soda"]}}, ["3"]),
+        ({"drinks": {"$all": ["tea"]}}, ["1", "3"]),
+        ({"drinks": {"$not": {"$all": ["tea", "soda"]}}}, ["1", "2"]),
+        ({"address[*].zip": {"$in": [94088, 1]}}, ["1"]),
+        ({"address[1].zip": 90001}, ["2"]),
+        ({"drinks[0,1]": "soda"}, ["3"]),
+        ({"drinks[1 to 2]": "soda"}, []),
+        ({"drinks": "tea"}, ["1", "3"]),
+        ({"drinks[*]": "tea"}, ["1", "3"]),
+        ({"name": "Jason"}, ["1"]),
+        ({"address.zip": {"$not": {"$eq": "90001"}}}, ["1", "3"]),
+        ({"age": {"$not": {"$gt": 46, "$lt": 65}}}, ["1", "3"]),
+        ({"$and": [{"name": {"$startsWith": "Ja"}}, {"drinks": "tea"}]}, ["1"]),
+        ({"name": {"$startsWith": "Ja"}, "drinks": "tea"}, ["1"]),
+        ({"$or": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["2", "3"]),
+        ({"$nor": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["1"]),
+        (
+            {
+                "$and": [
+                    {"age": {"$gte": 60}},
+                    {"$or": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                ]
+            },
+            ["3"],
+        ),
+        (
+            {
+                "$or": [
+                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
+                ]
+            },
+            ["1", "3"],
+        ),
+        (
+            {
+                "age": 65,
+                "$or": [
+                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
+                ],
+            },
+            ["3"],
+        ),
+        (
+            {
+                "age": 65,
+                "name": {"$regex": "*rk"},
+                "$or": [
+                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
+                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
+                ],
+            },
+            ["3"],
+        ),
+    ]
+
+    for _f, _r in filter_res:
+        # search with filter
+        result = await vs.asimilarity_search("Hello", k=3, db_filter=_f)
+        ids = [res.metadata["id"] for res in result]
+
+        assert set(ids) == set(_r)
+
+    with pytest.raises(ValueError, match="Invalid metadata key"):
+        _f = {"ss')--": "HELLOE"}
+        result = await vs.asimilarity_search("Hello", k=3, db_filter=_f)
+
+    with pytest.raises(ValueError, match="Invalid operator"):
+        _f = {"drinks": {"$neq": ["soda", "tea"]}}
+        result = await vs.asimilarity_search("Hello", k=3, db_filter=_f)
+
+    await adrop_table_purge(connection, "TB10")
