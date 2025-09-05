@@ -27,9 +27,10 @@ pytest-cov = "^4.1.0"
 syrupy = "^4.0.2"
 pytest-asyncio = "^0.23.2"
 pytest-watcher = "^0.3.4"
-langchain-tests = "0.3.12"
-langchain = "^0.3.7"
+langchain-tests = "^0.3.12"
 pytest-socket = "^0.7.0"
+pytest-mock = "^3.15.0"
+responses = "^0.25.8"
 
 
 [tool.poetry.group.codespell]

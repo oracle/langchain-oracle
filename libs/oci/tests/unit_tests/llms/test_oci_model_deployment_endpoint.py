@@ -154,10 +154,6 @@ def test_generate_tgi(*args: Any) -> None:
 @mock.patch(
     "ads.common.auth.default_signer", return_value=dict(signer=mock.MagicMock())
 )
-@mock.patch(
-    "langchain_oci.utilities.requests.Requests.apost",
-    mock.MagicMock(),
-)
 async def test_stream_async(*args: Any) -> None:
     """Tests async streaming."""
     llm = OCIModelDeploymentTGI(
