@@ -1691,20 +1691,20 @@ def test_perform_search_test() -> None:
         vs.similarity_search(query, 2)
 
         # similarity_searh with filter
-        vs.similarity_search(query, 2, db_filter=db_filter)
+        vs.similarity_search(query, 2, filter=db_filter)
 
         # Similarity search with relevance score
         vs.similarity_search_with_score(query, 2)
 
         # Similarity search with relevance score with filter
-        vs.similarity_search_with_score(query, 2, db_filter=db_filter)
+        vs.similarity_search_with_score(query, 2, filter=db_filter)
 
         # Max marginal relevance search
         vs.max_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
 
         # Max marginal relevance search with filter
         vs.max_marginal_relevance_search(
-            query, 2, fetch_k=20, lambda_mult=0.5, db_filter=db_filter
+            query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter
         )
 
     drop_table_purge(connection, "TB10")
@@ -1783,20 +1783,20 @@ async def test_perform_search_test_async() -> None:
         await vs.asimilarity_search(query, 2)
 
         # similarity_searh with filter
-        await vs.asimilarity_search(query, 2, db_filter=db_filter)
+        await vs.asimilarity_search(query, 2, filter=db_filter)
 
         # Similarity search with relevance score
         await vs.asimilarity_search_with_score(query, 2)
 
         # Similarity search with relevance score with filter
-        await vs.asimilarity_search_with_score(query, 2, db_filter=db_filter)
+        await vs.asimilarity_search_with_score(query, 2, filter=db_filter)
 
         # Max marginal relevance search
         await vs.amax_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
 
         # Max marginal relevance search with filter
         await vs.amax_marginal_relevance_search(
-            query, 2, fetch_k=20, lambda_mult=0.5, db_filter=db_filter
+            query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter
         )
 
     await adrop_table_purge(connection, "TB10")
@@ -1898,13 +1898,19 @@ def test_db_filter_test() -> None:
             assert result.metadata["id"] == "st"
 
             # search with filter
+            result = method(query_emb, k=5, filter=db_filter)
+            assert len(result) == 1
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "bl"
+
+            # search with db_filter
             result = method(query_emb, k=5, db_filter=db_filter)
             assert len(result) == 1
             result = result[0] if not isinstance(result[0], tuple) else result[0][0]
             assert result.metadata["id"] == "bl"
 
             # search with nested filter
-            result = method(query_emb, k=5, db_filter=db_filter_nested)
+            result = method(query_emb, k=5, filter=db_filter_nested)
             assert len(result) == 2
             result = result[0] if not isinstance(result[0], tuple) else result[0][0]
             assert result.metadata["id"] == "st"
@@ -1917,7 +1923,7 @@ def test_db_filter_test() -> None:
                     {"id": "st"},
                 ]
             }
-            result = vs.similarity_search(query, 1, db_filter=db_filter_exc)
+            result = vs.similarity_search(query, 1, filter=db_filter_exc)
         except ValueError:
             exception_occurred = True
 
@@ -1931,7 +1937,7 @@ def test_db_filter_test() -> None:
                     {"id": "st"},
                 ]
             }
-            result = vs.similarity_search(query, 1, db_filter=db_filter_exc)
+            result = vs.similarity_search(query, 1, filter=db_filter_exc)
         except ValueError:
             exception_occurred = True
 
@@ -2029,13 +2035,19 @@ async def test_db_filter_test_async() -> None:
             assert result.metadata["id"] == "st"
 
             # search with filter
+            result = await method(query_emb, k=5, filter=db_filter)
+            assert len(result) == 1
+            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
+            assert result.metadata["id"] == "bl"
+
+            # search with db_filter
             result = await method(query_emb, k=5, db_filter=db_filter)
             assert len(result) == 1
             result = result[0] if not isinstance(result[0], tuple) else result[0][0]
             assert result.metadata["id"] == "bl"
 
             # search with nested filter
-            result = await method(query_emb, k=5, db_filter=db_filter_nested)
+            result = await method(query_emb, k=5, filter=db_filter_nested)
             assert len(result) == 2
             result = result[0] if not isinstance(result[0], tuple) else result[0][0]
             assert result.metadata["id"] == "st"
@@ -2048,7 +2060,7 @@ async def test_db_filter_test_async() -> None:
                     {"id": "st"},
                 ]
             }
-            result = await vs.asimilarity_search(query, 1, db_filter=db_filter_exc)
+            result = await vs.asimilarity_search(query, 1, filter=db_filter_exc)
         except ValueError:
             exception_occurred = True
 
@@ -2063,7 +2075,7 @@ async def test_db_filter_test_async() -> None:
                 ]
             }
 
-            result = await vs.asimilarity_search(query, 1, db_filter=db_filter_exc)
+            result = await vs.asimilarity_search(query, 1, filter=db_filter_exc)
         except ValueError:
             exception_occurred = True
 
@@ -2767,18 +2779,18 @@ def test_filters() -> None:
 
     for _f, _r in filter_res:
         # search with filter
-        result = vs.similarity_search("Hello", k=3, db_filter=_f)
+        result = vs.similarity_search("Hello", k=3, filter=_f)
         ids = [res.metadata["id"] for res in result]
 
         assert set(ids) == set(_r)
 
     with pytest.raises(ValueError, match="Invalid metadata key"):
         _f = {"ss')--": "HELLOE"}
-        result = vs.similarity_search("Hello", k=3, db_filter=_f)
+        result = vs.similarity_search("Hello", k=3, filter=_f)
 
     with pytest.raises(ValueError, match="Invalid operator"):
         _f = {"drinks": {"$neq": ["soda", "tea"]}}
-        result = vs.similarity_search("Hello", k=3, db_filter=_f)
+        result = vs.similarity_search("Hello", k=3, filter=_f)
 
     drop_table_purge(connection, "TB10")
 
@@ -2960,17 +2972,17 @@ async def test_filters_async() -> None:
 
     for _f, _r in filter_res:
         # search with filter
-        result = await vs.asimilarity_search("Hello", k=3, db_filter=_f)
+        result = await vs.asimilarity_search("Hello", k=3, filter=_f)
         ids = [res.metadata["id"] for res in result]
 
         assert set(ids) == set(_r)
 
     with pytest.raises(ValueError, match="Invalid metadata key"):
         _f = {"ss')--": "HELLOE"}
-        result = await vs.asimilarity_search("Hello", k=3, db_filter=_f)
+        result = await vs.asimilarity_search("Hello", k=3, filter=_f)
 
     with pytest.raises(ValueError, match="Invalid operator"):
         _f = {"drinks": {"$neq": ["soda", "tea"]}}
-        result = await vs.asimilarity_search("Hello", k=3, db_filter=_f)
+        result = await vs.asimilarity_search("Hello", k=3, filter=_f)
 
     await adrop_table_purge(connection, "TB10")
