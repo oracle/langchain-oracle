@@ -14,6 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       working-directory:
+        description: source code directory to build and publish, e.g. libs/oci or libs/oracledb
         required: true
         type: string
         default: 'libs/oci'
@@ -84,7 +85,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.GH_LC_OCI_TESTPYPI_TOKEN }}
         run: |
           pip install twine
-          twine upload --repository-url https://test.pypi.org/legacy/ ${{ inputs.working-directory }}/dist/* -u $TWINE_USERNAME -p $TWINE_PASSWORD
+          twine upload -r testpypi ${{ inputs.working-directory }}/dist/* -u $TWINE_USERNAME -p $TWINE_PASSWORD --verbose
 
   pre-release-checks:
     needs:
