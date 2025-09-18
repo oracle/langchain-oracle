@@ -1281,7 +1281,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 for tool_call in self._provider.chat_tool_calls(response)
             ]
         message = AIMessage(
-            content=content,
+            content=content or "",
             additional_kwargs=generation_info,
             tool_calls=tool_calls,
         )
