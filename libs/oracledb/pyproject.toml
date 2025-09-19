@@ -28,6 +28,7 @@ syrupy = "^4.0.2"
 pytest-asyncio = "^0.23.2"
 pytest-watcher = "^0.3.4"
 sentence-transformers = "^5.0.0"
+langchain-tests = "^0.3.21"
 
 [tool.poetry.group.codespell]
 optional = true
