@@ -13,6 +13,7 @@ import logging
 import sys
 import threading
 
+import numpy as np
 import oracledb
 import pytest
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -20,6 +21,7 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.vectorstores.oraclevs import (
+    INTERNAL_ID_KEY,
     OracleVS,
     _acreate_table,
     _aindex_exists,
@@ -1164,6 +1166,7 @@ def test_add_texts_test() -> None:
     vs_obj = OracleVS(connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
     ids6 = ['"Good afternoon"', '"India"']
     vs_obj.add_texts(texts2, ids=ids6)
+    assert len(vs_obj.add_texts(texts2, ids=ids6)) == 0
     drop_table_purge(connection, "TB7")
 
     # 4. Add records with ids and metadatas
@@ -1206,30 +1209,6 @@ def test_add_texts_test() -> None:
     thread_1.join()
     thread_2.join()
     drop_table_purge(connection, "TB10")
-
-    # 7. Add 2 same record concurrently
-    # Expectation:Successful, For one of the insert,get primary key violation error
-    def add1(val: str) -> None:
-        model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-mpnet-base-v2"
-        )
-        vs_obj = OracleVS(
-            connection, model, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
-        )
-        texts = [val]
-        ids10 = texts
-        vs_obj.add_texts(texts, ids=ids10)
-
-    try:
-        thread_1 = threading.Thread(target=add1, args=("Sri Ram"))
-        thread_2 = threading.Thread(target=add1, args=("Sri Ram"))
-        thread_1.start()
-        thread_2.start()
-        thread_1.join()
-        thread_2.join()
-    except Exception:
-        pass
-    drop_table_purge(connection, "TB11")
 
     # 8. create object with table name of type <schema_name.table_name>
     # Expectation:U1 does not exist
@@ -1316,6 +1295,7 @@ async def test_add_texts_test_async() -> None:
     )
     ids6 = ['"Good afternoon"', '"India"']
     await vs_obj.aadd_texts(texts2, ids=ids6)
+    assert len(await vs_obj.aadd_texts(texts2, ids=ids6)) == 0
     await adrop_table_purge(connection, "TB7")
 
     # 4. Add records with ids and metadatas
@@ -1360,26 +1340,6 @@ async def test_add_texts_test_async() -> None:
 
     await asyncio.gather(task_1, task_2)
     await adrop_table_purge(connection, "TB10")
-
-    # 7. Add 2 same record concurrently
-    # Expectation:Successful, For one of the insert,get primary key violation error
-    async def add1(val: str) -> None:
-        model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-mpnet-base-v2"
-        )
-        vs_obj = await OracleVS.acreate(
-            connection, model, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
-        )
-        texts = [val]
-        ids10 = texts
-        await vs_obj.aadd_texts(texts, ids=ids10)
-
-    with pytest.raises(RuntimeError):
-        task_1 = asyncio.create_task(add1("Sri Ram"))
-        task_2 = asyncio.create_task(add1("Sri Ram"))
-        await asyncio.gather(task_1, task_2)
-
-    await adrop_table_purge(connection, "TB11")
 
     # 8. create object with table name of type <schema_name.table_name>
     # Expectation:U1 does not exist
@@ -1694,7 +1654,9 @@ def test_perform_search_test() -> None:
         vs.similarity_search(query, 2, filter=db_filter)
 
         # Similarity search with relevance score
-        vs.similarity_search_with_score(query, 2)
+        res = vs.similarity_search_with_score(query, 2)
+        assert all(isinstance(_r[1], float) for _r in res)
+        assert res[0][1] <= res[1][1]
 
         # Similarity search with relevance score with filter
         vs.similarity_search_with_score(query, 2, filter=db_filter)
@@ -1786,7 +1748,9 @@ async def test_perform_search_test_async() -> None:
         await vs.asimilarity_search(query, 2, filter=db_filter)
 
         # Similarity search with relevance score
-        await vs.asimilarity_search_with_score(query, 2)
+        res = await vs.asimilarity_search_with_score(query, 2)
+        assert all(isinstance(_r[1], float) for _r in res)
+        assert res[0][1] <= res[1][1]
 
         # Similarity search with relevance score with filter
         await vs.asimilarity_search_with_score(query, 2, filter=db_filter)
@@ -2517,6 +2481,14 @@ def test_oracle_embeddings() -> None:
     res = vs_obj.similarity_search("database", 1)
 
     assert "Database" in res[0].page_content
+    assert "100" == res[0].id
+
+    embedding = model.embed_query("Database Document")
+    res = vs_obj.similarity_search_by_vector_returning_embeddings(embedding, 1)  # type: ignore
+
+    # distance
+    assert all(np.isclose([res[0][1]], [0]))  # type: ignore
+    assert all(np.isclose(res[0][2], embedding))  # type: ignore
 
     drop_table_purge(connection, "TB1")
 
@@ -2555,6 +2527,14 @@ async def test_oracle_embeddings_async(caplog: pytest.LogCaptureFixture) -> None
     res = await vs_obj.asimilarity_search("database", 1)
 
     assert "Database" in res[0].page_content
+    assert "100" == res[0].id
+
+    embedding = model.embed_query("Database Document")
+    res = await vs_obj.asimilarity_search_by_vector_returning_embeddings(embedding, 1)  # type: ignore
+
+    # distance
+    assert all(np.isclose([res[0][1]], [0]))  # type: ignore
+    assert all(np.isclose(res[0][2], embedding))  # type: ignore
 
     await adrop_table_purge(connection, "TB1")
 
@@ -2986,3 +2966,75 @@ async def test_filters_async() -> None:
         result = await vs.asimilarity_search("Hello", k=3, filter=_f)
 
     await adrop_table_purge(connection, "TB10")
+
+
+##################################
+####### test_reserved  ######
+##################################
+
+
+def test_reserved() -> None:
+    try:
+        connection = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+
+    drop_table_purge(connection, "TB1")
+
+    embedder_params = {"provider": "database", "model": "allminilm"}
+    proxy = ""
+
+    # instance
+    model = OracleEmbeddings(conn=connection, params=embedder_params, proxy=proxy)
+
+    vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+
+    texts = ["Database Document", "Code Document"]
+    metadata = [
+        {"id": "100", "link": "Document Example Test 1", INTERNAL_ID_KEY: "my_temp_id"},
+        {"id": "101", "link": "Document Example Test 2"},
+    ]
+
+    with pytest.raises(ValueError, match="reserved"):
+        vs_obj.add_texts(texts, metadata, ids=["1", "2"])
+
+    drop_table_purge(connection, "TB1")
+
+    connection.close()
+
+
+@pytest.mark.asyncio
+async def test_reserved_async() -> None:
+    try:
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
+
+        connection_sync = oracledb.connect(user=username, password=password, dsn=dsn)
+    except Exception:
+        sys.exit(1)
+
+    await adrop_table_purge(connection, "TB1")
+
+    embedder_params = {"provider": "database", "model": "allminilm"}
+    proxy = ""
+
+    # instance
+    model = OracleEmbeddings(conn=connection_sync, params=embedder_params, proxy=proxy)
+
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+
+    texts = ["Database Document", "Code Document"]
+    metadata = [
+        {"id": "100", "link": "Document Example Test 1", INTERNAL_ID_KEY: "my_temp_id"},
+        {"id": "101", "link": "Document Example Test 2"},
+    ]
+
+    with pytest.raises(ValueError, match="reserved"):
+        await vs_obj.aadd_texts(texts, metadata, ids=["1", "2"])
+
+    await adrop_table_purge(connection, "TB1")
+
+    connection.close()
