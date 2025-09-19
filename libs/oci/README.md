@@ -59,14 +59,16 @@ embeddings.embed_query("What is the meaning of life?")
 
 ### 1. Use a Chat Model
 
-You may instantiate the OCI Data Science model with the generic `ChatOCIModelDeployment` or framework specific class like `ChatOCIModelDeploymentVLLM`.
+The `ChatOCIModelDeployment` class is designed for deployment with OpenAI compatible APIs.
 
 ```python
-from langchain_oci.chat_models import ChatOCIModelDeployment, ChatOCIModelDeploymentVLLM
+from langchain_oci import ChatOCIModelDeployment
 
 # Create an instance of OCI Model Deployment Endpoint
+
 # Replace the endpoint uri with your own
-endpoint = "https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict"
+# For streaming, use the /predictWithResponseStream endpoint.
+endpoint = "https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predictWithResponseStream"
 
 messages = [
     (
@@ -78,31 +80,23 @@ messages = [
 
 chat = ChatOCIModelDeployment(
     endpoint=endpoint,
-    streaming=True,
-    max_retries=1,
-    model_kwargs={
-        "temperature": 0.2,
-        "max_tokens": 512,
-    },  # other model params...
-    default_headers={
-        "route": "/v1/chat/completions",
-        # other request headers ...
-    },
+    model="odsc-llm",
+    max_tokens=512,
 )
-chat.invoke(messages)
+chat.stream(messages)
 
-chat_vllm = ChatOCIModelDeploymentVLLM(endpoint=endpoint)
-chat_vllm.invoke(messages)
 ```
 
 ### 2. Use a Completion Model
-You may instantiate the OCI Data Science model with `OCIModelDeploymentLLM` or `OCIModelDeploymentVLLM`.
+The `OCIModelDeploymentLLM` class is designed for completion endpoints.
 
 ```python
-from langchain_oci.llms import OCIModelDeploymentLLM, OCIModelDeploymentVLLM
+from langchain_oci import OCIModelDeploymentLLM
 
 # Create an instance of OCI Model Deployment Endpoint
+
 # Replace the endpoint uri and model name with your own
+# For streaming, use the /predictWithResponseStream endpoint.
 endpoint = "https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict"
 
 llm = OCIModelDeploymentLLM(
@@ -111,10 +105,6 @@ llm = OCIModelDeploymentLLM(
 )
 llm.invoke("Who is the first president of United States?")
 
-vllm = OCIModelDeploymentVLLM(
-    endpoint=endpoint,
-)
-vllm.invoke("Who is the first president of United States?")
 ```
 
 ### 3. Use an Embedding Model
