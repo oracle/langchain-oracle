@@ -5,14 +5,14 @@
 import os
 from typing import Dict, Optional
 
-from langchain_core.language_models.llms import BaseLLM
+from langchain_core.language_models.llms import BaseLanguageModel
 from langchain_core.utils import get_from_dict_or_env
 from langchain_core.utils.utils import secret_from_env
 from langchain_openai import OpenAI
 from pydantic import Field, SecretStr, model_validator
 
 
-class BaseOCIModelDeployment(BaseLLM):
+class BaseOCIModelDeployment(BaseLanguageModel):
     """Base class for LLM deployed on OCI Data Science Model Deployment."""
 
     auth: dict = Field(default_factory=dict, exclude=True)
@@ -26,6 +26,9 @@ class BaseOCIModelDeployment(BaseLLM):
         alias="api_key", default_factory=secret_from_env("OPENAI_API_KEY", default=" ")
     )
     """openai_api_key needs to be a non-empty in order to initialize openai client."""
+
+    model_name: str = Field(default="odsc-llm", alias="model")
+    """Model name to use."""
 
     endpoint: Optional[str] = None
     """For backward compatibility, user may specify the endpoint instead of base_url."""
