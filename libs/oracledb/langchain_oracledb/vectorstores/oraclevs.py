@@ -1221,15 +1221,19 @@ def _read_similarity_output(
     return docs
 
 
+# SQL queries to insert data into tables.
+# INSERT_QUERY is used when we do not wish to update the row when there is duplicate id.
+# MERGE_QUERY is used when we wish to update the row when there is duplicate id.
+# both expect values in the order (id, embedding, metadata, text)
+
 INSERT_QUERY = (
     "INSERT INTO {table_name} (id, embedding, metadata, text) VALUES ({values})"
 )
 MERGE_QUERY = """
 MERGE INTO {table_name} t
 USING (
-    SELECT {using}
-    FROM dual
-) s
+    VALUES ({values})
+) s(id, embedding, metadata, text)
 ON (t.id = s.id)
 WHEN MATCHED THEN
     UPDATE SET 
@@ -1471,12 +1475,25 @@ class OracleVS(VectorStore):
         **kwargs: Any,
     ) -> list[str]:
         """Add more texts to the vectorstore index.
+
+        Duplicate id handling behavior is controlled by the `mutate_on_duplicate`
+            parameter passed when creating an `OracleVS` instance:
+            If False: Existing rows with the same id are left unchanged;
+                duplicate rows are skipped and their ids are not returned
+                (i.e., they are not reported as successfully inserted).
+            If True: Existing rows with the same id are updated (upsert behavior);
+                returned ids include successful inserts and updates.
+
         Args:
           texts: Iterable of strings to add to the vectorstore.
           metadatas: Optional list of metadatas associated with the texts.
           ids: Optional list of ids for the texts that are being added to
           the vector store.
           kwargs: vectorstore specific parameters
+
+        Returns:
+          List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
+            also those successfully updated).
         """
 
         texts = list(texts)
@@ -1493,6 +1510,8 @@ class OracleVS(VectorStore):
                 )
             metadatas[i][INTERNAL_ID_KEY] = _id
 
+        # with OracleEmbeddings, embeddings are generated in the database during insert;
+        # they are not sent back to Python to be written again.
         docs: Any
         if not isinstance(self.embeddings, OracleEmbeddings):
             embeddings = self._embed_documents(texts)
@@ -1519,27 +1538,34 @@ class OracleVS(VectorStore):
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
         with connection.cursor() as cursor:
+            # self.mutate_on_duplicate controls how inserts handle existing IDs.
+            # If False:
+            #   uses INSERT_QUERY.
+            #   existing rows having the same ID as the inserted row are not updated.
+            #   with batcherrors=True, duplicate rows are skipped and their IDs
+            #       are not included in the `add_texts` return value (i.e., not
+            #       reported as successfully inserted).
+            #
+            # If True:
+            #   uses MERGE_QUERY.
+            #   existing rows having the same ID as the inserted row are updated
+            #       with the new data ("upsert").
+            #   the ID is included in the `add_texts` return value,
+            #       indicating a successful insert/update.
+            selected_query = (
+                INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
+            )
             if not isinstance(self.embeddings, OracleEmbeddings):
                 cursor.setinputsizes(
                     None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
                 )
-                if not self.mutate_on_duplicate:
-                    cursor.executemany(
-                        INSERT_QUERY.format(
-                            table_name=self.table_name, values=":1, :2, :3, :4"
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
-                else:
-                    cursor.executemany(
-                        MERGE_QUERY.format(
-                            table_name=self.table_name,
-                            using=":1 id, :2 embedding, :3 metadata, :4 text",
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
+                cursor.executemany(
+                    selected_query.format(
+                        table_name=self.table_name, values=":1, :2, :3, :4"
+                    ),
+                    docs,
+                    batcherrors=True,
+                )
 
             else:
                 if self.embeddings.proxy:
@@ -1552,30 +1578,18 @@ class OracleVS(VectorStore):
                     meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                 )
 
-                if not self.mutate_on_duplicate:
-                    cursor.executemany(
-                        INSERT_QUERY.format(
-                            table_name=self.table_name,
-                            values=(
-                                ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                ":meta, :text"
-                            ),
+                cursor.executemany(
+                    selected_query.format(
+                        table_name=self.table_name,
+                        values=(
+                            ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                            ":meta, :text"
                         ),
-                        docs,
-                        batcherrors=True,
-                    )
-                else:
-                    cursor.executemany(
-                        MERGE_QUERY.format(
-                            table_name=self.table_name,
-                            using=(
-                                ":id id, :meta metadata, :text text, "
-                                "dbms_vector_chain.utl_to_embedding(:text, json(:param)) embedding"  # noqa: E501
-                            ),
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
+                    ),
+                    docs,
+                    batcherrors=True,
+                )
+
             error_indices = [error.offset for error in cursor.getbatcherrors()]
             connection.commit()
 
@@ -1596,12 +1610,25 @@ class OracleVS(VectorStore):
         **kwargs: Any,
     ) -> list[str]:
         """Add more texts to the vectorstore index, async.
+
+        Duplicate id handling behavior is controlled by the `mutate_on_duplicate`
+            parameter passed when creating an `OracleVS` instance:
+            If False: Existing rows with the same id are left unchanged;
+                duplicate rows are skipped and their ids are not returned
+                (i.e., they are not reported as successfully inserted).
+            If True: Existing rows with the same id are updated (upsert behavior);
+                returned ids include successful inserts and updates.
+
         Args:
           texts: Iterable of strings to add to the vectorstore.
           metadatas: Optional list of metadatas associated with the texts.
           ids: Optional list of ids for the texts that are being added to
           the vector store.
           kwargs: vectorstore specific parameters
+
+        Returns:
+          List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
+            also those successfully updated).
         """
 
         texts = list(texts)
@@ -1618,6 +1645,8 @@ class OracleVS(VectorStore):
                 )
             metadatas[i][INTERNAL_ID_KEY] = _id
 
+        # with OracleEmbeddings, embeddings are generated in the database during insert;
+        # they are not sent back to Python to be written again.
         docs: Any
         if not isinstance(self.embeddings, OracleEmbeddings):
             embeddings = await self._aembed_documents(texts)
@@ -1644,27 +1673,22 @@ class OracleVS(VectorStore):
             if connection is None:
                 raise ValueError("Failed to acquire a connection.")
             with connection.cursor() as cursor:
+                # self.mutate_on_duplicate controls how inserts handle existing IDs,
+                # behavior is identical to the synchronous `add_texts` method.
+                selected_query = (
+                    INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
+                )
                 if not isinstance(self.embeddings, OracleEmbeddings):
                     cursor.setinputsizes(
                         None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
                     )
-                    if not self.mutate_on_duplicate:
-                        await cursor.executemany(
-                            INSERT_QUERY.format(
-                                table_name=self.table_name, values=":1, :2, :3, :4"
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
-                    else:
-                        await cursor.executemany(
-                            MERGE_QUERY.format(
-                                table_name=self.table_name,
-                                using=":1 id, :2 embedding, :3 metadata, :4 text",
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
+                    await cursor.executemany(
+                        selected_query.format(
+                            table_name=self.table_name, values=":1, :2, :3, :4"
+                        ),
+                        docs,
+                        batcherrors=True,
+                    )
                 else:
                     if self.embeddings.proxy:
                         await cursor.execute(
@@ -1675,30 +1699,18 @@ class OracleVS(VectorStore):
                     cursor.setinputsizes(
                         meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                     )
-                    if not self.mutate_on_duplicate:
-                        await cursor.executemany(
-                            INSERT_QUERY.format(
-                                table_name=self.table_name,
-                                values=(
-                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                    ":meta, :text"
-                                ),
+
+                    await cursor.executemany(
+                        selected_query.format(
+                            table_name=self.table_name,
+                            values=(
+                                ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                ":meta, :text"
                             ),
-                            docs,
-                            batcherrors=True,
-                        )
-                    else:
-                        await cursor.executemany(
-                            MERGE_QUERY.format(
-                                table_name=self.table_name,
-                                using=(
-                                    ":id id, :meta metadata, :text text, "
-                                    "dbms_vector_chain.utl_to_embedding(:text, json(:param)) embedding"  # noqa: E501
-                                ),
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
+                        ),
+                        docs,
+                        batcherrors=True,
+                    )
 
                 error_indices = [error.offset for error in cursor.getbatcherrors()]
                 await connection.commit()
