@@ -97,9 +97,9 @@ class OCIUtils:
         return ToolCall(
             name=tool_call.name,
             args=json.loads(tool_call.arguments)
-            if "arguments" in tool_call.attribute_map
+            if tool_call.attribute_map and "arguments" in tool_call.attribute_map
             else tool_call.parameters,
-            id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
+            id=tool_call.id if tool_call.attribute_map and "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
         )
 
 
