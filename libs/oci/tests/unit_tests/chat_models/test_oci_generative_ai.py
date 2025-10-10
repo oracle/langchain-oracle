@@ -582,7 +582,18 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
 
+    # Track if the tool_calls processing branch is executed
+    tool_calls_processed = False
+
     def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal tool_calls_processed
+        # Check if the request contains tool_calls in the message
+        request = args[0]
+        if hasattr(request, 'chat_request') and hasattr(request.chat_request, 'messages'):
+            for msg in request.chat_request.messages:
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    tool_calls_processed = True
+                    break
         return MockResponseDict(
             {
                 "status": 200,
