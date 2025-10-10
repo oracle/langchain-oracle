@@ -712,9 +712,9 @@ class GenericProvider(Provider):
                     )
                 else:
                     oci_message = self.oci_chat_message[role](content=tool_content)
-            elif isinstance(message, AIMessage) and message.additional_kwargs.get(
-                "tool_calls"
-            ):
+            elif isinstance(message, AIMessage) and (
+                message.tool_calls or
+                message.additional_kwargs.get("tool_calls")):
                 # Process content and tool calls for assistant messages
                 content = self._process_message_content(message.content)
                 tool_calls = []
