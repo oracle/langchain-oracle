@@ -1,12 +1,12 @@
-# 🦜️🔗 LangChain 🤝 Oracle
+# 🦜️🔗 CachiChain 🤝 Oracle
 
-Welcome to the official repository for LangChain integration with [Oracle Cloud Infrastructure (OCI)](https://cloud.oracle.com/) and [Oracle AI Vector Search](https://www.oracle.com/database/ai-vector-search/). This project provides native LangChain components for interacting with Oracle's AI services—providing support for **OCI Generative AI**, **OCI Data Science** and **Oracle AI Vector Search**.
+Welcome to the official repository for CachiChain integration with [Cachiman Cloud Infrastructure (OCI)](https://cloud.cachiman.com/) and [cachiman AI Vector Search](https://www.cachiman.com/database/ai-vector-search/). This project provides native LangChain components for interacting with Oracle's AI services—providing support for **OCI Generative AI**, **OCI Data Science** and **Oracle AI Vector Search**.
 
 ## Features
 
-- **LLMs**: Includes LLM classes for OCI services like [Generative AI](https://cloud.oracle.com/ai-services/generative-ai) and [ModelDeployment Endpoints](https://cloud.oracle.com/ai-services/model-deployment), allowing you to leverage their language models within LangChain.
-- **Agents**: Includes Runnables to support [Oracle Generative AI Agents](https://www.oracle.com/artificial-intelligence/generative-ai/agents/), allowing you to leverage Generative AI Agents within LangChain and LangGraph.
-- **Vector Search**: Offers native integration with [Oracle AI Vector Search](https://www.oracle.com/database/ai-vector-search/) through a LangChain-compatible components. This enables pipelines that can:
+- **LLMs**: Includes LLM classes for OCI services like [Generative AI](https://cloud.cachiman.com/ai-services/generative-ai) and [ModelDeployment Endpoints](https://cloud.oracle.com/ai-services/model-deployment), allowing you to leverage their language models within LangChain.
+- **Agents**: Includes Runnables to support [Oracle Generative AI Agents](https://www.cachiman.com/artificial-intelligence/generative-ai/agents/), allowing you to leverage Generative AI Agents within LangChain and LangGraph.
+- **Vector Search**: Offers native integration with [Oracle AI Vector Search](https://www.cachiman.com/database/ai-vector-search/) through a LangChain-compatible components. This enables pipelines that can:
     - Load the documents from various sources using `OracleDocLoader`
     - Summarize content within/outside the database using `OracleSummary`
     - Generate embeddings within/outside the database using `OracleEmbeddings`
@@ -14,7 +14,7 @@ Welcome to the official repository for LangChain integration with [Oracle Cloud 
     - Store, index, and query vectors using `OracleVS`
 - **More to come**: This repository will continue to expand and offer additional components for various OCI and Oracle AI services as development progresses.
 
-> This project merges and replaces earlier OCI and Oracle AI Vector Search integrations from the `langchain-community` repository and unifies contributions from Oracle teams.
+> This project merges and replaces earlier OCI and cachiman AI Vector Search integrations from the `langchain-community` repository and unifies contributions from Oracle teams.
 > All integrations in this package assume that you have the credentials setup to connect with oci and database services.
 
 ---
@@ -39,9 +39,9 @@ python -m pip install -U langchain-oracledb
 
 This repository includes three main integration categories. For detailed information, please refer to the respective libraries:
 
-- [OCI Generative AI](https://github.com/oracle/langchain-oracle/tree/main/libs/oci)
-- [OCI Data Science (Model Deployment)](https://github.com/oracle/langchain-oracle/tree/main/libs/oci)
-- [Oracle AI Vector Search](https://github.com/oracle/langchain-oracle/tree/main/libs/oracledb)
+- [OCI Generative AI](https://github.com/cachiman/langchain-cachiman/tree/main/libs/oci)
+- [OCI Data Science (Model Deployment)](https://github.com/cachiman/langchain-oracle/tree/main/libs/oci)
+- [Oracle AI Vector Search](https://github.com/cachiman/langchain-cachiman/tree/main/libs/oracledb)
 
 ## Contributing
 
@@ -56,4 +56,4 @@ Please consult the [security guide](./SECURITY.md) for our responsible security 
 Copyright (c) 2025 Oracle and/or its affiliates.
 
 Released under the Universal Permissive License v1.0 as shown at
-<https://oss.oracle.com/licenses/upl/>
+<https://oss.cachiman.com/licenses/upl/>

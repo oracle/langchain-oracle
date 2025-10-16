@@ -804,7 +804,22 @@ class GenericProvider(Provider):
         Raises:
             ValueError: If the tool type is not supported.
         """
-        if isinstance(tool, BaseTool):
+        if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
+            as_json_schema_function = convert_to_openai_function(tool)
+            parameters = as_json_schema_function.get("parameters", {})
+            return self.oci_function_definition(
+                name=as_json_schema_function.get("name"),
+                description=as_json_schema_function.get(
+                    "description",
+                    as_json_schema_function.get("name"),
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": parameters.get("properties", {}),
+                    "required": parameters.get("required", []),
+                },
+            )
+        elif isinstance(tool, BaseTool):
             return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -824,21 +839,6 @@ class GenericProvider(Provider):
                         for p_name, p_def in tool.args.items()
                         if "default" not in p_def
                     ],
-                },
-            )
-        elif (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
-            as_json_schema_function = convert_to_openai_function(tool)
-            parameters = as_json_schema_function.get("parameters", {})
-            return self.oci_function_definition(
-                name=as_json_schema_function.get("name"),
-                description=as_json_schema_function.get(
-                    "description",
-                    as_json_schema_function.get("name"),
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": parameters.get("properties", {}),
-                    "required": parameters.get("required", []),
                 },
             )
         raise ValueError(
