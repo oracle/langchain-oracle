@@ -58,7 +58,7 @@ from langchain_oci.llms.utils import enforce_stop_tokens
 
 CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"
 
-# Mapping of JSON schema types to Python types
+# Mapping of JSON schema types to Python types (for Cohere API)
 JSON_TO_PYTHON_TYPES = {
     "string": "str",
     "number": "float",
@@ -67,6 +67,24 @@ JSON_TO_PYTHON_TYPES = {
     "array": "List",
     "object": "Dict",
     "any": "any",
+}
+
+# Mapping of Python types to JSON schema types (for Generic API)
+PYTHON_TO_JSON_TYPES = {
+    "str": "string",
+    "float": "number",
+    "bool": "boolean",
+    "int": "integer",
+    "List": "array",
+    "list": "array",
+    "Dict": "object",
+    "dict": "object",
+    "any": ["string", "number", "integer", "boolean", "array", "object", "null"],
+}
+
+# Valid JSON Schema types
+VALID_JSON_SCHEMA_TYPES = {
+    "string", "number", "integer", "boolean", "array", "object", "null"
 }
 
 
@@ -550,6 +568,77 @@ class GenericProvider(Provider):
 
     stop_sequence_key: str = "stop"
 
+    @staticmethod
+    def _to_json_schema_type(type_value: Optional[str]) -> str | list[str]:
+        """Convert a type to valid JSON Schema type(s).
+
+        Args:
+            type_value: The type value (could be Python type or JSON Schema type)
+
+        Returns:
+            A valid JSON Schema type or list of types. Defaults to "string" if invalid.
+        """
+        if not type_value:
+            return "string"
+
+        # If it's already a valid JSON Schema type, return it
+        if type_value in VALID_JSON_SCHEMA_TYPES:
+            return type_value
+
+        # Try to convert from Python type to JSON Schema type
+        if type_value in PYTHON_TO_JSON_TYPES:
+            return PYTHON_TO_JSON_TYPES[type_value]  # type: ignore[return-value]
+
+        # Default to string for unknown types
+        return "string"
+
+    def _normalize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively normalize property schemas to use valid JSON Schema types.
+
+        Args:
+            properties: Dictionary of property schemas
+
+        Returns:
+            Dictionary with normalized property schemas
+        """
+        normalized = {}
+        for prop_name, prop_schema in properties.items():
+            if isinstance(prop_schema, dict):
+                normalized_prop = prop_schema.copy()
+
+                # Normalize the type if present
+                if "type" in normalized_prop:
+                    normalized_prop["type"] = self._to_json_schema_type(
+                        normalized_prop["type"]
+                    )
+
+                # Recursively normalize nested properties
+                if "properties" in normalized_prop and isinstance(
+                    normalized_prop["properties"], dict
+                ):
+                    normalized_prop["properties"] = self._normalize_properties(
+                        normalized_prop["properties"]
+                    )
+
+                # Handle array items
+                if "items" in normalized_prop and isinstance(
+                    normalized_prop["items"], dict
+                ):
+                    if "type" in normalized_prop["items"]:
+                        normalized_prop["items"]["type"] = self._to_json_schema_type(
+                            normalized_prop["items"]["type"]
+                        )
+                    if "properties" in normalized_prop["items"]:
+                        normalized_prop["items"]["properties"] = self._normalize_properties(
+                            normalized_prop["items"]["properties"]
+                        )
+
+                normalized[prop_name] = normalized_prop
+            else:
+                normalized[prop_name] = prop_schema
+
+        return normalized
+
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
 
@@ -814,7 +903,7 @@ class GenericProvider(Provider):
                     "type": "object",
                     "properties": {
                         p_name: {
-                            "type": p_def.get("type", "any"),
+                            "type": self._to_json_schema_type(p_def.get("type")),
                             "description": p_def.get("description", ""),
                         }
                         for p_name, p_def in tool.args.items()
@@ -837,7 +926,9 @@ class GenericProvider(Provider):
                 ),
                 parameters={
                     "type": "object",
-                    "properties": parameters.get("properties", {}),
+                    "properties": self._normalize_properties(
+                        parameters.get("properties", {})
+                    ),
                     "required": parameters.get("required", []),
                 },
             )
@@ -1260,6 +1351,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
         response = self.client.chat(request)
+
 
         content = self._provider.chat_response_to_text(response)
 

@@ -734,7 +734,7 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
     assert response.content == "I'll help you."
 
 
-def test_get_provider():
+def test_get_provider() -> None:
     """Test determining the provider based on the model_id."""
     model_provider_map = {
         "cohere.command-latest": "CohereProvider",
@@ -745,4 +745,209 @@ def test_get_provider():
         assert (
             ChatOCIGenAI(model_id=model_id)._provider.__class__.__name__
             == provider_name
+        )
+
+
+@pytest.mark.requires("oci")
+def test_generic_provider_tool_schema_validation() -> None:
+    """Test that GenericProvider creates valid JSON schemas for tools.
+
+    This test validates that tool parameters don't have invalid JSON Schema types
+    like 'any', which causes OCI API to reject the function schema.
+    """
+    from langchain_core.tools import BaseTool
+    from langchain_core.messages import HumanMessage
+    from langchain_oci.chat_models.oci_generative_ai import GenericProvider
+
+    # Mock a BaseTool
+    mock_tool = MagicMock(spec=BaseTool)
+    mock_tool.name = "tell_a_joke"
+    mock_tool.description = "Tell a joke about a topic."
+    mock_tool.args = {
+        "topic": {
+            "type": "string",
+            "description": "The topic of the joke"
+        }
+    }
+
+    provider = GenericProvider()
+    function_def = provider.convert_to_oci_tool(mock_tool)
+
+    # Valid JSON Schema types according to JSON Schema spec
+    valid_types = {"string", "number", "integer", "boolean", "array", "object", "null"}
+
+    # Check that the function definition has valid structure
+    assert hasattr(function_def, "name")
+    assert hasattr(function_def, "description")
+    assert hasattr(function_def, "parameters")
+
+    parameters = function_def.parameters
+    assert isinstance(parameters, dict)
+    assert parameters.get("type") == "object"
+    assert "properties" in parameters
+
+    # Validate each property has a valid JSON Schema type
+    for prop_name, prop_schema in parameters["properties"].items():
+        assert "type" in prop_schema, f"Property {prop_name} missing type"
+        prop_type = prop_schema["type"]
+        assert prop_type in valid_types, (
+            f"Property {prop_name} has invalid JSON Schema type '{prop_type}'. "
+            f"Valid types are: {valid_types}"
+        )
+
+    # Now test that tools actually get passed through to the request
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+
+    request_captured = None
+
+    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal request_captured
+        request_captured = args[0]
+        return MockResponseDict(
+            {
+                "status": 200,
+                "data": MockResponseDict(
+                    {
+                        "chat_response": MockResponseDict(
+                            {
+                                "api_format": "GENERIC",
+                                "choices": [
+                                    MockResponseDict(
+                                        {
+                                            "message": MockResponseDict(
+                                                {
+                                                    "role": "ASSISTANT",
+                                                    "content": [MockResponseDict({"text": "joke", "type": "TEXT"})],
+                                                    "tool_calls": [],
+                                                }
+                                            ),
+                                            "finish_reason": "completed",
+                                        }
+                                    )
+                                ],
+                                "time_created": "2025-08-14T10:00:01.100000+00:00",
+                            }
+                        ),
+                        "model_id": "meta.llama-3.3-70b-instruct",
+                        "model_version": "1.0.0",
+                    }
+                ),
+                "request_id": "1234567890",
+                "headers": MockResponseDict({"content-length": "123"}),
+            }
+        )
+
+    oci_gen_ai_client.chat = mocked_response
+
+    llm_with_tools = llm.bind_tools([mock_tool])
+    messages = [HumanMessage(content="tell me a joke")]
+    llm_with_tools.invoke(messages)
+
+    # Verify tools were passed to the request
+    assert request_captured is not None, "No request was captured"
+    assert hasattr(request_captured, 'chat_request'), "Request missing chat_request"
+    assert hasattr(request_captured.chat_request, 'tools'), "chat_request missing tools"
+    assert request_captured.chat_request.tools is not None, "tools is None"
+    assert len(request_captured.chat_request.tools) > 0, "tools list is empty"
+
+    # Validate the tool schema in the request
+    tool = request_captured.chat_request.tools[0]
+    assert tool.name == "tell_a_joke"
+    assert isinstance(tool.parameters, dict)
+    assert tool.parameters.get("type") == "object"
+
+    # Validate each property type
+    for prop_name, prop_schema in tool.parameters["properties"].items():
+        prop_type = prop_schema["type"]
+        assert prop_type in valid_types, (
+            f"Property {prop_name} has invalid JSON Schema type '{prop_type}' in request"
+        )
+
+
+@pytest.mark.requires("oci")
+def test_generic_provider_tool_schema_validation_streaming() -> None:
+    """Test that tools work correctly with streaming enabled.
+
+    This reproduces the issue where is_stream=True causes tool calling to fail.
+    """
+    from langchain_core.tools import BaseTool
+    from langchain_core.messages import HumanMessage
+
+    # Mock a BaseTool
+    mock_tool = MagicMock(spec=BaseTool)
+    mock_tool.name = "tell_a_joke"
+    mock_tool.description = "Tell a joke about a topic."
+    mock_tool.args = {
+        "topic": {
+            "type": "string",
+            "description": "The topic of the joke"
+        }
+    }
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        is_stream=True,  # This is the key difference
+        client=oci_gen_ai_client
+    )
+
+    request_captured = None
+
+    def mocked_stream_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal request_captured
+        request_captured = args[0]
+
+        # Create a mock streaming response
+        class MockEvents:
+            def events(self):  # type: ignore[no-untyped-def]
+                import json
+                # First event with content
+                yield MockResponseDict({
+                    "data": json.dumps({
+                        "message": {
+                            "content": [{"text": "Here's a joke"}]
+                        }
+                    })
+                })
+                # Final event with finish reason
+                yield MockResponseDict({
+                    "data": json.dumps({
+                        "finishReason": "completed"
+                    })
+                })
+
+        return MockResponseDict({
+            "data": MockEvents()
+        })
+
+    oci_gen_ai_client.chat = mocked_stream_response
+
+    llm_with_tools = llm.bind_tools([mock_tool])
+    messages = [HumanMessage(content="tell me a joke about felipe")]
+
+    # This should not raise an error
+    response = llm_with_tools.invoke(messages)
+
+    # Verify tools were passed to the request
+    assert request_captured is not None, "No request was captured"
+    assert hasattr(request_captured, 'chat_request'), "Request missing chat_request"
+    assert hasattr(request_captured.chat_request, 'tools'), "chat_request missing tools"
+    assert request_captured.chat_request.tools is not None, "tools is None"
+    assert len(request_captured.chat_request.tools) > 0, "tools list is empty"
+
+    # Valid JSON Schema types
+    valid_types = {"string", "number", "integer", "boolean", "array", "object", "null"}
+
+    # Validate the tool schema in the request
+    tool = request_captured.chat_request.tools[0]
+    assert tool.name == "tell_a_joke"
+    assert isinstance(tool.parameters, dict)
+    assert tool.parameters.get("type") == "object"
+
+    # Validate each property type
+    for prop_name, prop_schema in tool.parameters["properties"].items():
+        prop_type = prop_schema["type"]
+        assert prop_type in valid_types, (
+            f"Property {prop_name} has invalid JSON Schema type '{prop_type}' in streaming request"
         )
