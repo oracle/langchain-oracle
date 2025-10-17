@@ -87,6 +87,7 @@ VALID_JSON_SCHEMA_TYPES = {
     "string", "number", "integer", "boolean", "array", "object", "null"
 }
 
+MY_NEW_VAR = "TEXT"
 
 class OCIUtils:
     """Utility functions for OCI Generative AI integration."""
