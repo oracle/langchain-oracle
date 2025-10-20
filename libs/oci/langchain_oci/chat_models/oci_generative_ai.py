@@ -242,11 +242,6 @@ class CohereProvider(Provider):
             "is_search_required": response.data.chat_response.is_search_required,
             "finish_reason": response.data.chat_response.finish_reason,
         }
-
-        # Include token usage if available
-        if hasattr(response.data.chat_response, "usage") and response.data.chat_response.usage:
-            generation_info["total_tokens"] = response.data.chat_response.usage.total_tokens
-
         # Include tool calls if available
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(
@@ -607,11 +602,6 @@ class GenericProvider(Provider):
             "finish_reason": response.data.chat_response.choices[0].finish_reason,
             "time_created": str(response.data.chat_response.time_created),
         }
-
-        # Include token usage if available
-        if hasattr(response.data.chat_response, "usage") and response.data.chat_response.usage:
-            generation_info["total_tokens"] = response.data.chat_response.usage.total_tokens
-            
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(
                 self.chat_tool_calls(response)
