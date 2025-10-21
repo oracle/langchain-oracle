@@ -1058,6 +1058,15 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
+        # Warn if using max_tokens with OpenAI models
+        if self.model_id and self.model_id.startswith("openai.") and "max_tokens" in _model_kwargs:
+            import warnings
+            warnings.warn(
+                f"OpenAI models require 'max_completion_tokens' instead of 'max_tokens'.",
+                UserWarning,
+                stacklevel=2
+            )
+
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
 
         if not self.model_id:
