@@ -55,6 +55,11 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
                                     "citations": None,
                                     "documents": None,
                                     "tool_calls": None,
+                                    "usage": MockResponseDict(
+                                        {
+                                            "total_tokens": 50,
+                                        }
+                                    ),
                                 }
                             ),
                             "model_id": "cohere.command-r-16k",
@@ -116,6 +121,11 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
                                         )
                                     ],
                                     "time_created": "2025-08-14T10:00:01.100000+00:00",
+                                    "usage": MockResponseDict(
+                                        {
+                                            "total_tokens": 75,
+                                        }
+                                    ),
                                 }
                             ),
                             "model_id": "meta.llama-3.3-70b-instruct",
@@ -141,6 +151,13 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
     expected = "Assistant chat reply."
     actual = llm.invoke(messages, temperature=0.2)
     assert actual.content == expected
+    
+    # Test total_tokens in additional_kwargs
+    assert "total_tokens" in actual.additional_kwargs
+    if provider == "cohere":
+        assert actual.additional_kwargs["total_tokens"] == 50
+    elif provider == "meta":
+        assert actual.additional_kwargs["total_tokens"] == 75
 
 
 @pytest.mark.requires("oci")
