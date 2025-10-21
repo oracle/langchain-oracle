@@ -12,7 +12,7 @@ license = "UPL"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
-langchain-core = ">=0.3.15,<0.4"
+langchain-core = ">=0.3.15"
 langchain-community = ">=0.3.0"
 oracledb = ">=2.2.0"
 pydantic = ">=2,<3"
@@ -28,7 +28,10 @@ syrupy = "^4.0.2"
 pytest-asyncio = "^0.23.2"
 pytest-watcher = "^0.3.4"
 sentence-transformers = "^5.0.0"
-langchain-tests = "^0.3.21"
+langchain-tests = [
+ { version = "^0.3.21", python = "<3.10" },
+ { version = "^1.0.0", python = ">=3.10" }
+]
 
 [tool.poetry.group.codespell]
 optional = true
