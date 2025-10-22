@@ -6,9 +6,9 @@
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
 from pytest import MonkeyPatch
 
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 
 
@@ -589,7 +589,11 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
         nonlocal tool_calls_processed
         # Check if the request contains tool_calls in the message
         request = args[0]
-        if hasattr(request, 'chat_request') and hasattr(request.chat_request, 'messages'):
+        has_chat_request = hasattr(request, "chat_request")
+        has_messages = has_chat_request and hasattr(
+            request.chat_request, "messages"
+        )
+        if has_messages:
             for msg in request.chat_request.messages:
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                     tool_calls_processed = True
@@ -746,3 +750,62 @@ def test_get_provider():
             ChatOCIGenAI(model_id=model_id)._provider.__class__.__name__
             == provider_name
         )
+
+
+@pytest.mark.requires("oci")
+def test_tool_choice_none_after_tool_results() -> None:
+    """Test that tool_choice is set to 'none' when ToolMessages are present.
+
+    This prevents infinite loops with Meta Llama models that continue calling
+    tools even after receiving results when tools are bound to the model.
+    """
+    from langchain_core.messages import ToolMessage
+    from oci.generative_ai_inference import models
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        client=oci_gen_ai_client
+    )
+
+    # Mock tools
+    mock_tools = [
+        models.Tool(
+            type="FUNCTION",
+            function=models.FunctionDefinition(
+                name="get_weather",
+                description="Get weather for a city",
+                parameters={}
+            )
+        )
+    ]
+
+    # Bind tools to model
+    llm_with_tools = llm.bind_tools(mock_tools)
+
+    # Create conversation with ToolMessage
+    messages = [
+        HumanMessage(content="What's the weather?"),
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "id": "call_123",
+                "name": "get_weather",
+                "args": {"city": "Chicago"}
+            }]
+        ),
+        ToolMessage(
+            content="Sunny, 65°F",
+            tool_call_id="call_123"
+        )
+    ]
+
+    # Prepare the request
+    request = llm_with_tools._prepare_request(messages, stream=False)
+
+    # Verify that tool_choice is set to 'none'
+    assert hasattr(request.chat_request, 'tool_choice')
+    assert isinstance(request.chat_request.tool_choice, models.ToolChoiceNone)
+    # Verify tools are still present (not removed, just choice is 'none')
+    assert hasattr(request.chat_request, 'tools')
+    assert len(request.chat_request.tools) > 0
