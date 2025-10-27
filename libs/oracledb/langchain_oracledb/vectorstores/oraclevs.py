@@ -26,6 +26,7 @@ from typing import (
     Iterable,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
     TypeVar,
@@ -57,6 +58,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
+INTERNAL_ID_KEY = "__orcl_internal_doc_id"
 
 # define a type variable that can be any kind of function
 T = TypeVar("T", bound=Callable[..., Any])
@@ -1008,33 +1010,33 @@ async def adrop_index_if_exists(client: Any, index_name: str) -> None:
 
 
 def get_processed_ids(
-    texts: Iterable[str],
+    texts: Optional[Iterable[str]] = None,
     metadatas: Optional[List[Dict[Any, Any]]] = None,
     ids: Optional[List[str]] = None,
-) -> List[str]:
+) -> Tuple[List[str], List[str]]:
+    original_ids = None
     if ids:
         # if ids are provided, hash them to maintain consistency
-        processed_ids = [
-            hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in ids
-        ]
+        original_ids = [_id if _id else str(uuid.uuid4()) for _id in ids]
     elif metadatas and all("id" in metadata for metadata in metadatas):
         # if no ids are provided but metadatas with ids are, generate
         # ids from metadatas
-        processed_ids = [
-            hashlib.sha256(metadata["id"].encode()).hexdigest()[:16].upper()
+        original_ids = [
+            str(metadata["id"]) if metadata["id"] else str(uuid.uuid4())
             for metadata in metadatas
         ]
     else:
+        input_seq = texts or metadatas or []
         # generate new ids if none are provided
-        generated_ids = [
-            str(uuid.uuid4()) for _ in texts
+        original_ids = [
+            str(uuid.uuid4()) for _ in input_seq
         ]  # uuid4 is more standard for random UUIDs
-        processed_ids = [
-            hashlib.sha256(_id.encode()).hexdigest()[:16].upper()
-            for _id in generated_ids
-        ]
 
-    return processed_ids
+    processed_ids = [
+        hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in original_ids
+    ]
+
+    return processed_ids, original_ids
 
 
 def _get_delete_ddl(
@@ -1044,12 +1046,32 @@ def _get_delete_ddl(
         raise ValueError("No ids provided to delete.")
 
     # compute SHA-256 hashes of the ids and truncate them
-    hashed_ids = [hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in ids]
+    hashed_ids = get_processed_ids(ids=[_id for _id in ids if _id])[0]
 
     # constructing the SQL statement with individual placeholders
     placeholders = ", ".join([":id" + str(i + 1) for i in range(len(hashed_ids))])
 
     ddl = f"DELETE FROM {table_name} WHERE id IN ({placeholders})"
+
+    # preparing bind variables
+    bind_vars = {f"id{i}": hashed_id for i, hashed_id in enumerate(hashed_ids, start=1)}
+
+    return ddl, bind_vars
+
+
+def _get_by_ids_select(
+    table_name: str, ids: Optional[Sequence[str]] = None
+) -> Tuple[str, Dict]:
+    if ids is None:
+        raise ValueError("No ids provided to select.")
+
+    # compute SHA-256 hashes of the ids and truncate them
+    hashed_ids = get_processed_ids(ids=[_id for _id in ids if _id])[0]
+
+    # constructing the SQL statement with individual placeholders
+    placeholders = ", ".join([":id" + str(i + 1) for i in range(len(hashed_ids))])
+
+    ddl = f"SELECT text, metadata FROM {table_name} WHERE id IN ({placeholders})"
 
     # preparing bind variables
     bind_vars = {f"id{i}": hashed_id for i, hashed_id in enumerate(hashed_ids, start=1)}
@@ -1099,7 +1121,7 @@ def _get_similarity_search_query(
         where_clause = _generate_where_clause(filter, bind_variables)
 
     query = f"""
-    SELECT id,
+    SELECT 
         text,
         metadata,
         vector_distance(embedding, :embedding,
@@ -1143,6 +1165,87 @@ def output_type_string_handler(cursor: Any, metadata: Any) -> Any:
         return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
 
 
+def _read_similarity_output(
+    results: List, has_similarity_score: bool = False, has_embeddings: bool = False
+) -> List:
+    """
+    Reads the SELECT queries, expects the following order:
+    result[0] - text
+    result[1] - metadata
+    result[2] - distance (optional)
+    result[3] - embedding (optional)
+    """
+    docs: Any = []
+    for result in results:
+        id = None
+        metadata = result[1] or {}
+
+        if INTERNAL_ID_KEY in metadata:
+            id = metadata[INTERNAL_ID_KEY]
+            del metadata[INTERNAL_ID_KEY]
+
+        page_content_str = result[0] if result[0] is not None else ""
+
+        if not isinstance(page_content_str, str):
+            raise Exception("Unexpected type:", type(page_content_str))
+
+        doc = Document(
+            page_content=page_content_str,
+            metadata=metadata,
+            **({"id": id} if id is not None else {}),
+        )
+
+        if not has_similarity_score and not has_embeddings:
+            docs.append(doc)
+            continue
+
+        temp_res: Any = []
+        temp_res.append(doc)
+
+        if has_similarity_score:
+            distance = result[2]
+            temp_res.append(distance)
+
+        if has_embeddings:
+            # assuming result[3] is already in the correct format;
+            # adjust if necessary
+            current_embedding = (
+                np.array(result[3], dtype=np.float32)
+                if result[3]
+                else np.empty(0, dtype=np.float32)
+            )
+            temp_res.append(current_embedding)
+
+        docs.append(tuple(temp_res))
+
+    return docs
+
+
+# SQL queries to insert data into tables.
+# INSERT_QUERY is used when we do not wish to update the row when there is duplicate id.
+# MERGE_QUERY is used when we wish to update the row when there is duplicate id.
+# both expect values in the order (id, embedding, metadata, text)
+
+INSERT_QUERY = (
+    "INSERT INTO {table_name} (id, embedding, metadata, text) VALUES ({values})"
+)
+MERGE_QUERY = """
+MERGE INTO {table_name} t
+USING (
+    VALUES ({values})
+) s(id, embedding, metadata, text)
+ON (t.id = s.id)
+WHEN MATCHED THEN
+    UPDATE SET 
+        t.embedding = s.embedding,
+        t.metadata = s.metadata,
+        t.text = s.text
+WHEN NOT MATCHED THEN
+    INSERT (id, embedding, metadata, text)
+    VALUES (s.id, s.embedding, s.metadata, s.text)
+"""
+
+
 class OracleVS(VectorStore):
     """`OracleVS` vector store.
 
@@ -1150,6 +1253,11 @@ class OracleVS(VectorStore):
     - the ``oracledb`` python package installed
     - a connection string associated with a OracleDBCluster having deployed an
        Search index
+
+    - `mutate_on_duplicate` controls what happens when a document with an
+        existing ID is provided.
+        If False (default), the existing document is not updated.
+        If True, the document with the same ID will be updated.
 
     Example:
         .. code-block:: python
@@ -1178,6 +1286,7 @@ class OracleVS(VectorStore):
         distance_strategy: DistanceStrategy = DistanceStrategy.EUCLIDEAN_DISTANCE,
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
+        mutate_on_duplicate: Optional[bool] = False,
     ):
         """
         Initialize the OracleVS store.
@@ -1195,6 +1304,7 @@ class OracleVS(VectorStore):
             distance_strategy,
             query,
             params,
+            mutate_on_duplicate,
         )
 
         embedding_dim = self.get_embedding_dimension()
@@ -1213,6 +1323,7 @@ class OracleVS(VectorStore):
         distance_strategy: DistanceStrategy = DistanceStrategy.EUCLIDEAN_DISTANCE,
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
+        mutate_on_duplicate: Optional[bool] = False,
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
@@ -1229,6 +1340,7 @@ class OracleVS(VectorStore):
                 distance_strategy,
                 query,
                 params,
+                mutate_on_duplicate,
             )
 
             embedding_dim = await self.aget_embedding_dimension()
@@ -1250,6 +1362,7 @@ class OracleVS(VectorStore):
         distance_strategy: DistanceStrategy = DistanceStrategy.EUCLIDEAN_DISTANCE,
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
+        mutate_on_duplicate: Optional[bool] = False,
     ) -> None:
         if not (hasattr(connection, "thin") and connection.thin):
             if oracledb.clientversion()[:2] < (23, 4):
@@ -1280,6 +1393,7 @@ class OracleVS(VectorStore):
         self.table_name = _quote_indentifier(table_name)
         self.distance_strategy = distance_strategy
         self.params = params
+        self.mutate_on_duplicate = mutate_on_duplicate
 
     @property
     def embeddings(self) -> Optional[Embeddings]:
@@ -1361,20 +1475,43 @@ class OracleVS(VectorStore):
         **kwargs: Any,
     ) -> list[str]:
         """Add more texts to the vectorstore index.
+
+        Duplicate id handling behavior is controlled by the `mutate_on_duplicate`
+            parameter passed when creating an `OracleVS` instance:
+            If False: Existing rows with the same id are left unchanged;
+                duplicate rows are skipped and their ids are not returned
+                (i.e., they are not reported as successfully inserted).
+            If True: Existing rows with the same id are updated (upsert behavior);
+                returned ids include successful inserts and updates.
+
         Args:
           texts: Iterable of strings to add to the vectorstore.
           metadatas: Optional list of metadatas associated with the texts.
           ids: Optional list of ids for the texts that are being added to
           the vector store.
           kwargs: vectorstore specific parameters
+
+        Returns:
+          List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
+            also those successfully updated).
         """
 
         texts = list(texts)
-        processed_ids = get_processed_ids(texts, metadatas, ids)
+        processed_ids, original_ids = get_processed_ids(texts, metadatas, ids)
 
         if not metadatas:
             metadatas = [{} for _ in texts]
 
+        for i, _id in enumerate(original_ids):
+            if INTERNAL_ID_KEY in metadatas[i]:
+                raise ValueError(
+                    f'Metadata key "{INTERNAL_ID_KEY}" is '
+                    "reserved and cannot used in metadata."
+                )
+            metadatas[i][INTERNAL_ID_KEY] = _id
+
+        # with OracleEmbeddings, embeddings are generated in the database during insert;
+        # they are not sent back to Python to be written again.
         docs: Any
         if not isinstance(self.embeddings, OracleEmbeddings):
             embeddings = self._embed_documents(texts)
@@ -1391,20 +1528,45 @@ class OracleVS(VectorStore):
                 )
             ]
         else:
-            docs = list(zip(processed_ids, metadatas, texts))
+            docs = []
+            for _1, _2, _3 in zip(processed_ids, metadatas, texts):
+                docs.append(
+                    {"id": _1, "meta": _2, "text": _3, "param": self.embeddings.params}
+                )
 
         connection = _get_connection(self.client)
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
         with connection.cursor() as cursor:
+            # self.mutate_on_duplicate controls how inserts handle existing IDs.
+            # If False:
+            #   uses INSERT_QUERY.
+            #   existing rows having the same ID as the inserted row are not updated.
+            #   with batcherrors=True, duplicate rows are skipped and their IDs
+            #       are not included in the `add_texts` return value (i.e., not
+            #       reported as successfully inserted).
+            #
+            # If True:
+            #   uses MERGE_QUERY.
+            #   existing rows having the same ID as the inserted row are updated
+            #       with the new data ("upsert").
+            #   the ID is included in the `add_texts` return value,
+            #       indicating a successful insert/update.
+            selected_query = (
+                INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
+            )
             if not isinstance(self.embeddings, OracleEmbeddings):
-                cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
-                cursor.executemany(
-                    f"INSERT INTO {self.table_name} (id, embedding, metadata, "
-                    f"text) VALUES (:1, :2, :3, :4)",
-                    docs,
+                cursor.setinputsizes(
+                    None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
                 )
-                connection.commit()
+                cursor.executemany(
+                    selected_query.format(
+                        table_name=self.table_name, values=":1, :2, :3, :4"
+                    ),
+                    docs,
+                    batcherrors=True,
+                )
+
             else:
                 if self.embeddings.proxy:
                     cursor.execute(
@@ -1412,22 +1574,31 @@ class OracleVS(VectorStore):
                         proxy=self.embeddings.proxy,
                     )
 
-                cursor.setinputsizes(None, oracledb.DB_TYPE_JSON, None)
+                cursor.setinputsizes(
+                    meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
+                )
+
                 cursor.executemany(
-                    f"INSERT INTO {self.table_name} (id, metadata, "
-                    f"text) VALUES (:1, :2, :3)",
+                    selected_query.format(
+                        table_name=self.table_name,
+                        values=(
+                            ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                            ":meta, :text"
+                        ),
+                    ),
                     docs,
+                    batcherrors=True,
                 )
 
-                cursor.setinputsizes(oracledb.DB_TYPE_JSON)
-                update_sql = (
-                    f"UPDATE {self.table_name} "
-                    "SET embedding = dbms_vector_chain.utl_to_embedding(text, json(:1))"
-                )
-                cursor.execute(update_sql, [self.embeddings.params])
-                connection.commit()
+            error_indices = [error.offset for error in cursor.getbatcherrors()]
+            connection.commit()
 
-        return processed_ids
+        # do not change the input dict list
+        for i in range(len(original_ids)):
+            del metadatas[i][INTERNAL_ID_KEY]
+
+        inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
+        return inserted_ids
 
     @_ahandle_exceptions
     async def aadd_texts(
@@ -1439,20 +1610,43 @@ class OracleVS(VectorStore):
         **kwargs: Any,
     ) -> list[str]:
         """Add more texts to the vectorstore index, async.
+
+        Duplicate id handling behavior is controlled by the `mutate_on_duplicate`
+            parameter passed when creating an `OracleVS` instance:
+            If False: Existing rows with the same id are left unchanged;
+                duplicate rows are skipped and their ids are not returned
+                (i.e., they are not reported as successfully inserted).
+            If True: Existing rows with the same id are updated (upsert behavior);
+                returned ids include successful inserts and updates.
+
         Args:
           texts: Iterable of strings to add to the vectorstore.
           metadatas: Optional list of metadatas associated with the texts.
           ids: Optional list of ids for the texts that are being added to
           the vector store.
           kwargs: vectorstore specific parameters
+
+        Returns:
+          List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
+            also those successfully updated).
         """
 
         texts = list(texts)
-        processed_ids = get_processed_ids(texts, metadatas, ids)
+        processed_ids, original_ids = get_processed_ids(texts, metadatas, ids)
 
         if not metadatas:
             metadatas = [{} for _ in texts]
 
+        for i, _id in enumerate(original_ids):
+            if INTERNAL_ID_KEY in metadatas[i]:
+                raise ValueError(
+                    f'Metadata key "{INTERNAL_ID_KEY}" is '
+                    "reserved and cannot used in metadata."
+                )
+            metadatas[i][INTERNAL_ID_KEY] = _id
+
+        # with OracleEmbeddings, embeddings are generated in the database during insert;
+        # they are not sent back to Python to be written again.
         docs: Any
         if not isinstance(self.embeddings, OracleEmbeddings):
             embeddings = await self._aembed_documents(texts)
@@ -1469,20 +1663,32 @@ class OracleVS(VectorStore):
                 )
             ]
         else:
-            docs = list(zip(processed_ids, metadatas, texts))
+            docs = []
+            for _1, _2, _3 in zip(processed_ids, metadatas, texts):
+                docs.append(
+                    {"id": _1, "meta": _2, "text": _3, "param": self.embeddings.params}
+                )
 
-        async def context(connection: Any) -> None:
+        async def context(connection: Any) -> List[str]:
             if connection is None:
                 raise ValueError("Failed to acquire a connection.")
             with connection.cursor() as cursor:
+                # self.mutate_on_duplicate controls how inserts handle existing IDs,
+                # behavior is identical to the synchronous `add_texts` method.
+                selected_query = (
+                    INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
+                )
                 if not isinstance(self.embeddings, OracleEmbeddings):
-                    cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
-                    await cursor.executemany(
-                        f"INSERT INTO {self.table_name} (id, embedding, metadata, "
-                        f"text) VALUES (:1, :2, :3, :4)",
-                        docs,
+                    cursor.setinputsizes(
+                        None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
                     )
-                    await connection.commit()
+                    await cursor.executemany(
+                        selected_query.format(
+                            table_name=self.table_name, values=":1, :2, :3, :4"
+                        ),
+                        docs,
+                        batcherrors=True,
+                    )
                 else:
                     if self.embeddings.proxy:
                         await cursor.execute(
@@ -1490,24 +1696,34 @@ class OracleVS(VectorStore):
                             proxy=self.embeddings.proxy,
                         )
 
-                    cursor.setinputsizes(None, oracledb.DB_TYPE_JSON, None)
+                    cursor.setinputsizes(
+                        meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
+                    )
+
                     await cursor.executemany(
-                        f"INSERT INTO {self.table_name} (id, metadata, "
-                        f"text) VALUES (:1, :2, :3)",
+                        selected_query.format(
+                            table_name=self.table_name,
+                            values=(
+                                ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                ":meta, :text"
+                            ),
+                        ),
                         docs,
+                        batcherrors=True,
                     )
 
-                    cursor.setinputsizes(oracledb.DB_TYPE_JSON)
-                    update_sql = (
-                        f"UPDATE {self.table_name} "
-                        "SET embedding = dbms_vector_chain.utl_to_embedding(text, json(:1))"  # noqa: E501
-                    )
-                    await cursor.execute(update_sql, [self.embeddings.params])
-                    await connection.commit()
+                error_indices = [error.offset for error in cursor.getbatcherrors()]
+                await connection.commit()
+                return error_indices
 
-        await _handle_context(self.client, context)
+        error_indices = await _handle_context(self.client, context)
 
-        return processed_ids
+        # do not change the input dict list
+        for i in range(len(original_ids)):
+            del metadatas[i][INTERNAL_ID_KEY]
+
+        inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
+        return inserted_ids
 
     def similarity_search(
         self,
@@ -1640,20 +1856,9 @@ class OracleVS(VectorStore):
             cursor.execute(query, **params)
             results = cursor.fetchall()
 
-            for result in results:
-                metadata = result[2] or {}
-                page_content_str = result[1] if result[1] is not None else ""
-
-                if not isinstance(page_content_str, str):
-                    raise Exception("Unexpected type:", type(page_content_str))
-
-                doc = Document(
-                    page_content=page_content_str,
-                    metadata=metadata,
-                )
-                distance = result[3]
-
-                docs_and_scores.append((doc, distance))
+            docs_and_scores = _read_similarity_output(
+                results, has_similarity_score=True
+            )
 
         return docs_and_scores
 
@@ -1666,8 +1871,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        docs_and_scores = []
-
         embedding_arr: Any = array.array("f", embedding)
 
         db_filter = kwargs.get("db_filter", None)
@@ -1698,19 +1901,9 @@ class OracleVS(VectorStore):
                 await cursor.execute(query, **params)
                 results = await cursor.fetchall()
 
-                for result in results:
-                    metadata = result[2] or {}
-                    page_content_str = result[1] if result[1] is not None else ""
-                    if not isinstance(page_content_str, str):
-                        raise Exception("Unexpected type:", type(page_content_str))
-
-                    doc = Document(
-                        page_content=page_content_str,
-                        metadata=metadata,
-                    )
-                    distance = result[3]
-
-                    docs_and_scores.append((doc, distance))
+                docs_and_scores = _read_similarity_output(
+                    results, has_similarity_score=True
+                )
 
             return docs_and_scores
 
@@ -1759,24 +1952,9 @@ class OracleVS(VectorStore):
             cursor.execute(query, **params)
             results = cursor.fetchall()
 
-            for result in results:
-                page_content_str = result[1] if result[1] is not None else ""
-                if not isinstance(page_content_str, str):
-                    raise Exception("Unexpected type:", type(page_content_str))
-                metadata = result[2] or {}
-
-                document = Document(page_content=page_content_str, metadata=metadata)
-                distance = result[3]
-
-                # assuming result[4] is already in the correct format;
-                # adjust if necessary
-                current_embedding = (
-                    np.array(result[4], dtype=np.float32)
-                    if result[4]
-                    else np.empty(0, dtype=np.float32)
-                )
-
-                documents.append((document, distance, current_embedding))
+            documents = _read_similarity_output(
+                results, has_similarity_score=True, has_embeddings=True
+            )
 
         return documents
 
@@ -1790,8 +1968,6 @@ class OracleVS(VectorStore):
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
         embedding_arr: Any = array.array("f", embedding)
-
-        documents = []
 
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
@@ -1820,27 +1996,9 @@ class OracleVS(VectorStore):
 
                 await cursor.execute(query, **params)
                 results = await cursor.fetchall()
-
-                for result in results:
-                    page_content_str = result[1] if result[1] is not None else ""
-                    if not isinstance(page_content_str, str):
-                        raise Exception("Unexpected type:", type(page_content_str))
-                    metadata = result[2] or {}
-
-                    document = Document(
-                        page_content=page_content_str, metadata=metadata
-                    )
-                    distance = result[3]
-
-                    # assuming result[4] is already in the correct format;
-                    # adjust if necessary
-                    current_embedding = (
-                        np.array(result[4], dtype=np.float32)
-                        if result[4]
-                        else np.empty(0, dtype=np.float32)
-                    )
-
-                    documents.append((document, distance, current_embedding))
+                documents = _read_similarity_output(
+                    results, has_similarity_score=True, has_embeddings=True
+                )
 
             return documents
 
@@ -2112,6 +2270,57 @@ class OracleVS(VectorStore):
             filter=filter,
             **kwargs,
         )
+        return documents
+
+    @_handle_exceptions
+    def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
+        """Get documents by vector IDs.
+        Args:
+          self: An instance of the class
+          ids: The ids of the documents to get.
+          **kwargs
+        """
+
+        ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
+
+        connection = _get_connection(self.client)
+        if connection is None:
+            raise ValueError("Failed to acquire a connection.")
+
+        documents = []
+        with connection.cursor() as cursor:
+            cursor.outputtypehandler = output_type_string_handler
+            cursor.execute(ddl, bind_vars)
+            results = cursor.fetchall()
+
+            documents = _read_similarity_output(results)
+
+        return documents
+
+    @_ahandle_exceptions
+    async def aget_by_ids(self, ids: Sequence[str], /) -> list[Document]:
+        """Get documents by vector IDs.
+        Args:
+          self: An instance of the class
+          ids: The ids of the documents to get.
+          **kwargs
+        """
+
+        ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
+
+        async def context(connection: Any) -> List:
+            documents = []
+            with connection.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
+                await cursor.execute(ddl, bind_vars)
+                results = await cursor.fetchall()
+
+                documents = _read_similarity_output(results)
+
+            return documents
+
+        documents = await _handle_context(self.client, context)
+
         return documents
 
     @_handle_exceptions
