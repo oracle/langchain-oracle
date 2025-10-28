@@ -263,19 +263,19 @@ class CohereProvider(Provider):
         }
 
         # Include token usage if available
-        if (
-            hasattr(response.data.chat_response, "usage")
-            and response.data.chat_response.usage
-        ):
-            generation_info["total_tokens"] = (
-                response.data.chat_response.usage.total_tokens
-            )
+        try:
+            if (
+                hasattr(response.data.chat_response, "usage")
+                and response.data.chat_response.usage
+            ):
+                generation_info["total_tokens"] = (
+                    response.data.chat_response.usage.total_tokens
+                )
+        except (KeyError, AttributeError):
+            pass
 
-        # Include tool calls if available
-        if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(
-                self.chat_tool_calls(response)
-            )
+        # Note: tool_calls are now handled in _generate() to avoid redundant conversions
+        # The formatted tool calls will be added there if present
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
@@ -643,18 +643,19 @@ class GenericProvider(Provider):
         }
 
         # Include token usage if available
-        if (
-            hasattr(response.data.chat_response, "usage")
-            and response.data.chat_response.usage
-        ):
-            generation_info["total_tokens"] = (
-                response.data.chat_response.usage.total_tokens
-            )
+        try:
+            if (
+                hasattr(response.data.chat_response, "usage")
+                and response.data.chat_response.usage
+            ):
+                generation_info["total_tokens"] = (
+                    response.data.chat_response.usage.total_tokens
+                )
+        except (KeyError, AttributeError):
+            pass
 
-        if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(
-                self.chat_tool_calls(response)
-            )
+        # Note: tool_calls are now handled in _generate() to avoid redundant conversions
+        # The formatted tool calls will be added there if present
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
@@ -1400,6 +1401,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             content = enforce_stop_tokens(content, stop)
 
+        # Fetch raw tool calls once to avoid redundant calls
+        raw_tool_calls = self._provider.chat_tool_calls(response)
+
         generation_info = self._provider.chat_generation_info(response)
 
         llm_output = {
@@ -1408,12 +1412,20 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             "request_id": response.request_id,
             "content-length": response.headers["content-length"],
         }
+
+        # Convert tool calls once for LangChain format
         tool_calls = []
-        if "tool_calls" in generation_info:
+        if raw_tool_calls:
             tool_calls = [
                 OCIUtils.convert_oci_tool_call_to_langchain(tool_call)
-                for tool_call in self._provider.chat_tool_calls(response)
+                for tool_call in raw_tool_calls
             ]
+            # Add formatted version to generation_info if not already present
+            # This avoids redundant formatting in chat_generation_info()
+            if "tool_calls" not in generation_info:
+                generation_info["tool_calls"] = self._provider.format_response_tool_calls(
+                    raw_tool_calls
+                )
         message = AIMessage(
             content=content or "",
             additional_kwargs=generation_info,
