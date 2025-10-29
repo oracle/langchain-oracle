@@ -213,6 +213,9 @@ class CohereProvider(Provider):
             "SYSTEM": models.CohereSystemMessage,
             "TOOL": models.CohereToolMessage,
         }
+
+        self.oci_response_json_schema = models.ResponseJsonSchema
+        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
 
     def chat_response_to_text(self, response: Any) -> str:
@@ -581,6 +584,10 @@ class GenericProvider(Provider):
         self.oci_tool_choice_required = models.ToolChoiceRequired
         self.oci_tool_call = models.FunctionCall
         self.oci_tool_message = models.ToolMessage
+
+        # Response format models
+        self.oci_response_json_schema = models.ResponseJsonSchema
+        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
 
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
@@ -1201,22 +1208,20 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            from oci.generative_ai_inference import models
-            
             json_schema_dict = (
                 schema.model_json_schema()  # type: ignore[union-attr]
                 if is_pydantic_schema
                 else schema
             )
             
-            response_json_schema = models.ResponseJsonSchema(
+            response_json_schema = self._provider.oci_response_json_schema(
                 name=json_schema_dict.get("title", "response"),
                 description=json_schema_dict.get("description", ""),
                 schema=json_schema_dict,
                 is_strict=True
             )
             
-            response_format_obj = models.JsonSchemaResponseFormat(
+            response_format_obj = self._provider.oci_json_schema_response_format(
                 json_schema=response_json_schema
             )
             
