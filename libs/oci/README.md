@@ -54,6 +54,22 @@ embeddings = OCIGenAIEmbeddings()
 embeddings.embed_query("What is the meaning of life?")
 ```
 
+### 4. Use Structured Output
+`ChatOCIGenAI` supports structured output.
+
+```python
+from langchain_oci import ChatOCIGenAI
+from pydantic import BaseModel
+
+class Joke(BaseModel):
+    setup: str
+    punchline: str
+
+llm = ChatOCIGenAI()
+structured_llm = llm.with_structured_output(Joke)
+structured_llm.invoke("Tell me a joke about programming")
+```
+
 
 ## OCI Data Science Model Deployment Examples
 

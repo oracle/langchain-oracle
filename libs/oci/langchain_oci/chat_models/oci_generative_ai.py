@@ -1129,7 +1129,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         *,
         method: Literal[
             "function_calling", "json_schema", "json_mode"
-        ] = "function_calling",
+        ] = "json_schema",
         include_raw: bool = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, Union[Dict, BaseModel]]:
@@ -1201,19 +1201,26 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            response_format = (
-                dict(
-                    schema.model_json_schema().items()  # type: ignore[union-attr]
-                )
+            from oci.generative_ai_inference import models
+            
+            json_schema_dict = (
+                schema.model_json_schema()  # type: ignore[union-attr]
                 if is_pydantic_schema
                 else schema
             )
-            llm_response_format: Dict[Any, Any] = {"type": "JSON_OBJECT"}
-            llm_response_format["schema"] = {
-                k: v
-                for k, v in response_format.items()  # type: ignore[union-attr]
-            }
-            llm = self.bind(response_format=llm_response_format)
+            
+            response_json_schema = models.ResponseJsonSchema(
+                name=json_schema_dict.get("title", "response"),
+                description=json_schema_dict.get("description", ""),
+                schema=json_schema_dict,
+                is_strict=True
+            )
+            
+            response_format_obj = models.JsonSchemaResponseFormat(
+                json_schema=response_json_schema
+            )
+            
+            llm = self.bind(response_format=response_format_obj)
             if is_pydantic_schema:
                 output_parser = PydanticOutputParser(pydantic_object=schema)
             else:
