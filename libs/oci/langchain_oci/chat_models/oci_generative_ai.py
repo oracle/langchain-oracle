@@ -94,9 +94,15 @@ class OCIUtils:
     @staticmethod
     def convert_oci_tool_call_to_langchain(tool_call: Any) -> ToolCall:
         """Convert an OCI tool call to a LangChain ToolCall."""
+        parsed = json.loads(tool_call.arguments)
+
+        # If the parsed result is a string, it means the JSON was escaped, so parse again
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+
         return ToolCall(
             name=tool_call.name,
-            args=json.loads(tool_call.arguments)
+            args=parsed
             if "arguments" in tool_call.attribute_map
             else tool_call.parameters,
             id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
