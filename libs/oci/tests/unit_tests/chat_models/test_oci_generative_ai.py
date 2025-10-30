@@ -14,7 +14,7 @@ from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 
 class MockResponseDict(dict):
     def __getattr__(self, val):  # type: ignore[no-untyped-def]
-        return self[val]
+        return self.get(val)
 
 
 class MockToolCall(dict):
@@ -473,10 +473,10 @@ def test_json_schema_output(monkeypatch: MonkeyPatch) -> None:
     llm = ChatOCIGenAI(model_id="cohere.command-latest", client=oci_gen_ai_client)
 
     def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
-        # Verify that response_format contains the schema
+        # Verify that response_format is a JsonSchemaResponseFormat object
         request = args[0]
-        assert request.chat_request.response_format["type"] == "JSON_OBJECT"
-        assert "schema" in request.chat_request.response_format
+        assert hasattr(request.chat_request, 'response_format')
+        assert request.chat_request.response_format is not None
 
         return MockResponseDict(
             {

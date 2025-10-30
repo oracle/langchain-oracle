@@ -213,6 +213,9 @@ class CohereProvider(Provider):
             "SYSTEM": models.CohereSystemMessage,
             "TOOL": models.CohereToolMessage,
         }
+
+        self.oci_response_json_schema = models.ResponseJsonSchema
+        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
 
     def chat_response_to_text(self, response: Any) -> str:
@@ -587,6 +590,10 @@ class GenericProvider(Provider):
         self.oci_tool_choice_required = models.ToolChoiceRequired
         self.oci_tool_call = models.FunctionCall
         self.oci_tool_message = models.ToolMessage
+
+        # Response format models
+        self.oci_response_json_schema = models.ResponseJsonSchema
+        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
 
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
@@ -1230,14 +1237,14 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 `method` is "function_calling" and `schema` is a dict, then the dict
                 must match the OCI Generative AI function-calling spec.
             method:
-                The method for steering model generation, either "function_calling"
-                or "json_mode" or "json_schema. If "function_calling" then the schema
+                The method for steering model generation, either "function_calling" (default method)
+                or "json_mode" or "json_schema". If "function_calling" then the schema
                 will be converted to an OCI function and the returned model will make
                 use of the function-calling API. If "json_mode" then Cohere's JSON mode will be
                 used. Note that if using "json_mode" then you must include instructions
                 for formatting the output into the desired schema into the model call.
                 If "json_schema" then it allows the user to pass a json schema (or pydantic)
-                to the model for structured output. This is the default method.
+                to the model for structured output. 
             include_raw:
                 If False then only the parsed structured output is returned. If
                 an error occurs during model output parsing it will be raised. If True
@@ -1288,19 +1295,24 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            response_format = (
-                dict(
-                    schema.model_json_schema().items()  # type: ignore[union-attr]
-                )
+            json_schema_dict = (
+                schema.model_json_schema()  # type: ignore[union-attr]
                 if is_pydantic_schema
                 else schema
             )
-            llm_response_format: Dict[Any, Any] = {"type": "JSON_OBJECT"}
-            llm_response_format["schema"] = {
-                k: v
-                for k, v in response_format.items()  # type: ignore[union-attr]
-            }
-            llm = self.bind(response_format=llm_response_format)
+            
+            response_json_schema = self._provider.oci_response_json_schema(
+                name=json_schema_dict.get("title", "response"),
+                description=json_schema_dict.get("description", ""),
+                schema=json_schema_dict,
+                is_strict=True
+            )
+            
+            response_format_obj = self._provider.oci_json_schema_response_format(
+                json_schema=response_json_schema
+            )
+            
+            llm = self.bind(response_format=response_format_obj)
             if is_pydantic_schema:
                 output_parser = PydanticOutputParser(pydantic_object=schema)
             else:
