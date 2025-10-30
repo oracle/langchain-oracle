@@ -1136,7 +1136,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         *,
         method: Literal[
             "function_calling", "json_schema", "json_mode"
-        ] = "json_schema",
+        ] = "function_calling",
         include_raw: bool = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, Union[Dict, BaseModel]]:
@@ -1150,14 +1150,14 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 `method` is "function_calling" and `schema` is a dict, then the dict
                 must match the OCI Generative AI function-calling spec.
             method:
-                The method for steering model generation, either "function_calling"
-                or "json_mode" or "json_schema. If "function_calling" then the schema
+                The method for steering model generation, either "function_calling" (default method)
+                or "json_mode" or "json_schema". If "function_calling" then the schema
                 will be converted to an OCI function and the returned model will make
                 use of the function-calling API. If "json_mode" then Cohere's JSON mode will be
                 used. Note that if using "json_mode" then you must include instructions
                 for formatting the output into the desired schema into the model call.
                 If "json_schema" then it allows the user to pass a json schema (or pydantic)
-                to the model for structured output. This is the default method.
+                to the model for structured output. 
             include_raw:
                 If False then only the parsed structured output is returned. If
                 an error occurs during model output parsing it will be raised. If True
