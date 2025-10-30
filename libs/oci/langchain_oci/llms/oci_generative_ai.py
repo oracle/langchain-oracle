@@ -116,6 +116,10 @@ class OCIGenAIBase(BaseModel, ABC):
     is_stream: bool = False
     """Whether to stream back partial progress"""
 
+    max_sequential_tool_calls: int = 8
+    """Maximum tool calls before forcing final answer.
+    Prevents infinite loops while allowing multi-step orchestration."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )

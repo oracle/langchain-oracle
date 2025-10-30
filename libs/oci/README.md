@@ -30,7 +30,14 @@ This repository includes two main integration categories:
 ```python
 from langchain_oci import ChatOCIGenAI
 
-llm = ChatOCIGenAI()
+llm = ChatOCIGenAI(
+        model_id="MY_MODEL_ID",
+        service_endpoint="MY_SERVICE_ENDPOINT",
+        compartment_id="MY_COMPARTMENT_ID",
+        model_kwargs={"max_tokens": 1024}, # Use max_completion_tokens instead of max_tokens for OpenAI models
+        auth_profile="MY_AUTH_PROFILE",
+        is_stream=True,
+        auth_type="SECURITY_TOKEN"
 llm.invoke("Sing a ballad of LangChain.")
 ```
 
