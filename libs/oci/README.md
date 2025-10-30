@@ -63,7 +63,8 @@ embeddings.embed_query("What is the meaning of life?")
 
 ### 4. Use Structured Output
 `ChatOCIGenAI` supports structured output. 
-The default method is "function_calling". If default method fails, try "json_schema" or "json_mode".
+
+<sub>**Note:** The default method is `function_calling`. If default method returns `None` (e.g. for Gemini models), try `json_schema` or `json_mode`.</sub>
 
 ```python
 from langchain_oci import ChatOCIGenAI
