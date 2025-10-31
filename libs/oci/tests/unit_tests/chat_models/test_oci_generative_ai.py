@@ -771,10 +771,10 @@ def test_get_provider():
 
 @pytest.mark.requires("oci")
 def test_tool_choice_none_after_tool_results() -> None:
-    """Test that tool_choice is set to 'none' when ToolMessages are present.
+    """Test that tool_choice is set to 'none' when max_sequential_tool_calls is exceeded.
 
-    This prevents infinite loops with Meta Llama models that continue calling
-    tools even after receiving results when tools are bound to the model.
+    This prevents infinite loops with Meta Llama models by limiting the number
+    of sequential tool calls.
     """
     from langchain_core.messages import ToolMessage
     from oci.generative_ai_inference import models
@@ -782,45 +782,39 @@ def test_tool_choice_none_after_tool_results() -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
         model_id="meta.llama-3.3-70b-instruct",
-        client=oci_gen_ai_client
+        client=oci_gen_ai_client,
+        max_sequential_tool_calls=3  # Set limit to 3 for testing
     )
 
-    # Mock tools
-    mock_tools = [
-        models.Tool(
-            type="FUNCTION",
-            function=models.FunctionDefinition(
-                name="get_weather",
-                description="Get weather for a city",
-                parameters={}
-            )
-        )
-    ]
+    # Define a simple tool function (following the pattern from other tests)
+    def get_weather(city: str) -> str:
+        """Get weather for a city.
+
+        Args:
+            city: The city to get weather for
+        """
+        return f"Weather in {city}"
 
     # Bind tools to model
-    llm_with_tools = llm.bind_tools(mock_tools)
+    llm_with_tools = llm.bind_tools([get_weather])
 
-    # Create conversation with ToolMessage
+    # Create conversation with 3 ToolMessages (at the limit)
     messages = [
         HumanMessage(content="What's the weather?"),
-        AIMessage(
-            content="",
-            tool_calls=[{
-                "id": "call_123",
-                "name": "get_weather",
-                "args": {"city": "Chicago"}
-            }]
-        ),
-        ToolMessage(
-            content="Sunny, 65°F",
-            tool_call_id="call_123"
-        )
+        AIMessage(content="", tool_calls=[{"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}]),
+        ToolMessage(content="Sunny, 65°F", tool_call_id="call_1"),
+        AIMessage(content="", tool_calls=[{"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}]),
+        ToolMessage(content="Rainy, 55°F", tool_call_id="call_2"),
+        AIMessage(content="", tool_calls=[{"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}]),
+        ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3")
     ]
 
-    # Prepare the request
-    request = llm_with_tools._prepare_request(messages, stream=False)
+    # Prepare the request - need to pass tools from the bound model kwargs
+    request = llm_with_tools._prepare_request(
+        messages, stop=None, stream=False, **llm_with_tools.kwargs
+    )
 
-    # Verify that tool_choice is set to 'none'
+    # Verify that tool_choice is set to 'none' because limit was reached
     assert hasattr(request.chat_request, 'tool_choice')
     assert isinstance(request.chat_request.tool_choice, models.ToolChoiceNone)
     # Verify tools are still present (not removed, just choice is 'none')
