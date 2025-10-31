@@ -62,7 +62,7 @@ embeddings.embed_query("What is the meaning of life?")
 ```
 
 ### 4. Use Structured Output
-`ChatOCIGenAI` supports structured output. 
+`ChatOCIGenAI` supports structured output.
 
 <sub>**Note:** The default method is `function_calling`. If default method returns `None` (e.g. for Gemini models), try `json_schema` or `json_mode`.</sub>
 
@@ -78,6 +78,30 @@ llm = ChatOCIGenAI()
 structured_llm = llm.with_structured_output(Joke)
 structured_llm.invoke("Tell me a joke about programming")
 ```
+
+### 5. Use Parallel Tool Calling (Meta/Llama models only)
+Enable parallel tool calling to execute multiple tools simultaneously, improving performance for multi-tool workflows.
+
+```python
+from langchain_oci import ChatOCIGenAI
+
+# Option 1: Set at class level for all tool bindings
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.3-70b-instruct",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="MY_COMPARTMENT_ID",
+    parallel_tool_calls=True  # Enable parallel tool calling
+)
+
+# Option 2: Set per-binding
+llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct")
+llm_with_tools = llm.bind_tools(
+    [get_weather, calculate_tip, get_population],
+    parallel_tool_calls=True  # Tools can execute simultaneously
+)
+```
+
+<sub>**Note:** Parallel tool calling is only supported for Meta/Llama models. Cohere models will raise an error if this parameter is used.</sub>
 
 
 ## OCI Data Science Model Deployment Examples
