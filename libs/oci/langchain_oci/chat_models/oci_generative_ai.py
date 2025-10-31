@@ -1167,6 +1167,10 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
+        # Handle response_format from class level or kwargs
+        if self.response_format is not None:
+            _model_kwargs['response_format'] = self.response_format
+
         # Warn if using max_tokens with OpenAI models
         if (
             self.model_id
