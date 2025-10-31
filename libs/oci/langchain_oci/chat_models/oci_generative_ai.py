@@ -1253,7 +1253,11 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         # Add parallel tool calls support
         # Use bind-time parameter if provided, else fall back to class default
-        use_parallel = parallel_tool_calls if parallel_tool_calls is not None else self.parallel_tool_calls
+        use_parallel = (
+            parallel_tool_calls
+            if parallel_tool_calls is not None
+            else self.parallel_tool_calls
+        )
         if use_parallel:
             kwargs["is_parallel_tool_calls"] = True
 
