@@ -247,8 +247,13 @@ class CohereProvider(Provider):
         }
 
         # Include token usage if available
-        if hasattr(response.data.chat_response, "usage") and response.data.chat_response.usage:
-            generation_info["total_tokens"] = response.data.chat_response.usage.total_tokens
+        if (
+            hasattr(response.data.chat_response, "usage")
+            and response.data.chat_response.usage
+        ):
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )
 
         # Include tool calls if available
         if self.chat_tool_calls(response):
@@ -342,6 +347,14 @@ class CohereProvider(Provider):
 
         This includes conversion of chat history and tool call results.
         """
+        # Cohere models don't support parallel tool calls
+        if kwargs.get("is_parallel_tool_calls"):
+            raise ValueError(
+                "Parallel tool calls are not supported for Cohere models. "
+                "This feature is only available for models using GenericChatRequest "
+                "(Meta, Llama, xAI Grok, OpenAI, Mistral)."
+            )
+
         is_force_single_step = kwargs.get("is_force_single_step", False)
         oci_chat_history = []
 
@@ -622,9 +635,14 @@ class GenericProvider(Provider):
         }
 
         # Include token usage if available
-        if hasattr(response.data.chat_response, "usage") and response.data.chat_response.usage:
-            generation_info["total_tokens"] = response.data.chat_response.usage.total_tokens
-            
+        if (
+            hasattr(response.data.chat_response, "usage")
+            and response.data.chat_response.usage
+        ):
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )
+
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(
                 self.chat_tool_calls(response)
@@ -770,8 +788,7 @@ class GenericProvider(Provider):
         # continue calling tools even after receiving results.
 
         def _should_allow_more_tool_calls(
-            messages: List[BaseMessage],
-            max_tool_calls: int
+            messages: List[BaseMessage], max_tool_calls: int
         ) -> bool:
             """
             Determine if the model should be allowed to call more tools.
@@ -787,10 +804,7 @@ class GenericProvider(Provider):
                 max_tool_calls: Maximum number of tool calls before forcing stop
             """
             # Count total tool calls made so far
-            tool_call_count = sum(
-                1 for msg in messages
-                if isinstance(msg, ToolMessage)
-            )
+            tool_call_count = sum(1 for msg in messages if isinstance(msg, ToolMessage))
 
             # Safety limit: prevent runaway tool calling
             if tool_call_count >= max_tool_calls:
@@ -799,12 +813,12 @@ class GenericProvider(Provider):
             # Detect infinite loop: same tool called with same arguments in succession
             recent_calls = []
             for msg in reversed(messages):
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tc in msg.tool_calls:
                         # Create signature: (tool_name, sorted_args)
                         try:
-                            args_str = json.dumps(tc.get('args', {}), sort_keys=True)
-                            signature = (tc.get('name', ''), args_str)
+                            args_str = json.dumps(tc.get("args", {}), sort_keys=True)
+                            signature = (tc.get("name", ""), args_str)
 
                             # Check if this exact call was made in last 2 calls
                             if signature in recent_calls[-2:]:
@@ -828,6 +842,10 @@ class GenericProvider(Provider):
                 # Force model to stop and provide final answer
                 result["tool_choice"] = self.oci_tool_choice_none()
             # else: Allow model to decide (default behavior)
+
+        # Add parallel tool calls support (GenericChatRequest models)
+        if "is_parallel_tool_calls" in kwargs:
+            result["is_parallel_tool_calls"] = kwargs["is_parallel_tool_calls"]
 
         return result
 
@@ -1142,9 +1160,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             ) from ex
 
         oci_params = self._provider.messages_to_oci_params(
-            messages,
-            max_sequential_tool_calls=self.max_sequential_tool_calls,
-            **kwargs
+            messages, max_sequential_tool_calls=self.max_sequential_tool_calls, **kwargs
         )
 
         oci_params["is_stream"] = stream
@@ -1154,12 +1170,17 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
         # Warn if using max_tokens with OpenAI models
-        if self.model_id and self.model_id.startswith("openai.") and "max_tokens" in _model_kwargs:
+        if (
+            self.model_id
+            and self.model_id.startswith("openai.")
+            and "max_tokens" in _model_kwargs
+        ):
             import warnings
+
             warnings.warn(
                 f"OpenAI models require 'max_completion_tokens' instead of 'max_tokens'.",
                 UserWarning,
-                stacklevel=2
+                stacklevel=2,
             )
 
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
@@ -1186,6 +1207,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "none", "required", "any"], bool]
         ] = None,
+        parallel_tool_calls: Optional[bool] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, BaseMessage]:
         """Bind tool-like objects to this chat model.
@@ -1206,6 +1228,12 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     {"type": "function", "function": {"name": <<tool_name>>}}:
                 calls <<tool_name>> tool.
                 - False or None: no effect, default Meta behavior.
+            parallel_tool_calls: Whether to enable parallel function calling.
+                If True, the model can call multiple tools simultaneously.
+                If False, tools are called sequentially.
+                If None (default), uses the class-level parallel_tool_calls setting.
+                Supported for models using GenericChatRequest (Meta, Llama, xAI Grok,
+                OpenAI, Mistral). Not supported for Cohere models.
             kwargs: Any additional parameters are passed directly to
                 :meth:`~langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI.bind`.
         """
@@ -1214,6 +1242,16 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         if tool_choice is not None:
             kwargs["tool_choice"] = self._provider.process_tool_choice(tool_choice)
+
+        # Add parallel tool calls support
+        # Use bind-time parameter if provided, else fall back to class default
+        use_parallel = (
+            parallel_tool_calls
+            if parallel_tool_calls is not None
+            else self.parallel_tool_calls
+        )
+        if use_parallel:
+            kwargs["is_parallel_tool_calls"] = True
 
         return super().bind(tools=formatted_tools, **kwargs)
 
@@ -1244,7 +1282,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 used. Note that if using "json_mode" then you must include instructions
                 for formatting the output into the desired schema into the model call.
                 If "json_schema" then it allows the user to pass a json schema (or pydantic)
-                to the model for structured output. 
+                to the model for structured output.
             include_raw:
                 If False then only the parsed structured output is returned. If
                 an error occurs during model output parsing it will be raised. If True
@@ -1300,18 +1338,18 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 if is_pydantic_schema
                 else schema
             )
-            
+
             response_json_schema = self._provider.oci_response_json_schema(
                 name=json_schema_dict.get("title", "response"),
                 description=json_schema_dict.get("description", ""),
                 schema=json_schema_dict,
-                is_strict=True
+                is_strict=True,
             )
-            
+
             response_format_obj = self._provider.oci_json_schema_response_format(
                 json_schema=response_json_schema
             )
-            
+
             llm = self.bind(response_format=response_format_obj)
             if is_pydantic_schema:
                 output_parser = PydanticOutputParser(pydantic_object=schema)
