@@ -120,6 +120,13 @@ class OCIGenAIBase(BaseModel, ABC):
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
 
+    response_format: Optional[Any] = None
+    """Format for the model's output.
+    Can be a dict with 'type' key (e.g., {"type": "JSON_OBJECT"})
+    or an OCI ResponseFormat object (TextResponseFormat, JsonObjectResponseFormat, JsonSchemaResponseFormat).
+    Supported for both GenericChatRequest and CohereChatRequest models.
+    Default: None (no specific format enforced)."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )
