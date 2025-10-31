@@ -253,6 +253,67 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
             assert tool_call["type"] == "function"
             assert tool_call["function"]["name"] == "get_weather"
 
+    # Test escaped JSON arguments (issue #52)
+    def mocked_response_escaped(*args, **kwargs):  # type: ignore[no-untyped-def]
+        """Mock response with escaped JSON arguments."""
+        return MockResponseDict(
+            {
+                "status": 200,
+                "data": MockResponseDict(
+                    {
+                        "chat_response": MockResponseDict(
+                            {
+                                "choices": [
+                                    MockResponseDict(
+                                        {
+                                            "message": MockResponseDict(
+                                                {
+                                                    "content": [
+                                                        MockResponseDict({"text": ""})
+                                                    ],
+                                                    "tool_calls": [
+                                                        MockResponseDict(
+                                                            {
+                                                                "type": "FUNCTION",
+                                                                "id": "call_escaped",
+                                                                "name": "get_weather",
+                                                                # Escaped JSON (the bug scenario)
+                                                                "arguments": '"{\\\"location\\\": \\\"San Francisco\\\"}"',
+                                                                "attribute_map": {
+                                                                    "id": "id",
+                                                                    "type": "type",
+                                                                    "name": "name",
+                                                                    "arguments": "arguments",
+                                                                },
+                                                            }
+                                                        )
+                                                    ],
+                                                }
+                                            ),
+                                            "finish_reason": "tool_calls",
+                                        }
+                                    )
+                                ],
+                                "time_created": "2025-10-22T19:48:12.726000+00:00",
+                            }
+                        ),
+                        "model_id": "meta.llama-3-70b-instruct",
+                        "model_version": "1.0.0",
+                    }
+                ),
+                "request_id": "test_escaped",
+                "headers": MockResponseDict({"content-length": "366"}),
+            }
+        )
+
+    monkeypatch.setattr(llm.client, "chat", mocked_response_escaped)
+    response_escaped = llm.bind_tools(tools=[get_weather]).invoke(messages)
+
+    # Verify escaped JSON was correctly parsed to a dict
+    assert len(response_escaped.tool_calls) == 1
+    assert response_escaped.tool_calls[0]["name"] == "get_weather"
+    assert response_escaped.tool_calls[0]["args"] == {"location": "San Francisco"}
+
 
 @pytest.mark.requires("oci")
 def test_cohere_tool_choice_validation(monkeypatch: MonkeyPatch) -> None:
