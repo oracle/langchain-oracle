@@ -367,7 +367,8 @@ class CohereProvider(Provider):
         if kwargs.get("is_parallel_tool_calls"):
             raise ValueError(
                 "Parallel tool calls are not supported for Cohere models. "
-                "This feature is only available for Meta/Llama models using GenericChatRequest."
+                "This feature is only available for models using GenericChatRequest "
+                "(Meta, Llama, xAI Grok, OpenAI, Mistral)."
             )
 
         is_force_single_step = kwargs.get("is_force_single_step", False)
@@ -858,7 +859,7 @@ class GenericProvider(Provider):
                 result["tool_choice"] = self.oci_tool_choice_none()
             # else: Allow model to decide (default behavior)
 
-        # Add parallel tool calls support for Meta/Llama models
+        # Add parallel tool calls support (GenericChatRequest models)
         if "is_parallel_tool_calls" in kwargs:
             result["is_parallel_tool_calls"] = kwargs["is_parallel_tool_calls"]
 
@@ -1247,7 +1248,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 If True, the model can call multiple tools simultaneously.
                 If False, tools are called sequentially.
                 If None (default), uses the class-level parallel_tool_calls setting.
-                Only supported for Meta/Llama models using GenericChatRequest.
+                Supported for models using GenericChatRequest (Meta, Llama, xAI Grok,
+                OpenAI, Mistral). Not supported for Cohere models.
             kwargs: Any additional parameters are passed directly to
                 :meth:`~langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI.bind`.
         """

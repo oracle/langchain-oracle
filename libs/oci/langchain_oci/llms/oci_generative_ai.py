@@ -123,7 +123,8 @@ class OCIGenAIBase(BaseModel, ABC):
     parallel_tool_calls: bool = False
     """Whether to enable parallel function calling during tool use.
     If True, the model can call multiple tools simultaneously.
-    Only supported for Meta/Llama models using GenericChatRequest.
+    Supported for all models using GenericChatRequest (Meta, Llama, xAI Grok, OpenAI, Mistral).
+    Not supported for Cohere models.
     Default: False for backward compatibility."""
 
     model_config = ConfigDict(
