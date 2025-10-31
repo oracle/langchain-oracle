@@ -363,6 +363,13 @@ class CohereProvider(Provider):
 
         This includes conversion of chat history and tool call results.
         """
+        # Cohere models don't support parallel tool calls
+        if kwargs.get("is_parallel_tool_calls"):
+            raise ValueError(
+                "Parallel tool calls are not supported for Cohere models. "
+                "This feature is only available for Meta/Llama models using GenericChatRequest."
+            )
+
         is_force_single_step = kwargs.get("is_force_single_step", False)
         oci_chat_history = []
 
@@ -851,6 +858,10 @@ class GenericProvider(Provider):
                 result["tool_choice"] = self.oci_tool_choice_none()
             # else: Allow model to decide (default behavior)
 
+        # Add parallel tool calls support for Meta/Llama models
+        if "is_parallel_tool_calls" in kwargs:
+            result["is_parallel_tool_calls"] = kwargs["is_parallel_tool_calls"]
+
         return result
 
     def _process_message_content(
@@ -1211,6 +1222,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "none", "required", "any"], bool]
         ] = None,
+        parallel_tool_calls: Optional[bool] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, BaseMessage]:
         """Bind tool-like objects to this chat model.
@@ -1231,6 +1243,11 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     {"type": "function", "function": {"name": <<tool_name>>}}:
                 calls <<tool_name>> tool.
                 - False or None: no effect, default Meta behavior.
+            parallel_tool_calls: Whether to enable parallel function calling.
+                If True, the model can call multiple tools simultaneously.
+                If False, tools are called sequentially.
+                If None (default), uses the class-level parallel_tool_calls setting.
+                Only supported for Meta/Llama models using GenericChatRequest.
             kwargs: Any additional parameters are passed directly to
                 :meth:`~langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI.bind`.
         """
@@ -1239,6 +1256,12 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         if tool_choice is not None:
             kwargs["tool_choice"] = self._provider.process_tool_choice(tool_choice)
+
+        # Add parallel tool calls support
+        # Use bind-time parameter if provided, else fall back to class default
+        use_parallel = parallel_tool_calls if parallel_tool_calls is not None else self.parallel_tool_calls
+        if use_parallel:
+            kwargs["is_parallel_tool_calls"] = True
 
         return super().bind(tools=formatted_tools, **kwargs)
 

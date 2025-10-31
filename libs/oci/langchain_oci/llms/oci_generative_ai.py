@@ -120,6 +120,12 @@ class OCIGenAIBase(BaseModel, ABC):
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
 
+    parallel_tool_calls: bool = False
+    """Whether to enable parallel function calling during tool use.
+    If True, the model can call multiple tools simultaneously.
+    Only supported for Meta/Llama models using GenericChatRequest.
+    Default: False for backward compatibility."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )
