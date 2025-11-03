@@ -98,7 +98,11 @@ class OCIUtils:
 
         # If the parsed result is a string, it means the JSON was escaped, so parse again
         if isinstance(parsed, str):
-            parsed = json.loads(parsed)
+            try:
+                parsed = json.loads(parsed)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, keep it as a string
+                pass
 
         return ToolCall(
             name=tool_call.name,
