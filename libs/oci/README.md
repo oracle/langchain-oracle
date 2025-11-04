@@ -79,6 +79,32 @@ structured_llm = llm.with_structured_output(Joke)
 structured_llm.invoke("Tell me a joke about programming")
 ```
 
+### 5. Use OpenAI Responses API
+`OCIChatOpenAI` supports OpenAI Responses API.
+
+```python
+from langchain_oci import (
+    OCIChatOpenAI,
+    OCISessionAuth,
+)
+client = OCIChatOpenAI(
+        auth=OCISessionAuth(profile_name="MY_PROFILE_NAME"),
+        compartment_id="MY_COMPARTMENT_ID",
+        region="MY_REGION",
+        override_url="MY_OVERRIDE_URL",
+        model="MY_MODEL",
+        conversation_store_id="MY_CONVERSATION_STORE_ID"
+    )
+messages = [
+        (
+            "system",
+            "You are a helpful translator. Translate the user sentence to French.",
+        ),
+        ("human", "I love programming."),
+    ]
+response = client.invoke(messages)
+```
+
 
 ## OCI Data Science Model Deployment Examples
 
