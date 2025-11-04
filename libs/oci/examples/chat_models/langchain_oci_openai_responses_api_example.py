@@ -6,12 +6,12 @@ from langchain_oci import (
     OCISessionAuth,
 )
 
-COMPARTMENT_ID = "ocid1.tenancy.oc1..aaaaaaaaumuuscymm6yb3wsbaicfx3mjhesghplvrvamvbypyehh5pgaasna"
-CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1.us-sanjose-1.amaaaaaask7dceyaichocdeezhgmpzs3ikrmmxb3gtxh34nuo2cxrzdpv7ma"
-OVERRIDE_URL="https://dev.inference.generativeai.us-sanjose-1.oci.oraclecloud.com/20231130/openai/v1"
-REGION = "us-chicago-1"
-MODEL = "openai.gpt-4o"
-PROFILE_NAME="oc1"
+COMPARTMENT_ID = ""
+CONVERSATION_STORE_ID = ""
+OVERRIDE_URL=""
+REGION = ""
+MODEL = ""
+PROFILE_NAME=""
 
 
 def get_oci_openai_client():
