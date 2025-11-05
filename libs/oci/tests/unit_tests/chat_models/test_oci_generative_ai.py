@@ -816,18 +816,18 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
     assert response.content == "I'll help you."
 
 
+@pytest.mark.requires("oci")
 def test_get_provider():
     """Test determining the provider based on the model_id."""
+    oci_gen_ai_client = MagicMock()
     model_provider_map = {
         "cohere.command-latest": "CohereProvider",
         "meta.llama-3.3-70b-instruct": "MetaProvider",
         "xai.grok-3": "GenericProvider",
     }
     for model_id, provider_name in model_provider_map.items():
-        assert (
-            ChatOCIGenAI(model_id=model_id)._provider.__class__.__name__
-            == provider_name
-        )
+        llm = ChatOCIGenAI(model_id=model_id, client=oci_gen_ai_client)
+        assert llm._provider.__class__.__name__ == provider_name
 
 
 @pytest.mark.requires("oci")
