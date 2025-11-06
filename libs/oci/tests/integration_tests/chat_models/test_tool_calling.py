@@ -84,9 +84,7 @@ def weather_tool():
 def create_agent(model_id: str, weather_tool: StructuredTool):
     """Create a LangGraph agent with tool calling."""
     region = os.getenv("OCI_REGION", "us-chicago-1")
-    endpoint = (
-        f"https://inference.generativeai.{region}.oci.oraclecloud.com"
-    )
+    endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
@@ -149,10 +147,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     agent = create_agent(model_id, weather_tool)
 
     # Invoke the agent
-    system_msg = (
-        "You are a helpful assistant. Use the available tools when "
-        "needed to answer questions accurately."
-    )
+    system_msg = "You are a helpful assistant. Use the available tools when needed to answer questions accurately."
     result = agent.invoke(
         {
             "messages": [
@@ -169,35 +164,22 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     assert len(messages) >= 4, expected
 
     # Find tool messages
-    tool_messages = [
-        msg for msg in messages if type(msg).__name__ == "ToolMessage"
-    ]
+    tool_messages = [msg for msg in messages if type(msg).__name__ == "ToolMessage"]
     assert len(tool_messages) >= 1, "Should have at least one tool result"
 
     # Find AI messages with tool calls
     ai_tool_calls = [
-        msg
-        for msg in messages
-        if (
-            type(msg).__name__ == "AIMessage"
-            and hasattr(msg, "tool_calls")
-            and msg.tool_calls
-        )
+        msg for msg in messages if (type(msg).__name__ == "AIMessage" and hasattr(msg, "tool_calls") and msg.tool_calls)
     ]
     # The model should call the tool, but after receiving results,
     # should not call again. Allow flexibility - some models might make
     # 1 call, others might need 2, but should stop
-    error_msg = (
-        f"Model made too many tool calls ({len(ai_tool_calls)}), "
-        "possible infinite loop"
-    )
+    error_msg = f"Model made too many tool calls ({len(ai_tool_calls)}), possible infinite loop"
     assert len(ai_tool_calls) <= 2, error_msg
 
     # Verify final message is an AI response without tool calls
     final_message = messages[-1]
-    assert type(final_message).__name__ == "AIMessage", (
-        "Final message should be AIMessage"
-    )
+    assert type(final_message).__name__ == "AIMessage", "Final message should be AIMessage"
     assert final_message.content, "Final message should have content"
     assert not (
         hasattr(final_message, "tool_calls") and final_message.tool_calls
@@ -284,6 +266,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     multi-step investigations requiring several tool calls before
     providing a final analysis.
     """
+
     # Create diagnostic tools that simulate a monitoring workflow
     def check_status(resource: str) -> str:
         """Check the status of a resource."""
@@ -291,17 +274,12 @@ def test_multi_step_tool_orchestration(model_id: str):
             "payment-service": "Status: Running, Memory: 95%, Restarts: 12",
             "web-server": "Status: Running, Memory: 60%, Restarts: 0",
         }
-        return status_data.get(
-            resource, f"Resource {resource} status: Unknown"
-        )
+        return status_data.get(resource, f"Resource {resource} status: Unknown")
 
     def get_events(resource: str) -> str:
         """Get recent events for a resource."""
         events_data = {
-            "payment-service": (
-                "Events: [OOMKilled at 14:23, "
-                "BackOff at 14:30, Started at 14:32]"
-            ),
+            "payment-service": ("Events: [OOMKilled at 14:23, BackOff at 14:30, Started at 14:32]"),
             "web-server": "Events: [Started at 10:00, Healthy]",
         }
         return events_data.get(resource, f"No events for {resource}")
@@ -309,10 +287,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     def get_metrics(resource: str) -> str:
         """Get historical metrics for a resource."""
         metrics_data = {
-            "payment-service": (
-                "Memory trend: 70%→80%→90%→95% "
-                "(gradual increase over 2h)"
-            ),
+            "payment-service": ("Memory trend: 70%→80%→90%→95% (gradual increase over 2h)"),
             "web-server": "Memory trend: 55%→58%→60% (stable)",
         }
         return metrics_data.get(resource, f"No metrics for {resource}")
@@ -369,9 +344,7 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Create agent with higher recursion limit to allow multi-step
     region = os.getenv("OCI_REGION", "us-chicago-1")
-    endpoint = (
-        f"https://inference.generativeai.{region}.oci.oraclecloud.com"
-    )
+    endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
@@ -393,11 +366,7 @@ def test_multi_step_tool_orchestration(model_id: str):
         response = model_with_tools.invoke(messages)
 
         # OCI LIMITATION: Only allow ONE tool call at a time
-        if (
-            hasattr(response, "tool_calls")
-            and response.tool_calls
-            and len(response.tool_calls) > 1
-        ):
+        if hasattr(response, "tool_calls") and response.tool_calls and len(response.tool_calls) > 1:
             # Some models try to call multiple tools in parallel
             # Restrict to first tool only to avoid OCI API error
             response.tool_calls = [response.tool_calls[0]]
@@ -457,45 +426,33 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Count tool calls
     tool_call_messages = [
-        msg
-        for msg in messages
-        if (
-            type(msg).__name__ == "AIMessage"
-            and hasattr(msg, "tool_calls")
-            and msg.tool_calls
-        )
+        msg for msg in messages if (type(msg).__name__ == "AIMessage" and hasattr(msg, "tool_calls") and msg.tool_calls)
     ]
-    tool_result_messages = [
-        msg for msg in messages if type(msg).__name__ == "ToolMessage"
-    ]
+    tool_result_messages = [msg for msg in messages if type(msg).__name__ == "ToolMessage"]
 
     # Verify multi-step orchestration worked
-    msg = (
-        f"Should have made multiple tool calls (got {len(tool_call_messages)})"
-    )
+    msg = f"Should have made multiple tool calls (got {len(tool_call_messages)})"
     assert len(tool_call_messages) >= 2, msg
 
     # CRITICAL: Verify max_sequential_tool_calls limit was respected
     # The agent should stop at or before the limit (8 tool calls)
     # This is the key protection against infinite loops
-    assert len(tool_call_messages) <= 8, (
-        f"Too many tool calls ({len(tool_call_messages)}), "
-        "max_sequential_tool_calls limit not enforced"
-    )
+    assert (
+        len(tool_call_messages) <= 8
+    ), f"Too many tool calls ({len(tool_call_messages)}), max_sequential_tool_calls limit not enforced"
 
     # Verify tool results were received
-    assert len(tool_result_messages) >= 2, (
-        "Should have received multiple tool results"
-    )
+    assert len(tool_result_messages) >= 2, "Should have received multiple tool results"
 
     # Verify agent eventually stopped (didn't loop infinitely)
     # The final message might still have tool_calls if the agent hit
     # the max_sequential_tool_calls limit, which is expected behavior.
     # The key is that it STOPPED (didn't continue infinitely).
     final_message = messages[-1]
-    assert type(final_message).__name__ in ["AIMessage", "ToolMessage"], (
-        "Final message should be AIMessage or ToolMessage"
-    )
+    assert type(final_message).__name__ in [
+        "AIMessage",
+        "ToolMessage",
+    ], "Final message should be AIMessage or ToolMessage"
 
     # Verify the agent didn't hit infinite loop by checking message count
     # With max_sequential_tool_calls=8, we expect roughly:
