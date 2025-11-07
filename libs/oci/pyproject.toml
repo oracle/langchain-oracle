@@ -43,6 +43,7 @@ codespell = "^2.2.6"
 optional = true
 
 [tool.poetry.group.test_integration.dependencies]
+langgraph = "^0.2.0"
 
 [tool.poetry.group.lint]
 optional = true
