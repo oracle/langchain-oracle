@@ -1176,47 +1176,45 @@ def _read_similarity_output(
     result[3] - embedding (optional)
     """
     docs: Any = []
-    for result in results:
-        id = None
-        metadata = result[1] or {}
+    for row in results:
+        text, metadata, *extras = row
+        metadata = metadata or {}
 
-        if INTERNAL_ID_KEY in metadata:
-            id = metadata[INTERNAL_ID_KEY]
-            del metadata[INTERNAL_ID_KEY]
+        # Extract internal ID if present
+        doc_id = metadata.pop(INTERNAL_ID_KEY, None)
 
-        page_content_str = result[0] if result[0] is not None else ""
-
-        if not isinstance(page_content_str, str):
-            raise Exception("Unexpected type:", type(page_content_str))
+        # Ensure text is string
+        if not isinstance(text, str):
+            text = str(text or "")
 
         doc = Document(
-            page_content=page_content_str,
+            page_content=text,
             metadata=metadata,
-            **({"id": id} if id is not None else {}),
+            **({"id": doc_id} if doc_id is not None else {}),
         )
 
+        # Basic case (no extra fields)
         if not has_similarity_score and not has_embeddings:
             docs.append(doc)
             continue
-
-        temp_res: Any = []
-        temp_res.append(doc)
+        
+        # Extended result (score, embedding)
+        result_parts = [doc]
 
         if has_similarity_score:
-            distance = result[2]
-            temp_res.append(distance)
+            result_parts.append(extras[0])
 
         if has_embeddings:
             # assuming result[3] is already in the correct format;
             # adjust if necessary
             current_embedding = (
-                np.array(result[3], dtype=np.float32)
-                if result[3]
+                np.array(extras[1], dtype=np.float32)
+                if extras[1]
                 else np.empty(0, dtype=np.float32)
             )
-            temp_res.append(current_embedding)
+            result_parts.append(current_embedding)
 
-        docs.append(tuple(temp_res))
+        docs.append(tuple(result_parts))
 
     return docs
 
@@ -1537,65 +1535,70 @@ class OracleVS(VectorStore):
         connection = _get_connection(self.client)
         if connection is None:
             raise ValueError("Failed to acquire a connection.")
-        with connection.cursor() as cursor:
-            # self.mutate_on_duplicate controls how inserts handle existing IDs.
-            # If False:
-            #   uses INSERT_QUERY.
-            #   existing rows having the same ID as the inserted row are not updated.
-            #   with batcherrors=True, duplicate rows are skipped and their IDs
-            #       are not included in the `add_texts` return value (i.e., not
-            #       reported as successfully inserted).
-            #
-            # If True:
-            #   uses MERGE_QUERY.
-            #   existing rows having the same ID as the inserted row are updated
-            #       with the new data ("upsert").
-            #   the ID is included in the `add_texts` return value,
-            #       indicating a successful insert/update.
-            selected_query = (
-                INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
-            )
-            if not isinstance(self.embeddings, OracleEmbeddings):
-                cursor.setinputsizes(
-                    None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+        error_indices = []
+        try:
+            with connection.cursor() as cursor:
+                # self.mutate_on_duplicate controls how inserts handle existing IDs.
+                # If False:
+                #   uses INSERT_QUERY.
+                #   existing rows having the same ID as the inserted row are not updated.
+                #   with batcherrors=True, duplicate rows are skipped and their IDs
+                #       are not included in the `add_texts` return value (i.e., not
+                #       reported as successfully inserted).
+                #
+                # If True:
+                #   uses MERGE_QUERY.
+                #   existing rows having the same ID as the inserted row are updated
+                #       with the new data ("upsert").
+                #   the ID is included in the `add_texts` return value,
+                #       indicating a successful insert/update.
+                selected_query = (
+                    INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                 )
-                cursor.executemany(
-                    selected_query.format(
-                        table_name=self.table_name, values=":1, :2, :3, :4"
-                    ),
-                    docs,
-                    batcherrors=True,
-                )
-
-            else:
-                if self.embeddings.proxy:
-                    cursor.execute(
-                        "begin utl_http.set_proxy(:proxy); end;",
-                        proxy=self.embeddings.proxy,
+                if not isinstance(self.embeddings, OracleEmbeddings):
+                    cursor.setinputsizes(
+                        None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+                    )
+                    cursor.executemany(
+                        selected_query.format(
+                            table_name=self.table_name, values=":1, :2, :3, :4"
+                        ),
+                        docs,
+                        batcherrors=True,
                     )
 
-                cursor.setinputsizes(
-                    meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                )
+                else:
+                    if self.embeddings.proxy:
+                        cursor.execute(
+                            "begin utl_http.set_proxy(:proxy); end;",
+                            proxy=self.embeddings.proxy,
+                        )
 
-                cursor.executemany(
-                    selected_query.format(
-                        table_name=self.table_name,
-                        values=(
-                            ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                            ":meta, :text"
+                    cursor.setinputsizes(
+                        meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
+                    )
+
+                    cursor.executemany(
+                        selected_query.format(
+                            table_name=self.table_name,
+                            values=(
+                                ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                ":meta, :text"
+                            ),
                         ),
-                    ),
-                    docs,
-                    batcherrors=True,
-                )
+                        docs,
+                        batcherrors=True,
+                    )
 
-            error_indices = [error.offset for error in cursor.getbatcherrors()]
-            connection.commit()
+                for error in cursor.getbatcherrors():
+                    error_indices.append(error.offset)
+                    logger.warning("Could not insert row at offset %s due to error: %s", error.offset, error.message)
 
-        # do not change the input dict list
-        for i in range(len(original_ids)):
-            del metadatas[i][INTERNAL_ID_KEY]
+                connection.commit()
+        finally:
+            # do not change the input dict list
+            for i in range(len(original_ids)):
+                del metadatas[i][INTERNAL_ID_KEY]
 
         inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
         return inserted_ids
@@ -1672,57 +1675,63 @@ class OracleVS(VectorStore):
         async def context(connection: Any) -> List[str]:
             if connection is None:
                 raise ValueError("Failed to acquire a connection.")
-            with connection.cursor() as cursor:
-                # self.mutate_on_duplicate controls how inserts handle existing IDs,
-                # behavior is identical to the synchronous `add_texts` method.
-                selected_query = (
-                    INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
-                )
-                if not isinstance(self.embeddings, OracleEmbeddings):
-                    cursor.setinputsizes(
-                        None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+            error_indices = []
+            try:
+                with connection.cursor() as cursor:
+                    # self.mutate_on_duplicate controls how inserts handle existing IDs,
+                    # behavior is identical to the synchronous `add_texts` method.
+                    selected_query = (
+                        INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
-                    await cursor.executemany(
-                        selected_query.format(
-                            table_name=self.table_name, values=":1, :2, :3, :4"
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
-                else:
-                    if self.embeddings.proxy:
-                        await cursor.execute(
-                            "begin utl_http.set_proxy(:proxy); end;",
-                            proxy=self.embeddings.proxy,
+                    if not isinstance(self.embeddings, OracleEmbeddings):
+                        cursor.setinputsizes(
+                            None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+                        )
+                        await cursor.executemany(
+                            selected_query.format(
+                                table_name=self.table_name, values=":1, :2, :3, :4"
+                            ),
+                            docs,
+                            batcherrors=True,
+                        )
+                    else:
+                        if self.embeddings.proxy:
+                            await cursor.execute(
+                                "begin utl_http.set_proxy(:proxy); end;",
+                                proxy=self.embeddings.proxy,
+                            )
+
+                        cursor.setinputsizes(
+                            meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                         )
 
-                    cursor.setinputsizes(
-                        meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                    )
-
-                    await cursor.executemany(
-                        selected_query.format(
-                            table_name=self.table_name,
-                            values=(
-                                ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                ":meta, :text"
+                        await cursor.executemany(
+                            selected_query.format(
+                                table_name=self.table_name,
+                                values=(
+                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                    ":meta, :text"
+                                ),
                             ),
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
+                            docs,
+                            batcherrors=True,
+                        )
+                        
+                    for error in cursor.getbatcherrors():
+                        error_indices.append(error.offset)
+                        logger.warning("Could not insert row at offset %s due to error: %s", error.offset, error.message)
 
-                error_indices = [error.offset for error in cursor.getbatcherrors()]
-                await connection.commit()
-                return error_indices
+                    await connection.commit()
+            finally:
+                for i in range(len(original_ids)):
+                    del metadatas[i][INTERNAL_ID_KEY]
 
-        error_indices = await _handle_context(self.client, context)
+            inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
 
-        # do not change the input dict list
-        for i in range(len(original_ids)):
-            del metadatas[i][INTERNAL_ID_KEY]
+            return inserted_ids
 
-        inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
+        inserted_ids = await _handle_context(self.client, context)
+
         return inserted_ids
 
     def similarity_search(
