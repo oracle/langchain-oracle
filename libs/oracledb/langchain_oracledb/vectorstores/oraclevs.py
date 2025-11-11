@@ -1197,9 +1197,9 @@ def _read_similarity_output(
         if not has_similarity_score and not has_embeddings:
             docs.append(doc)
             continue
-        
+
         # Extended result (score, embedding)
-        result_parts = [doc]
+        result_parts: list[Any] = [doc]
 
         if has_similarity_score:
             result_parts.append(extras[0])
@@ -1495,10 +1495,22 @@ class OracleVS(VectorStore):
         """
 
         texts = list(texts)
+        if ids and len(ids) != len(texts):
+            raise ValueError(
+                f"Length mismatch: 'ids' has {len(ids)} items, "
+                f"but 'texts' has {len(texts)} items."
+            )
+
         processed_ids, original_ids = get_processed_ids(texts, metadatas, ids)
 
         if not metadatas:
             metadatas = [{} for _ in texts]
+        else:
+            if len(metadatas) != len(texts):
+                raise ValueError(
+                    f"Length mismatch: 'metadatas' has {len(metadatas)} items, "
+                    f"but 'texts' has {len(texts)} items."
+                )
 
         for i, _id in enumerate(original_ids):
             if INTERNAL_ID_KEY in metadatas[i]:
@@ -1541,7 +1553,8 @@ class OracleVS(VectorStore):
                 # self.mutate_on_duplicate controls how inserts handle existing IDs.
                 # If False:
                 #   uses INSERT_QUERY.
-                #   existing rows having the same ID as the inserted row are not updated.
+                #   existing rows having the same ID as the inserted row are not
+                #       updated.
                 #   with batcherrors=True, duplicate rows are skipped and their IDs
                 #       are not included in the `add_texts` return value (i.e., not
                 #       reported as successfully inserted).
@@ -1592,13 +1605,17 @@ class OracleVS(VectorStore):
 
                 for error in cursor.getbatcherrors():
                     error_indices.append(error.offset)
-                    logger.warning("Could not insert row at offset %s due to error: %s", error.offset, error.message)
+                    logger.warning(
+                        "Could not insert row at offset %s due to error: %s",
+                        error.offset,
+                        error.message,
+                    )
 
                 connection.commit()
         finally:
             # do not change the input dict list
             for i in range(len(original_ids)):
-                del metadatas[i][INTERNAL_ID_KEY]
+                metadatas[i].pop(INTERNAL_ID_KEY, None)
 
         inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
         return inserted_ids
@@ -1635,10 +1652,22 @@ class OracleVS(VectorStore):
         """
 
         texts = list(texts)
+        if ids and len(ids) != len(texts):
+            raise ValueError(
+                f"Length mismatch: 'ids' has {len(ids)} items, "
+                f"but 'texts' has {len(texts)} items."
+            )
+
         processed_ids, original_ids = get_processed_ids(texts, metadatas, ids)
 
         if not metadatas:
             metadatas = [{} for _ in texts]
+        else:
+            if len(metadatas) != len(texts):
+                raise ValueError(
+                    f"Length mismatch: 'metadatas' has {len(metadatas)} items, "
+                    f"but 'texts' has {len(texts)} items."
+                )
 
         for i, _id in enumerate(original_ids):
             if INTERNAL_ID_KEY in metadatas[i]:
@@ -1716,17 +1745,23 @@ class OracleVS(VectorStore):
                             docs,
                             batcherrors=True,
                         )
-                        
+
                     for error in cursor.getbatcherrors():
                         error_indices.append(error.offset)
-                        logger.warning("Could not insert row at offset %s due to error: %s", error.offset, error.message)
+                        logger.warning(
+                            "Could not insert row at offset %s due to error: %s",
+                            error.offset,
+                            error.message,
+                        )
 
                     await connection.commit()
             finally:
                 for i in range(len(original_ids)):
-                    del metadatas[i][INTERNAL_ID_KEY]
+                    metadatas[i].pop(INTERNAL_ID_KEY, None)
 
-            inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
+            inserted_ids = [
+                i for j, i in enumerate(original_ids) if j not in error_indices
+            ]
 
             return inserted_ids
 
