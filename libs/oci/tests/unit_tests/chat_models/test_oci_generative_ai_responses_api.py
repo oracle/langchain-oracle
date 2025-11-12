@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from langchain_oci.chat_models.oci_generative_ai_responses_api import (
     COMPARTMENT_ID_HEADER,
     CONVERSATION_STORE_ID_HEADER,
-    OCIChatOpenAI,
+    ChatOCIOpenAI,
     OCIInstancePrincipleAuth,
     OCIResourcePrincipleAuth,
     OCISessionAuth,
@@ -236,7 +236,7 @@ def _set_mock_create_response_with_web_search(httpx_mock):
 @pytest.fixture
 def oci_openai_client(auth_instance):
     """Return a ready OCIOpenAI client for any auth type."""
-    client = OCIChatOpenAI(
+    client = ChatOCIOpenAI(
         auth=auth_instance,
         compartment_id=COMPARTMENT_ID,
         conversation_store_id=CONVERSATION_STORE_ID,

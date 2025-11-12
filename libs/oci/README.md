@@ -80,14 +80,14 @@ structured_llm.invoke("Tell me a joke about programming")
 ```
 
 ### 5. Use OpenAI Responses API
-`OCIChatOpenAI` supports OpenAI Responses API.
+`ChatOCIOpenAI` supports OpenAI Responses API.
 
 ```python
 from langchain_oci import (
-    OCIChatOpenAI,
+    ChatOCIOpenAI,
     OCISessionAuth,
 )
-client = OCIChatOpenAI(
+client = ChatOCIOpenAI(
         auth=OCISessionAuth(profile_name="MY_PROFILE_NAME"),
         compartment_id="MY_COMPARTMENT_ID",
         region="MY_REGION",

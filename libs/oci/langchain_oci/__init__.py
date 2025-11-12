@@ -7,7 +7,13 @@ from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeploymentVLLM,
 )
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
-from langchain_oci.chat_models.oci_generative_ai_responses_api import OCIChatOpenAI, OCISessionAuth
+from langchain_oci.chat_models.oci_generative_ai_responses_api import (
+    ChatOCIOpenAI,
+    OCIInstancePrincipleAuth,
+    OCIResourcePrincipleAuth,
+    OCISessionAuth,
+    OCIUserPrincipleAuth,
+)
 from langchain_oci.embeddings.oci_data_science_model_deployment_endpoint import (
     OCIModelDeploymentEndpointEmbeddings,
 )
@@ -33,6 +39,9 @@ __all__ = [
     "OCIModelDeploymentLLM",
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
-    "OCIChatOpenAI",
-    "OCISessionAuth"
+    "ChatOCIOpenAI",
+    "OCISessionAuth",
+    "OCIResourcePrincipleAuth",
+    "OCIInstancePrincipleAuth",
+    "OCIUserPrincipleAuth",
 ]

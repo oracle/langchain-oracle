@@ -1,21 +1,18 @@
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from langchain_oci import (
-    OCIChatOpenAI,
-    OCISessionAuth,
-)
+from langchain_oci import ChatOCIOpenAI, OCISessionAuth
 
 COMPARTMENT_ID = ""
 CONVERSATION_STORE_ID = ""
-OVERRIDE_URL=""
+OVERRIDE_URL = ""
 REGION = ""
 MODEL = ""
-PROFILE_NAME=""
+PROFILE_NAME = ""
 
 
 def get_oci_openai_client():
-    return OCIChatOpenAI(
+    return ChatOCIOpenAI(
         auth=OCISessionAuth(profile_name=PROFILE_NAME),
         compartment_id=COMPARTMENT_ID,
         region=REGION,

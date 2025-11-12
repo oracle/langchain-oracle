@@ -265,7 +265,7 @@ class OCIAsyncOpenAI(AsyncOpenAI):
         )
 
 
-class OCIChatOpenAI(ChatOpenAI):
+class ChatOCIOpenAI(ChatOpenAI):
     """A custom OCI OpenAI client implementation confirming to OpenAI Responses API.
 
     Setup:
@@ -287,9 +287,9 @@ class OCIChatOpenAI(ChatOpenAI):
         .. code-block:: python
 
             from langchain_oci.chat_models.oci_generative_ai_responses_api import (
-                OCIChatOpenAI, OCIResourcePrincipleAuth,
+                ChatOCIOpenAI, OCIResourcePrincipleAuth,
             )
-            client = OCIChatOpenAI(
+            client = ChatOCIOpenAI(
                 auth=OCIResourcePrincipleAuth(),
                 compartment_id=COMPARTMENT_ID,
                 region=REGION,
