@@ -51,15 +51,18 @@ pytest tests/integration_tests/chat_models/test_tool_calling.py \
 """
 
 import os
+import time
 
 import pytest
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+def default_compartment():
+    return "ocid1.tenancy.oc1..aaaaaaaa7ayxuw32vjb64hbxtouarftwtwb2uat5x5mf4hu7cvzaesfrebrq"
 
 def get_weather(city: str) -> str:
     """Get the current weather for a given city name."""
@@ -68,8 +71,8 @@ def get_weather(city: str) -> str:
         "new york": "Cloudy, 60°F",
         "san francisco": "Foggy, 58°F",
     }
+    time.sleep(1)
     return weather_data.get(city.lower(), f"Weather data not available for {city}")
-
 
 @pytest.fixture
 def weather_tool():
@@ -90,7 +93,7 @@ def create_agent(model_id: str, weather_tool: StructuredTool):
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
-        compartment_id=os.getenv("OCI_COMP"),
+        compartment_id=os.getenv("OCI_COMP", default_compartment()),
         model_kwargs={"temperature": 0.3, "max_tokens": 512, "top_p": 0.9},
         auth_type="SECURITY_TOKEN",
         auth_profile="DEFAULT",
@@ -159,7 +162,9 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
                 SystemMessage(content=system_msg),
                 HumanMessage(content="What's the weather in Chicago?"),
             ]
-        }
+        },
+        config={"recursion_limit": 25},  # Allow enough recursion for multi-step
+
     )
 
     messages = result["messages"]
@@ -212,7 +217,8 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
 @pytest.mark.requires("oci")
 def test_meta_llama_tool_calling(weather_tool: StructuredTool):
     """Specific test for Meta Llama models to ensure fix works."""
-    model_id = "meta.llama-4-scout-17b-16e-instruct"
+    model_id = "meta.llama-4-scout-17b-16e-instruct"  # gets recursion error
+
     agent = create_agent(model_id, weather_tool)
 
     result = agent.invoke(
@@ -375,7 +381,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
-        compartment_id=os.getenv("OCI_COMP"),
+        compartment_id=os.getenv("OCI_COMP", default_compartment()),
         model_kwargs={"temperature": 0.2, "max_tokens": 2048, "top_p": 0.9},
         auth_type="SECURITY_TOKEN",
         auth_profile="DEFAULT",
@@ -510,3 +516,14 @@ def test_multi_step_tool_orchestration(model_id: str):
     # 1. Made multiple tool calls (multi-step orchestration)
     # 2. Stopped within the max_sequential_tool_calls limit
     # 3. Did not loop infinitely
+
+if __name__ == "__main__":
+    import os
+    import pytest
+
+    # Set your desired defaults here or fetch them by any required means.
+    # You may also load from a local file, IDE Run Config, etc.
+    os.environ.setdefault("OCI_REGION", "us-chicago-1")  # Edit as appropriate
+    os.environ.setdefault("OCI_COMP", "ocid1.tenancy.oc1..aaaaaaaa7ayxuw32vjb64hbxtouarftwtwb2uat5x5mf4hu7cvzaesfrebrq")  # Edit as appropriate
+    # This runs all tests in this file if you run it as a script in your IDE.
+    pytest.main([__file__])

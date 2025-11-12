@@ -1,6 +1,6 @@
-[tool.poetry]
+[project]
 name = "langchain-oci"
-version = "0.1.6"
+version = "0.1.7"
 description = "An integration package connecting OCI and LangChain"
 authors = []
 readme = "README.md"
@@ -11,15 +11,15 @@ license = "UPL"
 "Source Code" = "https://github.com/oracle/langchain-oracle/tree/main/libs/oci"
 
 [tool.poetry.dependencies]
-python = ">=3.9,<4.0"
-langchain-core = ">=0.3.20,<1.0.0"
-langchain = ">=0.3.20,<1.0.0"
+python = ">=3.10,<4.0"
+langchain-core = ">=0.3.20,<=1.0.4" # 0.3.20
+langchain = ">=0.3.20,<=1.0.4" # >=0.3.20
 oci = ">=2.161.0"
 pydantic = ">=2,<3"
 aiohttp = ">=3.12.14"
 
 [tool.poetry.group.test]
-optional = true
+optional = false
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.3"
@@ -40,12 +40,12 @@ optional = true
 codespell = "^2.2.6"
 
 [tool.poetry.group.test_integration]
-optional = true
+optional = false
 
 [tool.poetry.group.test_integration.dependencies]
 
 [tool.poetry.group.lint]
-optional = true
+optional = false
 
 [tool.poetry.group.lint.dependencies]
 ruff = "^0.1.8"
@@ -88,7 +88,8 @@ build-backend = "poetry.core.masonry.api"
 #
 # https://github.com/tophat/syrupy
 # --snapshot-warn-unused    Prints a warning on unused snapshots rather than fail the test suite.
-addopts = "--snapshot-warn-unused --strict-markers --strict-config --durations=5 --cov=langchain_oci"
+#addopts = "--snapshot-warn-unused --strict-markers --strict-config --durations=5 --cov=langchain_oci"
+addopts = "--snapshot-warn-unused --strict-markers --strict-config --durations=5"
 # Registering custom markers.
 # https://docs.pytest.org/en/7.1.x/example/markers.html#registering-markers
 markers = [
