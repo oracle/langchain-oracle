@@ -22,12 +22,10 @@ CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"
 class Provider(ABC):
     @property
     @abstractmethod
-    def stop_sequence_key(self) -> str:
-        ...
+    def stop_sequence_key(self) -> str: ...
 
     @abstractmethod
-    def completion_response_to_text(self, response: Any) -> str:
-        ...
+    def completion_response_to_text(self, response: Any) -> str: ...
 
 
 class CohereProvider(Provider):
@@ -122,7 +120,9 @@ class OCIGenAIBase(BaseModel, ABC):
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
 
-    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True, protected_namespaces=())
+    model_config = ConfigDict(
+        extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
+    )
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
@@ -152,8 +152,12 @@ class OCIGenAIBase(BaseModel, ABC):
             elif values["auth_type"] == OCIAuthType(2).name:
 
                 def make_security_token_signer(oci_config):  # type: ignore[no-untyped-def]
-                    pk = oci.signer.load_private_key_from_file(oci_config.get("key_file"), None)
-                    with open(oci_config.get("security_token_file"), encoding="utf-8") as f:
+                    pk = oci.signer.load_private_key_from_file(
+                        oci_config.get("key_file"), None
+                    )
+                    with open(
+                        oci_config.get("security_token_file"), encoding="utf-8"
+                    ) as f:
                         st_string = f.read()
                     return oci.auth.signers.SecurityTokenSigner(st_string, pk)
 
@@ -161,19 +165,31 @@ class OCIGenAIBase(BaseModel, ABC):
                     file_location=values["auth_file_location"],
                     profile_name=values["auth_profile"],
                 )
-                client_kwargs["signer"] = make_security_token_signer(oci_config=client_kwargs["config"])
+                client_kwargs["signer"] = make_security_token_signer(
+                    oci_config=client_kwargs["config"]
+                )
             elif values["auth_type"] == OCIAuthType(3).name:
-                client_kwargs["signer"] = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                client_kwargs["signer"] = (
+                    oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                )
             elif values["auth_type"] == OCIAuthType(4).name:
-                client_kwargs["signer"] = oci.auth.signers.get_resource_principals_signer()
+                client_kwargs["signer"] = (
+                    oci.auth.signers.get_resource_principals_signer()
+                )
             else:
-                raise ValueError(f"Please provide valid value to auth_type, {values['auth_type']} is not valid.")
+                raise ValueError(
+                    "Please provide valid value to auth_type, "
+                    f"{values['auth_type']} is not valid."
+                )
 
-            values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(**client_kwargs)
+            values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
+                **client_kwargs
+            )
 
         except ImportError as ex:
             raise ModuleNotFoundError(
-                "Could not import oci python package. Please make sure you have the oci package installed."
+                "Could not import oci python package. "
+                "Please make sure you have the oci package installed."
             ) from ex
         except Exception as e:
             raise ValueError(
@@ -285,7 +301,10 @@ class OCIGenAI(LLM, OCIGenAIBase):
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
         if self.model_id is None:
-            raise ValueError("model_id is required to call the model, please provide the model_id.")
+            raise ValueError(
+                "model_id is required to call the model, "
+                "please provide the model_id."
+            )
 
         if self.model_id.startswith(CUSTOM_ENDPOINT_PREFIX):
             serving_mode = models.DedicatedServingMode(endpoint_id=self.model_id)

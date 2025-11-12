@@ -49,7 +49,10 @@ CONST_STREAM_DELTAS = ['{"role":"assistant","content":""}'] + [
 ]
 CONST_STREAM_RESPONSE = (
     content
-    for content in [CONST_STREAM_TEMPLATE.replace("<DELTA>", delta).encode() for delta in CONST_STREAM_DELTAS]
+    for content in [
+        CONST_STREAM_TEMPLATE.replace("<DELTA>", delta).encode()
+        for delta in CONST_STREAM_DELTAS
+    ]
     + [b"data: [DONE]"]
 )
 
@@ -58,10 +61,13 @@ CONST_ASYNC_STREAM_TEMPLATE = (
     '"model":"odsc-llm","choices":[{"index":0,"delta":<DELTA>,"finish_reason":null}]}'
 )
 CONST_ASYNC_STREAM_RESPONSE = (
-    CONST_ASYNC_STREAM_TEMPLATE.replace("<DELTA>", delta).encode() for delta in CONST_STREAM_DELTAS
+    CONST_ASYNC_STREAM_TEMPLATE.replace("<DELTA>", delta).encode()
+    for delta in CONST_STREAM_DELTAS
 )
 
-pytestmark = pytest.mark.skipif(sys.version_info < (3, 9), reason="Requires Python 3.9 or higher")
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="Requires Python 3.9 or higher"
+)
 
 
 class MockResponse:
@@ -138,7 +144,9 @@ def test_invoke_tgi(*args: Any) -> None:
 @mock.patch("requests.post", side_effect=mocked_requests_post)
 def test_stream_vllm(*args: Any) -> None:
     """Tests streaming with vLLM endpoint using OpenAI spec."""
-    llm = ChatOCIModelDeploymentVLLM(endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True)
+    llm = ChatOCIModelDeploymentVLLM(
+        endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     output = None
     count = 0
@@ -155,7 +163,9 @@ def test_stream_vllm(*args: Any) -> None:
         assert str(output.content).strip() == CONST_COMPLETION
 
 
-async def mocked_async_streaming_response(*args: Any, **kwargs: Any) -> AsyncGenerator[bytes, None]:
+async def mocked_async_streaming_response(
+    *args: Any, **kwargs: Any
+) -> AsyncGenerator[bytes, None]:
     """Returns mocked response for async streaming."""
     for item in CONST_ASYNC_STREAM_RESPONSE:
         yield item
@@ -164,14 +174,18 @@ async def mocked_async_streaming_response(*args: Any, **kwargs: Any) -> AsyncGen
 @pytest.mark.asyncio
 @pytest.mark.requires("ads")
 @pytest.mark.requires("langchain_openai")
-@mock.patch("ads.common.auth.default_signer", return_value=dict(signer=mock.MagicMock()))
+@mock.patch(
+    "ads.common.auth.default_signer", return_value=dict(signer=mock.MagicMock())
+)
 @mock.patch(
     "langchain_oci.llms.oci_data_science_model_deployment_endpoint.BaseOCIModelDeployment._arequest",
     mock.MagicMock(),
 )
 async def test_stream_async(*args: Any) -> None:
     """Tests async streaming."""
-    llm = ChatOCIModelDeploymentVLLM(endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True)
+    llm = ChatOCIModelDeploymentVLLM(
+        endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     with mock.patch.object(
         llm,

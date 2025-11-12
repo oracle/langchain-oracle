@@ -60,10 +60,6 @@ optional = true
 
 [tool.poetry.group.dev.dependencies]
 
-[tool.ruff]
-line-length = 120  # Increase from default 88 to 120
-exclude = ["*.ipynb"]
-
 [tool.ruff.lint]
 select = [
   "E",    # pycodestyle
@@ -74,7 +70,7 @@ select = [
 
 [tool.mypy]
 ignore_missing_imports = "True"
-disable_error_code = ["attr-defined", "assignment", "var-annotated", "override", "union-attr", "arg-type"]
+disallow_untyped_defs = "True"
 
 [tool.coverage.run]
 omit = ["tests/*"]

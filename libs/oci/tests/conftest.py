@@ -43,5 +43,7 @@ def pytest_collection_modifyitems(config: Config, items: Sequence[Function]) -> 
                     required_pkgs_info[pkg] = installed
 
                 if not required_pkgs_info[pkg]:
-                    item.add_marker(pytest.mark.skip(reason=f"Requires pkg: `{pkg}`"))
+                    item.add_marker(
+                        pytest.mark.skip(reason=f"Requires pkg: `{pkg}`")
+                    )
                     break

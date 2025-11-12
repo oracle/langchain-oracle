@@ -126,8 +126,12 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
             elif values["auth_type"] == OCIAuthType(2).name:
 
                 def make_security_token_signer(oci_config):  # type: ignore[no-untyped-def]
-                    pk = oci.signer.load_private_key_from_file(oci_config.get("key_file"), None)
-                    with open(oci_config.get("security_token_file"), encoding="utf-8") as f:
+                    pk = oci.signer.load_private_key_from_file(
+                        oci_config.get("key_file"), None
+                    )
+                    with open(
+                        oci_config.get("security_token_file"), encoding="utf-8"
+                    ) as f:
                         st_string = f.read()
                     return oci.auth.signers.SecurityTokenSigner(st_string, pk)
 
@@ -135,19 +139,28 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
                     file_location=values["auth_file_location"],
                     profile_name=values["auth_profile"],
                 )
-                client_kwargs["signer"] = make_security_token_signer(oci_config=client_kwargs["config"])
+                client_kwargs["signer"] = make_security_token_signer(
+                    oci_config=client_kwargs["config"]
+                )
             elif values["auth_type"] == OCIAuthType(3).name:
-                client_kwargs["signer"] = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                client_kwargs["signer"] = (
+                    oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+                )
             elif values["auth_type"] == OCIAuthType(4).name:
-                client_kwargs["signer"] = oci.auth.signers.get_resource_principals_signer()
+                client_kwargs["signer"] = (
+                    oci.auth.signers.get_resource_principals_signer()
+                )
             else:
                 raise ValueError("Please provide valid value to auth_type")
 
-            values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(**client_kwargs)
+            values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
+                **client_kwargs
+            )
 
         except ImportError as ex:
             raise ImportError(
-                "Could not import oci python package. Please make sure you have the oci package installed."
+                "Could not import oci python package. "
+                "Please make sure you have the oci package installed."
             ) from ex
         except Exception as e:
             raise ValueError(
