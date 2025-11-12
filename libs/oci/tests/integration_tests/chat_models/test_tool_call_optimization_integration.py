@@ -52,7 +52,7 @@ def test_tool_call_basic():
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         ),
         compartment_id=os.environ.get("OCI_COMPARTMENT_ID"),
-        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "BOAT-OC1"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
         model_kwargs={"temperature": 0, "max_tokens": 500},
     )
@@ -105,7 +105,7 @@ def test_multiple_tools():
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         ),
         compartment_id=os.environ.get("OCI_COMPARTMENT_ID"),
-        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "BOAT-OC1"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
         model_kwargs={"temperature": 0, "max_tokens": 500},
     )
@@ -178,7 +178,7 @@ Manual verification steps:
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         ),
         compartment_id=os.environ.get("OCI_COMPARTMENT_ID"),
-        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "BOAT-OC1"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
         model_kwargs={"temperature": 0, "max_tokens": 100},
     )
@@ -217,7 +217,7 @@ def test_cohere_provider():
                 "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             ),
             compartment_id=os.environ.get("OCI_COMPARTMENT_ID"),
-            auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "BOAT-OC1"),
+            auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
             auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
             model_kwargs={"temperature": 0, "max_tokens": 500},
         )
@@ -263,7 +263,7 @@ def main():
     print(f"\nUsing configuration:")
     print(f"  Model: {os.environ.get('OCI_MODEL_ID', 'meta.llama-3.3-70b-instruct')}")
     print(f"  Endpoint: {os.environ.get('OCI_GENAI_ENDPOINT', 'default')}")
-    print(f"  Profile: {os.environ.get('OCI_CONFIG_PROFILE', 'BOAT-OC1')}")
+    print(f"  Profile: {os.environ.get('OCI_CONFIG_PROFILE', 'DEFAULT')}")
     print(f"  Compartment: {os.environ.get('OCI_COMPARTMENT_ID', 'not set')[:20]}...")
 
     # Run tests
