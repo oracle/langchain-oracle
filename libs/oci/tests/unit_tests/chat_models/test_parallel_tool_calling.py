@@ -11,7 +11,7 @@ def test_parallel_tool_calls_class_level():
     """Test class-level parallel_tool_calls parameter."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         parallel_tool_calls=True,
         client=oci_gen_ai_client
     )
@@ -23,7 +23,7 @@ def test_parallel_tool_calls_default_false():
     """Test that parallel_tool_calls defaults to False."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         client=oci_gen_ai_client
     )
     assert llm.parallel_tool_calls is False
@@ -34,7 +34,7 @@ def test_parallel_tool_calls_bind_tools_explicit_true():
     """Test parallel_tool_calls=True in bind_tools."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         client=oci_gen_ai_client
     )
 
@@ -59,7 +59,7 @@ def test_parallel_tool_calls_bind_tools_explicit_false():
     """Test parallel_tool_calls=False in bind_tools."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         client=oci_gen_ai_client
     )
 
@@ -81,7 +81,7 @@ def test_parallel_tool_calls_bind_tools_uses_class_default():
     """Test that bind_tools uses class default when not specified."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         parallel_tool_calls=True,  # Set class default
         client=oci_gen_ai_client
     )
@@ -102,7 +102,7 @@ def test_parallel_tool_calls_bind_tools_overrides_class_default():
     """Test that bind_tools parameter overrides class default."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         parallel_tool_calls=True,  # Set class default to True
         client=oci_gen_ai_client
     )
@@ -125,7 +125,7 @@ def test_parallel_tool_calls_passed_to_oci_api_meta():
 
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
         client=oci_gen_ai_client
     )
 
@@ -197,3 +197,134 @@ def test_parallel_tool_calls_cohere_class_level_raises_error():
             stream=False,
             **llm_with_tools.kwargs
         )
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_llama_3_0_blocked():
+    """Test that Llama 3.0 models are blocked from parallel tool calling."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3-70b-instruct",
+        client=oci_gen_ai_client
+    )
+
+    def tool1(x: int) -> int:
+        """Tool 1."""
+        return x + 1
+
+    # Should raise ValueError when trying to enable parallel tool calling
+    with pytest.raises(ValueError, match="Llama 4\\+"):
+        llm.bind_tools([tool1], parallel_tool_calls=True)
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_llama_3_1_blocked():
+    """Test that Llama 3.1 models are blocked from parallel tool calling."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.1-70b-instruct",
+        client=oci_gen_ai_client
+    )
+
+    def tool1(x: int) -> int:
+        """Tool 1."""
+        return x + 1
+
+    # Should raise ValueError
+    with pytest.raises(ValueError, match="Llama 4\\+"):
+        llm.bind_tools([tool1], parallel_tool_calls=True)
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_llama_3_2_blocked():
+    """Test that Llama 3.2 models are blocked from parallel tool calling."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.2-11b-vision-instruct",
+        client=oci_gen_ai_client
+    )
+
+    def tool1(x: int) -> int:
+        """Tool 1."""
+        return x + 1
+
+    # Should raise ValueError
+    with pytest.raises(ValueError, match="Llama 4\\+"):
+        llm.bind_tools([tool1], parallel_tool_calls=True)
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_llama_3_3_blocked():
+    """Test that Llama 3.3 models are blocked from parallel tool calling."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        client=oci_gen_ai_client
+    )
+
+    def tool1(x: int) -> int:
+        """Tool 1."""
+        return x + 1
+
+    # Should raise ValueError - Llama 3.3 doesn't actually support parallel calls
+    with pytest.raises(ValueError, match="Llama 4\\+"):
+        llm.bind_tools([tool1], parallel_tool_calls=True)
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_llama_4_allowed():
+    """Test that Llama 4 models are allowed parallel tool calling."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
+        client=oci_gen_ai_client
+    )
+
+    def tool1(x: int) -> int:
+        """Tool 1."""
+        return x + 1
+
+    # Should NOT raise ValueError
+    llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=True)
+    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_other_models_allowed():
+    """Test that other GenericChatRequest models are allowed parallel tool calling."""
+    oci_gen_ai_client = MagicMock()
+
+    # Test with xAI Grok
+    llm_grok = ChatOCIGenAI(
+        model_id="xai.grok-4-fast",
+        client=oci_gen_ai_client
+    )
+
+    def tool1(x: int) -> int:
+        """Tool 1."""
+        return x + 1
+
+    # Should NOT raise ValueError for Grok
+    llm_with_tools = llm_grok.bind_tools([tool1], parallel_tool_calls=True)
+    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True
+
+
+@pytest.mark.requires("oci")
+def test_version_filter_supports_parallel_tool_calls_method():
+    """Test the _supports_parallel_tool_calls method directly."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
+        client=oci_gen_ai_client
+    )
+
+    # Test various model IDs
+    assert llm._supports_parallel_tool_calls("meta.llama-4-maverick-17b-128e-instruct-fp8") is True
+    assert llm._supports_parallel_tool_calls("meta.llama-3.3-70b-instruct") is False  # Llama 3.3 NOT supported
+    assert llm._supports_parallel_tool_calls("meta.llama-3.2-11b-vision-instruct") is False
+    assert llm._supports_parallel_tool_calls("meta.llama-3.1-70b-instruct") is False
+    assert llm._supports_parallel_tool_calls("meta.llama-3-70b-instruct") is False
+    assert llm._supports_parallel_tool_calls("cohere.command-r-plus") is False
+    assert llm._supports_parallel_tool_calls("xai.grok-4-fast") is True
+    assert llm._supports_parallel_tool_calls("openai.gpt-4") is True
+    assert llm._supports_parallel_tool_calls("mistral.mistral-large") is True
