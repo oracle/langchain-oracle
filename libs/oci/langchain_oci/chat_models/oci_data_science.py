@@ -78,6 +78,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         .. code-block:: python
 
             import ads
+
             ads.set_auth("resource_principal")
 
         For more details on authentication, see:
@@ -109,7 +110,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
 
             chat = ChatOCIModelDeployment(
                 endpoint="https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict",
-                model="odsc-llm", # this is the default model name if deployed with AQUA
+                model="odsc-llm",  # this is the default model name if deployed with AQUA
                 streaming=True,
                 max_retries=3,
                 model_kwargs={
@@ -135,18 +136,14 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         .. code-block:: python
 
             AIMessage(
-                content='Bonjour le monde!',
+                content="Bonjour le monde!",
                 response_metadata={
-                    'token_usage': {
-                        'prompt_tokens': 40,
-                        'total_tokens': 50,
-                        'completion_tokens': 10
-                    },
-                    'model_name': 'odsc-llm',
-                    'system_fingerprint': '',
-                    'finish_reason': 'stop'
+                    "token_usage": {"prompt_tokens": 40, "total_tokens": 50, "completion_tokens": 10},
+                    "model_name": "odsc-llm",
+                    "system_fingerprint": "",
+                    "finish_reason": "stop",
                 },
-                id='run-cbed62da-e1b3-4abd-9df3-ec89d69ca012-0'
+                id="run-cbed62da-e1b3-4abd-9df3-ec89d69ca012-0",
             )
 
     Streaming:
@@ -179,9 +176,9 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         .. code-block:: python
 
             AIMessage(
-                content='Bonjour le monde!',
-                response_metadata={'finish_reason': 'stop'},
-                id='run-8657a105-96b7-4bb6-b98e-b69ca420e5d1-0'
+                content="Bonjour le monde!",
+                response_metadata={"finish_reason": "stop"},
+                id="run-8657a105-96b7-4bb6-b98e-b69ca420e5d1-0",
             )
 
     Structured output:
@@ -190,22 +187,18 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
             from typing import Optional
             from pydantic import BaseModel, Field
 
+
             class Joke(BaseModel):
                 setup: str = Field(description="The setup of the joke")
                 punchline: str = Field(description="The punchline to the joke")
 
+
             structured_llm = chat.with_structured_output(Joke, method="json_mode")
-            structured_llm.invoke(
-                "Tell me a joke about cats, "
-                "respond in JSON with `setup` and `punchline` keys"
-            )
+            structured_llm.invoke("Tell me a joke about cats, respond in JSON with `setup` and `punchline` keys")
 
         .. code-block:: python
 
-            Joke(
-                setup='Why did the cat get stuck in the tree?',
-                punchline='Because it was chasing its tail!'
-            )
+            Joke(setup="Why did the cat get stuck in the tree?", punchline="Because it was chasing its tail!")
 
         See ``ChatOCIModelDeployment.with_structured_output()`` for more.
 
@@ -247,14 +240,10 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         .. code-block:: python
 
             {
-                'token_usage': {
-                    'prompt_tokens': 40,
-                    'total_tokens': 50,
-                    'completion_tokens': 10
-                },
-                'model_name': 'odsc-llm',
-                'system_fingerprint': '',
-                'finish_reason': 'stop'
+                "token_usage": {"prompt_tokens": 40, "total_tokens": 50, "completion_tokens": 10},
+                "model_name": "odsc-llm",
+                "system_fingerprint": "",
+                "finish_reason": "stop",
             }
 
     """  # noqa: E501
@@ -275,8 +264,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         """Checks if langchain_openai is installed."""
         if not importlib.util.find_spec("langchain_openai"):
             raise ImportError(
-                "Could not import langchain_openai package. "
-                "Please install it with `pip install langchain_openai`."
+                "Could not import langchain_openai package. Please install it with `pip install langchain_openai`."
             )
         return values
 
@@ -303,9 +291,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
             "stream": self.streaming,
         }
 
-    def _headers(
-        self, is_async: Optional[bool] = False, body: Optional[dict] = None
-    ) -> Dict:
+    def _headers(self, is_async: Optional[bool] = False, body: Optional[dict] = None) -> Dict:
         """Construct and return the headers for a request.
 
         Args:
@@ -357,17 +343,13 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 response = chat.invoke(messages)
         """  # noqa: E501
         if self.streaming:
-            stream_iter = self._stream(
-                messages, stop=stop, run_manager=run_manager, **kwargs
-            )
+            stream_iter = self._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
             return generate_from_stream(stream_iter)
 
         requests_kwargs = kwargs.pop("requests_kwargs", {})
         params = self._invocation_params(stop, **kwargs)
         body = self._construct_json_body(messages, params)
-        res = self.completion_with_retry(
-            data=body, run_manager=run_manager, **requests_kwargs
-        )
+        res = self.completion_with_retry(data=body, run_manager=run_manager, **requests_kwargs)
         return self._process_response(res.json())
 
     def _stream(
@@ -415,9 +397,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         params = self._invocation_params(stop, **kwargs)
         body = self._construct_json_body(messages, params)  # request json body
 
-        response = self.completion_with_retry(
-            data=body, run_manager=run_manager, stream=True, **requests_kwargs
-        )
+        response = self.completion_with_retry(data=body, run_manager=run_manager, stream=True, **requests_kwargs)
         default_chunk_class = AIMessageChunk
         for line in self._parse_stream(response.iter_lines()):
             chunk = self._handle_sse_line(line, default_chunk_class)
@@ -467,9 +447,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
 
         """  # noqa: E501
         if self.streaming:
-            stream_iter = self._astream(
-                messages, stop=stop, run_manager=run_manager, **kwargs
-            )
+            stream_iter = self._astream(messages, stop=stop, run_manager=run_manager, **kwargs)
             return await agenerate_from_stream(stream_iter)
 
         requests_kwargs = kwargs.pop("requests_kwargs", {})
@@ -593,19 +571,14 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 else JsonOutputParser()
             )
         else:
-            raise ValueError(
-                f"Unrecognized method argument. Expected `json_mode`."
-                f"Received: `{method}`."
-            )
+            raise ValueError(f"Unrecognized method argument. Expected `json_mode`.Received: `{method}`.")
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
                 parsed=itemgetter("raw") | output_parser, parsing_error=lambda _: None
             )
             parser_none = RunnablePassthrough.assign(parsed=lambda _: None)
-            parser_with_fallback = parser_assign.with_fallbacks(
-                [parser_none], exception_key="parsing_error"
-            )
+            parser_with_fallback = parser_assign.with_fallbacks([parser_none], exception_key="parsing_error")
             return RunnableMap(raw=llm) | parser_with_fallback
         else:
             return llm | output_parser
@@ -688,9 +661,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
             if not isinstance(choice, dict):
                 raise TypeError("Endpoint response is not well formed.")
         except (KeyError, IndexError, TypeError) as e:
-            raise ValueError(
-                "Error while formatting response payload for chat model of type"
-            ) from e
+            raise ValueError("Error while formatting response payload for chat model of type") from e
 
         chunk = _convert_delta_to_message_chunk(choice["delta"], default_chunk_cls)
         default_chunk_cls = chunk.__class__
@@ -702,9 +673,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         if usage is not None:
             gen_info.update({"usage": usage})
 
-        return ChatGenerationChunk(
-            message=chunk, generation_info=gen_info if gen_info else None
-        )
+        return ChatGenerationChunk(message=chunk, generation_info=gen_info if gen_info else None)
 
     def _process_response(self, response_json: dict) -> ChatResult:
         """Formats response in OpenAI spec.
@@ -729,9 +698,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
             if not isinstance(choices, list):
                 raise TypeError("Endpoint response is not well formed.")
         except (KeyError, TypeError) as e:
-            raise ValueError(
-                "Error while formatting response payload for chat model of type"
-            ) from e
+            raise ValueError("Error while formatting response payload for chat model of type") from e
 
         for choice in choices:
             message = _convert_dict_to_message(choice["message"])

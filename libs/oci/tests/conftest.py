@@ -20,8 +20,7 @@ def pytest_collection_modifyitems(config: Config, items: Sequence[Function]) -> 
     .. code-block:: python
 
         @pytest.mark.requires("package1", "package2")
-        def test_something():
-            ...
+        def test_something(): ...
     """
     # Mapping from the name of a package to whether it is installed or not.
     # Used to avoid repeated calls to `util.find_spec`
@@ -43,7 +42,5 @@ def pytest_collection_modifyitems(config: Config, items: Sequence[Function]) -> 
                     required_pkgs_info[pkg] = installed
 
                 if not required_pkgs_info[pkg]:
-                    item.add_marker(
-                        pytest.mark.skip(reason=f"Requires pkg: `{pkg}`")
-                    )
+                    item.add_marker(pytest.mark.skip(reason=f"Requires pkg: `{pkg}`"))
                     break
