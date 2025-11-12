@@ -62,7 +62,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_oci.chat_models import ChatOCIGenAI
 
 def default_compartment():
-    return "ocid1.tenancy.oc1..aaaaaaaa7ayxuw32vjb64hbxtouarftwtwb2uat5x5mf4hu7cvzaesfrebrq"
+    return "<compartment_ocid>" # for convenience
 
 def get_weather(city: str) -> str:
     """Get the current weather for a given city name."""
@@ -162,9 +162,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
                 SystemMessage(content=system_msg),
                 HumanMessage(content="What's the weather in Chicago?"),
             ]
-        },
-        config={"recursion_limit": 25},  # Allow enough recursion for multi-step
-
+        }
     )
 
     messages = result["messages"]
@@ -217,7 +215,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
 @pytest.mark.requires("oci")
 def test_meta_llama_tool_calling(weather_tool: StructuredTool):
     """Specific test for Meta Llama models to ensure fix works."""
-    model_id = "meta.llama-4-scout-17b-16e-instruct"  # gets recursion error
+    model_id = "meta.llama-4-scout-17b-16e-instruct"
 
     agent = create_agent(model_id, weather_tool)
 
@@ -524,6 +522,6 @@ if __name__ == "__main__":
     # Set your desired defaults here or fetch them by any required means.
     # You may also load from a local file, IDE Run Config, etc.
     os.environ.setdefault("OCI_REGION", "us-chicago-1")  # Edit as appropriate
-    os.environ.setdefault("OCI_COMP", "ocid1.tenancy.oc1..aaaaaaaa7ayxuw32vjb64hbxtouarftwtwb2uat5x5mf4hu7cvzaesfrebrq")  # Edit as appropriate
+    os.environ.setdefault("OCI_COMP", "<compartment_ocid>")  # Edit as appropriate
     # This runs all tests in this file if you run it as a script in your IDE.
     pytest.main([__file__])
