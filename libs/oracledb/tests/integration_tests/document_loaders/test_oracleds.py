@@ -5,9 +5,10 @@ test_oracleds.py
 
 Unit tests for OracleDocLoader and OracleTextSplitter.
 
-Authors: 
+Authors:
     - Sudhir Kumar (sudhirkk)
 """
+
 import sys
 
 import oracledb

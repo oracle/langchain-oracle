@@ -3,13 +3,14 @@
 """
 oracleai.py
 
-Implements OracleEmbeddings for generating and handling 
+Implements OracleEmbeddings for generating and handling
 vector embeddings with Oracle AI Vector Search.
 
 Authors:
     - Harichandan Roy (hroy)
     - David Jiang (ddjiang)
 """
+
 from __future__ import annotations
 
 import json
@@ -55,9 +56,7 @@ class OracleEmbeddings(BaseModel, Embeddings):
     """
 
     @staticmethod
-    def load_onnx_model(
-        conn: Connection, dir: str, onnx_file: str, model_name: str
-    ) -> None:
+    def load_onnx_model(conn: Connection, dir: str, onnx_file: str, model_name: str) -> None:
         """Load an ONNX model to Oracle Database.
         Args:
             conn: Oracle Connection,
@@ -111,9 +110,7 @@ class OracleEmbeddings(BaseModel, Embeddings):
             cursor = self.conn.cursor()
 
             if self.proxy:
-                cursor.execute(
-                    "begin utl_http.set_proxy(:proxy); end;", proxy=self.proxy
-                )
+                cursor.execute("begin utl_http.set_proxy(:proxy); end;", proxy=self.proxy)
 
             chunks = []
             for i, text in enumerate(texts, start=1):
@@ -124,9 +121,7 @@ class OracleEmbeddings(BaseModel, Embeddings):
             inputs = vector_array_type.newobject(chunks)
             cursor.setinputsizes(None, oracledb.DB_TYPE_JSON)
             cursor.execute(
-                "select t.* "
-                + "from dbms_vector_chain.utl_to_embeddings(:1, "
-                + "json(:2)) t",
+                "select t.* " + "from dbms_vector_chain.utl_to_embeddings(:1, " + "json(:2)) t",
                 [inputs, self.params],
             )
 

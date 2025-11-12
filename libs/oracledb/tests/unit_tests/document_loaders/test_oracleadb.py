@@ -5,6 +5,7 @@ test_oracleadb.py
 
 Unit tests for OracleAutonomousDatabaseLoader.
 """
+
 from typing import Dict, List
 from unittest.mock import MagicMock, patch
 
@@ -26,26 +27,21 @@ def raw_docs() -> List[Dict]:
 def expected_documents() -> List[Document]:
     return [
         Document(
-            page_content="{'FIELD1': '1', 'FIELD_JSON': "
-            "{'INNER_FIELD1': '1', 'INNER_FIELD2': '1'}}",
+            page_content="{'FIELD1': '1', 'FIELD_JSON': {'INNER_FIELD1': '1', 'INNER_FIELD2': '1'}}",
             metadata={"FIELD1": "1"},
         ),
         Document(
-            page_content="{'FIELD1': '2', 'FIELD_JSON': "
-            "{'INNER_FIELD1': '2', 'INNER_FIELD2': '2'}}",
+            page_content="{'FIELD1': '2', 'FIELD_JSON': {'INNER_FIELD1': '2', 'INNER_FIELD2': '2'}}",
             metadata={"FIELD1": "2"},
         ),
         Document(
-            page_content="{'FIELD1': '3', 'FIELD_JSON': "
-            "{'INNER_FIELD1': '3', 'INNER_FIELD2': '3'}}",
+            page_content="{'FIELD1': '3', 'FIELD_JSON': {'INNER_FIELD1': '3', 'INNER_FIELD2': '3'}}",
             metadata={"FIELD1": "3"},
         ),
     ]
 
 
-@patch(
-    "langchain_oracledb.document_loaders.oracleadb_loader.OracleAutonomousDatabaseLoader._run_query"
-)
+@patch("langchain_oracledb.document_loaders.oracleadb_loader.OracleAutonomousDatabaseLoader._run_query")
 def test_oracle_loader_load(mock_query: MagicMock) -> None:
     """Test oracleDB loader load function."""
 

@@ -3,9 +3,10 @@
 """
 oraclevs.py
 
-Provides integration between Oracle Vector Database and 
+Provides integration between Oracle Vector Database and
 LangChain for vector storage and search.
 """
+
 from __future__ import annotations
 
 import array
@@ -91,9 +92,7 @@ COMPARISON_MAP = {
 NOT_OPERS = ["$nin", "$not", "$exists"]
 
 
-def _get_comparison_string(
-    oper: str, value: Any, bind_variables: List[str]
-) -> tuple[str, str]:
+def _get_comparison_string(oper: str, value: Any, bind_variables: List[str]) -> tuple[str, str]:
     if oper not in COMPARISON_MAP:
         raise ValueError(f"Invalid operator: {oper}")
 
@@ -110,10 +109,7 @@ def _get_comparison_string(
     # between - needs two bindings
     elif oper == "$between":
         if not isinstance(value, List) or len(value) != 2:
-            raise ValueError(
-                f"Invalid value for $between: {value}. "
-                "It must be a list containing exactly 2 elements."
-            )
+            raise ValueError(f"Invalid value for $between: {value}. It must be a list containing exactly 2 elements.")
 
         min_val, max_val = value
         if min_val is None and max_val is None:
@@ -142,9 +138,7 @@ def _get_comparison_string(
     # in/nin/all needs N bindings
     elif oper in ["$in", "$nin", "$all"]:
         if not isinstance(value, List):
-            raise ValueError(
-                f"Invalid value for $in: {value}. It must be a non-empty list."
-            )
+            raise ValueError(f"Invalid value for $in: {value}. It must be a non-empty list.")
 
         value_binds = []
         passings = []
@@ -183,14 +177,9 @@ def _validate_metadata_key(metadata_key: str) -> None:
         )
 
 
-def _generate_condition(
-    metadata_key: str, value: Any, bind_variables: List[str]
-) -> str:
+def _generate_condition(metadata_key: str, value: Any, bind_variables: List[str]) -> str:
     # single check inside a JSON_EXISTS
-    SINGLE_MASK = (
-        "JSON_EXISTS(metadata, '$.{key}?(@ {oper} $val)' "
-        'PASSING {value_bind} AS "val")'
-    )
+    SINGLE_MASK = "JSON_EXISTS(metadata, '$.{key}?(@ {oper} $val)' PASSING {value_bind} AS \"val\")"
     # combined checks with multiple operators and passing values
     MULTIPLE_MASK = "JSON_EXISTS(metadata, '$.{key}?({filters})' PASSING {passes})"
 
@@ -249,28 +238,18 @@ def _generate_condition(
 
                 elif k == "$exists":
                     if not isinstance(v, bool):
-                        raise ValueError(
-                            f"Invalid value for $exists: {value}. "
-                            "It must be a boolean (true or false)."
-                        )
+                        raise ValueError(f"Invalid value for $exists: {value}. It must be a boolean (true or false).")
 
                     if v:
-                        all_conditions.append(
-                            f"JSON_EXISTS(metadata, '$.{metadata_key}')"
-                        )
+                        all_conditions.append(f"JSON_EXISTS(metadata, '$.{metadata_key}')")
                     else:
-                        all_conditions.append(
-                            f"NOT (JSON_EXISTS(metadata, '$.{metadata_key}'))"
-                        )
+                        all_conditions.append(f"NOT (JSON_EXISTS(metadata, '$.{metadata_key}'))")
 
                 elif k == "$nin":  # for now only $nin
                     result, passings = _get_comparison_string(k, v, bind_variables)
 
                     all_conditions.append(
-                        " NOT "
-                        + MULTIPLE_MASK.format(
-                            key=metadata_key, filters=result, passes=passings
-                        )
+                        " NOT " + MULTIPLE_MASK.format(key=metadata_key, filters=result, passes=passings)
                     )
 
                 elif k == "$eq":
@@ -278,10 +257,7 @@ def _generate_condition(
                     bind_variables.append(json.dumps(v))
 
                     all_conditions.append(
-                        "JSON_EQUAL("
-                        f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
-                        f"    JSON(:value{bind_l})"
-                        ")"
+                        f"JSON_EQUAL(    JSON_QUERY(metadata, '$.{metadata_key}' ),    JSON(:value{bind_l}))"
                     )
 
                 elif k == "$ne":
@@ -289,10 +265,7 @@ def _generate_condition(
                     bind_variables.append(json.dumps(v))
 
                     all_conditions.append(
-                        "NOT (JSON_EQUAL("
-                        f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
-                        f"    JSON(:value{bind_l})"
-                        "))"
+                        f"NOT (JSON_EQUAL(    JSON_QUERY(metadata, '$.{metadata_key}' ),    JSON(:value{bind_l})))"
                     )
 
             res = " AND ".join(all_conditions)
@@ -326,9 +299,7 @@ def _generate_where_clause(filter: dict, bind_variables: List[str]) -> str:
             if not isinstance(value, list):
                 raise ValueError("Logical operators require an array of values.")
 
-            combine_conditions = [
-                _generate_where_clause(v, bind_variables) for v in value
-            ]
+            combine_conditions = [_generate_where_clause(v, bind_variables) for v in value]
 
             res = filter_format[1].format(filter_format[0].join(combine_conditions))
 
@@ -360,9 +331,7 @@ def _get_connection(client: Any) -> Optional[Connection]:
         valid_types = "oracledb.Connection"
         if connection_pool_class:
             valid_types += " or oracledb.ConnectionPool"
-        raise TypeError(
-            f"Expected client of type {valid_types}, got {type(client).__name__}"
-        )
+        raise TypeError(f"Expected client of type {valid_types}, got {type(client).__name__}")
 
 
 async def _aget_connection(client: Any) -> Optional[AsyncConnection]:
@@ -377,9 +346,7 @@ async def _aget_connection(client: Any) -> Optional[AsyncConnection]:
         valid_types = "oracledb.AsyncConnection"
         if connection_pool_class:
             valid_types += " or oracledb.AsyncConnectionPool"
-        raise TypeError(
-            f"Expected client of type {valid_types}, got {type(client).__name__}"
-        )
+        raise TypeError(f"Expected client of type {valid_types}, got {type(client).__name__}")
 
 
 def _handle_exceptions(func: T) -> T:
@@ -390,15 +357,11 @@ def _handle_exceptions(func: T) -> T:
         except oracledb.Error as db_err:
             # Handle a known type of error (e.g., DB-related) specifically
             logger.exception("DB-related error occurred.")
-            raise RuntimeError(
-                "Failed due to a DB error: {}".format(db_err)
-            ) from db_err
+            raise RuntimeError("Failed due to a DB error: {}".format(db_err)) from db_err
         except RuntimeError as runtime_err:
             # Handle a runtime error
             logger.exception("Runtime error occurred.")
-            raise RuntimeError(
-                "Failed due to a runtime error: {}".format(runtime_err)
-            ) from runtime_err
+            raise RuntimeError("Failed due to a runtime error: {}".format(runtime_err)) from runtime_err
         except ValueError as val_err:
             # Handle another known type of error specifically
             logger.exception("Validation error.")
@@ -419,15 +382,11 @@ def _ahandle_exceptions(func: T) -> T:
         except oracledb.Error as db_err:
             # Handle a known type of error (e.g., DB-related) specifically
             logger.exception("DB-related error occurred.")
-            raise RuntimeError(
-                "Failed due to a DB error: {}".format(db_err)
-            ) from db_err
+            raise RuntimeError("Failed due to a DB error: {}".format(db_err)) from db_err
         except RuntimeError as runtime_err:
             # Handle a runtime error
             logger.exception("Runtime error occurred.")
-            raise RuntimeError(
-                "Failed due to a runtime error: {}".format(runtime_err)
-            ) from runtime_err
+            raise RuntimeError("Failed due to a runtime error: {}".format(runtime_err)) from runtime_err
         except ValueError as val_err:
             # Handle another known type of error specifically
             logger.exception("Validation error.")
@@ -481,9 +440,7 @@ def _quote_indentifier(name: str) -> str:
 
 
 @_handle_exceptions
-def _index_exists(
-    connection: Connection, index_name: str, table_name: Optional[str] = None
-) -> bool:
+def _index_exists(connection: Connection, index_name: str, table_name: Optional[str] = None) -> bool:
     # check if the index exists
     query = f"""
         SELECT index_name 
@@ -513,9 +470,7 @@ def _index_exists(
     return result is not None
 
 
-async def _aindex_exists(
-    connection: AsyncConnection, index_name: str, table_name: Optional[str] = None
-) -> bool:
+async def _aindex_exists(connection: AsyncConnection, index_name: str, table_name: Optional[str] = None) -> bool:
     # check if the index exists
     query = f"""
         SELECT index_name,  table_name
@@ -582,9 +537,7 @@ def _create_table(connection: Connection, table_name: str, embedding_dim: int) -
 
     if not _table_exists(connection, table_name):
         with connection.cursor() as cursor:
-            ddl_body = ", ".join(
-                f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
-            )
+            ddl_body = ", ".join(f"{col_name} {col_type}" for col_name, col_type in cols_dict.items())
             ddl = f"CREATE TABLE {table_name} ({ddl_body})"
             cursor.execute(ddl)
         logger.info(f"Table {table_name} created successfully...")
@@ -592,16 +545,12 @@ def _create_table(connection: Connection, table_name: str, embedding_dim: int) -
         logger.info(f"Table {table_name} already exists...")
 
 
-async def _acreate_table(
-    connection: AsyncConnection, table_name: str, embedding_dim: int
-) -> None:
+async def _acreate_table(connection: AsyncConnection, table_name: str, embedding_dim: int) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
     if not await _atable_exists(connection, table_name):
         with connection.cursor() as cursor:
-            ddl_body = ", ".join(
-                f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
-            )
+            ddl_body = ", ".join(f"{col_name} {col_type}" for col_name, col_type in cols_dict.items())
             ddl = f"CREATE TABLE {table_name} ({ddl_body})"
             await cursor.execute(ddl)
         logger.info(f"Table {table_name} created successfully...")
@@ -643,9 +592,7 @@ def create_index(
                 params,
             )
     else:
-        _create_hnsw_index(
-            connection, vector_store.table_name, vector_store.distance_strategy, params
-        )
+        _create_hnsw_index(connection, vector_store.table_name, vector_store.distance_strategy, params)
     return
 
 
@@ -669,9 +616,7 @@ def _get_hnsw_index_ddl(
         for compulsory_key in ["idx_name", "parallel"]:
             if compulsory_key not in config:
                 if compulsory_key == "idx_name":
-                    config[compulsory_key] = _get_index_name(
-                        str(defaults[compulsory_key])
-                    )
+                    config[compulsory_key] = _get_index_name(str(defaults[compulsory_key]))
                 else:
                     config[compulsory_key] = defaults[compulsory_key]
 
@@ -685,10 +630,7 @@ def _get_hnsw_index_ddl(
 
     # base SQL statement
     idx_name = config["idx_name"]
-    base_sql = (
-        f"create vector index {idx_name} on {table_name}(embedding) "
-        f"ORGANIZATION INMEMORY NEIGHBOR GRAPH"
-    )
+    base_sql = f"create vector index {idx_name} on {table_name}(embedding) ORGANIZATION INMEMORY NEIGHBOR GRAPH"
 
     # optional parts depending on parameters
     accuracy_part = " WITH TARGET ACCURACY {accuracy}" if ("accuracy" in config) else ""
@@ -696,30 +638,19 @@ def _get_hnsw_index_ddl(
 
     parameters_part = ""
     if "neighbors" in config and "efConstruction" in config:
-        parameters_part = (
-            " parameters (type {idx_type}, neighbors {"
-            "neighbors}, efConstruction {efConstruction})"
-        )
+        parameters_part = " parameters (type {idx_type}, neighbors {neighbors}, efConstruction {efConstruction})"
     elif "neighbors" in config and "efConstruction" not in config:
         config["efConstruction"] = defaults["efConstruction"]
-        parameters_part = (
-            " parameters (type {idx_type}, neighbors {"
-            "neighbors}, efConstruction {efConstruction})"
-        )
+        parameters_part = " parameters (type {idx_type}, neighbors {neighbors}, efConstruction {efConstruction})"
     elif "neighbors" not in config and "efConstruction" in config:
         config["neighbors"] = defaults["neighbors"]
-        parameters_part = (
-            " parameters (type {idx_type}, neighbors {"
-            "neighbors}, efConstruction {efConstruction})"
-        )
+        parameters_part = " parameters (type {idx_type}, neighbors {neighbors}, efConstruction {efConstruction})"
 
     # always included part for parallel
     parallel_part = " parallel {parallel}"
 
     # combine all parts
-    ddl_assembly = (
-        base_sql + accuracy_part + distance_part + parameters_part + parallel_part
-    )
+    ddl_assembly = base_sql + accuracy_part + distance_part + parameters_part + parallel_part
     # format the SQL with values from the params dictionary
     ddl = ddl_assembly.format(**config)
 
@@ -764,9 +695,7 @@ def _get_ivf_index_ddl(
         for compulsory_key in ["idx_name", "parallel"]:
             if compulsory_key not in config:
                 if compulsory_key == "idx_name":
-                    config[compulsory_key] = _get_index_name(
-                        str(defaults[compulsory_key])
-                    )
+                    config[compulsory_key] = _get_index_name(str(defaults[compulsory_key]))
                 else:
                     config[compulsory_key] = defaults[compulsory_key]
 
@@ -780,10 +709,7 @@ def _get_ivf_index_ddl(
 
     # base SQL statement
     idx_name = config["idx_name"]
-    base_sql = (
-        f"CREATE VECTOR INDEX {idx_name} ON {table_name}(embedding) "
-        f"ORGANIZATION NEIGHBOR PARTITIONS"
-    )
+    base_sql = f"CREATE VECTOR INDEX {idx_name} ON {table_name}(embedding) ORGANIZATION NEIGHBOR PARTITIONS"
 
     # optional parts depending on parameters
     accuracy_part = " WITH TARGET ACCURACY {accuracy}" if ("accuracy" in config) else ""
@@ -791,18 +717,13 @@ def _get_ivf_index_ddl(
 
     parameters_part = ""
     if "idx_type" in config and "neighbor_part" in config:
-        parameters_part = (
-            f" PARAMETERS (type {config['idx_type']}, neighbor"
-            f" partitions {config['neighbor_part']})"
-        )
+        parameters_part = f" PARAMETERS (type {config['idx_type']}, neighbor partitions {config['neighbor_part']})"
 
     # always included part for parallel
     parallel_part = f" PARALLEL {config['parallel']}"
 
     # combine all parts
-    ddl_assembly = (
-        base_sql + accuracy_part + distance_part + parameters_part + parallel_part
-    )
+    ddl_assembly = base_sql + accuracy_part + distance_part + parameters_part + parallel_part
     # format the SQL with values from the params dictionary
     ddl = ddl_assembly.format(**config)
 
@@ -1014,32 +935,20 @@ def get_processed_ids(
 ) -> List[str]:
     if ids:
         # if ids are provided, hash them to maintain consistency
-        processed_ids = [
-            hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in ids
-        ]
+        processed_ids = [hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in ids]
     elif metadatas and all("id" in metadata for metadata in metadatas):
         # if no ids are provided but metadatas with ids are, generate
         # ids from metadatas
-        processed_ids = [
-            hashlib.sha256(metadata["id"].encode()).hexdigest()[:16].upper()
-            for metadata in metadatas
-        ]
+        processed_ids = [hashlib.sha256(metadata["id"].encode()).hexdigest()[:16].upper() for metadata in metadatas]
     else:
         # generate new ids if none are provided
-        generated_ids = [
-            str(uuid.uuid4()) for _ in texts
-        ]  # uuid4 is more standard for random UUIDs
-        processed_ids = [
-            hashlib.sha256(_id.encode()).hexdigest()[:16].upper()
-            for _id in generated_ids
-        ]
+        generated_ids = [str(uuid.uuid4()) for _ in texts]  # uuid4 is more standard for random UUIDs
+        processed_ids = [hashlib.sha256(_id.encode()).hexdigest()[:16].upper() for _id in generated_ids]
 
     return processed_ids
 
 
-def _get_delete_ddl(
-    table_name: str, ids: Optional[List[str]] = None
-) -> Tuple[str, Dict]:
+def _get_delete_ddl(table_name: str, ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
     if ids is None:
         raise ValueError("No ids provided to delete.")
 
@@ -1065,9 +974,7 @@ def mmr_from_docs_embeddings(
 ) -> List[Tuple[Document, float]]:
     # if you need to split documents and scores for processing (e.g.,
     # for MMR calculation)
-    documents, scores, embeddings = (
-        zip(*docs_scores_embeddings) if docs_scores_embeddings else ([], [], [])
-    )
+    documents, scores, embeddings = zip(*docs_scores_embeddings) if docs_scores_embeddings else ([], [], [])
 
     # assume maximal_marginal_relevance method accepts embeddings and
     # scores, and returns indices of selected docs
@@ -1079,9 +986,7 @@ def mmr_from_docs_embeddings(
     )
 
     # filter documents based on MMR-selected indices and map scores
-    mmr_selected_documents_with_scores = [
-        (documents[i], scores[i]) for i in mmr_selected_indices
-    ]
+    mmr_selected_documents_with_scores = [(documents[i], scores[i]) for i in mmr_selected_indices]
 
     return mmr_selected_documents_with_scores
 
@@ -1291,26 +1196,18 @@ class OracleVS(VectorStore):
             Optional[Embeddings]: The embedding function if it's an instance of
             Embeddings, otherwise None.
         """
-        return (
-            self.embedding_function
-            if isinstance(self.embedding_function, Embeddings)
-            else None
-        )
+        return self.embedding_function if isinstance(self.embedding_function, Embeddings) else None
 
     def get_embedding_dimension(self) -> int:
         # embed the single document by wrapping it in a list
-        embedded_document = self._embed_documents(
-            [self.query if self.query is not None else ""]
-        )
+        embedded_document = self._embed_documents([self.query if self.query is not None else ""])
 
         # get the first (and only) embedding's dimension
         return len(embedded_document[0])
 
     async def aget_embedding_dimension(self) -> int:
         # embed the single document by wrapping it in a list
-        embedded_document = await self._aembed_documents(
-            [self.query if self.query is not None else ""]
-        )
+        embedded_document = await self._aembed_documents([self.query if self.query is not None else ""])
 
         # get the first (and only) embedding's dimension
         return len(embedded_document[0])
@@ -1321,9 +1218,7 @@ class OracleVS(VectorStore):
         elif callable(self.embedding_function):
             return [self.embedding_function(text) for text in texts]
         else:
-            raise TypeError(
-                "The embedding_function is neither Embeddings nor callable."
-            )
+            raise TypeError("The embedding_function is neither Embeddings nor callable.")
 
     async def _aembed_documents(self, texts: List[str]) -> List[List[float]]:
         if isinstance(self.embedding_function, Embeddings):
@@ -1333,9 +1228,7 @@ class OracleVS(VectorStore):
         elif callable(self.embedding_function):
             return [self.embedding_function(text) for text in texts]
         else:
-            raise TypeError(
-                "The embedding_function is neither Embeddings nor callable."
-            )
+            raise TypeError("The embedding_function is neither Embeddings nor callable.")
 
     def _embed_query(self, text: str) -> List[float]:
         if isinstance(self.embedding_function, Embeddings):
@@ -1386,9 +1279,7 @@ class OracleVS(VectorStore):
                     metadata,
                     text,
                 )
-                for id_, embedding, metadata, text in zip(
-                    processed_ids, embeddings, metadatas, texts
-                )
+                for id_, embedding, metadata, text in zip(processed_ids, embeddings, metadatas, texts)
             ]
         else:
             docs = list(zip(processed_ids, metadatas, texts))
@@ -1400,8 +1291,7 @@ class OracleVS(VectorStore):
             if not isinstance(self.embeddings, OracleEmbeddings):
                 cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
                 cursor.executemany(
-                    f"INSERT INTO {self.table_name} (id, embedding, metadata, "
-                    f"text) VALUES (:1, :2, :3, :4)",
+                    f"INSERT INTO {self.table_name} (id, embedding, metadata, text) VALUES (:1, :2, :3, :4)",
                     docs,
                 )
                 connection.commit()
@@ -1414,15 +1304,13 @@ class OracleVS(VectorStore):
 
                 cursor.setinputsizes(None, oracledb.DB_TYPE_JSON, None)
                 cursor.executemany(
-                    f"INSERT INTO {self.table_name} (id, metadata, "
-                    f"text) VALUES (:1, :2, :3)",
+                    f"INSERT INTO {self.table_name} (id, metadata, text) VALUES (:1, :2, :3)",
                     docs,
                 )
 
                 cursor.setinputsizes(oracledb.DB_TYPE_JSON)
                 update_sql = (
-                    f"UPDATE {self.table_name} "
-                    "SET embedding = dbms_vector_chain.utl_to_embedding(text, json(:1))"
+                    f"UPDATE {self.table_name} SET embedding = dbms_vector_chain.utl_to_embedding(text, json(:1))"
                 )
                 cursor.execute(update_sql, [self.embeddings.params])
                 connection.commit()
@@ -1464,9 +1352,7 @@ class OracleVS(VectorStore):
                     metadata,
                     text,
                 )
-                for id_, embedding, metadata, text in zip(
-                    processed_ids, embeddings, metadatas, texts
-                )
+                for id_, embedding, metadata, text in zip(processed_ids, embeddings, metadatas, texts)
             ]
         else:
             docs = list(zip(processed_ids, metadatas, texts))
@@ -1478,8 +1364,7 @@ class OracleVS(VectorStore):
                 if not isinstance(self.embeddings, OracleEmbeddings):
                     cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
                     await cursor.executemany(
-                        f"INSERT INTO {self.table_name} (id, embedding, metadata, "
-                        f"text) VALUES (:1, :2, :3, :4)",
+                        f"INSERT INTO {self.table_name} (id, embedding, metadata, text) VALUES (:1, :2, :3, :4)",
                         docs,
                     )
                     await connection.commit()
@@ -1492,8 +1377,7 @@ class OracleVS(VectorStore):
 
                     cursor.setinputsizes(None, oracledb.DB_TYPE_JSON, None)
                     await cursor.executemany(
-                        f"INSERT INTO {self.table_name} (id, metadata, "
-                        f"text) VALUES (:1, :2, :3)",
+                        f"INSERT INTO {self.table_name} (id, metadata, text) VALUES (:1, :2, :3)",
                         docs,
                     )
 
@@ -1520,9 +1404,7 @@ class OracleVS(VectorStore):
         """Return docs most similar to query."""
         embedding: List[float] = self._embed_query(query)
 
-        documents = self.similarity_search_by_vector(
-            embedding=embedding, k=k, filter=filter, **kwargs
-        )
+        documents = self.similarity_search_by_vector(embedding=embedding, k=k, filter=filter, **kwargs)
         return documents
 
     async def asimilarity_search(
@@ -1536,9 +1418,7 @@ class OracleVS(VectorStore):
         """Return docs most similar to query."""
         embedding: List[float] = await self._aembed_query(query)
 
-        documents = await self.asimilarity_search_by_vector(
-            embedding=embedding, k=k, filter=filter, **kwargs
-        )
+        documents = await self.asimilarity_search_by_vector(embedding=embedding, k=k, filter=filter, **kwargs)
         return documents
 
     def similarity_search_by_vector(
@@ -1613,9 +1493,7 @@ class OracleVS(VectorStore):
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
-                raise ValueError(
-                    "Specify only one of 'filter' or 'db_filter'; they are equivalent."
-                )
+                raise ValueError("Specify only one of 'filter' or 'db_filter'; they are equivalent.")
 
             filter = db_filter
 
@@ -1673,9 +1551,7 @@ class OracleVS(VectorStore):
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
-                raise ValueError(
-                    "Specify only one of 'filter' or 'db_filter'; they are equivalent."
-                )
+                raise ValueError("Specify only one of 'filter' or 'db_filter'; they are equivalent.")
 
             filter = db_filter
 
@@ -1732,9 +1608,7 @@ class OracleVS(VectorStore):
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
-                raise ValueError(
-                    "Specify only one of 'filter' or 'db_filter'; they are equivalent."
-                )
+                raise ValueError("Specify only one of 'filter' or 'db_filter'; they are equivalent.")
 
             filter = db_filter
 
@@ -1771,9 +1645,7 @@ class OracleVS(VectorStore):
                 # assuming result[4] is already in the correct format;
                 # adjust if necessary
                 current_embedding = (
-                    np.array(result[4], dtype=np.float32)
-                    if result[4]
-                    else np.empty(0, dtype=np.float32)
+                    np.array(result[4], dtype=np.float32) if result[4] else np.empty(0, dtype=np.float32)
                 )
 
                 documents.append((document, distance, current_embedding))
@@ -1796,9 +1668,7 @@ class OracleVS(VectorStore):
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
-                raise ValueError(
-                    "Specify only one of 'filter' or 'db_filter'; they are equivalent."
-                )
+                raise ValueError("Specify only one of 'filter' or 'db_filter'; they are equivalent.")
 
             filter = db_filter
 
@@ -1827,17 +1697,13 @@ class OracleVS(VectorStore):
                         raise Exception("Unexpected type:", type(page_content_str))
                     metadata = result[2] or {}
 
-                    document = Document(
-                        page_content=page_content_str, metadata=metadata
-                    )
+                    document = Document(page_content=page_content_str, metadata=metadata)
                     distance = result[3]
 
                     # assuming result[4] is already in the correct format;
                     # adjust if necessary
                     current_embedding = (
-                        np.array(result[4], dtype=np.float32)
-                        if result[4]
-                        else np.empty(0, dtype=np.float32)
+                        np.array(result[4], dtype=np.float32) if result[4] else np.empty(0, dtype=np.float32)
                     )
 
                     documents.append((document, distance, current_embedding))
@@ -1887,9 +1753,7 @@ class OracleVS(VectorStore):
             embedding, fetch_k, filter=filter, **kwargs
         )
         # assuming documents_with_scores is a list of tuples (Document, score)
-        mmr_selected_documents_with_scores = mmr_from_docs_embeddings(
-            docs_scores_embeddings, embedding, k, lambda_mult
-        )
+        mmr_selected_documents_with_scores = mmr_from_docs_embeddings(docs_scores_embeddings, embedding, k, lambda_mult)
 
         return mmr_selected_documents_with_scores
 
@@ -1930,15 +1794,11 @@ class OracleVS(VectorStore):
         """
 
         # fetch documents and their scores
-        docs_scores_embeddings = (
-            await self.asimilarity_search_by_vector_returning_embeddings(
-                embedding, fetch_k, filter=filter, **kwargs
-            )
+        docs_scores_embeddings = await self.asimilarity_search_by_vector_returning_embeddings(
+            embedding, fetch_k, filter=filter, **kwargs
         )
         # assuming documents_with_scores is a list of tuples (Document, score)
-        mmr_selected_documents_with_scores = mmr_from_docs_embeddings(
-            docs_scores_embeddings, embedding, k, lambda_mult
-        )
+        mmr_selected_documents_with_scores = mmr_from_docs_embeddings(docs_scores_embeddings, embedding, k, lambda_mult)
 
         return mmr_selected_documents_with_scores
 
@@ -2012,15 +1872,13 @@ class OracleVS(VectorStore):
         Returns:
           List of Documents selected by maximal marginal relevance.
         """
-        docs_and_scores = (
-            await self.amax_marginal_relevance_search_with_score_by_vector(
-                embedding,
-                k=k,
-                fetch_k=fetch_k,
-                lambda_mult=lambda_mult,
-                filter=filter,
-                **kwargs,
-            )
+        docs_and_scores = await self.amax_marginal_relevance_search_with_score_by_vector(
+            embedding,
+            k=k,
+            fetch_k=fetch_k,
+            lambda_mult=lambda_mult,
+            filter=filter,
+            **kwargs,
         )
         return [doc for doc, _ in docs_and_scores]
 
@@ -2163,13 +2021,9 @@ class OracleVS(VectorStore):
 
         table_name = str(kwargs.get("table_name", "langchain"))
 
-        distance_strategy = cast(
-            DistanceStrategy, kwargs.get("distance_strategy", None)
-        )
+        distance_strategy = cast(DistanceStrategy, kwargs.get("distance_strategy", None))
         if not isinstance(distance_strategy, DistanceStrategy):
-            raise TypeError(
-                f"Expected DistanceStrategy got " f"{type(distance_strategy).__name__} "
-            )
+            raise TypeError(f"Expected DistanceStrategy got {type(distance_strategy).__name__} ")
 
         query = kwargs.get("query", "What is a Oracle database")
 

@@ -3,7 +3,7 @@
 """
 oracleadb_loader.py
 
-Contains OracleAutonomousDatabaseLoader for connecting to 
+Contains OracleAutonomousDatabaseLoader for connecting to
 Oracle Autonomous Database (ADB).
 """
 
@@ -98,11 +98,7 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
             columns = [col[0] for col in cursor.description]
             data = cursor.fetchall()
             data = [
-                {
-                    i: (j if not isinstance(j, oracledb.LOB) else j.read())
-                    for i, j in zip(columns, row)
-                }
-                for row in data
+                {i: (j if not isinstance(j, oracledb.LOB) else j.read()) for i, j in zip(columns, row)} for row in data
             ]
         except oracledb.DatabaseError as e:
             print("Got error while connecting: " + str(e))  # noqa: T201
@@ -118,9 +114,7 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         documents = []
         metadata_columns = self.metadata if self.metadata else []
         for row in data:
-            metadata = {
-                key: value for key, value in row.items() if key in metadata_columns
-            }
+            metadata = {key: value for key, value in row.items() if key in metadata_columns}
             doc = Document(page_content=str(row), metadata=metadata)
             documents.append(doc)
 
