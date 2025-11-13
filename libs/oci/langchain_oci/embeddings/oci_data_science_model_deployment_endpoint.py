@@ -21,7 +21,9 @@ class TokenExpiredError(Exception):
 def _create_retry_decorator(llm) -> Callable[[Any], Any]:
     """Creates a retry decorator."""
     errors = [requests.exceptions.ConnectTimeout, TokenExpiredError]
-    decorator = create_base_retry_decorator(error_types=errors, max_retries=llm.max_retries)
+    decorator = create_base_retry_decorator(
+        error_types=errors, max_retries=llm.max_retries
+    )  # noqa: E501
     return decorator
 
 
@@ -70,7 +72,7 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
 
         except ImportError as ex:
             raise ImportError(
-                "Could not import ads python package. Please install it with `pip install oracle_ads`."
+                "Could not import ads python package. Please install it with `pip install oracle_ads`."  # noqa: E501
             ) from ex
         if not values.get("auth", None):
             values["auth"] = ads.common.auth.default_signer()
@@ -104,7 +106,9 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
                 if response.status_code == 401 and self._refresh_signer():
                     raise TokenExpiredError() from http_err
                 else:
-                    raise ValueError(f"Server error: {str(http_err)}. Message: {response.text}") from http_err
+                    raise ValueError(
+                        f"Server error: {str(http_err)}. Message: {response.text}"
+                    ) from http_err  # noqa: E501
             except Exception as e:
                 raise ValueError(f"Error occurs by inference endpoint: {str(e)}") from e
 
@@ -158,7 +162,9 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
             res_json = response.json()
             embeddings = res_json["data"][0]["embedding"]
         except Exception as e:
-            raise ValueError(f"Error raised by inference API: {e}.\nResponse: {response.text}")
+            raise ValueError(
+                f"Error raised by inference API: {e}.\nResponse: {response.text}"
+            )  # noqa: E501
         return embeddings
 
     def embed_documents(
@@ -178,7 +184,9 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
             List of embeddings, one for each text.
         """
         results = []
-        _chunk_size = len(texts) if (not chunk_size or chunk_size > len(texts)) else chunk_size
+        _chunk_size = (
+            len(texts) if (not chunk_size or chunk_size > len(texts)) else chunk_size
+        )  # noqa: E501
         for i in range(0, len(texts), _chunk_size):
             response = self._embedding(texts[i : i + _chunk_size])
             results.extend(response)

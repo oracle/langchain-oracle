@@ -101,14 +101,18 @@ class OracleDocReader:
         # binary object id
         object_id = timestamp_bin + hashval_bin + counter_bin  # 16 bytes
         object_id_hex = object_id.hex()  # 32 bytes
-        object_id_hex = object_id_hex.zfill(out_length)  # fill with zeros if less than 32 bytes
+        object_id_hex = object_id_hex.zfill(
+            out_length
+        )  # fill with zeros if less than 32 bytes
 
         object_id_hex = object_id_hex[:out_length]
 
         return object_id_hex
 
     @staticmethod
-    def read_file(conn: Connection, file_path: str, params: dict) -> Union[Document, None]:
+    def read_file(
+        conn: Connection, file_path: str, params: dict
+    ) -> Union[Document, None]:
         """Read a file using OracleReader
         Args:
             conn: Oracle Connection,
@@ -151,7 +155,9 @@ class OracleDocReader:
                 metadata = {}
             else:
                 doc_data = str(mdata.getvalue())
-                if doc_data.startswith("<!DOCTYPE html") or doc_data.startswith("<HTML>"):
+                if doc_data.startswith("<!DOCTYPE html") or doc_data.startswith(
+                    "<HTML>"
+                ):
                     p = ParseOracleDocMetadata()
                     p.feed(doc_data)
                     metadata = p.get_metadata()
@@ -237,7 +243,10 @@ class OracleDocLoader(BaseLoader):
                     self.mdata_cols = self.params.get("mdata_cols")
                     if self.mdata_cols is not None:
                         if len(self.mdata_cols) > 3:
-                            raise Exception("Exceeds the max number of columns " + "you can request for metadata.")
+                            raise Exception(
+                                "Exceeds the max number of columns "
+                                + "you can request for metadata."
+                            )
 
                         # execute a query to get column data types
                         sql = (
@@ -265,7 +274,8 @@ class OracleDocLoader(BaseLoader):
                                     "VARCHAR2",
                                 ]:
                                     raise Exception(
-                                        "The datatype for the column requested " + "for metadata is not supported."
+                                        "The datatype for the column requested "
+                                        + "for metadata is not supported."
                                     )
 
                     self.mdata_cols_sql = ", rowid"
@@ -296,14 +306,22 @@ class OracleDocLoader(BaseLoader):
 
                         if row is None:
                             doc_id = OracleDocReader.generate_object_id(
-                                self.conn.username + "$" + self.owner + "$" + self.tablename + "$" + self.colname
+                                self.conn.username
+                                + "$"
+                                + self.owner
+                                + "$"
+                                + self.tablename
+                                + "$"
+                                + self.colname
                             )
                             metadata["_oid"] = doc_id
                             results.append(Document(page_content="", metadata=metadata))
                         else:
                             if row[0] is not None:
                                 data = str(row[0])
-                                if data.startswith("<!DOCTYPE html") or data.startswith("<HTML>"):
+                                if data.startswith("<!DOCTYPE html") or data.startswith(
+                                    "<HTML>"
+                                ):
                                     p = ParseOracleDocMetadata()
                                     p.feed(data)
                                     metadata = p.get_metadata()
@@ -330,9 +348,15 @@ class OracleDocLoader(BaseLoader):
                                 metadata[self.mdata_cols[i]] = row[i + 2]
 
                             if row[1] is None:
-                                results.append(Document(page_content="", metadata=metadata))
+                                results.append(
+                                    Document(page_content="", metadata=metadata)
+                                )
                             else:
-                                results.append(Document(page_content=str(row[1]), metadata=metadata))
+                                results.append(
+                                    Document(
+                                        page_content=str(row[1]), metadata=metadata
+                                    )
+                                )
                 except Exception as ex:
                     logger.info(f"An exception occurred :: {ex}")
                     traceback.print_exc()
@@ -379,7 +403,8 @@ class OracleTextSplitter(TextSplitter):
 
             cursor.setinputsizes(content=oracledb.CLOB)
             cursor.execute(
-                "select t.column_value from " + "dbms_vector_chain.utl_to_chunks(:content, json(:params)) t",
+                "select t.column_value from "
+                + "dbms_vector_chain.utl_to_chunks(:content, json(:params)) t",
                 content=text,
                 params=self._json.dumps(self.params),
             )

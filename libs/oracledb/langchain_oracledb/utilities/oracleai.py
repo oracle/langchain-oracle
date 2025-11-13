@@ -46,7 +46,9 @@ class OracleSummary:
         proxy: Proxy
     """
 
-    def __init__(self, conn: Connection, params: Dict[str, Any], proxy: Optional[str] = None):
+    def __init__(
+        self, conn: Connection, params: Dict[str, Any], proxy: Optional[str] = None
+    ):
         self.conn = conn
         self.proxy = proxy
         self.summary_params = params
@@ -69,7 +71,9 @@ class OracleSummary:
             cursor.outputtypehandler = output_type_handler
 
             if self.proxy:
-                cursor.execute("begin utl_http.set_proxy(:proxy); end;", proxy=self.proxy)
+                cursor.execute(
+                    "begin utl_http.set_proxy(:proxy); end;", proxy=self.proxy
+                )
 
             if isinstance(docs, str):
                 results = []
@@ -146,7 +150,10 @@ class OracleSummary:
 
                 value = summary.getvalue(i)
 
-                results = ["" if value is None else str(value) for i in range(summary.actual_elements)]
+                results = [
+                    "" if value is None else str(value)
+                    for i in range(summary.actual_elements)
+                ]
 
             else:
                 raise Exception("Invalid input type")

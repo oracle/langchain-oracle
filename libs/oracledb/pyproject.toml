@@ -56,7 +56,6 @@ optional = true
 [tool.poetry.group.dev.dependencies]
 
 [tool.ruff]
-line-length = 120
 
 [tool.ruff.lint]
 select = [

@@ -96,7 +96,7 @@ class OCIUtils:
         """Convert an OCI tool call to a LangChain ToolCall."""
         parsed = json.loads(tool_call.arguments)
 
-        # If the parsed result is a string, it means the JSON was escaped, so parse again
+        # If the parsed result is a string, it means the JSON was escaped, so parse again  # noqa: E501
         if isinstance(parsed, str):
             try:
                 parsed = json.loads(parsed)
@@ -106,7 +106,9 @@ class OCIUtils:
 
         return ToolCall(
             name=tool_call.name,
-            args=parsed if "arguments" in tool_call.attribute_map else tool_call.parameters,
+            args=parsed
+            if "arguments" in tool_call.attribute_map
+            else tool_call.parameters,  # noqa: E501
             id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
         )
 
@@ -176,14 +178,18 @@ class Provider(ABC):
         ...
 
     @abstractmethod
-    def convert_to_oci_tool(self, tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]) -> Dict[str, Any]:
+    def convert_to_oci_tool(
+        self, tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]
+    ) -> Dict[str, Any]:  # noqa: E501
         """Convert a tool definition into the provider-specific OCI tool format."""
         ...
 
     @abstractmethod
     def process_tool_choice(
         self,
-        tool_choice: Optional[Union[dict, str, Literal["auto", "none", "required", "any"], bool]],
+        tool_choice: Optional[
+            Union[dict, str, Literal["auto", "none", "required", "any"], bool]
+        ],  # noqa: E501
     ) -> Optional[Any]:
         """Process tool choice parameter for the provider."""
         ...
@@ -251,12 +257,19 @@ class CohereProvider(Provider):
         }
 
         # Include token usage if available
-        if hasattr(response.data.chat_response, "usage") and response.data.chat_response.usage:
-            generation_info["total_tokens"] = response.data.chat_response.usage.total_tokens
+        if (
+            hasattr(response.data.chat_response, "usage")
+            and response.data.chat_response.usage
+        ):  # noqa: E501
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )  # noqa: E501
 
         # Include tool calls if available
         if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(self.chat_tool_calls(response))
+            generation_info["tool_calls"] = self.format_response_tool_calls(
+                self.chat_tool_calls(response)
+            )  # noqa: E501
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
@@ -336,7 +349,9 @@ class CohereProvider(Provider):
             return "TOOL"
         raise ValueError(f"Unknown message type: {type(message)}")
 
-    def messages_to_oci_params(self, messages: Sequence[ChatMessage], **kwargs: Any) -> Dict[str, Any]:
+    def messages_to_oci_params(
+        self, messages: Sequence[ChatMessage], **kwargs: Any
+    ) -> Dict[str, Any]:  # noqa: E501
         """
         Convert LangChain messages to OCI parameters for Cohere.
 
@@ -349,18 +364,27 @@ class CohereProvider(Provider):
         for msg in messages[:-1]:
             role = self.get_role(msg)
             if role in ("USER", "SYSTEM"):
-                oci_chat_history.append(self.oci_chat_message[role](message=msg.content))
+                oci_chat_history.append(
+                    self.oci_chat_message[role](message=msg.content)
+                )
             elif isinstance(msg, AIMessage):
                 # Skip tool calls if forcing single step
                 if msg.tool_calls and is_force_single_step:
                     continue
                 tool_calls = (
-                    [self.oci_tool_call(name=tc["name"], parameters=tc["args"]) for tc in msg.tool_calls]
+                    [
+                        self.oci_tool_call(name=tc["name"], parameters=tc["args"])
+                        for tc in msg.tool_calls
+                    ]  # noqa: E501
                     if msg.tool_calls
                     else None
                 )
                 msg_content = msg.content if msg.content else " "
-                oci_chat_history.append(self.oci_chat_message[role](message=msg_content, tool_calls=tool_calls))
+                oci_chat_history.append(
+                    self.oci_chat_message[role](
+                        message=msg_content, tool_calls=tool_calls
+                    )
+                )  # noqa: E501
             elif isinstance(msg, ToolMessage):
                 oci_chat_history.append(
                     self.oci_chat_message[self.get_role(msg)](
@@ -378,12 +402,16 @@ class CohereProvider(Provider):
         for i, message in enumerate(messages[::-1]):
             current_turn.append(message)
             if isinstance(message, HumanMessage):
-                if len(messages) > i and isinstance(messages[len(messages) - i - 2], ToolMessage):
+                if len(messages) > i and isinstance(
+                    messages[len(messages) - i - 2], ToolMessage
+                ):  # noqa: E501
                     # add dummy message REPEATING the tool_result to avoid
                     # the error about ToolMessage needing to be followed
                     # by an AI message
                     oci_chat_history.append(
-                        self.oci_chat_message["CHATBOT"](message=messages[len(messages) - i - 2].content)
+                        self.oci_chat_message["CHATBOT"](
+                            message=messages[len(messages) - i - 2].content
+                        )  # noqa: E501
                     )
                 break
         current_turn = list(reversed(current_turn))
@@ -393,7 +421,9 @@ class CohereProvider(Provider):
         for message in current_turn:
             if isinstance(message, ToolMessage):
                 tool_msg = message
-                previous_ai_msgs = [m for m in current_turn if isinstance(m, AIMessage) and m.tool_calls]
+                previous_ai_msgs = [
+                    m for m in current_turn if isinstance(m, AIMessage) and m.tool_calls
+                ]  # noqa: E501
                 if previous_ai_msgs:
                     previous_ai_msg = previous_ai_msgs[-1]
                     for lc_tool_call in previous_ai_msg.tool_calls:
@@ -434,7 +464,9 @@ class CohereProvider(Provider):
         if isinstance(tool, BaseTool):
             return self.oci_tool(
                 name=tool.name,
-                description=OCIUtils.remove_signature_from_tool_description(tool.name, tool.description),
+                description=OCIUtils.remove_signature_from_tool_description(
+                    tool.name, tool.description
+                ),  # noqa: E501
                 parameter_definitions={
                     p_name: self.oci_tool_param(
                         description=p_def.get("description", ""),
@@ -495,14 +527,20 @@ class CohereProvider(Provider):
 
     def process_tool_choice(
         self,
-        tool_choice: Optional[Union[dict, str, Literal["auto", "none", "required", "any"], bool]],
+        tool_choice: Optional[
+            Union[dict, str, Literal["auto", "none", "required", "any"], bool]
+        ],  # noqa: E501
     ) -> Optional[Any]:
         """Cohere does not support tool choices."""
         if tool_choice is not None:
-            raise ValueError("Tool choice is not supported for Cohere models.Please remove the tool_choice parameter.")
+            raise ValueError(
+                "Tool choice is not supported for Cohere models.Please remove the tool_choice parameter."  # noqa: E501
+            )
         return None
 
-    def process_stream_tool_calls(self, event_data: Dict, tool_call_ids: Set[str]) -> List[ToolCallChunk]:
+    def process_stream_tool_calls(
+        self, event_data: Dict, tool_call_ids: Set[str]
+    ) -> List[ToolCallChunk]:  # noqa: E501
         """
         Process Cohere stream tool calls and return them as ToolCallChunk objects.
 
@@ -598,11 +636,18 @@ class GenericProvider(Provider):
         }
 
         # Include token usage if available
-        if hasattr(response.data.chat_response, "usage") and response.data.chat_response.usage:
-            generation_info["total_tokens"] = response.data.chat_response.usage.total_tokens
+        if (
+            hasattr(response.data.chat_response, "usage")
+            and response.data.chat_response.usage
+        ):  # noqa: E501
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )  # noqa: E501
 
         if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(self.chat_tool_calls(response))
+            generation_info["tool_calls"] = self.format_response_tool_calls(
+                self.chat_tool_calls(response)
+            )  # noqa: E501
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
@@ -678,7 +723,9 @@ class GenericProvider(Provider):
             return "TOOL"
         raise ValueError(f"Unknown message type: {type(message)}")
 
-    def messages_to_oci_params(self, messages: List[BaseMessage], **kwargs: Any) -> Dict[str, Any]:
+    def messages_to_oci_params(
+        self, messages: List[BaseMessage], **kwargs: Any
+    ) -> Dict[str, Any]:  # noqa: E501
         """Convert LangChain messages to OCI chat parameters.
 
         Args:
@@ -697,7 +744,9 @@ class GenericProvider(Provider):
             role = self.get_role(message)
             if isinstance(message, ToolMessage):
                 # For tool messages, wrap the content in a text content object.
-                tool_content = [self.oci_chat_message_text_content(text=str(message.content))]
+                tool_content = [
+                    self.oci_chat_message_text_content(text=str(message.content))
+                ]  # noqa: E501
                 if message.tool_call_id:
                     oci_message = self.oci_chat_message[role](
                         content=tool_content,
@@ -705,7 +754,9 @@ class GenericProvider(Provider):
                     )
                 else:
                     oci_message = self.oci_chat_message[role](content=tool_content)
-            elif isinstance(message, AIMessage) and (message.tool_calls or message.additional_kwargs.get("tool_calls")):
+            elif isinstance(message, AIMessage) and (
+                message.tool_calls or message.additional_kwargs.get("tool_calls")
+            ):  # noqa: E501
                 # Process content and tool calls for assistant messages
                 content = self._process_message_content(message.content)
                 tool_calls = []
@@ -737,7 +788,9 @@ class GenericProvider(Provider):
         # This addresses a known issue with Meta Llama models that
         # continue calling tools even after receiving results.
 
-        def _should_allow_more_tool_calls(messages: List[BaseMessage], max_tool_calls: int) -> bool:
+        def _should_allow_more_tool_calls(
+            messages: List[BaseMessage], max_tool_calls: int
+        ) -> bool:  # noqa: E501
             """
             Determine if the model should be allowed to call more tools.
 
@@ -793,7 +846,9 @@ class GenericProvider(Provider):
 
         return result
 
-    def _process_message_content(self, content: Union[str, List[Union[str, Dict]]]) -> List[Any]:
+    def _process_message_content(
+        self, content: Union[str, List[Union[str, Dict]]]
+    ) -> List[Any]:  # noqa: E501
         """Process message content into OCI chat content format.
 
         Args:
@@ -820,15 +875,21 @@ class GenericProvider(Provider):
                 if item["type"] == "image_url":
                     processed_content.append(
                         self.oci_chat_message_image_content(
-                            image_url=self.oci_chat_message_image_url(url=item["image_url"]["url"])
+                            image_url=self.oci_chat_message_image_url(
+                                url=item["image_url"]["url"]
+                            )
                         )
                     )
                 elif item["type"] == "text":
-                    processed_content.append(self.oci_chat_message_text_content(text=item["text"]))
+                    processed_content.append(
+                        self.oci_chat_message_text_content(text=item["text"])
+                    )
                 else:
                     raise ValueError(f"Unsupported content type: {item['type']}")
             else:
-                raise ValueError(f"Content items must be str or dict, got: {type(item)}")
+                raise ValueError(
+                    f"Content items must be str or dict, got: {type(item)}"
+                )  # noqa: E501
         return processed_content
 
     def convert_to_oci_tool(
@@ -866,7 +927,9 @@ class GenericProvider(Provider):
         elif isinstance(tool, BaseTool):
             return self.oci_function_definition(
                 name=tool.name,
-                description=OCIUtils.remove_signature_from_tool_description(tool.name, tool.description),
+                description=OCIUtils.remove_signature_from_tool_description(
+                    tool.name, tool.description
+                ),  # noqa: E501
                 parameters={
                     "type": "object",
                     "properties": {
@@ -876,7 +939,11 @@ class GenericProvider(Provider):
                         }
                         for p_name, p_def in tool.args.items()
                     },
-                    "required": [p_name for p_name, p_def in tool.args.items() if "default" not in p_def],
+                    "required": [
+                        p_name
+                        for p_name, p_def in tool.args.items()
+                        if "default" not in p_def
+                    ],  # noqa: E501
                 },
             )
         raise ValueError(
@@ -887,7 +954,9 @@ class GenericProvider(Provider):
 
     def process_tool_choice(
         self,
-        tool_choice: Optional[Union[dict, str, Literal["auto", "none", "required", "any"], bool]],
+        tool_choice: Optional[
+            Union[dict, str, Literal["auto", "none", "required", "any"], bool]
+        ],  # noqa: E501
     ) -> Optional[Any]:
         """Process tool choice for Meta provider.
 
@@ -928,9 +997,13 @@ class GenericProvider(Provider):
         elif isinstance(tool_choice, dict):
             # For Meta, we use ToolChoiceAuto for tool selection
             return self.oci_tool_choice_auto()
-        raise ValueError(f"Unrecognized tool_choice type. Expected str, bool or dict. Received: {tool_choice}")
+        raise ValueError(
+            f"Unrecognized tool_choice type. Expected str, bool or dict. Received: {tool_choice}"  # noqa: E501
+        )
 
-    def process_stream_tool_calls(self, event_data: Dict, tool_call_ids: Set[str]) -> List[ToolCallChunk]:
+    def process_stream_tool_calls(
+        self, event_data: Dict, tool_call_ids: Set[str]
+    ) -> List[ToolCallChunk]:  # noqa: E501
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
 
@@ -1078,7 +1151,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         except ImportError as ex:
             raise ModuleNotFoundError(
-                "Could not import oci python package. Please make sure you have the oci package installed."
+                "Could not import oci python package. Please make sure you have the oci package installed."  # noqa: E501
             ) from ex
 
         oci_params = self._provider.messages_to_oci_params(
@@ -1092,11 +1165,17 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
         # Warn if using max_tokens with OpenAI models
-        if self.model_id and self.model_id.startswith("openai.") and "max_tokens" in _model_kwargs:
+        if (
+            self.model_id
+            and self.model_id.startswith("openai.")
+            and "max_tokens" in _model_kwargs
+        ):  # noqa: E501
             import warnings
 
             warnings.warn(
-                "OpenAI models require 'max_completion_tokens' instead of 'max_tokens'.", UserWarning, stacklevel=2
+                "OpenAI models require 'max_completion_tokens' instead of 'max_tokens'.",  # noqa: E501
+                UserWarning,
+                stacklevel=2,
             )
 
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
@@ -1120,7 +1199,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         self,
         tools: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
         *,
-        tool_choice: Optional[Union[dict, str, Literal["auto", "none", "required", "any"], bool]] = None,
+        tool_choice: Optional[
+            Union[dict, str, Literal["auto", "none", "required", "any"], bool]
+        ] = None,  # noqa: E501
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, BaseMessage]:
         """Bind tool-like objects to this chat model.
@@ -1156,7 +1237,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         self,
         schema: Optional[Union[Dict, Type[BaseModel]]] = None,
         *,
-        method: Literal["function_calling", "json_schema", "json_mode"] = "function_calling",
+        method: Literal[
+            "function_calling", "json_schema", "json_mode"
+        ] = "function_calling",  # noqa: E501
         include_raw: bool = False,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, Union[Dict, BaseModel]]:
@@ -1217,7 +1300,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     first_tool_only=True,  # type: ignore[list-item]
                 )
             else:
-                output_parser = JsonOutputKeyToolsParser(key_name=tool_name, first_tool_only=True)
+                output_parser = JsonOutputKeyToolsParser(
+                    key_name=tool_name, first_tool_only=True
+                )  # noqa: E501
         elif method == "json_mode":
             llm = self.bind(response_format={"type": "JSON_OBJECT"})
             output_parser = (
@@ -1239,7 +1324,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 is_strict=True,
             )
 
-            response_format_obj = self._provider.oci_json_schema_response_format(json_schema=response_json_schema)
+            response_format_obj = self._provider.oci_json_schema_response_format(
+                json_schema=response_json_schema
+            )  # noqa: E501
 
             llm = self.bind(response_format=response_format_obj)
             if is_pydantic_schema:
@@ -1257,7 +1344,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 parsed=itemgetter("raw") | output_parser, parsing_error=lambda _: None
             )
             parser_none = RunnablePassthrough.assign(parsed=lambda _: None)
-            parser_with_fallback = parser_assign.with_fallbacks([parser_none], exception_key="parsing_error")
+            parser_with_fallback = parser_assign.with_fallbacks(
+                [parser_none], exception_key="parsing_error"
+            )  # noqa: E501
             return RunnableMap(raw=llm) | parser_with_fallback
         return llm | output_parser
 
@@ -1289,7 +1378,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                response = llm.invoke(messages)
         """
         if self.is_stream:
-            stream_iter = self._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+            stream_iter = self._stream(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )  # noqa: E501
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
@@ -1320,7 +1411,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             tool_calls=tool_calls,
         )
         return ChatResult(
-            generations=[ChatGeneration(message=message, generation_info=generation_info)],
+            generations=[
+                ChatGeneration(message=message, generation_info=generation_info)
+            ],  # noqa: E501
             llm_output=llm_output,
         )
 
@@ -1346,7 +1439,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             if not self._provider.is_chat_stream_end(event_data):
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(event_data)
-                tool_call_chunks = self._provider.process_stream_tool_calls(event_data, tool_call_ids)
+                tool_call_chunks = self._provider.process_stream_tool_calls(
+                    event_data, tool_call_ids
+                )  # noqa: E501
 
                 chunk = ChatGenerationChunk(
                     message=AIMessageChunk(

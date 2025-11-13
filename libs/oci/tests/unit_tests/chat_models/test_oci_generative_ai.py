@@ -23,7 +23,9 @@ class MockToolCall(dict):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize("test_model_id", ["cohere.command-r-16k", "meta.llama-3.3-70b-instruct"])
+@pytest.mark.parametrize(
+    "test_model_id", ["cohere.command-r-16k", "meta.llama-3.3-70b-instruct"]
+)  # noqa: E501
 def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
     """Test valid chat call to OCI Generative AI LLM service."""
     oci_gen_ai_client = MagicMock()
@@ -266,20 +268,22 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                         {
                                             "message": MockResponseDict(
                                                 {
-                                                    "content": [MockResponseDict({"text": ""})],
+                                                    "content": [
+                                                        MockResponseDict({"text": ""})
+                                                    ],  # noqa: E501
                                                     "tool_calls": [
                                                         MockResponseDict(
                                                             {
                                                                 "type": "FUNCTION",
                                                                 "id": "call_escaped",
                                                                 "name": "get_weather",
-                                                                # Escaped JSON (the bug scenario)
+                                                                # Escaped JSON (the bug scenario)  # noqa: E501
                                                                 "arguments": '"{\\"location\\": \\"San Francisco\\"}"',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
                                                                     "type": "type",
                                                                     "name": "name",
-                                                                    "arguments": "arguments",
+                                                                    "arguments": "arguments",  # noqa: E501
                                                                 },
                                                             }
                                                         )
@@ -324,7 +328,9 @@ def test_cohere_tool_choice_validation(monkeypatch: MonkeyPatch) -> None:
     messages = [HumanMessage(content="What's the weather like?")]
 
     # Test that tool choice raises ValueError
-    with pytest.raises(ValueError, match="Tool choice is not supported for Cohere models"):
+    with pytest.raises(
+        ValueError, match="Tool choice is not supported for Cohere models"
+    ):  # noqa: E501
         llm.bind_tools(
             tools=[get_weather],
             tool_choice="auto",
@@ -577,7 +583,9 @@ def test_auth_file_location(monkeypatch: MonkeyPatch) -> None:
     from unittest.mock import patch
 
     with patch("oci.config.from_file") as mock_from_file:
-        with patch("oci.generative_ai_inference.generative_ai_inference_client.validate_config"):
+        with patch(
+            "oci.generative_ai_inference.generative_ai_inference_client.validate_config"
+        ):  # noqa: E501
             with patch("oci.base_client.validate_config"):
                 with patch("oci.signer.load_private_key"):
                     custom_config_path = "/custom/path/config"
@@ -585,7 +593,9 @@ def test_auth_file_location(monkeypatch: MonkeyPatch) -> None:
                         model_id="cohere.command-r-16k",
                         auth_file_location=custom_config_path,
                     )
-                    mock_from_file.assert_called_once_with(file_location=custom_config_path, profile_name="DEFAULT")
+                    mock_from_file.assert_called_once_with(
+                        file_location=custom_config_path, profile_name="DEFAULT"
+                    )  # noqa: E501
 
 
 @pytest.mark.requires("oci")
@@ -631,7 +641,9 @@ def test_include_raw_output(monkeypatch: MonkeyPatch) -> None:
     messages = [HumanMessage(content="What's the weather like?")]
 
     # Test with include_raw=True
-    structured_llm = llm.with_structured_output(WeatherResponse, method="json_schema", include_raw=True)
+    structured_llm = llm.with_structured_output(
+        WeatherResponse, method="json_schema", include_raw=True
+    )  # noqa: E501
     response = structured_llm.invoke(messages)
     assert isinstance(response, dict)
     assert "parsed" in response
@@ -680,7 +692,9 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
                                                     "content": [
                                                         MockResponseDict(
                                                             {
-                                                                "text": ("I'll help you."),
+                                                                "text": (
+                                                                    "I'll help you."
+                                                                ),  # noqa: E501
                                                                 "type": "TEXT",
                                                             }
                                                         )
@@ -751,7 +765,9 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
                                                     "content": [
                                                         MockResponseDict(
                                                             {
-                                                                "text": ("I'll help you."),
+                                                                "text": (
+                                                                    "I'll help you."
+                                                                ),  # noqa: E501
                                                                 "type": "TEXT",
                                                             }
                                                         )
@@ -813,8 +829,8 @@ def test_get_provider():
 
 
 @pytest.mark.requires("oci")
-def test_tool_choice_none_after_tool_results() -> None:
-    """Test that tool_choice is set to 'none' when max_sequential_tool_calls is exceeded.
+def test_tool_choice_none_after_tool_results() -> None:  # noqa: E501
+    """Test tool_choice='none' when max_sequential_tool_calls is exceeded.
 
     This prevents infinite loops with Meta Llama models by limiting the number
     of sequential tool calls.
@@ -844,16 +860,33 @@ def test_tool_choice_none_after_tool_results() -> None:
     # Create conversation with 3 ToolMessages (at the limit)
     messages = [
         HumanMessage(content="What's the weather?"),
-        AIMessage(content="", tool_calls=[{"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}
+            ],
+        ),  # noqa: E501
         ToolMessage(content="Sunny, 65°F", tool_call_id="call_1"),
-        AIMessage(content="", tool_calls=[{"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}
+            ],
+        ),  # noqa: E501
         ToolMessage(content="Rainy, 55°F", tool_call_id="call_2"),
-        AIMessage(content="", tool_calls=[{"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}
+            ],
+        ),  # noqa: E501
         ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3"),
     ]
 
     # Prepare the request - need to pass tools from the bound model kwargs
-    request = llm_with_tools._prepare_request(messages, stop=None, stream=False, **llm_with_tools.kwargs)
+    request = llm_with_tools._prepare_request(
+        messages, stop=None, stream=False, **llm_with_tools.kwargs
+    )  # noqa: E501
 
     # Verify that tool_choice is set to 'none' because limit was reached
     assert hasattr(request.chat_request, "tool_choice")

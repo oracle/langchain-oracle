@@ -52,11 +52,15 @@ class ServerError(Exception):
 def _create_retry_decorator(
     llm: "BaseOCIModelDeployment",
     *,
-    run_manager: Optional[Union[AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun]] = None,
+    run_manager: Optional[
+        Union[AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun]
+    ] = None,  # noqa: E501
 ) -> Callable[[Any], Any]:
     """Create a retry decorator."""
     errors = [requests.exceptions.ConnectTimeout, TokenExpiredError]
-    decorator = create_base_retry_decorator(error_types=errors, max_retries=llm.max_retries, run_manager=run_manager)
+    decorator = create_base_retry_decorator(
+        error_types=errors, max_retries=llm.max_retries, run_manager=run_manager
+    )  # noqa: E501
     return decorator
 
 
@@ -93,7 +97,7 @@ class BaseOCIModelDeployment(Serializable):
 
         except ImportError as ex:
             raise ImportError(
-                "Could not import ads python package. Please install it with `pip install oracle_ads`."
+                "Could not import ads python package. Please install it with `pip install oracle_ads`."  # noqa: E501
             ) from ex
 
         if not values.get("auth", None):
@@ -106,7 +110,9 @@ class BaseOCIModelDeployment(Serializable):
         )
         return values
 
-    def _headers(self, is_async: Optional[bool] = False, body: Optional[dict] = None) -> Dict:
+    def _headers(
+        self, is_async: Optional[bool] = False, body: Optional[dict] = None
+    ) -> Dict:  # noqa: E501
         """Construct and return the headers for a request.
 
         Args:
@@ -150,7 +156,9 @@ class BaseOCIModelDeployment(Serializable):
 
         return headers
 
-    def completion_with_retry(self, run_manager: Optional[CallbackManagerForLLMRun] = None, **kwargs: Any) -> Any:
+    def completion_with_retry(
+        self, run_manager: Optional[CallbackManagerForLLMRun] = None, **kwargs: Any
+    ) -> Any:  # noqa: E501
         """Use tenacity to retry the completion call."""
         retry_decorator = _create_retry_decorator(self, run_manager=run_manager)
 
@@ -185,7 +193,9 @@ class BaseOCIModelDeployment(Serializable):
                     f"url={self.endpoint},timeout={request_timeout},stream={stream}. "
                     f"Additional request kwargs={kwargs}."
                 )
-                raise RuntimeError(f"Error occurs by inference endpoint: {str(err)}") from err
+                raise RuntimeError(
+                    f"Error occurs by inference endpoint: {str(err)}"
+                ) from err  # noqa: E501
 
         return _completion_with_retry(**kwargs)
 
@@ -239,7 +249,9 @@ class BaseOCIModelDeployment(Serializable):
                     f"Stream mode={stream}. "
                     f"Requests kwargs: url={self.endpoint}, timeout={request_timeout}."
                 )
-                raise RuntimeError(f"Error occurs by inference endpoint: {str(err)}") from err
+                raise RuntimeError(
+                    f"Error occurs by inference endpoint: {str(err)}"
+                ) from err  # noqa: E501
 
         return await _completion_with_retry(**kwargs)
 
@@ -274,11 +286,17 @@ class BaseOCIModelDeployment(Serializable):
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as http_err:
-            status_code = response.status_code if hasattr(response, "status_code") else response.status
+            status_code = (
+                response.status_code
+                if hasattr(response, "status_code")
+                else response.status
+            )  # noqa: E501
             if status_code == 401 and self._refresh_signer():
                 raise TokenExpiredError() from http_err
 
-            raise ServerError(f"Server error: {str(http_err)}. \nMessage: {response.text}") from http_err
+            raise ServerError(
+                f"Server error: {str(http_err)}. \nMessage: {response.text}"
+            ) from http_err  # noqa: E501
 
     def _parse_stream(self, lines: Iterator[bytes]) -> Iterator[str]:
         """Parse a stream of byte lines and yield parsed string lines.
@@ -364,7 +382,9 @@ class BaseOCIModelDeployment(Serializable):
         Returns:
                 bool: `True` if the token was successfully refreshed, `False` otherwise.
         """
-        if self.auth.get("signer", None) and hasattr(self.auth["signer"], "refresh_security_token"):
+        if self.auth.get("signer", None) and hasattr(
+            self.auth["signer"], "refresh_security_token"
+        ):  # noqa: E501
             self.auth["signer"].refresh_security_token()
             return True
         return False
@@ -470,7 +490,9 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
             **self._default_params,
         }
 
-    def _headers(self, is_async: Optional[bool] = False, body: Optional[dict] = None) -> Dict:
+    def _headers(
+        self, is_async: Optional[bool] = False, body: Optional[dict] = None
+    ) -> Dict:  # noqa: E501
         """Construct and return the headers for a request.
 
         Args:
@@ -515,7 +537,9 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
             body = self._construct_json_body(prompt, params)
             if self.streaming:
                 generation = GenerationChunk(text="")
-                for chunk in self._stream(prompt, stop=stop, run_manager=run_manager, **kwargs):
+                for chunk in self._stream(
+                    prompt, stop=stop, run_manager=run_manager, **kwargs
+                ):  # noqa: E501
                     generation += chunk
                 generations.append([generation])
             else:
@@ -555,7 +579,9 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
             body = self._construct_json_body(prompt, params)
             if self.streaming:
                 generation = GenerationChunk(text="")
-                async for chunk in self._astream(prompt, stop=stop, run_manager=run_manager, **kwargs):
+                async for chunk in self._astream(
+                    prompt, stop=stop, run_manager=run_manager, **kwargs
+                ):  # noqa: E501
                     generation += chunk
                 generations.append([generation])
             else:
@@ -602,7 +628,9 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
         params = self._invocation_params(stop, **kwargs)
         body = self._construct_json_body(prompt, params)
 
-        response = self.completion_with_retry(data=body, run_manager=run_manager, stream=True, **requests_kwargs)
+        response = self.completion_with_retry(
+            data=body, run_manager=run_manager, stream=True, **requests_kwargs
+        )  # noqa: E501
         for line in self._parse_stream(response.iter_lines()):
             chunk = self._handle_sse_line(line)
             if run_manager:
@@ -661,7 +689,9 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
             **params,
         }
 
-    def _invocation_params(self, stop: Optional[List[str]] = None, **kwargs: Any) -> dict:
+    def _invocation_params(
+        self, stop: Optional[List[str]] = None, **kwargs: Any
+    ) -> dict:  # noqa: E501
         """Combines the invocation parameters with default parameters."""
         params = self._default_params
         _model_kwargs = self.model_kwargs or {}
@@ -834,7 +864,9 @@ class OCIModelDeploymentTGI(OCIModelDeploymentLLM):
                 "best_of": self.best_of,
                 "max_new_tokens": self.max_tokens,
                 "temperature": self.temperature,
-                "top_k": (self.k if self.k > 0 else None),  # `top_k` must be strictly positive'
+                "top_k": (
+                    self.k if self.k > 0 else None
+                ),  # `top_k` must be strictly positive'  # noqa: E501
                 "top_p": self.p,
                 "do_sample": self.do_sample,
                 "return_full_text": self.return_full_text,
@@ -874,7 +906,9 @@ class OCIModelDeploymentTGI(OCIModelDeploymentLLM):
         try:
             text = response_json["generated_text"]
         except KeyError as e:
-            raise ValueError(f"Error while formatting response payload.response_json={response_json}") from e
+            raise ValueError(
+                f"Error while formatting response payload.response_json={response_json}"
+            ) from e  # noqa: E501
 
         return [Generation(text=text)]
 

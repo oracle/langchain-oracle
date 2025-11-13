@@ -147,7 +147,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     agent = create_agent(model_id, weather_tool)
 
     # Invoke the agent
-    system_msg = "You are a helpful assistant. Use the available tools when needed to answer questions accurately."
+    system_msg = "You are a helpful assistant. Use the available tools when needed to answer questions accurately."  # noqa: E501
     result = agent.invoke(
         {
             "messages": [
@@ -169,17 +169,27 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
 
     # Find AI messages with tool calls
     ai_tool_calls = [
-        msg for msg in messages if (type(msg).__name__ == "AIMessage" and hasattr(msg, "tool_calls") and msg.tool_calls)
+        msg
+        for msg in messages
+        if (
+            type(msg).__name__ == "AIMessage"
+            and hasattr(msg, "tool_calls")
+            and msg.tool_calls
+        )  # noqa: E501
     ]
     # The model should call the tool, but after receiving results,
     # should not call again. Allow flexibility - some models might make
     # 1 call, others might need 2, but should stop
-    error_msg = f"Model made too many tool calls ({len(ai_tool_calls)}), possible infinite loop"
+    error_msg = (
+        f"Model made too many tool calls ({len(ai_tool_calls)}), possible infinite loop"  # noqa: E501
+    )
     assert len(ai_tool_calls) <= 2, error_msg
 
     # Verify final message is an AI response without tool calls
     final_message = messages[-1]
-    assert type(final_message).__name__ == "AIMessage", "Final message should be AIMessage"
+    assert type(final_message).__name__ == "AIMessage", (
+        "Final message should be AIMessage"
+    )  # noqa: E501
     assert final_message.content, "Final message should have content"
     assert not (hasattr(final_message, "tool_calls") and final_message.tool_calls), (
         "Final message should not have tool_calls (infinite loop prevention)"
@@ -279,7 +289,9 @@ def test_multi_step_tool_orchestration(model_id: str):
     def get_events(resource: str) -> str:
         """Get recent events for a resource."""
         events_data = {
-            "payment-service": ("Events: [OOMKilled at 14:23, BackOff at 14:30, Started at 14:32]"),
+            "payment-service": (
+                "Events: [OOMKilled at 14:23, BackOff at 14:30, Started at 14:32]"
+            ),  # noqa: E501
             "web-server": "Events: [Started at 10:00, Healthy]",
         }
         return events_data.get(resource, f"No events for {resource}")
@@ -287,7 +299,9 @@ def test_multi_step_tool_orchestration(model_id: str):
     def get_metrics(resource: str) -> str:
         """Get historical metrics for a resource."""
         metrics_data = {
-            "payment-service": ("Memory trend: 70%→80%→90%→95% (gradual increase over 2h)"),
+            "payment-service": (
+                "Memory trend: 70%→80%→90%→95% (gradual increase over 2h)"
+            ),  # noqa: E501
             "web-server": "Memory trend: 55%→58%→60% (stable)",
         }
         return metrics_data.get(resource, f"No metrics for {resource}")
@@ -366,7 +380,11 @@ def test_multi_step_tool_orchestration(model_id: str):
         response = model_with_tools.invoke(messages)
 
         # OCI LIMITATION: Only allow ONE tool call at a time
-        if hasattr(response, "tool_calls") and response.tool_calls and len(response.tool_calls) > 1:
+        if (
+            hasattr(response, "tool_calls")
+            and response.tool_calls
+            and len(response.tool_calls) > 1
+        ):  # noqa: E501
             # Some models try to call multiple tools in parallel
             # Restrict to first tool only to avoid OCI API error
             response.tool_calls = [response.tool_calls[0]]
@@ -426,9 +444,17 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Count tool calls
     tool_call_messages = [
-        msg for msg in messages if (type(msg).__name__ == "AIMessage" and hasattr(msg, "tool_calls") and msg.tool_calls)
+        msg
+        for msg in messages
+        if (
+            type(msg).__name__ == "AIMessage"
+            and hasattr(msg, "tool_calls")
+            and msg.tool_calls
+        )  # noqa: E501
     ]
-    tool_result_messages = [msg for msg in messages if type(msg).__name__ == "ToolMessage"]
+    tool_result_messages = [
+        msg for msg in messages if type(msg).__name__ == "ToolMessage"
+    ]  # noqa: E501
 
     # Verify multi-step orchestration worked
     msg = f"Should have made multiple tool calls (got {len(tool_call_messages)})"
@@ -438,7 +464,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     # The agent should stop at or before the limit (8 tool calls)
     # This is the key protection against infinite loops
     assert len(tool_call_messages) <= 8, (
-        f"Too many tool calls ({len(tool_call_messages)}), max_sequential_tool_calls limit not enforced"
+        f"Too many tool calls ({len(tool_call_messages)}), max_sequential_tool_calls limit not enforced"  # noqa: E501
     )
 
     # Verify tool results were received

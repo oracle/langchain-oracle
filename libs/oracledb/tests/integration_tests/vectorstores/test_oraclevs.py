@@ -113,7 +113,9 @@ def test_table_exists_test() -> None:
 @pytest.mark.asyncio
 async def test_table_exists_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
     # 1. Existing Table:(all capital letters)
@@ -293,7 +295,9 @@ def test_create_table_test() -> None:
 @pytest.mark.asyncio
 async def test_create_table_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
 
@@ -406,7 +410,9 @@ async def test_create_table_test_async() -> None:
 
     # 17. String Operations in table_name&dimension parameter
     # Expectation:table is created
-    await _acreate_table(connection, _quote_indentifier("YaSh".replace("aS", "ok")), 500)
+    await _acreate_table(
+        connection, _quote_indentifier("YaSh".replace("aS", "ok")), 500
+    )
     await adrop_table_purge(connection, _quote_indentifier("YaSh".replace("aS", "ok")))
 
 
@@ -424,7 +430,9 @@ def test_create_hnsw_index_test() -> None:
     #    New Index
     #    distance_strategy - DistanceStrategy.Dot_product
     # Expectation:Index created
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
     vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
     create_index(connection, vs)
 
@@ -627,7 +635,9 @@ def test_create_hnsw_index_test() -> None:
     # 11. index_name as <schema_name.index_name>
     # Expectation:U1 not present
     with pytest.raises(RuntimeError):
-        vs = OracleVS(connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         create_index(
             connection,
             vs,
@@ -662,15 +672,21 @@ def test_create_hnsw_index_test() -> None:
 @pytest.mark.asyncio
 async def test_create_hnsw_index_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
     # 1. Table_name - TB1
     #    New Index
     #    distance_strategy - DistanceStrategy.Dot_product
     # Expectation:Index created
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
-    vs = await OracleVS.acreate(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
+    vs = await OracleVS.acreate(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(connection, vs)
 
     # 2. Creating same index again
@@ -685,8 +701,12 @@ async def test_create_hnsw_index_test_async() -> None:
     #    idx_name - hnsw_idx2
     #    idx_type - HNSW
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    await acreate_index(connection, vs, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
+    vs = await OracleVS.acreate(
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    await acreate_index(
+        connection, vs, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+    )
     await adrop_index_if_exists(connection, "hnsw_idx2")
     await adrop_table_purge(connection, "TB2")
 
@@ -694,29 +714,41 @@ async def test_create_hnsw_index_test_async() -> None:
     #    idx_name - "हिन्दी"
     #    idx_type - HNSW
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    await acreate_index(connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"})
+    vs = await OracleVS.acreate(
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    await acreate_index(
+        connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"}
+    )
     await adrop_index_if_exists(connection, '"हिन्दी"')
     await adrop_table_purge(connection, "TB3")
 
     # 5. idx_name passed empty
     # Expectation:ORA-01741: illegal zero-length identifier
     with pytest.raises(ValueError):
-        vs = await OracleVS.acreate(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
-        await acreate_index(connection, vs, params={"idx_name": '""', "idx_type": "HNSW"})
+        vs = await OracleVS.acreate(
+            connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+        await acreate_index(
+            connection, vs, params={"idx_name": '""', "idx_type": "HNSW"}
+        )
         await adrop_index_if_exists(connection, '""')
     await adrop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
     await adrop_index_if_exists(connection, "Hello")
     await adrop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(
         connection,
         vs,
@@ -728,7 +760,9 @@ async def test_create_hnsw_index_test_async() -> None:
     # 8. efconstruction passed as parameter as well as neighbours
     # (for this idx_type parameter is also necessary)
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(
         connection,
         vs,
@@ -753,7 +787,9 @@ async def test_create_hnsw_index_test_async() -> None:
     #     0<parallel<=255
     # Expectation:Index created
     await adrop_table_purge(connection, "TB9")
-    vs = await OracleVS.acreate(connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(
         connection,
         vs,
@@ -769,7 +805,9 @@ async def test_create_hnsw_index_test_async() -> None:
     await adrop_table_purge(connection, "TB9")
     # index not created:
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = await OracleVS.acreate(
+            connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         await acreate_index(
             connection,
             vs,
@@ -785,7 +823,9 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # index not created:
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = await OracleVS.acreate(
+            connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         await acreate_index(
             connection,
             vs,
@@ -800,7 +840,9 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
     # index not created
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = await OracleVS.acreate(
+            connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         await acreate_index(
             connection,
             vs,
@@ -815,7 +857,9 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
     # index not created
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = await OracleVS.acreate(
+            connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         await acreate_index(
             connection,
             vs,
@@ -832,7 +876,9 @@ async def test_create_hnsw_index_test_async() -> None:
     # with negative values/out-of-bound values for all 4 of them, we get the same errors
     # Expectation:Index not created
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = await OracleVS.acreate(
+            connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         await acreate_index(
             connection,
             vs,
@@ -854,7 +900,9 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 10. Table_name as <schema_name.table_name>
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(
         connection,
         vs,
@@ -873,7 +921,9 @@ async def test_create_hnsw_index_test_async() -> None:
     # 11. index_name as <schema_name.index_name>
     # Expectation:U1 not present
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = await OracleVS.acreate(
+            connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         await acreate_index(
             connection,
             vs,
@@ -892,15 +942,23 @@ async def test_create_hnsw_index_test_async() -> None:
     # 12. Index_name size >129
     # Expectation:Index not created
     with pytest.raises(RuntimeError):
-        vs = await OracleVS.acreate(connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE)
-        await acreate_index(connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"})
+        vs = await OracleVS.acreate(
+            connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
+        await acreate_index(
+            connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"}
+        )
         await adrop_index_if_exists(connection, "x" * 129)
     await adrop_table_purge(connection, "TB17")
 
     # 13. Index_name size 128
     # Expectation:Index created
-    vs = await OracleVS.acreate(connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    await acreate_index(connection, vs, params={"idx_name": "x" * 128, "idx_type": "HNSW"})
+    vs = await OracleVS.acreate(
+        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    await acreate_index(
+        connection, vs, params={"idx_name": "x" * 128, "idx_type": "HNSW"}
+    )
     await adrop_index_if_exists(connection, "x" * 128)
     await adrop_table_purge(connection, "TB18")
 
@@ -915,7 +973,9 @@ def test_index_exists_test() -> None:
         connection = oracledb.connect(user=username, password=password, dsn=dsn)
     except Exception:
         sys.exit(1)
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
     # 1. Existing Index:(all capital letters)
     # Expectation:true
     vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
@@ -973,14 +1033,22 @@ def test_index_exists_test() -> None:
 @pytest.mark.asyncio
 async def test_index_exists_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
     # 1. Existing Index:(all capital letters)
     # Expectation:true
-    vs = await OracleVS.acreate(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    await acreate_index(connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"})
+    vs = await OracleVS.acreate(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    await acreate_index(
+        connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"}
+    )
     assert not await _aindex_exists(connection, _quote_indentifier("IDX11"))
 
     # 2. Existing Table:(all small letters)
@@ -1122,8 +1190,12 @@ def test_add_texts_test() -> None:
     # 6. Add 2 different record concurrently
     # Expectation:Successful
     def add(val: str) -> None:
-        model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vs_obj = OracleVS(connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        vs_obj = OracleVS(
+            connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         texts5 = [val]
         ids9 = texts5
         vs_obj.add_texts(texts5, ids=ids9)
@@ -1139,8 +1211,12 @@ def test_add_texts_test() -> None:
     # 7. Add 2 same record concurrently
     # Expectation:Successful, For one of the insert,get primary key violation error
     def add1(val: str) -> None:
-        model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vs_obj = OracleVS(connection, model, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        vs_obj = OracleVS(
+            connection, model, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         texts = [val]
         ids10 = texts
         vs_obj.add_texts(texts, ids=ids10)
@@ -1170,7 +1246,9 @@ def test_add_texts_test() -> None:
 @pytest.mark.asyncio
 async def test_add_texts_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
     # 1. Add 2 records to table
@@ -1181,7 +1259,9 @@ async def test_add_texts_test_async() -> None:
         {"id": "101", "link": "Document Example Test 2"},
     ]
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = await OracleVS.acreate(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await vs_obj.aadd_texts(texts, metadata)
     await adrop_table_purge(connection, "TB1")
 
@@ -1189,7 +1269,9 @@ async def test_add_texts_test_async() -> None:
     # Expectation:An exception occurred :: Either specify an 'ids' list or
     # 'metadatas' with an 'id' attribute for each element.
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = await OracleVS.acreate(connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     texts2 = ["Sri Ram", "Krishna"]
     await vs_obj.aadd_texts(texts2)
     await adrop_table_purge(connection, "TB2")
@@ -1205,17 +1287,23 @@ async def test_add_texts_test_async() -> None:
     # Successful
     # Successful
 
-    vs_obj = await OracleVS.acreate(connection, model, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     ids3 = ["114", "124"]
     await vs_obj.aadd_texts(texts2, ids=ids3)
     await adrop_table_purge(connection, "TB4")
 
-    vs_obj = await OracleVS.acreate(connection, model, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     ids4 = ["", "134"]
     await vs_obj.aadd_texts(texts2, ids=ids4)
     await adrop_table_purge(connection, "TB5")
 
-    vs_obj = await OracleVS.acreate(connection, model, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     ids5 = [
         """Good afternoon
     my friends""",
@@ -1224,14 +1312,18 @@ async def test_add_texts_test_async() -> None:
     await vs_obj.aadd_texts(texts2, ids=ids5)
     await adrop_table_purge(connection, "TB6")
 
-    vs_obj = await OracleVS.acreate(connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     ids6 = ['"Good afternoon"', '"India"']
     await vs_obj.aadd_texts(texts2, ids=ids6)
     await adrop_table_purge(connection, "TB7")
 
     # 4. Add records with ids and metadatas
     # Expectation:Successful
-    vs_obj = await OracleVS.acreate(connection, model, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     texts3 = ["Sri Ram 6", "Krishna 6"]
     ids7 = ["1", "2"]
     metadata = [
@@ -1243,7 +1335,9 @@ async def test_add_texts_test_async() -> None:
 
     # 5. Add 10000 records
     # Expectation:Successful
-    vs_obj = await OracleVS.acreate(connection, model, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     texts4 = ["Sri Ram{0}".format(i) for i in range(1, 10000)]
     ids8 = ["Hello{0}".format(i) for i in range(1, 10000)]
     await vs_obj.aadd_texts(texts4, ids=ids8)
@@ -1252,8 +1346,12 @@ async def test_add_texts_test_async() -> None:
     # 6. Add 2 different record concurrently
     # Expectation:Successful
     async def add(val: str) -> None:
-        model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vs_obj = await OracleVS.acreate(connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        vs_obj = await OracleVS.acreate(
+            connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         texts5 = [val]
         ids9 = texts5
         await vs_obj.aadd_texts(texts5, ids=ids9)
@@ -1267,8 +1365,12 @@ async def test_add_texts_test_async() -> None:
     # 7. Add 2 same record concurrently
     # Expectation:Successful, For one of the insert,get primary key violation error
     async def add1(val: str) -> None:
-        model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vs_obj = await OracleVS.acreate(connection, model, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        vs_obj = await OracleVS.acreate(
+            connection, model, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         texts = [val]
         ids10 = texts
         await vs_obj.aadd_texts(texts, ids=ids10)
@@ -1283,7 +1385,9 @@ async def test_add_texts_test_async() -> None:
     # 8. create object with table name of type <schema_name.table_name>
     # Expectation:U1 does not exist
     with pytest.raises(RuntimeError):
-        vs_obj = await OracleVS.acreate(connection, model, "U1.TB14", DistanceStrategy.DOT_PRODUCT)
+        vs_obj = await OracleVS.acreate(
+            connection, model, "U1.TB14", DistanceStrategy.DOT_PRODUCT
+        )
         for i in range(1, 10):
             texts7 = ["Yash{0}".format(i)]
             ids13 = ["1234{0}".format(i)]
@@ -1313,13 +1417,17 @@ def test_embed_documents_test() -> None:
 @pytest.mark.asyncio
 async def test_embed_documents_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
     # 1. String Example-'Sri Ram'
     # Expectation:Vector Printed
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = await OracleVS.acreate(connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
 
     # 4. List
     # Expectation:Vector Printed
@@ -1350,13 +1458,17 @@ def test_embed_query_test() -> None:
 @pytest.mark.asyncio
 async def test_embed_query_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
     # 1. String
     # Expectation:Vector printed
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = await OracleVS.acreate(connection, model, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await vs_obj._aembed_query("Sri Ram")
     await adrop_table_purge(connection, "TB8")
 
@@ -1375,7 +1487,9 @@ def test_create_index_test() -> None:
         sys.exit(1)
     # 1. No optional parameters passed
     # Expectation:Successful
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
     vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
     create_index(connection, vs)
     drop_index_if_exists(connection, "HNSW")
@@ -1398,14 +1512,18 @@ def test_create_index_test() -> None:
     # 4. ivf index with neighbour_part and accuracy passed as parameter
     # Expectation:Successful
     vs = OracleVS(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    create_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90})
+    create_index(
+        connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90}
+    )
     drop_index_if_exists(connection, "IVF")
     drop_table_purge(connection, "TB4")
 
     # 5. ivf index with neighbour_part and parallel passed as parameter
     # Expectation:Successful
     vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    create_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90})
+    create_index(
+        connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90}
+    )
     drop_index_if_exists(connection, "IVF")
     drop_table_purge(connection, "TB5")
 
@@ -1435,48 +1553,68 @@ def test_create_index_test() -> None:
 @pytest.mark.asyncio
 async def test_create_index_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
     # 1. No optional parameters passed
     # Expectation:Successful
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
-    vs = await OracleVS.acreate(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
+    vs = await OracleVS.acreate(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(connection, vs)
     await adrop_index_if_exists(connection, "HNSW")
     await adrop_table_purge(connection, "TB1")
 
     # 2. ivf index
     # Expectation:Successful
-    vs = await OracleVS.acreate(connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     await adrop_index_if_exists(connection, "IVF")
     await adrop_table_purge(connection, "TB2")
 
     # 3. ivf index with neighbour_part passed as parameter
     # Expectation:Successful
-    vs = await OracleVS.acreate(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10})
     await adrop_index_if_exists(connection, "IVF")
     await adrop_table_purge(connection, "TB3")
 
     # 4. ivf index with neighbour_part and accuracy passed as parameter
     # Expectation:Successful
-    vs = await OracleVS.acreate(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    await acreate_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90})
+    vs = await OracleVS.acreate(
+        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    await acreate_index(
+        connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90}
+    )
     await adrop_index_if_exists(connection, "IVF")
     await adrop_table_purge(connection, "TB4")
 
     # 5. ivf index with neighbour_part and parallel passed as parameter
     # Expectation:Successful
-    vs = await OracleVS.acreate(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    await acreate_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90})
+    vs = await OracleVS.acreate(
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    await acreate_index(
+        connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90}
+    )
     await adrop_index_if_exists(connection, "IVF")
     await adrop_table_purge(connection, "TB5")
 
     # 6. ivf index and then perform dml(insert)
     # Expectation:Successful
-    vs = await OracleVS.acreate(connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     texts = ["Sri Ram", "Krishna"]
     await vs.aadd_texts(texts)
@@ -1487,7 +1625,9 @@ async def test_create_index_test_async() -> None:
 
     # 7. ivf index with neighbour_part,parallel and accuracy passed as parameter
     # Expectation:Successful
-    vs = await OracleVS.acreate(connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
     await acreate_index(
         connection,
         vs,
@@ -1505,7 +1645,9 @@ def test_perform_search_test() -> None:
         connection = oracledb.connect(user=username, password=password, dsn=dsn)
     except Exception:
         sys.exit(1)
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
     vs_1 = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
     vs_2 = OracleVS(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
     vs_3 = OracleVS(connection, model1, "TB12", DistanceStrategy.COSINE)
@@ -1562,7 +1704,9 @@ def test_perform_search_test() -> None:
         vs.max_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
 
         # Max marginal relevance search with filter
-        vs.max_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter)
+        vs.max_marginal_relevance_search(
+            query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter
+        )
 
     drop_table_purge(connection, "TB10")
     drop_table_purge(connection, "TB11")
@@ -1575,16 +1719,28 @@ def test_perform_search_test() -> None:
 @pytest.mark.asyncio
 async def test_perform_search_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
 
-    vs_1 = await OracleVS.acreate(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_2 = await OracleVS.acreate(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
+    vs_1 = await OracleVS.acreate(
+        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    vs_2 = await OracleVS.acreate(
+        connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT
+    )
     vs_3 = await OracleVS.acreate(connection, model1, "TB12", DistanceStrategy.COSINE)
-    vs_4 = await OracleVS.acreate(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_5 = await OracleVS.acreate(connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT)
+    vs_4 = await OracleVS.acreate(
+        connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    vs_5 = await OracleVS.acreate(
+        connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT
+    )
     vs_6 = await OracleVS.acreate(connection, model1, "TB15", DistanceStrategy.COSINE)
 
     # vector store lists:
@@ -1605,9 +1761,13 @@ async def test_perform_search_test_async() -> None:
 
         # create index
         if i == 1 or i == 2 or i == 3:
-            await acreate_index(connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"})
+            await acreate_index(
+                connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"}
+            )
         else:
-            await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"})
+            await acreate_index(
+                connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"}
+            )
 
         # perform search
         query = "YashB"
@@ -1636,7 +1796,9 @@ async def test_perform_search_test_async() -> None:
         await vs.amax_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
 
         # Max marginal relevance search with filter
-        await vs.amax_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter)
+        await vs.amax_marginal_relevance_search(
+            query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter
+        )
 
     await adrop_table_purge(connection, "TB10")
     await adrop_table_purge(connection, "TB11")
@@ -1667,7 +1829,9 @@ def test_db_filter_test() -> None:
         connection = oracledb.connect(user=username, password=password, dsn=dsn)
     except Exception:
         sys.exit(1)
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
     drop_table_purge(connection, "TB10")
     drop_table_purge(connection, "TB11")
     drop_table_purge(connection, "TB12")
@@ -1791,16 +1955,28 @@ def test_db_filter_test() -> None:
 @pytest.mark.asyncio
 async def test_db_filter_test_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
-    model1 = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model1 = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
 
-    vs_1 = await OracleVS.acreate(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_2 = await OracleVS.acreate(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
+    vs_1 = await OracleVS.acreate(
+        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    vs_2 = await OracleVS.acreate(
+        connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT
+    )
     vs_3 = await OracleVS.acreate(connection, model1, "TB12", DistanceStrategy.COSINE)
-    vs_4 = await OracleVS.acreate(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_5 = await OracleVS.acreate(connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT)
+    vs_4 = await OracleVS.acreate(
+        connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+    vs_5 = await OracleVS.acreate(
+        connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT
+    )
     vs_6 = await OracleVS.acreate(connection, model1, "TB15", DistanceStrategy.COSINE)
 
     # vector store lists:
@@ -1821,9 +1997,13 @@ async def test_db_filter_test_async() -> None:
 
         # create index
         if i == 1 or i == 2 or i == 3:
-            await acreate_index(connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"})
+            await acreate_index(
+                connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"}
+            )
         else:
-            await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"})
+            await acreate_index(
+                connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"}
+            )
 
         # perform search
         query = "Strawberry"
@@ -1920,15 +2100,21 @@ async def test_add_texts_pool_test() -> None:
     POOLS_MAX = 4
 
     try:
-        connection = oracledb.create_pool(user=username, password=password, dsn=dsn, min=1, max=POOLS_MAX, increment=1)
+        connection = oracledb.create_pool(
+            user=username, password=password, dsn=dsn, min=1, max=POOLS_MAX, increment=1
+        )
     except Exception:
         sys.exit(1)
 
     # 1. Add different records concurrently
     # Expectation:Successful
     async def add(order: int) -> None:
-        model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vs_obj = OracleVS(connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        vs_obj = OracleVS(
+            connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         texts = ["Sri Ram" + str(order)]
         ids = texts
         vs_obj.add_texts(texts, ids=ids)
@@ -1960,15 +2146,21 @@ async def test_add_texts_pool_test_async() -> None:
     POOLS_MAX = 4
 
     try:
-        connection = oracledb.create_pool_async(user=username, password=password, dsn=dsn, min=1, max=4, increment=1)
+        connection = oracledb.create_pool_async(
+            user=username, password=password, dsn=dsn, min=1, max=4, increment=1
+        )
     except Exception:
         sys.exit(1)
 
     # 1. Add different records concurrently
     # Expectation:Successful
     async def add(order: int) -> None:
-        model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        vs_obj = await OracleVS.acreate(connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
+        vs_obj = await OracleVS.acreate(
+            connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         texts = ["Sri Ram" + str(order)]
         ids = texts
         await vs_obj.aadd_texts(texts, ids=ids)
@@ -2004,7 +2196,9 @@ def test_from_texts_lobs() -> None:
     except Exception:
         sys.exit(1)
 
-    model = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
 
     texts = [
         "If the answer to any preceding questions is yes, then the database stops \
@@ -2057,11 +2251,15 @@ def test_from_texts_lobs() -> None:
 @pytest.mark.asyncio
 async def test_from_texts_lobs_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
 
-    model = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-mpnet-base-v2")
+    model = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
+    )
 
     texts = [
         "If the answer to any preceding questions is yes, then the database stops \
@@ -2148,25 +2346,37 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
     assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        vs_obj2 = OracleVS(connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs_obj2 = OracleVS(
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
 
     assert 'Table "TB2" created successfully...' in caplog.records[-1].message
 
     vs_obj.add_texts(texts, metadata)
 
     with caplog.at_level(logging.INFO):
-        create_index(connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
+        create_index(
+            connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
 
     assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
-        create_index(connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"})
+        create_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
 
-    with pytest.raises(RuntimeError, match="name is already used by an existing object"):
-        create_index(connection, vs_obj2, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
+    with pytest.raises(
+        RuntimeError, match="name is already used by an existing object"
+    ):
+        create_index(
+            connection, vs_obj2, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
-        create_index(connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"})
+        create_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
 
     with caplog.at_level(logging.INFO):
         drop_index_if_exists(connection, "hnsw_idx2")
@@ -2174,7 +2384,9 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
     assert 'Index "hnsw_idx2" has been dropped.' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        create_index(connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"})
+        create_index(
+            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
+        )
 
     assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
 
@@ -2186,7 +2398,9 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
 @pytest.mark.asyncio
 async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
 
@@ -2204,40 +2418,58 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 
     with caplog.at_level(logging.INFO):
-        vs_obj = await OracleVS.acreate(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs_obj = await OracleVS.acreate(
+            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
 
     assert 'Table "TB1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        await OracleVS.acreate(connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE)
+        await OracleVS.acreate(
+            connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
 
     assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        await OracleVS.acreate(connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        await OracleVS.acreate(
+            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
 
     assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        vs_obj2 = await OracleVS.acreate(connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs_obj2 = await OracleVS.acreate(
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
 
     assert 'Table "TB2" created successfully...' in caplog.records[-1].message
 
     await vs_obj.aadd_texts(texts, metadata)
 
     with caplog.at_level(logging.INFO):
-        await acreate_index(connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
 
     assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
-        await acreate_index(connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"})
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
 
-    with pytest.raises(RuntimeError, match="name is already used by an existing object"):
-        await acreate_index(connection, vs_obj2, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
+    with pytest.raises(
+        RuntimeError, match="name is already used by an existing object"
+    ):
+        await acreate_index(
+            connection, vs_obj2, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
+        )
 
     with pytest.raises(RuntimeError, match="such column list already indexed"):
-        await acreate_index(connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"})
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": "HNSW_idx2", "idx_type": "HNSW"}
+        )
 
     with caplog.at_level(logging.INFO):
         await adrop_index_if_exists(connection, "hnsw_idx2")
@@ -2245,7 +2477,9 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
     assert 'Index "hnsw_idx2" has been dropped.' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        await acreate_index(connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"})
+        await acreate_index(
+            connection, vs_obj, params={"idx_name": '"hnsw_idx2"', "idx_type": "HNSW"}
+        )
 
     assert 'Index "hnsw_idx2" created successfully...' in caplog.records[-1].message
 
@@ -2293,7 +2527,9 @@ def test_oracle_embeddings() -> None:
 @pytest.mark.asyncio
 async def test_oracle_embeddings_async(caplog: pytest.LogCaptureFixture) -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
 
         connection_sync = oracledb.connect(user=username, password=password, dsn=dsn)
     except Exception:
@@ -2312,7 +2548,9 @@ async def test_oracle_embeddings_async(caplog: pytest.LogCaptureFixture) -> None
     # instance
     model = OracleEmbeddings(conn=connection_sync, params=embedder_params, proxy=proxy)
 
-    vs_obj = await OracleVS.acreate(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs_obj = await OracleVS.acreate(
+        connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
 
     await vs_obj.aadd_texts(texts, metadata)
     res = await vs_obj.asimilarity_search("database", 1)
@@ -2560,7 +2798,9 @@ def test_filters() -> None:
 
 async def test_filters_async() -> None:
     try:
-        connection = await oracledb.connect_async(user=username, password=password, dsn=dsn)
+        connection = await oracledb.connect_async(
+            user=username, password=password, dsn=dsn
+        )
     except Exception:
         sys.exit(1)
 
@@ -2571,7 +2811,9 @@ async def test_filters_async() -> None:
 
     await adrop_table_purge(connection, "TB10")
 
-    vs = await OracleVS.acreate(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = await OracleVS.acreate(
+        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
 
     texts = ["Strawberry", "Banana", "Blueberry"]
     metadatas = [
