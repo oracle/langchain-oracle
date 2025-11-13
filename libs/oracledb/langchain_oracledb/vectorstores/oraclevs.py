@@ -279,8 +279,10 @@ def _generate_condition(
                     bind_variables.append(json.dumps(v))
 
                     all_conditions.append(
-                        f"JSON_EQUAL(    JSON_QUERY(metadata, '$.{metadata_key}' ),    "
-                        f"JSON(:value{bind_l}))"
+                        f"JSON_EQUAL("
+                        f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
+                        f"    JSON(:value{bind_l})"
+                        ")"
                     )
 
                 elif k == "$ne":
@@ -288,9 +290,10 @@ def _generate_condition(
                     bind_variables.append(json.dumps(v))
 
                     all_conditions.append(
-                        f"NOT (JSON_EQUAL(    "
-                        f"JSON_QUERY(metadata, '$.{metadata_key}' ),    "
-                        f"JSON(:value{bind_l})))"
+                        f"NOT (JSON_EQUAL("
+                        f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
+                        f"    JSON(:value{bind_l})"
+                        "))"
                     )
 
             res = " AND ".join(all_conditions)

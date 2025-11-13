@@ -178,7 +178,8 @@ class OCIGenAIBase(BaseModel, ABC):
                 )
             else:
                 raise ValueError(
-                    f"Please provide valid value to auth_type, {values['auth_type']} is not valid."  # noqa: E501
+                    "Please provide valid value to auth_type, "
+                    f"{values['auth_type']} is not valid."
                 )
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
@@ -187,7 +188,8 @@ class OCIGenAIBase(BaseModel, ABC):
 
         except ImportError as ex:
             raise ModuleNotFoundError(
-                "Could not import oci python package. Please make sure you have the oci package installed."  # noqa: E501
+                "Could not import oci python package. "
+                "Please make sure you have the oci package installed."
             ) from ex
         except Exception as e:
             raise ValueError(

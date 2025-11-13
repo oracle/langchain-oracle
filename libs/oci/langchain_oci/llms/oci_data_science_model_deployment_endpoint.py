@@ -97,7 +97,8 @@ class BaseOCIModelDeployment(Serializable):
 
         except ImportError as ex:
             raise ImportError(
-                "Could not import ads python package. Please install it with `pip install oracle_ads`."  # noqa: E501
+                "Could not import ads python package. "
+                "Please install it with `pip install oracle_ads`."
             ) from ex
 
         if not values.get("auth", None):

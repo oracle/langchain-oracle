@@ -534,7 +534,8 @@ class CohereProvider(Provider):
         """Cohere does not support tool choices."""
         if tool_choice is not None:
             raise ValueError(
-                "Tool choice is not supported for Cohere models.Please remove the tool_choice parameter."  # noqa: E501
+                "Tool choice is not supported for Cohere models."
+                "Please remove the tool_choice parameter."
             )
         return None
 
@@ -998,7 +999,8 @@ class GenericProvider(Provider):
             # For Meta, we use ToolChoiceAuto for tool selection
             return self.oci_tool_choice_auto()
         raise ValueError(
-            f"Unrecognized tool_choice type. Expected str, bool or dict. Received: {tool_choice}"  # noqa: E501
+            f"Unrecognized tool_choice type. Expected str, bool or dict. "
+            f"Received: {tool_choice}"
         )
 
     def process_stream_tool_calls(
@@ -1151,7 +1153,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         except ImportError as ex:
             raise ModuleNotFoundError(
-                "Could not import oci python package. Please make sure you have the oci package installed."  # noqa: E501
+                "Could not import oci python package. "
+                "Please make sure you have the oci package installed."
             ) from ex
 
         oci_params = self._provider.messages_to_oci_params(

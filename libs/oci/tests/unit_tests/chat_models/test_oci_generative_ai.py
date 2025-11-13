@@ -192,7 +192,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                             {
                                                                 "type": "FUNCTION",
                                                                 "id": "call_456",
-                                                                "name": "get_weather",  # noqa: E501
+                                                                "name": "get_weather",
                                                                 "arguments": '{"location": "San Francisco"}',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
@@ -330,7 +330,7 @@ def test_cohere_tool_choice_validation(monkeypatch: MonkeyPatch) -> None:
     # Test that tool choice raises ValueError
     with pytest.raises(
         ValueError, match="Tool choice is not supported for Cohere models"
-    ):  # noqa: E501
+    ):
         llm.bind_tools(
             tools=[get_weather],
             tool_choice="auto",
@@ -585,7 +585,7 @@ def test_auth_file_location(monkeypatch: MonkeyPatch) -> None:
     with patch("oci.config.from_file") as mock_from_file:
         with patch(
             "oci.generative_ai_inference.generative_ai_inference_client.validate_config"
-        ):  # noqa: E501
+        ):
             with patch("oci.base_client.validate_config"):
                 with patch("oci.signer.load_private_key"):
                     custom_config_path = "/custom/path/config"
@@ -595,7 +595,7 @@ def test_auth_file_location(monkeypatch: MonkeyPatch) -> None:
                     )
                     mock_from_file.assert_called_once_with(
                         file_location=custom_config_path, profile_name="DEFAULT"
-                    )  # noqa: E501
+                    )
 
 
 @pytest.mark.requires("oci")
@@ -643,7 +643,7 @@ def test_include_raw_output(monkeypatch: MonkeyPatch) -> None:
     # Test with include_raw=True
     structured_llm = llm.with_structured_output(
         WeatherResponse, method="json_schema", include_raw=True
-    )  # noqa: E501
+    )
     response = structured_llm.invoke(messages)
     assert isinstance(response, dict)
     assert "parsed" in response
@@ -694,7 +694,7 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
                                                             {
                                                                 "text": (
                                                                     "I'll help you."
-                                                                ),  # noqa: E501
+                                                                ),
                                                                 "type": "TEXT",
                                                             }
                                                         )
@@ -767,7 +767,7 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
                                                             {
                                                                 "text": (
                                                                     "I'll help you."
-                                                                ),  # noqa: E501
+                                                                ),
                                                                 "type": "TEXT",
                                                             }
                                                         )
@@ -829,7 +829,7 @@ def test_get_provider():
 
 
 @pytest.mark.requires("oci")
-def test_tool_choice_none_after_tool_results() -> None:  # noqa: E501
+def test_tool_choice_none_after_tool_results() -> None:
     """Test tool_choice='none' when max_sequential_tool_calls is exceeded.
 
     This prevents infinite loops with Meta Llama models by limiting the number
@@ -865,28 +865,28 @@ def test_tool_choice_none_after_tool_results() -> None:  # noqa: E501
             tool_calls=[
                 {"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}
             ],
-        ),  # noqa: E501
+        ),
         ToolMessage(content="Sunny, 65°F", tool_call_id="call_1"),
         AIMessage(
             content="",
             tool_calls=[
                 {"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}
             ],
-        ),  # noqa: E501
+        ),
         ToolMessage(content="Rainy, 55°F", tool_call_id="call_2"),
         AIMessage(
             content="",
             tool_calls=[
                 {"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}
             ],
-        ),  # noqa: E501
+        ),
         ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3"),
     ]
 
     # Prepare the request - need to pass tools from the bound model kwargs
     request = llm_with_tools._prepare_request(
         messages, stop=None, stream=False, **llm_with_tools.kwargs
-    )  # noqa: E501
+    )
 
     # Verify that tool_choice is set to 'none' because limit was reached
     assert hasattr(request.chat_request, "tool_choice")

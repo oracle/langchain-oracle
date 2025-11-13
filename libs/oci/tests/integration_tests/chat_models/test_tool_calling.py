@@ -147,7 +147,10 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     agent = create_agent(model_id, weather_tool)
 
     # Invoke the agent
-    system_msg = "You are a helpful assistant. Use the available tools when needed to answer questions accurately."  # noqa: E501
+    system_msg = (
+        "You are a helpful assistant. Use the available tools when "
+        "needed to answer questions accurately."
+    )
     result = agent.invoke(
         {
             "messages": [
@@ -175,13 +178,13 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
             type(msg).__name__ == "AIMessage"
             and hasattr(msg, "tool_calls")
             and msg.tool_calls
-        )  # noqa: E501
+        )
     ]
     # The model should call the tool, but after receiving results,
     # should not call again. Allow flexibility - some models might make
     # 1 call, others might need 2, but should stop
     error_msg = (
-        f"Model made too many tool calls ({len(ai_tool_calls)}), possible infinite loop"  # noqa: E501
+        f"Model made too many tool calls ({len(ai_tool_calls)}), possible infinite loop"
     )
     assert len(ai_tool_calls) <= 2, error_msg
 
@@ -450,7 +453,7 @@ def test_multi_step_tool_orchestration(model_id: str):
             type(msg).__name__ == "AIMessage"
             and hasattr(msg, "tool_calls")
             and msg.tool_calls
-        )  # noqa: E501
+        )
     ]
     tool_result_messages = [
         msg for msg in messages if type(msg).__name__ == "ToolMessage"
@@ -464,7 +467,8 @@ def test_multi_step_tool_orchestration(model_id: str):
     # The agent should stop at or before the limit (8 tool calls)
     # This is the key protection against infinite loops
     assert len(tool_call_messages) <= 8, (
-        f"Too many tool calls ({len(tool_call_messages)}), max_sequential_tool_calls limit not enforced"  # noqa: E501
+        f"Too many tool calls ({len(tool_call_messages)}), "
+        "max_sequential_tool_calls limit not enforced"
     )
 
     # Verify tool results were received

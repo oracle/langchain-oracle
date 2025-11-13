@@ -159,7 +159,8 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
 
         except ImportError as ex:
             raise ImportError(
-                "Could not import oci python package. Please make sure you have the oci package installed."  # noqa: E501
+                "Could not import oci python package. "
+                "Please make sure you have the oci package installed."
             ) from ex
         except Exception as e:
             raise ValueError(
