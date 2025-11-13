@@ -189,7 +189,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     final_message = messages[-1]
     assert type(final_message).__name__ == "AIMessage", (
         "Final message should be AIMessage"
-    )  # noqa: E501
+    )
     assert final_message.content, "Final message should have content"
     assert not (hasattr(final_message, "tool_calls") and final_message.tool_calls), (
         "Final message should not have tool_calls (infinite loop prevention)"
@@ -291,7 +291,7 @@ def test_multi_step_tool_orchestration(model_id: str):
         events_data = {
             "payment-service": (
                 "Events: [OOMKilled at 14:23, BackOff at 14:30, Started at 14:32]"
-            ),  # noqa: E501
+            ),
             "web-server": "Events: [Started at 10:00, Healthy]",
         }
         return events_data.get(resource, f"No events for {resource}")
@@ -301,7 +301,7 @@ def test_multi_step_tool_orchestration(model_id: str):
         metrics_data = {
             "payment-service": (
                 "Memory trend: 70%→80%→90%→95% (gradual increase over 2h)"
-            ),  # noqa: E501
+            ),
             "web-server": "Memory trend: 55%→58%→60% (stable)",
         }
         return metrics_data.get(resource, f"No metrics for {resource}")
@@ -384,7 +384,7 @@ def test_multi_step_tool_orchestration(model_id: str):
             hasattr(response, "tool_calls")
             and response.tool_calls
             and len(response.tool_calls) > 1
-        ):  # noqa: E501
+        ):
             # Some models try to call multiple tools in parallel
             # Restrict to first tool only to avoid OCI API error
             response.tool_calls = [response.tool_calls[0]]
@@ -454,7 +454,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     ]
     tool_result_messages = [
         msg for msg in messages if type(msg).__name__ == "ToolMessage"
-    ]  # noqa: E501
+    ]
 
     # Verify multi-step orchestration worked
     msg = f"Should have made multiple tool calls (got {len(tool_call_messages)})"

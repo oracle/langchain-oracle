@@ -110,7 +110,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
 
             chat = ChatOCIModelDeployment(
                 endpoint="https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict",
-                model="odsc-llm",  # this is the default model name if deployed with AQUA
+                model="odsc-llm",  # default model name if deployed with AQUA
                 streaming=True,
                 max_retries=3,
                 model_kwargs={
@@ -167,9 +167,10 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
             content=' le' id='run-02c6-c43f-42de'
             content=' monde' id='run-02c6-c43f-42de'
             content='!' id='run-02c6-c43f-42de'
-            content='' response_metadata={'finish_reason': 'stop'} id='run-02c6-c43f-42de'
+            content='' response_metadata={'finish_reason': 'stop'} \
+                id='run-02c6-c43f-42de'
 
-    Async:
+        Async:
         .. code-block:: python
 
             await chat.ainvoke(messages)
@@ -199,7 +200,8 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
 
             structured_llm = chat.with_structured_output(Joke, method="json_mode")
             structured_llm.invoke(
-                "Tell me a joke about cats, respond in JSON with `setup` and `punchline` keys"
+                "Tell me a joke about cats, respond in JSON with "
+                "`setup` and `punchline` keys"
             )
 
         .. code-block:: python
@@ -218,7 +220,9 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         .. code-block:: python
 
             class MyChatModel(ChatOCIModelDeployment):
-                def _process_stream_response(self, response_json: dict) -> ChatGenerationChunk:
+                def _process_stream_response(
+                    self, response_json: dict
+                ) -> ChatGenerationChunk:
                     print("My customized streaming result handler.")
                     return GenerationChunk(...)
 
@@ -259,7 +263,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 "finish_reason": "stop",
             }
 
-    """  # noqa: E501
+    """
 
     model_kwargs: Dict[str, Any] = Field(default_factory=dict)
     """Keyword arguments to pass to the model."""
@@ -351,13 +355,14 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 messages = [
                     (
                         "system",
-                        "You are a helpful assistant that translates English to French. Translate the user sentence.",
+                        "You are a helpful assistant that translates English to "
+                        "French. Translate the user sentence.",
                     ),
                     ("human", "Hello World!"),
                 ]
 
                 response = chat.invoke(messages)
-        """  # noqa: E501
+        """
         if self.streaming:
             stream_iter = self._stream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
@@ -404,14 +409,15 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 messages = [
                     (
                         "system",
-                        "You are a helpful assistant that translates English to French. Translate the user sentence.",
+                        "You are a helpful assistant that translates English to "
+                        "French. Translate the user sentence.",
                     ),
                     ("human", "Hello World!"),
                 ]
 
                 chunk_iter = chat.stream(messages)
 
-        """  # noqa: E501
+        """
         requests_kwargs = kwargs.pop("requests_kwargs", {})
         self.streaming = True
         params = self._invocation_params(stop, **kwargs)
@@ -460,14 +466,15 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 messages = [
                     (
                         "system",
-                        "You are a helpful assistant that translates English to French. Translate the user sentence.",
+                        "You are a helpful assistant that translates English to "
+                        "French. Translate the user sentence.",
                     ),
                     ("human", "I love programming."),
                 ]
 
                 resp = await chat.ainvoke(messages)
 
-        """  # noqa: E501
+        """
         if self.streaming:
             stream_iter = self._astream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
@@ -517,14 +524,15 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
                 messages = [
                     (
                         "system",
-                        "You are a helpful assistant that translates English to French. Translate the user sentence.",
+                        "You are a helpful assistant that translates English to "
+                        "French. Translate the user sentence.",
                     ),
                     ("human", "I love programming."),
                 ]
 
                 chunk_iter = await chat.astream(messages)
 
-        """  # noqa: E501
+        """
         requests_kwargs = kwargs.pop("requests_kwargs", {})
         self.streaming = True
         params = self._invocation_params(stop, **kwargs)
@@ -583,7 +591,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
 
                 If schema is a dict then _DictOrPydantic is a dict.
 
-        """  # noqa: E501
+        """
         if kwargs:
             raise ValueError(f"Received unsupported arguments {kwargs}")
         is_pydantic_schema = _is_pydantic_class(schema)
@@ -792,7 +800,7 @@ class ChatOCIModelDeploymentVLLM(ChatOCIModelDeployment):
                 # other model parameters...
             )
 
-    """  # noqa: E501
+    """
 
     frequency_penalty: float = 0.0
     """Penalizes repeated tokens according to frequency. Between 0 and 1."""
@@ -959,7 +967,7 @@ class ChatOCIModelDeploymentTGI(ChatOCIModelDeployment):
                 # other model parameters...
             )
 
-    """  # noqa: E501
+    """
 
     frequency_penalty: Optional[float] = None
     """Penalizes repeated tokens according to frequency. Between 0 and 1."""

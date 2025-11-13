@@ -49,11 +49,11 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         :param schema: schema to run in database
         :param dsn: data source name used to identify the oracle database to connect to
         :param config_dir: directory of config files(tnsname.ora, ewallet.pem)
-        :param wallet_location: location of ewallet.pem, not required for TLS connections
+        :param wallet_location: location of ewallet.pem, not required for TLS
         :param wallet_password: password of wallet, not required for TLS connections
         :param metadata: metadata used in document
         :param parameter: bind variable to use in query
-        """  # noqa: E501
+        """
         # Mandatory required arguments.
         self.query = query
         self.user = user

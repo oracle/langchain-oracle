@@ -34,7 +34,7 @@ CONST_STREAM_TEMPLATE = (
 )
 CONST_STREAM_RESPONSE = (
     CONST_STREAM_TEMPLATE.replace("<TOKEN>", " " + word).encode()
-    for word in CONST_COMPLETION.split(" ")  # noqa: E501
+    for word in CONST_COMPLETION.split(" ")
 )
 
 CONST_ASYNC_STREAM_TEMPLATE = (
@@ -43,12 +43,12 @@ CONST_ASYNC_STREAM_TEMPLATE = (
 )
 CONST_ASYNC_STREAM_RESPONSE = (
     CONST_ASYNC_STREAM_TEMPLATE.replace("<TOKEN>", " " + word).encode()
-    for word in CONST_COMPLETION.split(" ")  # noqa: E501
+    for word in CONST_COMPLETION.split(" ")
 )
 
 pytestmark = pytest.mark.skipif(
     sys.version_info < (3, 9), reason="Requires Python 3.9 or higher"
-)  # noqa: E501
+)
 
 
 class MockResponse:
@@ -101,7 +101,7 @@ def mocked_requests_post(url: str, **kwargs: Any) -> MockResponse:
 
 async def mocked_async_streaming_response(
     *args: Any, **kwargs: Any
-) -> AsyncGenerator[bytes, None]:  # noqa: E501
+) -> AsyncGenerator[bytes, None]:
     """Returns mocked response for async streaming."""
     for item in CONST_ASYNC_STREAM_RESPONSE:
         yield item
@@ -125,7 +125,7 @@ def test_stream_tgi(*args: Any) -> None:
     """Tests streaming with TGI endpoint using OpenAI spec."""
     llm = OCIModelDeploymentTGI(
         endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
-    )  # noqa: E501
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     output = ""
     count = 0
@@ -143,7 +143,7 @@ def test_generate_tgi(*args: Any) -> None:
     """Tests invoking TGI endpoint using TGI generate spec."""
     llm = OCIModelDeploymentTGI(
         endpoint=CONST_ENDPOINT, api="/generate", model=CONST_MODEL_NAME
-    )  # noqa: E501
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     output = llm.invoke(CONST_PROMPT)
     assert output == CONST_COMPLETION
@@ -153,12 +153,12 @@ def test_generate_tgi(*args: Any) -> None:
 @pytest.mark.requires("ads")
 @mock.patch(
     "ads.common.auth.default_signer", return_value=dict(signer=mock.MagicMock())
-)  # noqa: E501
+)
 async def test_stream_async(*args: Any) -> None:
     """Tests async streaming."""
     llm = OCIModelDeploymentTGI(
         endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
-    )  # noqa: E501
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     with mock.patch.object(
         llm,

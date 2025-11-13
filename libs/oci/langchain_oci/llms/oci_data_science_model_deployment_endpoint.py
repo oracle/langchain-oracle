@@ -54,13 +54,13 @@ def _create_retry_decorator(
     *,
     run_manager: Optional[
         Union[AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun]
-    ] = None,  # noqa: E501
+    ] = None,
 ) -> Callable[[Any], Any]:
     """Create a retry decorator."""
     errors = [requests.exceptions.ConnectTimeout, TokenExpiredError]
     decorator = create_base_retry_decorator(
         error_types=errors, max_retries=llm.max_retries, run_manager=run_manager
-    )  # noqa: E501
+    )
     return decorator
 
 
@@ -112,7 +112,7 @@ class BaseOCIModelDeployment(Serializable):
 
     def _headers(
         self, is_async: Optional[bool] = False, body: Optional[dict] = None
-    ) -> Dict:  # noqa: E501
+    ) -> Dict:
         """Construct and return the headers for a request.
 
         Args:
@@ -158,7 +158,7 @@ class BaseOCIModelDeployment(Serializable):
 
     def completion_with_retry(
         self, run_manager: Optional[CallbackManagerForLLMRun] = None, **kwargs: Any
-    ) -> Any:  # noqa: E501
+    ) -> Any:
         """Use tenacity to retry the completion call."""
         retry_decorator = _create_retry_decorator(self, run_manager=run_manager)
 
@@ -195,7 +195,7 @@ class BaseOCIModelDeployment(Serializable):
                 )
                 raise RuntimeError(
                     f"Error occurs by inference endpoint: {str(err)}"
-                ) from err  # noqa: E501
+                ) from err
 
         return _completion_with_retry(**kwargs)
 
@@ -251,7 +251,7 @@ class BaseOCIModelDeployment(Serializable):
                 )
                 raise RuntimeError(
                     f"Error occurs by inference endpoint: {str(err)}"
-                ) from err  # noqa: E501
+                ) from err
 
         return await _completion_with_retry(**kwargs)
 
@@ -290,13 +290,13 @@ class BaseOCIModelDeployment(Serializable):
                 response.status_code
                 if hasattr(response, "status_code")
                 else response.status
-            )  # noqa: E501
+            )
             if status_code == 401 and self._refresh_signer():
                 raise TokenExpiredError() from http_err
 
             raise ServerError(
                 f"Server error: {str(http_err)}. \nMessage: {response.text}"
-            ) from http_err  # noqa: E501
+            ) from http_err
 
     def _parse_stream(self, lines: Iterator[bytes]) -> Iterator[str]:
         """Parse a stream of byte lines and yield parsed string lines.
@@ -384,7 +384,7 @@ class BaseOCIModelDeployment(Serializable):
         """
         if self.auth.get("signer", None) and hasattr(
             self.auth["signer"], "refresh_security_token"
-        ):  # noqa: E501
+        ):
             self.auth["signer"].refresh_security_token()
             return True
         return False
@@ -428,15 +428,18 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
         Customized Usage:
 
-        User can inherit from our base class and overrwrite the `_process_response`, `_process_stream_response`,
-        `_construct_json_body` for satisfying customized needed.
+        User can inherit from our base class and overrwrite the `_process_response`,
+        `_process_stream_response`, `_construct_json_body` for satisfying customized
+        needed.
 
         .. code-block:: python
 
             from langchain_oci.llms import OCIModelDeploymentLLM
 
             class MyCutomizedModel(OCIModelDeploymentLLM):
-                def _process_stream_response(self, response_json:dict) -> GenerationChunk:
+                def _process_stream_response(
+                    self, response_json:dict
+                ) -> GenerationChunk:
                     print("My customized output stream handler.")
                     return GenerationChunk()
 
@@ -455,7 +458,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
             llm.invoke("tell me a joke.")
 
-    """  # noqa: E501
+    """
 
     model: str = DEFAULT_MODEL_NAME
     """The name of the model."""
@@ -492,7 +495,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
     def _headers(
         self, is_async: Optional[bool] = False, body: Optional[dict] = None
-    ) -> Dict:  # noqa: E501
+    ) -> Dict:
         """Construct and return the headers for a request.
 
         Args:
@@ -539,7 +542,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
                 generation = GenerationChunk(text="")
                 for chunk in self._stream(
                     prompt, stop=stop, run_manager=run_manager, **kwargs
-                ):  # noqa: E501
+                ):
                     generation += chunk
                 generations.append([generation])
             else:
@@ -558,7 +561,8 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> LLMResult:
-        """Call out to OCI Data Science Model Deployment endpoint async with k unique prompts.
+        """Call out to OCI Data Science Model Deployment endpoint async with k
+        unique prompts.
 
         Args:
             prompts: The prompts to pass into the service.
@@ -572,7 +576,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
                 response = await llm.ainvoke("Tell me a joke.")
                 response = await llm.agenerate(["Tell me a joke."])
-        """  # noqa: E501
+        """
         generations: List[List[Generation]] = []
         params = self._invocation_params(stop, **kwargs)
         for prompt in prompts:
@@ -581,7 +585,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
                 generation = GenerationChunk(text="")
                 async for chunk in self._astream(
                     prompt, stop=stop, run_manager=run_manager, **kwargs
-                ):  # noqa: E501
+                ):
                     generation += chunk
                 generations.append([generation])
             else:
@@ -630,7 +634,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
         response = self.completion_with_retry(
             data=body, run_manager=run_manager, stream=True, **requests_kwargs
-        )  # noqa: E501
+        )
         for line in self._parse_stream(response.iter_lines()):
             chunk = self._handle_sse_line(line)
             if run_manager:
@@ -691,7 +695,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
     def _invocation_params(
         self, stop: Optional[List[str]] = None, **kwargs: Any
-    ) -> dict:  # noqa: E501
+    ) -> dict:
         """Combines the invocation parameters with default parameters."""
         params = self._default_params
         _model_kwargs = self.model_kwargs or {}
@@ -866,7 +870,7 @@ class OCIModelDeploymentTGI(OCIModelDeploymentLLM):
                 "temperature": self.temperature,
                 "top_k": (
                     self.k if self.k > 0 else None
-                ),  # `top_k` must be strictly positive'  # noqa: E501
+                ),  # `top_k` must be strictly positive'
                 "top_p": self.p,
                 "do_sample": self.do_sample,
                 "return_full_text": self.return_full_text,
@@ -908,7 +912,7 @@ class OCIModelDeploymentTGI(OCIModelDeploymentLLM):
         except KeyError as e:
             raise ValueError(
                 f"Error while formatting response payload.response_json={response_json}"
-            ) from e  # noqa: E501
+            ) from e
 
         return [Generation(text=text)]
 

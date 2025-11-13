@@ -23,7 +23,7 @@ def _create_retry_decorator(llm) -> Callable[[Any], Any]:
     errors = [requests.exceptions.ConnectTimeout, TokenExpiredError]
     decorator = create_base_retry_decorator(
         error_types=errors, max_retries=llm.max_retries
-    )  # noqa: E501
+    )
     return decorator
 
 
@@ -39,7 +39,7 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
             embeddings = OCIModelDeploymentEndpointEmbeddings(
                 endpoint="https://modeldeployment.us-ashburn-1.oci.customer-oci.com/<md_ocid>/predict",
             )
-    """  # noqa: E501
+    """
 
     auth: dict = Field(default_factory=dict, exclude=True)
     """ADS auth dictionary for OCI authentication:
@@ -108,7 +108,7 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
                 else:
                     raise ValueError(
                         f"Server error: {str(http_err)}. Message: {response.text}"
-                    ) from http_err  # noqa: E501
+                    ) from http_err
             except Exception as e:
                 raise ValueError(f"Error occurs by inference endpoint: {str(e)}") from e
 
@@ -164,7 +164,7 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
         except Exception as e:
             raise ValueError(
                 f"Error raised by inference API: {e}.\nResponse: {response.text}"
-            )  # noqa: E501
+            )
         return embeddings
 
     def embed_documents(
@@ -186,7 +186,7 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
         results = []
         _chunk_size = (
             len(texts) if (not chunk_size or chunk_size > len(texts)) else chunk_size
-        )  # noqa: E501
+        )
         for i in range(0, len(texts), _chunk_size):
             response = self._embedding(texts[i : i + _chunk_size])
             results.extend(response)

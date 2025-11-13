@@ -128,10 +128,10 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
                 def make_security_token_signer(oci_config):  # type: ignore[no-untyped-def]
                     pk = oci.signer.load_private_key_from_file(
                         oci_config.get("key_file"), None
-                    )  # noqa: E501
+                    )
                     with open(
                         oci_config.get("security_token_file"), encoding="utf-8"
-                    ) as f:  # noqa: E501
+                    ) as f:
                         st_string = f.read()
                     return oci.auth.signers.SecurityTokenSigner(st_string, pk)
 
@@ -141,21 +141,21 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
                 )
                 client_kwargs["signer"] = make_security_token_signer(
                     oci_config=client_kwargs["config"]
-                )  # noqa: E501
+                )
             elif values["auth_type"] == OCIAuthType(3).name:
                 client_kwargs["signer"] = (
                     oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-                )  # noqa: E501
+                )
             elif values["auth_type"] == OCIAuthType(4).name:
                 client_kwargs["signer"] = (
                     oci.auth.signers.get_resource_principals_signer()
-                )  # noqa: E501
+                )
             else:
                 raise ValueError("Please provide valid value to auth_type")
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
                 **client_kwargs
-            )  # noqa: E501
+            )
 
         except ImportError as ex:
             raise ImportError(

@@ -25,7 +25,7 @@ class MockToolCall(dict):
 @pytest.mark.requires("oci")
 @pytest.mark.parametrize(
     "test_model_id", ["cohere.command-r-16k", "meta.llama-3.3-70b-instruct"]
-)  # noqa: E501
+)
 def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
     """Test valid chat call to OCI Generative AI LLM service."""
     oci_gen_ai_client = MagicMock()
@@ -270,7 +270,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                 {
                                                     "content": [
                                                         MockResponseDict({"text": ""})
-                                                    ],  # noqa: E501
+                                                    ],
                                                     "tool_calls": [
                                                         MockResponseDict(
                                                             {
@@ -278,7 +278,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                                 "id": "call_escaped",
                                                                 "name": "get_weather",
                                                                 # Escaped JSON (the bug scenario)  # noqa: E501
-                                                                "arguments": '"{\\"location\\": \\"San Francisco\\"}"',  # noqa: E501
+                                                                "arguments": '"{{\\"location\\": \\"San Francisco\\"}}"}',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
                                                                     "type": "type",

@@ -87,7 +87,7 @@ def test_construct_json_body(mocker: MockerFixture) -> None:
     ]
     chat = ChatOCIModelDeployment(
         endpoint="test_endpoint", model_kwargs={"temperature": 0.2}
-    )  # noqa: E501
+    )
     payload = chat._construct_json_body(messages, chat._invocation_params(stop=None))
     assert payload == {
         "messages": [{"content": "User message", "role": "user"}],

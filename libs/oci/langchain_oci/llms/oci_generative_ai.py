@@ -122,7 +122,7 @@ class OCIGenAIBase(BaseModel, ABC):
 
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
-    )  # noqa: E501
+    )
 
     @pre_init
     def validate_environment(cls, values: Dict) -> Dict:
@@ -154,10 +154,10 @@ class OCIGenAIBase(BaseModel, ABC):
                 def make_security_token_signer(oci_config):  # type: ignore[no-untyped-def]
                     pk = oci.signer.load_private_key_from_file(
                         oci_config.get("key_file"), None
-                    )  # noqa: E501
+                    )
                     with open(
                         oci_config.get("security_token_file"), encoding="utf-8"
-                    ) as f:  # noqa: E501
+                    ) as f:
                         st_string = f.read()
                     return oci.auth.signers.SecurityTokenSigner(st_string, pk)
 
@@ -167,15 +167,15 @@ class OCIGenAIBase(BaseModel, ABC):
                 )
                 client_kwargs["signer"] = make_security_token_signer(
                     oci_config=client_kwargs["config"]
-                )  # noqa: E501
+                )
             elif values["auth_type"] == OCIAuthType(3).name:
                 client_kwargs["signer"] = (
                     oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-                )  # noqa: E501
+                )
             elif values["auth_type"] == OCIAuthType(4).name:
                 client_kwargs["signer"] = (
                     oci.auth.signers.get_resource_principals_signer()
-                )  # noqa: E501
+                )
             else:
                 raise ValueError(
                     f"Please provide valid value to auth_type, {values['auth_type']} is not valid."  # noqa: E501
@@ -183,7 +183,7 @@ class OCIGenAIBase(BaseModel, ABC):
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
                 **client_kwargs
-            )  # noqa: E501
+            )
 
         except ImportError as ex:
             raise ModuleNotFoundError(
@@ -301,7 +301,7 @@ class OCIGenAI(LLM, OCIGenAIBase):
         if self.model_id is None:
             raise ValueError(
                 "model_id is required to call the model, please provide the model_id."
-            )  # noqa: E501
+            )
 
         if self.model_id.startswith(CUSTOM_ENDPOINT_PREFIX):
             serving_mode = models.DedicatedServingMode(endpoint_id=self.model_id)

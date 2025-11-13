@@ -52,7 +52,7 @@ CONST_STREAM_RESPONSE = (
     for content in [
         CONST_STREAM_TEMPLATE.replace("<DELTA>", delta).encode()
         for delta in CONST_STREAM_DELTAS
-    ]  # noqa: E501
+    ]
     + [b"data: [DONE]"]
 )
 
@@ -62,12 +62,12 @@ CONST_ASYNC_STREAM_TEMPLATE = (
 )
 CONST_ASYNC_STREAM_RESPONSE = (
     CONST_ASYNC_STREAM_TEMPLATE.replace("<DELTA>", delta).encode()
-    for delta in CONST_STREAM_DELTAS  # noqa: E501
+    for delta in CONST_STREAM_DELTAS
 )
 
 pytestmark = pytest.mark.skipif(
     sys.version_info < (3, 9), reason="Requires Python 3.9 or higher"
-)  # noqa: E501
+)
 
 
 class MockResponse:
@@ -146,7 +146,7 @@ def test_stream_vllm(*args: Any) -> None:
     """Tests streaming with vLLM endpoint using OpenAI spec."""
     llm = ChatOCIModelDeploymentVLLM(
         endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
-    )  # noqa: E501
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     output = None
     count = 0
@@ -165,7 +165,7 @@ def test_stream_vllm(*args: Any) -> None:
 
 async def mocked_async_streaming_response(
     *args: Any, **kwargs: Any
-) -> AsyncGenerator[bytes, None]:  # noqa: E501
+) -> AsyncGenerator[bytes, None]:
     """Returns mocked response for async streaming."""
     for item in CONST_ASYNC_STREAM_RESPONSE:
         yield item
@@ -176,7 +176,7 @@ async def mocked_async_streaming_response(
 @pytest.mark.requires("langchain_openai")
 @mock.patch(
     "ads.common.auth.default_signer", return_value=dict(signer=mock.MagicMock())
-)  # noqa: E501
+)
 @mock.patch(
     "langchain_oci.llms.oci_data_science_model_deployment_endpoint.BaseOCIModelDeployment._arequest",
     mock.MagicMock(),
@@ -185,7 +185,7 @@ async def test_stream_async(*args: Any) -> None:
     """Tests async streaming."""
     llm = ChatOCIModelDeploymentVLLM(
         endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
-    )  # noqa: E501
+    )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
     with mock.patch.object(
         llm,
