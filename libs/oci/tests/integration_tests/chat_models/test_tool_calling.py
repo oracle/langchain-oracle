@@ -62,7 +62,7 @@ from langgraph.prebuilt import ToolNode
 from langchain_oci.chat_models import ChatOCIGenAI
 
 def default_compartment():
-    return "<compartment_ocid>" # for convenience
+    return "ocid1.tenancy.oc1..aaaaaaaa7ayxuw32vjb64hbxtouarftwtwb2uat5x5mf4hu7cvzaesfrebrq"
 
 def get_weather(city: str) -> str:
     """Get the current weather for a given city name."""
