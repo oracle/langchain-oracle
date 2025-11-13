@@ -76,7 +76,7 @@ def do_function_calling():
 
 def do_web_search():
     client = get_oci_openai_client()
-    tool = {"type": "web_search_preview"}
+    tool = {"type": "web_search"}
     llm_with_tools = client.bind_tools([tool])
 
     response = llm_with_tools.invoke("What was a positive news story from today?")

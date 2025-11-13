@@ -10,13 +10,13 @@ from openai import (
     DEFAULT_MAX_RETRIES,
     NOT_GIVEN,
     AsyncOpenAI,
-    DefaultAsyncHttpxClient,
-    DefaultHttpxClient,
     NotGiven,
     OpenAI,
     Timeout,
 )
 from pydantic import SecretStr, model_validator
+
+from langchain_oci.llms.utils import get_base_url, get_sync_httpx_client, get_async_httpx_client
 
 API_KEY = "<NOTUSED>"
 COMPARTMENT_ID_HEADER = "opc-compartment-id"
@@ -144,38 +144,6 @@ class OCIUserPrincipleAuth(OCIHttpxAuth):
         super().__init__(signer=signer)
 
 
-def get_base_url(region: str, override_url: str = "") -> str:
-    return (
-        override_url
-        if override_url
-        else f"https://inference.generativeai.{region}.oci.oraclecloud.com/openai/v1"
-    )
-
-
-def get_sync_httpx_client(
-    auth: httpx.Auth, compartment_id: str, conversation_store_id: str
-) -> httpx.Client:
-    return DefaultHttpxClient(
-        auth=auth,
-        headers={
-            COMPARTMENT_ID_HEADER: compartment_id,
-            CONVERSATION_STORE_ID_HEADER: conversation_store_id,
-        },
-    )
-
-
-def get_async_httpx_client(
-    auth: httpx.Auth, compartment_id: str, conversation_store_id: str
-) -> httpx.AsyncClient:
-    return DefaultAsyncHttpxClient(
-        auth=auth,
-        headers={
-            COMPARTMENT_ID_HEADER: compartment_id,
-            CONVERSATION_STORE_ID_HEADER: conversation_store_id,
-        },
-    )
-
-
 class OCIOpenAI(OpenAI):
     """
     A custom OpenAI client implementation for Oracle Cloud Infrastructure (OCI)
@@ -215,8 +183,10 @@ class OCIOpenAI(OpenAI):
             default_query=default_query,
             http_client=get_sync_httpx_client(
                 auth=auth,
-                compartment_id=compartment_id,
-                conversation_store_id=conversation_store_id,
+                headers={
+                    COMPARTMENT_ID_HEADER: compartment_id,
+                    CONVERSATION_STORE_ID_HEADER: conversation_store_id,
+                }
             ),
         )
 
@@ -259,8 +229,10 @@ class OCIAsyncOpenAI(AsyncOpenAI):
             default_query=default_query,
             http_client=get_async_httpx_client(
                 auth=auth,
-                compartment_id=compartment_id,
-                conversation_store_id=conversation_store_id,
+                headers={
+                    COMPARTMENT_ID_HEADER: compartment_id,
+                    CONVERSATION_STORE_ID_HEADER: conversation_store_id,
+                }
             ),
         )
 
@@ -397,8 +369,10 @@ class ChatOCIOpenAI(ChatOpenAI):
             api_key=SecretStr(API_KEY),
             http_client=get_sync_httpx_client(
                 auth=auth,
-                compartment_id=compartment_id,
-                conversation_store_id=conversation_store_id,
+                headers={
+                    COMPARTMENT_ID_HEADER: compartment_id,
+                    CONVERSATION_STORE_ID_HEADER: conversation_store_id,
+                }
             ),
             base_url=get_base_url(region, override_url),
             use_responses_api=True,
