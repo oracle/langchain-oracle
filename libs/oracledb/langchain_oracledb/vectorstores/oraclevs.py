@@ -3,9 +3,10 @@
 """
 oraclevs.py
 
-Provides integration between Oracle Vector Database and 
+Provides integration between Oracle Vector Database and
 LangChain for vector storage and search.
 """
+
 from __future__ import annotations
 
 import array
@@ -278,7 +279,7 @@ def _generate_condition(
                     bind_variables.append(json.dumps(v))
 
                     all_conditions.append(
-                        "JSON_EQUAL("
+                        f"JSON_EQUAL("
                         f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
                         f"    JSON(:value{bind_l})"
                         ")"
@@ -289,7 +290,7 @@ def _generate_condition(
                     bind_variables.append(json.dumps(v))
 
                     all_conditions.append(
-                        "NOT (JSON_EQUAL("
+                        f"NOT (JSON_EQUAL("
                         f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
                         f"    JSON(:value{bind_l})"
                         "))"
@@ -687,7 +688,7 @@ def _get_hnsw_index_ddl(
     idx_name = config["idx_name"]
     base_sql = (
         f"create vector index {idx_name} on {table_name}(embedding) "
-        f"ORGANIZATION INMEMORY NEIGHBOR GRAPH"
+        "ORGANIZATION INMEMORY NEIGHBOR GRAPH"
     )
 
     # optional parts depending on parameters
@@ -697,20 +698,20 @@ def _get_hnsw_index_ddl(
     parameters_part = ""
     if "neighbors" in config and "efConstruction" in config:
         parameters_part = (
-            " parameters (type {idx_type}, neighbors {"
-            "neighbors}, efConstruction {efConstruction})"
+            " parameters (type {idx_type}, neighbors {neighbors}, "
+            "efConstruction {efConstruction})"
         )
     elif "neighbors" in config and "efConstruction" not in config:
         config["efConstruction"] = defaults["efConstruction"]
         parameters_part = (
-            " parameters (type {idx_type}, neighbors {"
-            "neighbors}, efConstruction {efConstruction})"
+            " parameters (type {idx_type}, neighbors {neighbors}, "
+            "efConstruction {efConstruction})"
         )
     elif "neighbors" not in config and "efConstruction" in config:
         config["neighbors"] = defaults["neighbors"]
         parameters_part = (
-            " parameters (type {idx_type}, neighbors {"
-            "neighbors}, efConstruction {efConstruction})"
+            " parameters (type {idx_type}, neighbors {neighbors}, "
+            "efConstruction {efConstruction})"
         )
 
     # always included part for parallel
@@ -782,7 +783,7 @@ def _get_ivf_index_ddl(
     idx_name = config["idx_name"]
     base_sql = (
         f"CREATE VECTOR INDEX {idx_name} ON {table_name}(embedding) "
-        f"ORGANIZATION NEIGHBOR PARTITIONS"
+        "ORGANIZATION NEIGHBOR PARTITIONS"
     )
 
     # optional parts depending on parameters
@@ -792,8 +793,8 @@ def _get_ivf_index_ddl(
     parameters_part = ""
     if "idx_type" in config and "neighbor_part" in config:
         parameters_part = (
-            f" PARAMETERS (type {config['idx_type']}, neighbor"
-            f" partitions {config['neighbor_part']})"
+            f" PARAMETERS (type {config['idx_type']}, "
+            f"neighbor partitions {config['neighbor_part']})"
         )
 
     # always included part for parallel
@@ -1400,8 +1401,8 @@ class OracleVS(VectorStore):
             if not isinstance(self.embeddings, OracleEmbeddings):
                 cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
                 cursor.executemany(
-                    f"INSERT INTO {self.table_name} (id, embedding, metadata, "
-                    f"text) VALUES (:1, :2, :3, :4)",
+                    f"INSERT INTO {self.table_name} "
+                    "(id, embedding, metadata, text) VALUES (:1, :2, :3, :4)",
                     docs,
                 )
                 connection.commit()
@@ -1414,15 +1415,15 @@ class OracleVS(VectorStore):
 
                 cursor.setinputsizes(None, oracledb.DB_TYPE_JSON, None)
                 cursor.executemany(
-                    f"INSERT INTO {self.table_name} (id, metadata, "
-                    f"text) VALUES (:1, :2, :3)",
+                    f"INSERT INTO {self.table_name} "
+                    "(id, metadata, text) VALUES (:1, :2, :3)",
                     docs,
                 )
 
                 cursor.setinputsizes(oracledb.DB_TYPE_JSON)
                 update_sql = (
-                    f"UPDATE {self.table_name} "
-                    "SET embedding = dbms_vector_chain.utl_to_embedding(text, json(:1))"
+                    f"UPDATE {self.table_name} SET embedding = "
+                    "dbms_vector_chain.utl_to_embedding(text, json(:1))"
                 )
                 cursor.execute(update_sql, [self.embeddings.params])
                 connection.commit()
@@ -1478,8 +1479,8 @@ class OracleVS(VectorStore):
                 if not isinstance(self.embeddings, OracleEmbeddings):
                     cursor.setinputsizes(None, None, oracledb.DB_TYPE_JSON, None)
                     await cursor.executemany(
-                        f"INSERT INTO {self.table_name} (id, embedding, metadata, "
-                        f"text) VALUES (:1, :2, :3, :4)",
+                        f"INSERT INTO {self.table_name} "
+                        "(id, embedding, metadata, text) VALUES (:1, :2, :3, :4)",
                         docs,
                     )
                     await connection.commit()
@@ -1492,8 +1493,8 @@ class OracleVS(VectorStore):
 
                     cursor.setinputsizes(None, oracledb.DB_TYPE_JSON, None)
                     await cursor.executemany(
-                        f"INSERT INTO {self.table_name} (id, metadata, "
-                        f"text) VALUES (:1, :2, :3)",
+                        f"INSERT INTO {self.table_name} "
+                        "(id, metadata, text) VALUES (:1, :2, :3)",
                         docs,
                     )
 
@@ -2168,7 +2169,7 @@ class OracleVS(VectorStore):
         )
         if not isinstance(distance_strategy, DistanceStrategy):
             raise TypeError(
-                f"Expected DistanceStrategy got " f"{type(distance_strategy).__name__} "
+                f"Expected DistanceStrategy got {type(distance_strategy).__name__} "
             )
 
         query = kwargs.get("query", "What is a Oracle database")

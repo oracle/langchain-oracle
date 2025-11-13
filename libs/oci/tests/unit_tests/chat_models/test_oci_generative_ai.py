@@ -151,7 +151,7 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
     expected = "Assistant chat reply."
     actual = llm.invoke(messages, temperature=0.2)
     assert actual.content == expected
-    
+
     # Test total_tokens in additional_kwargs
     assert "total_tokens" in actual.additional_kwargs
     if provider == "cohere":
@@ -192,7 +192,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                             {
                                                                 "type": "FUNCTION",
                                                                 "id": "call_456",
-                                                                "name": "get_weather",  # noqa: E501
+                                                                "name": "get_weather",
                                                                 "arguments": '{"location": "San Francisco"}',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
@@ -277,13 +277,13 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                                 "type": "FUNCTION",
                                                                 "id": "call_escaped",
                                                                 "name": "get_weather",
-                                                                # Escaped JSON (the bug scenario)
-                                                                "arguments": '"{\\\"location\\\": \\\"San Francisco\\\"}"',
+                                                                # Escaped JSON (the bug scenario) # noqa: E501
+                                                                "arguments": '"{\\"location\\": \\"San Francisco\\"}"',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
                                                                     "type": "type",
                                                                     "name": "name",
-                                                                    "arguments": "arguments",
+                                                                    "arguments": "arguments",  # noqa: E501
                                                                 },
                                                             }
                                                         )
@@ -536,7 +536,7 @@ def test_json_schema_output(monkeypatch: MonkeyPatch) -> None:
     def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
         # Verify that response_format is a JsonSchemaResponseFormat object
         request = args[0]
-        assert hasattr(request.chat_request, 'response_format')
+        assert hasattr(request.chat_request, "response_format")
         assert request.chat_request.response_format is not None
 
         return MockResponseDict(
@@ -668,12 +668,10 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
         # Check if the request contains tool_calls in the message
         request = args[0]
         has_chat_request = hasattr(request, "chat_request")
-        has_messages = has_chat_request and hasattr(
-            request.chat_request, "messages"
-        )
+        has_messages = has_chat_request and hasattr(request.chat_request, "messages")
         if has_messages:
             for msg in request.chat_request.messages:
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
                     tool_calls_processed = True
                     break
         return MockResponseDict(
@@ -731,7 +729,7 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
                 "name": "get_weather",
                 "args": {"location": "San Francisco"},
             }
-        ]
+        ],
     )
 
     messages = [ai_message]
@@ -744,7 +742,7 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
 @pytest.mark.requires("oci")
 def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> None:
     """Test AIMessage with tool_calls in additional_kwargs field."""
-  
+
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
 
@@ -806,7 +804,7 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
                     "args": {"location": "New York"},
                 }
             ]
-        }
+        },
     )
 
     messages = [ai_message]
@@ -832,7 +830,7 @@ def test_get_provider():
 
 @pytest.mark.requires("oci")
 def test_tool_choice_none_after_tool_results() -> None:
-    """Test that tool_choice is set to 'none' when max_sequential_tool_calls is exceeded.
+    """Test tool_choice='none' when max_sequential_tool_calls is exceeded.
 
     This prevents infinite loops with Meta Llama models by limiting the number
     of sequential tool calls.
@@ -844,7 +842,7 @@ def test_tool_choice_none_after_tool_results() -> None:
     llm = ChatOCIGenAI(
         model_id="meta.llama-3.3-70b-instruct",
         client=oci_gen_ai_client,
-        max_sequential_tool_calls=3  # Set limit to 3 for testing
+        max_sequential_tool_calls=3,  # Set limit to 3 for testing
     )
 
     # Define a simple tool function (following the pattern from other tests)
@@ -862,12 +860,27 @@ def test_tool_choice_none_after_tool_results() -> None:
     # Create conversation with 3 ToolMessages (at the limit)
     messages = [
         HumanMessage(content="What's the weather?"),
-        AIMessage(content="", tool_calls=[{"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}
+            ],
+        ),
         ToolMessage(content="Sunny, 65°F", tool_call_id="call_1"),
-        AIMessage(content="", tool_calls=[{"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}
+            ],
+        ),
         ToolMessage(content="Rainy, 55°F", tool_call_id="call_2"),
-        AIMessage(content="", tool_calls=[{"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}]),
-        ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3")
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}
+            ],
+        ),
+        ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3"),
     ]
 
     # Prepare the request - need to pass tools from the bound model kwargs
@@ -876,8 +889,8 @@ def test_tool_choice_none_after_tool_results() -> None:
     )
 
     # Verify that tool_choice is set to 'none' because limit was reached
-    assert hasattr(request.chat_request, 'tool_choice')
+    assert hasattr(request.chat_request, "tool_choice")
     assert isinstance(request.chat_request.tool_choice, models.ToolChoiceNone)
     # Verify tools are still present (not removed, just choice is 'none')
-    assert hasattr(request.chat_request, 'tools')
+    assert hasattr(request.chat_request, "tools")
     assert len(request.chat_request.tools) > 0

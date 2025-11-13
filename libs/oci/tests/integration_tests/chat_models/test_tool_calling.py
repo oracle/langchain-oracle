@@ -84,9 +84,7 @@ def weather_tool():
 def create_agent(model_id: str, weather_tool: StructuredTool):
     """Create a LangGraph agent with tool calling."""
     region = os.getenv("OCI_REGION", "us-chicago-1")
-    endpoint = (
-        f"https://inference.generativeai.{region}.oci.oraclecloud.com"
-    )
+    endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
@@ -169,9 +167,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     assert len(messages) >= 4, expected
 
     # Find tool messages
-    tool_messages = [
-        msg for msg in messages if type(msg).__name__ == "ToolMessage"
-    ]
+    tool_messages = [msg for msg in messages if type(msg).__name__ == "ToolMessage"]
     assert len(tool_messages) >= 1, "Should have at least one tool result"
 
     # Find AI messages with tool calls
@@ -188,8 +184,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
     # should not call again. Allow flexibility - some models might make
     # 1 call, others might need 2, but should stop
     error_msg = (
-        f"Model made too many tool calls ({len(ai_tool_calls)}), "
-        "possible infinite loop"
+        f"Model made too many tool calls ({len(ai_tool_calls)}), possible infinite loop"
     )
     assert len(ai_tool_calls) <= 2, error_msg
 
@@ -199,9 +194,9 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
         "Final message should be AIMessage"
     )
     assert final_message.content, "Final message should have content"
-    assert not (
-        hasattr(final_message, "tool_calls") and final_message.tool_calls
-    ), "Final message should not have tool_calls (infinite loop prevention)"
+    assert not (hasattr(final_message, "tool_calls") and final_message.tool_calls), (
+        "Final message should not have tool_calls (infinite loop prevention)"
+    )
 
     # Note: Different models format responses differently. Some return
     # natural language, others may return the tool call syntax. The
@@ -284,6 +279,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     multi-step investigations requiring several tool calls before
     providing a final analysis.
     """
+
     # Create diagnostic tools that simulate a monitoring workflow
     def check_status(resource: str) -> str:
         """Check the status of a resource."""
@@ -291,16 +287,13 @@ def test_multi_step_tool_orchestration(model_id: str):
             "payment-service": "Status: Running, Memory: 95%, Restarts: 12",
             "web-server": "Status: Running, Memory: 60%, Restarts: 0",
         }
-        return status_data.get(
-            resource, f"Resource {resource} status: Unknown"
-        )
+        return status_data.get(resource, f"Resource {resource} status: Unknown")
 
     def get_events(resource: str) -> str:
         """Get recent events for a resource."""
         events_data = {
             "payment-service": (
-                "Events: [OOMKilled at 14:23, "
-                "BackOff at 14:30, Started at 14:32]"
+                "Events: [OOMKilled at 14:23, BackOff at 14:30, Started at 14:32]"
             ),
             "web-server": "Events: [Started at 10:00, Healthy]",
         }
@@ -310,8 +303,7 @@ def test_multi_step_tool_orchestration(model_id: str):
         """Get historical metrics for a resource."""
         metrics_data = {
             "payment-service": (
-                "Memory trend: 70%→80%→90%→95% "
-                "(gradual increase over 2h)"
+                "Memory trend: 70%→80%→90%→95% (gradual increase over 2h)"
             ),
             "web-server": "Memory trend: 55%→58%→60% (stable)",
         }
@@ -369,9 +361,7 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Create agent with higher recursion limit to allow multi-step
     region = os.getenv("OCI_REGION", "us-chicago-1")
-    endpoint = (
-        f"https://inference.generativeai.{region}.oci.oraclecloud.com"
-    )
+    endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
@@ -470,9 +460,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     ]
 
     # Verify multi-step orchestration worked
-    msg = (
-        f"Should have made multiple tool calls (got {len(tool_call_messages)})"
-    )
+    msg = f"Should have made multiple tool calls (got {len(tool_call_messages)})"
     assert len(tool_call_messages) >= 2, msg
 
     # CRITICAL: Verify max_sequential_tool_calls limit was respected
@@ -484,9 +472,7 @@ def test_multi_step_tool_orchestration(model_id: str):
     )
 
     # Verify tool results were received
-    assert len(tool_result_messages) >= 2, (
-        "Should have received multiple tool results"
-    )
+    assert len(tool_result_messages) >= 2, "Should have received multiple tool results"
 
     # Verify agent eventually stopped (didn't loop infinitely)
     # The final message might still have tool_calls if the agent hit

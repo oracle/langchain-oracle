@@ -3,13 +3,14 @@
 """
 oracleai.py
 
-Implements OracleEmbeddings for generating and handling 
+Implements OracleEmbeddings for generating and handling
 vector embeddings with Oracle AI Vector Search.
 
 Authors:
     - Harichandan Roy (hroy)
     - David Jiang (ddjiang)
 """
+
 from __future__ import annotations
 
 import json

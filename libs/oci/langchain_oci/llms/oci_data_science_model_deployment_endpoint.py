@@ -423,21 +423,24 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
                 headers={
                     "route": "/v1/completions",
                     # other request headers ...
-                }
+                },
             )
             llm.invoke("tell me a joke.")
 
         Customized Usage:
 
-        User can inherit from our base class and overrwrite the `_process_response`, `_process_stream_response`,
-        `_construct_json_body` for satisfying customized needed.
+        User can inherit from our base class and overrwrite the `_process_response`,
+        `_process_stream_response`, `_construct_json_body` for satisfying customized
+        needed.
 
         .. code-block:: python
 
             from langchain_oci.llms import OCIModelDeploymentLLM
 
             class MyCutomizedModel(OCIModelDeploymentLLM):
-                def _process_stream_response(self, response_json:dict) -> GenerationChunk:
+                def _process_stream_response(
+                    self, response_json:dict
+                ) -> GenerationChunk:
                     print("My customized output stream handler.")
                     return GenerationChunk()
 
@@ -456,7 +459,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
             llm.invoke("tell me a joke.")
 
-    """  # noqa: E501
+    """
 
     model: str = DEFAULT_MODEL_NAME
     """The name of the model."""
@@ -559,7 +562,8 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> LLMResult:
-        """Call out to OCI Data Science Model Deployment endpoint async with k unique prompts.
+        """Call out to OCI Data Science Model Deployment endpoint async with k
+        unique prompts.
 
         Args:
             prompts: The prompts to pass into the service.
@@ -573,7 +577,7 @@ class OCIModelDeploymentLLM(BaseLLM, BaseOCIModelDeployment):
 
                 response = await llm.ainvoke("Tell me a joke.")
                 response = await llm.agenerate(["Tell me a joke."])
-        """  # noqa: E501
+        """
         generations: List[List[Generation]] = []
         params = self._invocation_params(stop, **kwargs)
         for prompt in prompts:

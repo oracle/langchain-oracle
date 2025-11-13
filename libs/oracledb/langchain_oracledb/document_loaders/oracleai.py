@@ -3,7 +3,7 @@
 """
 oracleai.py
 
-Defines OracleDocLoader and OracleTextSplitter for loading 
+Defines OracleDocLoader and OracleTextSplitter for loading
 and splitting documents using Oracle AI Vector Search.
 
 Authors:

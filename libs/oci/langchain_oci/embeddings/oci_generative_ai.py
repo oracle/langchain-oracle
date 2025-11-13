@@ -48,7 +48,7 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
             embeddings = OCIGenAIEmbeddings(
                 model_id="MY_EMBEDDING_MODEL",
                 service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-                compartment_id="MY_OCID"
+                compartment_id="MY_OCID",
             )
     """
 
