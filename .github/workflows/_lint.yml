@@ -45,7 +45,6 @@ jobs:
       - name: Check Poetry configuration
         working-directory: ${{ inputs.working-directory }}
         run: |
-          poetry check
           poetry check --lock
 
       - name: Install dependencies
