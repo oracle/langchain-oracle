@@ -277,8 +277,8 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                                 "type": "FUNCTION",
                                                                 "id": "call_escaped",
                                                                 "name": "get_weather",
-                                                                # Escaped JSON (the bug scenario)  # noqa: E501
-                                                                "arguments": '"{{\\"location\\": \\"San Francisco\\"}}"',  # noqa: E501
+                                                                # Escaped JSON (the bug scenario) # noqa: E501
+                                                                "arguments": '"{\\"location\\": \\"San Francisco\\"}"',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
                                                                     "type": "type",
