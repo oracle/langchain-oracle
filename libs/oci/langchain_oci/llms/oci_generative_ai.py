@@ -116,6 +116,10 @@ class OCIGenAIBase(BaseModel, ABC):
     is_stream: bool = False
     """Whether to stream back partial progress"""
 
+    max_sequential_tool_calls: int = 8
+    """Maximum tool calls before forcing final answer.
+    Prevents infinite loops while allowing multi-step orchestration."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )
@@ -257,10 +261,10 @@ class OCIGenAI(LLM, OCIGenAIBase):
             from langchain_oci.llms import OCIGenAI
 
             llm = OCIGenAI(
-                    model_id="MY_MODEL_ID",
-                    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-                    compartment_id="MY_OCID"
-                )
+                model_id="MY_MODEL_ID",
+                service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+                compartment_id="MY_OCID",
+            )
     """
 
     model_config = ConfigDict(
@@ -298,8 +302,7 @@ class OCIGenAI(LLM, OCIGenAIBase):
 
         if self.model_id is None:
             raise ValueError(
-                "model_id is required to call the model, "
-                "please provide the model_id."
+                "model_id is required to call the model, please provide the model_id."
             )
 
         if self.model_id.startswith(CUSTOM_ENDPOINT_PREFIX):

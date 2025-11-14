@@ -30,7 +30,14 @@ This repository includes two main integration categories:
 ```python
 from langchain_oci import ChatOCIGenAI
 
-llm = ChatOCIGenAI()
+llm = ChatOCIGenAI(
+        model_id="MY_MODEL_ID",
+        service_endpoint="MY_SERVICE_ENDPOINT",
+        compartment_id="MY_COMPARTMENT_ID",
+        model_kwargs={"max_tokens": 1024}, # Use max_completion_tokens instead of max_tokens for OpenAI models
+        auth_profile="MY_AUTH_PROFILE",
+        is_stream=True,
+        auth_type="SECURITY_TOKEN"
 llm.invoke("Sing a ballad of LangChain.")
 ```
 
@@ -52,6 +59,24 @@ from langchain_oci import OCIGenAIEmbeddings
 
 embeddings = OCIGenAIEmbeddings()
 embeddings.embed_query("What is the meaning of life?")
+```
+
+### 4. Use Structured Output
+`ChatOCIGenAI` supports structured output. 
+
+<sub>**Note:** The default method is `function_calling`. If default method returns `None` (e.g. for Gemini models), try `json_schema` or `json_mode`.</sub>
+
+```python
+from langchain_oci import ChatOCIGenAI
+from pydantic import BaseModel
+
+class Joke(BaseModel):
+    setup: str
+    punchline: str
+
+llm = ChatOCIGenAI()
+structured_llm = llm.with_structured_output(Joke)
+structured_llm.invoke("Tell me a joke about programming")
 ```
 
 

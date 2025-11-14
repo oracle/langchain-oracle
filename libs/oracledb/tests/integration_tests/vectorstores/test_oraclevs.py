@@ -3,7 +3,7 @@
 """
 test_oraclevs.py
 
-Test Oracle AI Vector Search functionality integration 
+Test Oracle AI Vector Search functionality integration
 with OracleVS.
 """
 
@@ -12,6 +12,7 @@ import asyncio
 import logging
 import sys
 import threading
+from typing import Union
 
 import numpy as np
 import oracledb
@@ -1852,7 +1853,7 @@ def test_db_filter_test() -> None:
         for filtered_function in FILTERED_FUNCTIONS:
             method = getattr(vs, filtered_function)
 
-            query_emb: list[float] | str = query
+            query_emb: Union[list[float], str] = query
             if "_by_vector" in filtered_function:
                 query_emb = vs.embedding_function.embed_query(query)  # type: ignore[union-attr]
 
@@ -1989,7 +1990,7 @@ async def test_db_filter_test_async() -> None:
         for filtered_function in FILTERED_FUNCTIONS:
             method = getattr(vs, "a" + filtered_function)
 
-            query_emb: list[float] | str = query
+            query_emb: Union[list[float], str] = query
             if "_by_vector" in filtered_function:
                 query_emb = vs.embedding_function.embed_query(query)  # type: ignore[union-attr]
 

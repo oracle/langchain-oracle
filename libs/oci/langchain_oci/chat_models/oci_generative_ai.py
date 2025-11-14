@@ -94,9 +94,19 @@ class OCIUtils:
     @staticmethod
     def convert_oci_tool_call_to_langchain(tool_call: Any) -> ToolCall:
         """Convert an OCI tool call to a LangChain ToolCall."""
+        parsed = json.loads(tool_call.arguments)
+
+        # If the parsed result is a string, it means the JSON was escaped, so parse again  # noqa: E501
+        if isinstance(parsed, str):
+            try:
+                parsed = json.loads(parsed)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, keep it as a string
+                pass
+
         return ToolCall(
             name=tool_call.name,
-            args=json.loads(tool_call.arguments)
+            args=parsed
             if "arguments" in tool_call.attribute_map
             else tool_call.parameters,
             id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
@@ -213,6 +223,9 @@ class CohereProvider(Provider):
             "SYSTEM": models.CohereSystemMessage,
             "TOOL": models.CohereToolMessage,
         }
+
+        self.oci_response_json_schema = models.ResponseJsonSchema
+        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
 
     def chat_response_to_text(self, response: Any) -> str:
@@ -242,6 +255,16 @@ class CohereProvider(Provider):
             "is_search_required": response.data.chat_response.is_search_required,
             "finish_reason": response.data.chat_response.finish_reason,
         }
+
+        # Include token usage if available
+        if (
+            hasattr(response.data.chat_response, "usage")
+            and response.data.chat_response.usage
+        ):
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )
+
         # Include tool calls if available
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(
@@ -367,9 +390,7 @@ class CohereProvider(Provider):
                     self.oci_chat_message[self.get_role(msg)](
                         tool_results=[
                             self.oci_tool_result(
-                                call=self.oci_tool_call(
-                                    name=msg.name, parameters={}
-                                ),
+                                call=self.oci_tool_call(name=msg.name, parameters={}),
                                 outputs=[{"output": msg.content}],
                             )
                         ],
@@ -381,9 +402,17 @@ class CohereProvider(Provider):
         for i, message in enumerate(messages[::-1]):
             current_turn.append(message)
             if isinstance(message, HumanMessage):
-                if len(messages) > i and isinstance(messages[len(messages) - i - 2], ToolMessage):
-                    # add dummy message REPEATING the tool_result to avoid the error about ToolMessage needing to be followed by an AI message
-                    oci_chat_history.append(self.oci_chat_message['CHATBOT'](message=messages[len(messages) - i - 2].content))
+                if len(messages) > i and isinstance(
+                    messages[len(messages) - i - 2], ToolMessage
+                ):
+                    # add dummy message REPEATING the tool_result to avoid
+                    # the error about ToolMessage needing to be followed
+                    # by an AI message
+                    oci_chat_history.append(
+                        self.oci_chat_message["CHATBOT"](
+                            message=messages[len(messages) - i - 2].content
+                        )
+                    )
                 break
         current_turn = list(reversed(current_turn))
 
@@ -577,6 +606,10 @@ class GenericProvider(Provider):
         self.oci_tool_call = models.FunctionCall
         self.oci_tool_message = models.ToolMessage
 
+        # Response format models
+        self.oci_response_json_schema = models.ResponseJsonSchema
+        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
+
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
     def chat_response_to_text(self, response: Any) -> str:
@@ -602,6 +635,16 @@ class GenericProvider(Provider):
             "finish_reason": response.data.chat_response.choices[0].finish_reason,
             "time_created": str(response.data.chat_response.time_created),
         }
+
+        # Include token usage if available
+        if (
+            hasattr(response.data.chat_response, "usage")
+            and response.data.chat_response.usage
+        ):
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )
+
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(
                 self.chat_tool_calls(response)
@@ -712,8 +755,8 @@ class GenericProvider(Provider):
                     )
                 else:
                     oci_message = self.oci_chat_message[role](content=tool_content)
-            elif isinstance(message, AIMessage) and message.additional_kwargs.get(
-                "tool_calls"
+            elif isinstance(message, AIMessage) and (
+                message.tool_calls or message.additional_kwargs.get("tool_calls")
             ):
                 # Process content and tool calls for assistant messages
                 content = self._process_message_content(message.content)
@@ -736,10 +779,73 @@ class GenericProvider(Provider):
                 oci_message = self.oci_chat_message[role](content=content)
             oci_messages.append(oci_message)
 
-        return {
+        result = {
             "messages": oci_messages,
             "api_format": self.chat_api_format,
         }
+
+        # BUGFIX: Intelligently manage tool_choice to prevent infinite loops
+        # while allowing legitimate multi-step tool orchestration.
+        # This addresses a known issue with Meta Llama models that
+        # continue calling tools even after receiving results.
+
+        def _should_allow_more_tool_calls(
+            messages: List[BaseMessage], max_tool_calls: int
+        ) -> bool:
+            """
+            Determine if the model should be allowed to call more tools.
+
+            Returns False (force stop) if:
+            - Tool call limit exceeded
+            - Infinite loop detected (same tool called repeatedly with same args)
+
+            Returns True otherwise to allow multi-step tool orchestration.
+
+            Args:
+                messages: Conversation history
+                max_tool_calls: Maximum number of tool calls before forcing stop
+            """
+            # Count total tool calls made so far
+            tool_call_count = sum(1 for msg in messages if isinstance(msg, ToolMessage))
+
+            # Safety limit: prevent runaway tool calling
+            if tool_call_count >= max_tool_calls:
+                return False
+
+            # Detect infinite loop: same tool called with same arguments in succession
+            recent_calls = []
+            for msg in reversed(messages):
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        # Create signature: (tool_name, sorted_args)
+                        try:
+                            args_str = json.dumps(tc.get("args", {}), sort_keys=True)
+                            signature = (tc.get("name", ""), args_str)
+
+                            # Check if this exact call was made in last 2 calls
+                            if signature in recent_calls[-2:]:
+                                return False  # Infinite loop detected
+
+                            recent_calls.append(signature)
+                        except Exception:
+                            # If we can't serialize args, be conservative and continue
+                            pass
+
+                # Only check last 4 AI messages (last 4 tool call attempts)
+                if len(recent_calls) >= 4:
+                    break
+
+            return True
+
+        has_tool_results = any(isinstance(msg, ToolMessage) for msg in messages)
+        if has_tool_results and "tools" in kwargs and "tool_choice" not in kwargs:
+            max_tool_calls = kwargs.get("max_sequential_tool_calls", 8)
+            if not _should_allow_more_tool_calls(messages, max_tool_calls):
+                # Force model to stop and provide final answer
+                result["tool_choice"] = self.oci_tool_choice_none()
+            # else: Allow model to decide (default behavior)
+
+        return result
 
     def _process_message_content(
         self, content: Union[str, List[Union[str, Dict]]]
@@ -804,7 +910,22 @@ class GenericProvider(Provider):
         Raises:
             ValueError: If the tool type is not supported.
         """
-        if isinstance(tool, BaseTool):
+        if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
+            as_json_schema_function = convert_to_openai_function(tool)
+            parameters = as_json_schema_function.get("parameters", {})
+            return self.oci_function_definition(
+                name=as_json_schema_function.get("name"),
+                description=as_json_schema_function.get(
+                    "description",
+                    as_json_schema_function.get("name"),
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": parameters.get("properties", {}),
+                    "required": parameters.get("required", []),
+                },
+            )
+        elif isinstance(tool, BaseTool):
             return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -824,21 +945,6 @@ class GenericProvider(Provider):
                         for p_name, p_def in tool.args.items()
                         if "default" not in p_def
                     ],
-                },
-            )
-        elif (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
-            as_json_schema_function = convert_to_openai_function(tool)
-            parameters = as_json_schema_function.get("parameters", {})
-            return self.oci_function_definition(
-                name=as_json_schema_function.get("name"),
-                description=as_json_schema_function.get(
-                    "description",
-                    as_json_schema_function.get("name"),
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": parameters.get("properties", {}),
-                    "required": parameters.get("required", []),
                 },
             )
         raise ValueError(
@@ -934,6 +1040,7 @@ class GenericProvider(Provider):
 
 class MetaProvider(GenericProvider):
     """Provider for Meta models. This provider is for backward compatibility."""
+
     pass
 
 
@@ -1050,13 +1157,29 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 "Please make sure you have the oci package installed."
             ) from ex
 
-        oci_params = self._provider.messages_to_oci_params(messages, **kwargs)
+        oci_params = self._provider.messages_to_oci_params(
+            messages, max_sequential_tool_calls=self.max_sequential_tool_calls, **kwargs
+        )
 
         oci_params["is_stream"] = stream
         _model_kwargs = self.model_kwargs or {}
 
         if stop is not None:
             _model_kwargs[self._provider.stop_sequence_key] = stop
+
+        # Warn if using max_tokens with OpenAI models
+        if (
+            self.model_id
+            and self.model_id.startswith("openai.")
+            and "max_tokens" in _model_kwargs
+        ):
+            import warnings
+
+            warnings.warn(
+                "OpenAI models require 'max_completion_tokens' instead of 'max_tokens'.",  # noqa: E501
+                UserWarning,
+                stacklevel=2,
+            )
 
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
 
@@ -1133,14 +1256,14 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 `method` is "function_calling" and `schema` is a dict, then the dict
                 must match the OCI Generative AI function-calling spec.
             method:
-                The method for steering model generation, either "function_calling"
-                or "json_mode" or "json_schema. If "function_calling" then the schema
+                The method for steering model generation, either "function_calling" (default method)
+                or "json_mode" or "json_schema". If "function_calling" then the schema
                 will be converted to an OCI function and the returned model will make
                 use of the function-calling API. If "json_mode" then Cohere's JSON mode will be
                 used. Note that if using "json_mode" then you must include instructions
                 for formatting the output into the desired schema into the model call.
                 If "json_schema" then it allows the user to pass a json schema (or pydantic)
-                to the model for structured output. This is the default method.
+                to the model for structured output.
             include_raw:
                 If False then only the parsed structured output is returned. If
                 an error occurs during model output parsing it will be raised. If True
@@ -1191,19 +1314,24 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            response_format = (
-                dict(
-                    schema.model_json_schema().items()  # type: ignore[union-attr]
-                )
+            json_schema_dict = (
+                schema.model_json_schema()  # type: ignore[union-attr]
                 if is_pydantic_schema
                 else schema
             )
-            llm_response_format: Dict[Any, Any] = {"type": "JSON_OBJECT"}
-            llm_response_format["schema"] = {
-                k: v
-                for k, v in response_format.items()  # type: ignore[union-attr]
-            }
-            llm = self.bind(response_format=llm_response_format)
+
+            response_json_schema = self._provider.oci_response_json_schema(
+                name=json_schema_dict.get("title", "response"),
+                description=json_schema_dict.get("description", ""),
+                schema=json_schema_dict,
+                is_strict=True,
+            )
+
+            response_format_obj = self._provider.oci_json_schema_response_format(
+                json_schema=response_json_schema
+            )
+
+            llm = self.bind(response_format=response_format_obj)
             if is_pydantic_schema:
                 output_parser = PydanticOutputParser(pydantic_object=schema)
             else:
@@ -1245,10 +1373,10 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             .. code-block:: python
 
                messages = [
-                            HumanMessage(content="hello!"),
-                            AIMessage(content="Hi there human!"),
-                            HumanMessage(content="Meow!")
-                          ]
+                   HumanMessage(content="hello!"),
+                   AIMessage(content="Hi there human!"),
+                   HumanMessage(content="Meow!"),
+               ]
 
                response = llm.invoke(messages)
         """
@@ -1281,7 +1409,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 for tool_call in self._provider.chat_tool_calls(response)
             ]
         message = AIMessage(
-            content=content,
+            content=content or "",
             additional_kwargs=generation_info,
             tool_calls=tool_calls,
         )
