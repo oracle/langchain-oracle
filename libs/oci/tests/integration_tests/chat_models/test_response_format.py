@@ -52,16 +52,20 @@ from pydantic import BaseModel, Field
 from langchain_oci.chat_models import ChatOCIGenAI
 
 
-def create_chat_model(model_id: str, **kwargs):
+def create_chat_model(model_id: str, response_format=None, **kwargs):
     """Create a ChatOCIGenAI instance for testing."""
     region = os.getenv("OCI_REGION", "us-chicago-1")
     endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+
+    model_kwargs = {"temperature": 0.1, "max_tokens": 512}
+    if response_format:
+        model_kwargs["response_format"] = response_format
 
     return ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
         compartment_id=os.getenv("OCI_COMP"),
-        model_kwargs={"temperature": 0.1, "max_tokens": 512},
+        model_kwargs=model_kwargs,
         auth_type="SECURITY_TOKEN",
         auth_profile="DEFAULT",
         auth_file_location=os.path.expanduser("~/.oci/config"),

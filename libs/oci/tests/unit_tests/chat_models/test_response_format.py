@@ -7,26 +7,26 @@ from langchain_oci.chat_models import ChatOCIGenAI
 
 
 @pytest.mark.requires("oci")
-def test_response_format_class_level():
-    """Test class-level response_format parameter."""
+def test_response_format_via_model_kwargs():
+    """Test response_format via model_kwargs."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
         model_id="meta.llama-3.3-70b-instruct",
-        response_format={"type": "JSON_OBJECT"},
+        model_kwargs={"response_format": {"type": "JSON_OBJECT"}},
         client=oci_gen_ai_client
     )
-    assert llm.response_format == {"type": "JSON_OBJECT"}
+    assert llm.model_kwargs["response_format"] == {"type": "JSON_OBJECT"}
 
 
 @pytest.mark.requires("oci")
-def test_response_format_default_none():
-    """Test that response_format defaults to None."""
+def test_response_format_default_not_in_model_kwargs():
+    """Test that response_format is not set by default."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
         model_id="meta.llama-3.3-70b-instruct",
         client=oci_gen_ai_client
     )
-    assert llm.response_format is None
+    assert llm.model_kwargs is None or "response_format" not in llm.model_kwargs
 
 
 @pytest.mark.requires("oci")
