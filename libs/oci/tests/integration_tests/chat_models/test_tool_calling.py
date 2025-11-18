@@ -428,7 +428,7 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Invoke agent with a diagnostic scenario
     result = agent.invoke(
-        {
+        {  # type: ignore[arg-type]
             "messages": [
                 SystemMessage(content=system_prompt),
                 HumanMessage(

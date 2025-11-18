@@ -31,7 +31,6 @@ from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
     BaseMessage,
-    ChatMessage,
     HumanMessage,
     SystemMessage,
     ToolCall,
@@ -350,7 +349,7 @@ class CohereProvider(Provider):
         raise ValueError(f"Unknown message type: {type(message)}")
 
     def messages_to_oci_params(
-        self, messages: Sequence[ChatMessage], **kwargs: Any
+        self, messages: Sequence[BaseMessage], **kwargs: Any
     ) -> Dict[str, Any]:
         """
         Convert LangChain messages to OCI parameters for Cohere.
@@ -417,7 +416,7 @@ class CohereProvider(Provider):
         current_turn = list(reversed(current_turn))
 
         # Process tool results from the current turn
-        oci_tool_results: List[Any] = []
+        oci_tool_results: Optional[List[Any]] = []
         for message in current_turn:
             if isinstance(message, ToolMessage):
                 tool_msg = message
@@ -434,7 +433,7 @@ class CohereProvider(Provider):
                                 parameters=lc_tool_call["args"],
                             )
                             tool_result.outputs = [{"output": tool_msg.content}]
-                            oci_tool_results.append(tool_result)
+                            oci_tool_results.append(tool_result)  # type: ignore[union-attr]
         if not oci_tool_results:
             oci_tool_results = None
 
@@ -552,7 +551,7 @@ class CohereProvider(Provider):
         Returns:
             List of ToolCallChunk objects
         """
-        tool_call_chunks = []
+        tool_call_chunks: List[ToolCallChunk] = []
         tool_call_response = self.chat_stream_tool_calls(event_data)
 
         if not tool_call_response:
@@ -813,7 +812,7 @@ class GenericProvider(Provider):
                 return False
 
             # Detect infinite loop: same tool called with same arguments in succession
-            recent_calls = []
+            recent_calls: list = []
             for msg in reversed(messages):
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tc in msg.tool_calls:
@@ -895,7 +894,7 @@ class GenericProvider(Provider):
 
     def convert_to_oci_tool(
         self,
-        tool: Union[Type[BaseModel], Callable, BaseTool],
+        tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
     ) -> Dict[str, Any]:
         """Convert a BaseTool instance, TypedDict or BaseModel type
         to a OCI tool in Meta's format.
@@ -1016,7 +1015,7 @@ class GenericProvider(Provider):
         Returns:
             List of ToolCallChunk objects
         """
-        tool_call_chunks = []
+        tool_call_chunks: List[ToolCallChunk] = []
         tool_call_response = self.chat_stream_tool_calls(event_data)
 
         if not tool_call_response:
@@ -1142,7 +1141,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         stop: Optional[List[str]],
         stream: bool,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """
         Prepare the OCI chat request from LangChain messages.
 
@@ -1206,7 +1205,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             Union[dict, str, Literal["auto", "none", "required", "any"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tool-like objects to this chat model.
 
         Assumes model is compatible with Meta's tool-calling API.
@@ -1299,8 +1298,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             tool_name = getattr(self._provider.convert_to_oci_tool(schema), "name")
             if is_pydantic_schema:
                 output_parser: OutputParserLike = PydanticToolsParser(
-                    tools=[schema],  # type: ignore[list-item]
-                    first_tool_only=True,  # type: ignore[list-item]
+                    tools=[schema],
+                    first_tool_only=True,
                 )
             else:
                 output_parser = JsonOutputKeyToolsParser(
@@ -1309,15 +1308,15 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         elif method == "json_mode":
             llm = self.bind(response_format={"type": "JSON_OBJECT"})
             output_parser = (
-                PydanticOutputParser(pydantic_object=schema)  # type: ignore[type-var, arg-type]
+                PydanticOutputParser(pydantic_object=schema)
                 if is_pydantic_schema
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            json_schema_dict = (
+            json_schema_dict: Dict[str, Any] = (
                 schema.model_json_schema()  # type: ignore[union-attr]
                 if is_pydantic_schema
-                else schema
+                else schema  # type: ignore[assignment]
             )
 
             response_json_schema = self._provider.oci_response_json_schema(

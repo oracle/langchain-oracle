@@ -104,12 +104,9 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as http_err:
-                if response.status_code == 401 and self._refresh_signer():
-                    raise TokenExpiredError() from http_err
-                else:
-                    raise ValueError(
-                        f"Server error: {str(http_err)}. Message: {response.text}"
-                    ) from http_err
+                raise ValueError(
+                    f"Server error: {str(http_err)}. Message: {response.text}"
+                ) from http_err
             except Exception as e:
                 raise ValueError(f"Error occurs by inference endpoint: {str(e)}") from e
 
