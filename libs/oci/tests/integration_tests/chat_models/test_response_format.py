@@ -26,12 +26,13 @@ OCI Generative AI API calls for both JSON mode and JSON schema mode.
 Run all integration tests:
 ```bash
 cd libs/oci
-python -m pytest tests/integration_tests/chat_models/test_response_format.py -v -o addopts=""
+pytest tests/integration_tests/chat_models/test_response_format.py -v
 ```
 
 Run specific test:
 ```bash
-pytest tests/integration_tests/chat_models/test_response_format.py::test_json_mode_meta_llama -v -o addopts=""
+pytest tests/integration_tests/chat_models/\
+test_response_format.py::test_json_mode_meta_llama -v
 ```
 
 ## What These Tests Verify
@@ -69,7 +70,7 @@ def create_chat_model(model_id: str, response_format=None, **kwargs):
         auth_type="SECURITY_TOKEN",
         auth_profile="DEFAULT",
         auth_file_location=os.path.expanduser("~/.oci/config"),
-        **kwargs
+        **kwargs,
     )
 
 
@@ -90,9 +91,13 @@ def test_json_mode_basic(model_id: str):
     llm = create_chat_model(model_id)
     llm_with_json = llm.bind(response_format={"type": "JSON_OBJECT"})
 
-    response = llm_with_json.invoke([
-        HumanMessage(content="List three colors in JSON format with a 'colors' array.")
-    ])
+    response = llm_with_json.invoke(
+        [
+            HumanMessage(
+                content="List three colors in JSON format with a 'colors' array."
+            )
+        ]
+    )
 
     # Verify response is valid JSON
     try:
@@ -109,16 +114,25 @@ def test_json_mode_meta_llama():
     model_id = "meta.llama-3.3-70b-instruct"
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
-    response = llm.invoke([
-        HumanMessage(content="Create a JSON object with a person's name and age. Name: Alice, Age: 30")
-    ])
+    response = llm.invoke(
+        [
+            HumanMessage(
+                content=(
+                    "Create a JSON object with a person's name and age. "
+                    "Name: Alice, Age: 30"
+                )
+            )
+        ]
+    )
 
     # Verify valid JSON
     try:
         parsed = json.loads(response.content)
         assert isinstance(parsed, dict)
         # Check for common variations in key names
-        has_name = any(k.lower() in ["name", "person", "alice"] for k in str(parsed).lower())
+        has_name = any(
+            k.lower() in ["name", "person", "alice"] for k in str(parsed).lower()
+        )
         has_age = "30" in str(parsed) or "age" in str(parsed).lower()
         assert has_name or has_age, f"Should contain person info: {parsed}"
     except json.JSONDecodeError as e:
@@ -131,9 +145,16 @@ def test_json_mode_cohere():
     model_id = "cohere.command-r-plus-08-2024"
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
-    response = llm.invoke([
-        HumanMessage(content="Generate a JSON object with a book title and author. Use 'title' and 'author' as keys.")
-    ])
+    response = llm.invoke(
+        [
+            HumanMessage(
+                content=(
+                    "Generate a JSON object with a book title and author. "
+                    "Use 'title' and 'author' as keys."
+                )
+            )
+        ]
+    )
 
     # Verify valid JSON
     try:
@@ -159,18 +180,24 @@ def test_with_structured_output_json_mode(model_id: str):
     This verifies the integration between response_format and LangChain's
     structured output feature using JSON mode.
     """
+
     class Person(BaseModel):
         """A person with name and age."""
+
         name: str = Field(description="The person's name")
         age: int = Field(description="The person's age")
 
     llm = create_chat_model(model_id)
     structured_llm = llm.with_structured_output(Person, method="json_mode")
 
-    result = structured_llm.invoke("Tell me about a person named Bob who is 25 years old.")
+    result = structured_llm.invoke(
+        "Tell me about a person named Bob who is 25 years old."
+    )
 
     # Verify we got a Person object
-    assert isinstance(result, Person), f"Should return Person object, got {type(result)}"
+    assert isinstance(result, Person), (
+        f"Should return Person object, got {type(result)}"
+    )
     assert hasattr(result, "name"), "Should have name attribute"
     assert hasattr(result, "age"), "Should have age attribute"
 
@@ -198,8 +225,10 @@ def test_with_structured_output_json_schema(model_id: str):
     Note: This test only runs with Meta Llama models as Cohere models require
     a different response format type (CohereResponseFormat vs JsonSchemaResponseFormat).
     """
+
     class Product(BaseModel):
         """A product with details."""
+
         product_name: str = Field(description="Name of the product")
         price: float = Field(description="Price in USD")
         in_stock: bool = Field(description="Whether the product is in stock")
@@ -212,7 +241,9 @@ def test_with_structured_output_json_schema(model_id: str):
     )
 
     # Verify we got a Product object with correct types
-    assert isinstance(result, Product), f"Should return Product object, got {type(result)}"
+    assert isinstance(result, Product), (
+        f"Should return Product object, got {type(result)}"
+    )
     assert isinstance(result.product_name, str), "product_name should be string"
     assert isinstance(result.price, (int, float)), "price should be numeric"
     assert isinstance(result.in_stock, bool), "in_stock should be boolean"
@@ -239,23 +270,25 @@ def test_response_format_via_model_kwargs():
         model_kwargs={
             "temperature": 0.1,
             "max_tokens": 512,
-            "response_format": {"type": "JSON_OBJECT"}
+            "response_format": {"type": "JSON_OBJECT"},
         },
         auth_type="SECURITY_TOKEN",
         auth_profile="DEFAULT",
         auth_file_location=os.path.expanduser("~/.oci/config"),
     )
 
-    response = llm.invoke([
-        HumanMessage(content="Create a JSON with a list of two fruits.")
-    ])
+    response = llm.invoke(
+        [HumanMessage(content="Create a JSON with a list of two fruits.")]
+    )
 
     # Verify valid JSON
     try:
         parsed = json.loads(response.content)
         assert isinstance(parsed, dict), "Response should be a JSON object"
     except json.JSONDecodeError as e:
-        pytest.fail(f"model_kwargs response_format failed: {e}\nContent: {response.content}")
+        pytest.fail(
+            f"model_kwargs response_format failed: {e}\nContent: {response.content}"
+        )
 
 
 @pytest.mark.requires("oci")
@@ -264,12 +297,16 @@ def test_json_mode_complex_nested_structure():
     model_id = "cohere.command-r-plus-08-2024"
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
-    response = llm.invoke([
-        HumanMessage(content="""Create a JSON object representing a company with:
+    response = llm.invoke(
+        [
+            HumanMessage(
+                content="""Create a JSON object representing a company with:
         - name: "TechCorp"
         - employees: array of 2 employees, each with name and role
-        - founded: 2020""")
-    ])
+        - founded: 2020"""
+            )
+        ]
+    )
 
     # Verify valid JSON with nested structure
     try:
@@ -281,7 +318,9 @@ def test_json_mode_complex_nested_structure():
 
         # Try to verify it has some nested structure
         has_nested = any(isinstance(v, (dict, list)) for v in parsed.values())
-        assert has_nested or len(str(parsed)) > 50, "Should have some nested structure or substantial content"
+        assert has_nested or len(str(parsed)) > 50, (
+            "Should have some nested structure or substantial content"
+        )
 
     except json.JSONDecodeError as e:
         pytest.fail(f"Complex JSON failed: {e}\nContent: {response.content}")
@@ -294,13 +333,15 @@ def test_response_format_class_level():
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
     # Should work without bind()
-    response = llm.invoke([
-        HumanMessage(content="Return JSON with a single key 'status' set to 'ok'")
-    ])
+    response = llm.invoke(
+        [HumanMessage(content="Return JSON with a single key 'status' set to 'ok'")]
+    )
 
     # Verify valid JSON
     try:
         parsed = json.loads(response.content)
         assert isinstance(parsed, dict), "Response should be a JSON object"
     except json.JSONDecodeError as e:
-        pytest.fail(f"Class-level response_format failed: {e}\nContent: {response.content}")
+        pytest.fail(
+            f"Class-level response_format failed: {e}\nContent: {response.content}"
+        )

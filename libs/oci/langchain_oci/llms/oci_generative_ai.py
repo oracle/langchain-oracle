@@ -120,8 +120,6 @@ class OCIGenAIBase(BaseModel, ABC):
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
 
-
-
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )

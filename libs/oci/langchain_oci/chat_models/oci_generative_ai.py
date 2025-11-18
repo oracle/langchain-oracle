@@ -1167,8 +1167,6 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
-
-
         # Warn if using max_tokens with OpenAI models
         if (
             self.model_id
