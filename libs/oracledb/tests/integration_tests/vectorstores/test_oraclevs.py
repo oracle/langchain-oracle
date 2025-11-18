@@ -1918,7 +1918,7 @@ def test_db_filter_test() -> None:
 
         exception_occurred = False
         try:
-            db_filter_exc: dict = {  # type: ignore[typeddict-unknown-key]
+            db_filter_exc: dict = {
                 "_xor": [  # Incorrect operation _xor
                     {"order": {"$lte": 4}},
                     {"id": "st"},
@@ -2055,7 +2055,7 @@ async def test_db_filter_test_async() -> None:
 
         exception_occurred = False
         try:
-            db_filter_exc: dict = {  # type: ignore[typeddict-unknown-key]
+            db_filter_exc: dict = {
                 "_xor": [  # Incorrect operation _xor
                     {"order": {"$lte": 4}},
                     {"id": "st"},
@@ -2213,11 +2213,11 @@ def test_from_texts_lobs() -> None:
     metadatas = [
         {
             "id": "cncpt_15.5.3.2.2_P4",
-            "link": "https://docs.oracle.com/en/database/oracle/oracle-database/23/cncpt/logical-storage-structures.html#GUID-5387D7B2-C0CA-4C1E-811B-C7EB9B636442",  # type: ignore[E501]
+            "link": "https://docs.oracle.com/en/database/oracle/oracle-database/23/cncpt/logical-storage-structures.html#GUID-5387D7B2-C0CA-4C1E-811B-C7EB9B636442",
         },
         {
             "id": "cncpt_15.5.5_P1",
-            "link": "https://docs.oracle.com/en/database/oracle/oracle-database/23/cncpt/logical-storage-structures.html#GUID-D02B2220-E6F5-40D9-AFB5-BC69BCEF6CD4",  # type: ignore[E501]
+            "link": "https://docs.oracle.com/en/database/oracle/oracle-database/23/cncpt/logical-storage-structures.html#GUID-D02B2220-E6F5-40D9-AFB5-BC69BCEF6CD4",
         },
     ]
 
@@ -2613,7 +2613,7 @@ def test_filters() -> None:
     except Exception:
         sys.exit(1)
 
-    def model1(_) -> list[float]:  # type: ignore[no-untyped-def]
+    def model1(_) -> list[float]:
         return [0.1, 0.2, 0.3]
 
     # model1 = lambda x: [0.1, 0.2, 0.3]
@@ -2804,7 +2804,7 @@ async def test_filters_async() -> None:
     except Exception:
         sys.exit(1)
 
-    def model1(_) -> list[float]:  # type: ignore[no-untyped-def]
+    def model1(_) -> list[float]:
         return [0.1, 0.2, 0.3]
 
     # model1 = lambda x: [0.1, 0.2, 0.3]

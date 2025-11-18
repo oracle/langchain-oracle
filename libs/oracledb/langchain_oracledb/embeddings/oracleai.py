@@ -102,9 +102,6 @@ class OracleEmbeddings(BaseModel, Embeddings):
             List of embeddings, one for each input text.
         """
 
-        if texts is None:
-            return None
-
         embeddings: List[List[float]] = []
         try:
             # returns strings or bytes instead of a locator

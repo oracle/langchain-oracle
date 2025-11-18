@@ -1330,7 +1330,7 @@ class OracleVS(VectorStore):
         if isinstance(self.embedding_function, Embeddings):
             return await self.embedding_function.aembed_documents(texts)
         elif inspect.isawaitable(self.embedding_function):
-            return [await self.embedding_function(text) for text in texts]
+            return [await self.embedding_function(text) for text in texts]  # type: ignore[unreachable]
         elif callable(self.embedding_function):
             return [self.embedding_function(text) for text in texts]
         else:
@@ -1348,7 +1348,7 @@ class OracleVS(VectorStore):
         if isinstance(self.embedding_function, Embeddings):
             return await self.embedding_function.aembed_query(text)
         elif inspect.isawaitable(self.embedding_function):
-            return await self.embedding_function(text)
+            return await self.embedding_function(text)  # type: ignore[unreachable]
         else:
             return self.embedding_function(text)
 
