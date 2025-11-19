@@ -1,8 +1,9 @@
 """Unit tests for parallel tool calling feature."""
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
 from langchain_core.messages import HumanMessage
+
 from langchain_oci.chat_models import ChatOCIGenAI
 
 
@@ -121,8 +122,6 @@ def test_parallel_tool_calls_bind_tools_overrides_class_default():
 @pytest.mark.requires("oci")
 def test_parallel_tool_calls_passed_to_oci_api_meta():
     """Test that is_parallel_tool_calls is passed to OCI API for Meta models."""
-    from oci.generative_ai_inference import models
-
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
         model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
@@ -319,9 +318,12 @@ def test_version_filter_supports_parallel_tool_calls_method():
     )
 
     # Test various model IDs
-    assert llm._supports_parallel_tool_calls("meta.llama-4-maverick-17b-128e-instruct-fp8") is True
-    assert llm._supports_parallel_tool_calls("meta.llama-3.3-70b-instruct") is False  # Llama 3.3 NOT supported
-    assert llm._supports_parallel_tool_calls("meta.llama-3.2-11b-vision-instruct") is False
+    model_id = "meta.llama-4-maverick-17b-128e-instruct-fp8"
+    assert llm._supports_parallel_tool_calls(model_id) is True
+    # Llama 3.3 NOT supported
+    assert llm._supports_parallel_tool_calls("meta.llama-3.3-70b-instruct") is False
+    model_id = "meta.llama-3.2-11b-vision-instruct"
+    assert llm._supports_parallel_tool_calls(model_id) is False
     assert llm._supports_parallel_tool_calls("meta.llama-3.1-70b-instruct") is False
     assert llm._supports_parallel_tool_calls("meta.llama-3-70b-instruct") is False
     assert llm._supports_parallel_tool_calls("cohere.command-r-plus") is False

@@ -253,10 +253,13 @@ def main():
         logging.info("Please set: export OCI_COMPARTMENT_ID=<your-compartment-id>")
         sys.exit(1)
 
-    logging.info(f"\nUsing configuration:")
-    logging.info(f"  Model: {os.environ.get('OCI_MODEL_ID', 'meta.llama-3.3-70b-instruct')}")
-    logging.info(f"  Endpoint: {os.environ.get('OCI_GENAI_ENDPOINT', 'default')}")
-    logging.info(f"  Profile: {os.environ.get('OCI_CONFIG_PROFILE', 'DEFAULT')}")
+    logging.info("\nUsing configuration:")
+    model_id = os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct")
+    logging.info(f"  Model: {model_id}")
+    endpoint = os.environ.get("OCI_GENAI_ENDPOINT", "default")
+    logging.info(f"  Endpoint: {endpoint}")
+    profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+    logging.info(f"  Profile: {profile}")
     logging.info(f"  Compartment: {os.environ.get('OCI_COMPARTMENT_ID')[:25]}...")
 
     results = []
