@@ -924,8 +924,8 @@ class GenericProvider(Provider):
                     "required": parameters.get("required", []),
                 },
             )
-        elif isinstance(tool, BaseTool):
-            return self.oci_function_definition(
+        elif isinstance(tool, BaseTool):  # type: ignore[unreachable]
+            return self.oci_function_definition(  # type: ignore[unreachable]
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
                     tool.name, tool.description
@@ -1205,7 +1205,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             Union[dict, str, Literal["auto", "none", "required", "any"], bool]
         ] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, AIMessage]:
+    ) -> Runnable[LanguageModelInput, BaseMessage]:
         """Bind tool-like objects to this chat model.
 
         Assumes model is compatible with Meta's tool-calling API.
