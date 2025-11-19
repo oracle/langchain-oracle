@@ -14,13 +14,17 @@ Run with:
     python test_parallel_tool_calling_integration.py
 """
 
+import logging
 import os
 import sys
 import time
-from typing import List
 
 from langchain_core.messages import HumanMessage
+
 from langchain_oci.chat_models import ChatOCIGenAI
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def get_weather(city: str, unit: str = "fahrenheit") -> str:
@@ -54,9 +58,9 @@ def get_population(city: str) -> int:
 
 def test_parallel_tool_calling_enabled():
     """Test parallel tool calling with parallel_tool_calls=True."""
-    print("\n" + "=" * 80)
-    print("TEST 1: Parallel Tool Calling ENABLED")
-    print("=" * 80)
+    logging.info("\n" + "=" * 80)
+    logging.info("TEST 1: Parallel Tool Calling ENABLED")
+    logging.info("=" * 80)
 
     chat = ChatOCIGenAI(
         model_id=os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct"),
@@ -75,7 +79,7 @@ def test_parallel_tool_calling_enabled():
     chat_with_tools = chat.bind_tools([get_weather, calculate_tip, get_population])
 
     # Invoke with query that needs weather info
-    print("\nQuery: 'What's the weather in New York City?'")
+    logging.info("\nQuery: 'What's the weather in New York City?'")
 
     start_time = time.time()
     response = chat_with_tools.invoke([
@@ -83,31 +87,33 @@ def test_parallel_tool_calling_enabled():
     ])
     elapsed_time = time.time() - start_time
 
-    print(f"\nResponse time: {elapsed_time:.2f}s")
-    print(f"Response content: {response.content[:200] if response.content else '(empty)'}...")
-    print(f"Tool calls count: {len(response.tool_calls)}")
+    logging.info(f"\nResponse time: {elapsed_time:.2f}s")
+    content = response.content[:200] if response.content else "(empty)"
+    logging.info(f"Response content: {content}...")
+    logging.info(f"Tool calls count: {len(response.tool_calls)}")
 
     if response.tool_calls:
-        print("\nTool calls:")
+        logging.info("\nTool calls:")
         for i, tc in enumerate(response.tool_calls, 1):
-            print(f"  {i}. {tc['name']}({tc['args']})")
+            logging.info(f"  {i}. {tc['name']}({tc['args']})")
     else:
-        print("\n⚠️  No tool calls in response.tool_calls")
-        print(f"Additional kwargs: {response.additional_kwargs.keys()}")
+        logging.info("\n⚠️  No tool calls in response.tool_calls")
+        logging.info(f"Additional kwargs: {response.additional_kwargs.keys()}")
 
     # Verify we got tool calls
-    assert len(response.tool_calls) >= 1, f"Should have at least one tool call, got {len(response.tool_calls)}"
+    count = len(response.tool_calls)
+    assert count >= 1, f"Should have at least one tool call, got {count}"
 
     # Verify parallel_tool_calls was set
-    print("\n✓ TEST 1 PASSED: Parallel tool calling enabled and working")
+    logging.info("\n✓ TEST 1 PASSED: Parallel tool calling enabled and working")
     return elapsed_time
 
 
 def test_parallel_tool_calling_disabled():
     """Test tool calling with parallel_tool_calls=False (sequential)."""
-    print("\n" + "=" * 80)
-    print("TEST 2: Parallel Tool Calling DISABLED (Sequential)")
-    print("=" * 80)
+    logging.info("\n" + "=" * 80)
+    logging.info("TEST 2: Parallel Tool Calling DISABLED (Sequential)")
+    logging.info("=" * 80)
 
     chat = ChatOCIGenAI(
         model_id=os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct"),
@@ -126,7 +132,7 @@ def test_parallel_tool_calling_disabled():
     chat_with_tools = chat.bind_tools([get_weather, calculate_tip, get_population])
 
     # Same query as test 1
-    print("\nQuery: 'What's the weather in New York City?'")
+    logging.info("\nQuery: 'What's the weather in New York City?'")
 
     start_time = time.time()
     response = chat_with_tools.invoke([
@@ -134,27 +140,29 @@ def test_parallel_tool_calling_disabled():
     ])
     elapsed_time = time.time() - start_time
 
-    print(f"\nResponse time: {elapsed_time:.2f}s")
-    print(f"Response content: {response.content[:200] if response.content else '(empty)'}...")
-    print(f"Tool calls count: {len(response.tool_calls)}")
+    logging.info(f"\nResponse time: {elapsed_time:.2f}s")
+    content = response.content[:200] if response.content else "(empty)"
+    logging.info(f"Response content: {content}...")
+    logging.info(f"Tool calls count: {len(response.tool_calls)}")
 
     if response.tool_calls:
-        print("\nTool calls:")
+        logging.info("\nTool calls:")
         for i, tc in enumerate(response.tool_calls, 1):
-            print(f"  {i}. {tc['name']}({tc['args']})")
+            logging.info(f"  {i}. {tc['name']}({tc['args']})")
 
     # Verify we got tool calls
-    assert len(response.tool_calls) >= 1, f"Should have at least one tool call, got {len(response.tool_calls)}"
+    count = len(response.tool_calls)
+    assert count >= 1, f"Should have at least one tool call, got {count}"
 
-    print("\n✓ TEST 2 PASSED: Sequential tool calling works")
+    logging.info("\n✓ TEST 2 PASSED: Sequential tool calling works")
     return elapsed_time
 
 
 def test_bind_tools_override():
     """Test that bind_tools can override class-level setting."""
-    print("\n" + "=" * 80)
-    print("TEST 3: bind_tools Override of Class Setting")
-    print("=" * 80)
+    logging.info("\n" + "=" * 80)
+    logging.info("TEST 3: bind_tools Override of Class Setting")
+    logging.info("=" * 80)
 
     # Create chat with parallel_tool_calls=False at class level
     chat = ChatOCIGenAI(
@@ -176,28 +184,28 @@ def test_bind_tools_override():
         parallel_tool_calls=True  # Override to enable
     )
 
-    print("\nQuery: 'What's the weather and population of Tokyo?'")
+    logging.info("\nQuery: 'What's the weather and population of Tokyo?'")
 
     response = chat_with_tools.invoke([
         HumanMessage(content="What's the weather and population of Tokyo?")
     ])
 
-    print(f"\nResponse content: {response.content}")
-    print(f"Tool calls count: {len(response.tool_calls)}")
+    logging.info(f"\nResponse content: {response.content}")
+    logging.info(f"Tool calls count: {len(response.tool_calls)}")
 
     if response.tool_calls:
-        print("\nTool calls:")
+        logging.info("\nTool calls:")
         for i, tc in enumerate(response.tool_calls, 1):
-            print(f"  {i}. {tc['name']}({tc['args']})")
+            logging.info(f"  {i}. {tc['name']}({tc['args']})")
 
-    print("\n✓ TEST 3 PASSED: bind_tools override works")
+    logging.info("\n✓ TEST 3 PASSED: bind_tools override works")
 
 
 def test_cohere_model_error():
     """Test that Cohere models raise an error with parallel_tool_calls."""
-    print("\n" + "=" * 80)
-    print("TEST 4: Cohere Model Error Handling")
-    print("=" * 80)
+    logging.info("\n" + "=" * 80)
+    logging.info("TEST 4: Cohere Model Error Handling")
+    logging.info("=" * 80)
 
     chat = ChatOCIGenAI(
         model_id="cohere.command-r-plus",
@@ -216,40 +224,40 @@ def test_cohere_model_error():
         parallel_tool_calls=True
     )
 
-    print("\nAttempting to use parallel_tool_calls with Cohere model...")
+    logging.info("\nAttempting to use parallel_tool_calls with Cohere model...")
 
     try:
-        response = chat_with_tools.invoke([
+        _ = chat_with_tools.invoke([
             HumanMessage(content="What's the weather in Paris?")
         ])
-        print("❌ TEST FAILED: Should have raised ValueError")
+        logging.info("❌ TEST FAILED: Should have raised ValueError")
         return False
     except ValueError as e:
         if "not supported for Cohere" in str(e):
-            print(f"\n✓ Correctly raised error: {e}")
-            print("\n✓ TEST 4 PASSED: Cohere validation works")
+            logging.info(f"\n✓ Correctly raised error: {e}")
+            logging.info("\n✓ TEST 4 PASSED: Cohere validation works")
             return True
         else:
-            print(f"❌ Wrong error: {e}")
+            logging.info(f"❌ Wrong error: {e}")
             return False
 
 
 def main():
-    print("=" * 80)
-    print("PARALLEL TOOL CALLING INTEGRATION TESTS")
-    print("=" * 80)
+    logging.info("=" * 80)
+    logging.info("PARALLEL TOOL CALLING INTEGRATION TESTS")
+    logging.info("=" * 80)
 
     # Check required env vars
     if not os.environ.get("OCI_COMPARTMENT_ID"):
-        print("\n❌ ERROR: OCI_COMPARTMENT_ID environment variable not set")
-        print("Please set: export OCI_COMPARTMENT_ID=<your-compartment-id>")
+        logging.info("\n❌ ERROR: OCI_COMPARTMENT_ID environment variable not set")
+        logging.info("Please set: export OCI_COMPARTMENT_ID=<your-compartment-id>")
         sys.exit(1)
 
-    print(f"\nUsing configuration:")
-    print(f"  Model: {os.environ.get('OCI_MODEL_ID', 'meta.llama-3.3-70b-instruct')}")
-    print(f"  Endpoint: {os.environ.get('OCI_GENAI_ENDPOINT', 'default')}")
-    print(f"  Profile: {os.environ.get('OCI_CONFIG_PROFILE', 'DEFAULT')}")
-    print(f"  Compartment: {os.environ.get('OCI_COMPARTMENT_ID')[:25]}...")
+    logging.info(f"\nUsing configuration:")
+    logging.info(f"  Model: {os.environ.get('OCI_MODEL_ID', 'meta.llama-3.3-70b-instruct')}")
+    logging.info(f"  Endpoint: {os.environ.get('OCI_GENAI_ENDPOINT', 'default')}")
+    logging.info(f"  Profile: {os.environ.get('OCI_CONFIG_PROFILE', 'DEFAULT')}")
+    logging.info(f"  Compartment: {os.environ.get('OCI_COMPARTMENT_ID')[:25]}...")
 
     results = []
 
@@ -268,39 +276,39 @@ def main():
         results.append(("Cohere Validation", cohere_test))
 
         # Print summary
-        print("\n" + "=" * 80)
-        print("TEST SUMMARY")
-        print("=" * 80)
+        logging.info("\n" + "=" * 80)
+        logging.info("TEST SUMMARY")
+        logging.info("=" * 80)
 
         for test_name, passed in results:
             status = "✓ PASSED" if passed else "✗ FAILED"
-            print(f"{status}: {test_name}")
+            logging.info(f"{status}: {test_name}")
 
         passed_count = sum(1 for _, passed in results if passed)
         total_count = len(results)
 
-        print(f"\nTotal: {passed_count}/{total_count} tests passed")
+        logging.info(f"\nTotal: {passed_count}/{total_count} tests passed")
 
         # Performance comparison
         if parallel_time and sequential_time:
-            print("\n" + "=" * 80)
-            print("PERFORMANCE COMPARISON")
-            print("=" * 80)
-            print(f"Parallel:   {parallel_time:.2f}s")
-            print(f"Sequential: {sequential_time:.2f}s")
+            logging.info("\n" + "=" * 80)
+            logging.info("PERFORMANCE COMPARISON")
+            logging.info("=" * 80)
+            logging.info(f"Parallel:   {parallel_time:.2f}s")
+            logging.info(f"Sequential: {sequential_time:.2f}s")
             if sequential_time > 0:
                 speedup = sequential_time / parallel_time
-                print(f"Speedup:    {speedup:.2f}×")
+                logging.info(f"Speedup:    {speedup:.2f}×")
 
         if passed_count == total_count:
-            print("\n🎉 ALL TESTS PASSED!")
+            logging.info("\n🎉 ALL TESTS PASSED!")
             return 0
         else:
-            print(f"\n⚠️  {total_count - passed_count} test(s) failed")
+            logging.info(f"\n⚠️  {total_count - passed_count} test(s) failed")
             return 1
 
     except Exception as e:
-        print(f"\n❌ ERROR: {e}")
+        logging.info(f"\n❌ ERROR: {e}")
         import traceback
         traceback.print_exc()
         return 1
