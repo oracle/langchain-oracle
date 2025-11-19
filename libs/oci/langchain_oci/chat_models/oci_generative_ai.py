@@ -861,6 +861,14 @@ class GenericProvider(Provider):
 
         # Add parallel tool calls support (GenericChatRequest models)
         if "is_parallel_tool_calls" in kwargs:
+            # Validate Llama 3.x doesn't support parallel tool calls
+            model_id = self.llm.model_id
+            if "llama" in model_id.lower() and not self.llm._supports_parallel_tool_calls(model_id):
+                raise ValueError(
+                    f"Parallel tool calls not supported for {model_id}. "
+                    "Only Llama 4+ models support this feature. "
+                    "Llama 3.x (including 3.3) don't support parallel calls."
+                )
             result["is_parallel_tool_calls"] = kwargs["is_parallel_tool_calls"]
 
         return result
@@ -1313,18 +1321,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             else self.parallel_tool_calls
         )
         if use_parallel:
-            # Validate model supports parallel tool calling
-            if not self._supports_parallel_tool_calls(self.model_id):
-                if "llama" in self.model_id.lower():
-                    raise ValueError(
-                        f"Parallel tool calls not supported for {self.model_id}. "
-                        "Only Llama 4+ models support this feature. "
-                        "Llama 3.x (including 3.3) don't support parallel calls."
-                    )
-                else:
-                    raise ValueError(
-                        f"Parallel tool calls are not supported for {self.model_id}."
-                    )
+            # Store the parameter; validation happens in provider
             kwargs["is_parallel_tool_calls"] = True
 
         return super().bind(tools=formatted_tools, **kwargs)
