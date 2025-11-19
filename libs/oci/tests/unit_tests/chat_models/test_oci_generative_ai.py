@@ -3,6 +3,7 @@
 
 """Test OCI Generative AI LLM service"""
 
+from typing import Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -231,7 +232,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
     messages = [HumanMessage(content="What's the weather like?")]
 
     # Test different tool choice options
-    tool_choices: list[str | bool | dict[str, str | dict[str, str]]] = [
+    tool_choices: list[Union[str, bool, dict[str, Union[str, dict[str, str]]]]] = [
         "get_weather",  # Specific tool
         "auto",  # Auto mode
         "none",  # No tools
