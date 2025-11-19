@@ -1,7 +1,9 @@
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from langchain_oci import ChatOCIOpenAI, OCISessionAuth
+from oci_openai import OciSessionAuth
+from langchain_oci import ChatOCIOpenAI
+from rich import print
 
 COMPARTMENT_ID = ""
 CONVERSATION_STORE_ID = ""
@@ -13,10 +15,10 @@ PROFILE_NAME = ""
 
 def get_oci_openai_client():
     return ChatOCIOpenAI(
-        auth=OCISessionAuth(profile_name=PROFILE_NAME),
+        auth=OciSessionAuth(profile_name=PROFILE_NAME),
         compartment_id=COMPARTMENT_ID,
         region=REGION,
-        override_url=OVERRIDE_URL,
+        service_endpoint=OVERRIDE_URL,
         model=MODEL,
         conversation_store_id=CONVERSATION_STORE_ID,
     )
@@ -103,11 +105,11 @@ def do_hosted_mcp_calling():
 
 
 def main():
-    do_model_invoke()
-    do_prompt_chaining()
-    do_function_calling()
-    do_web_search()
-    do_hosted_mcp_calling()
+    print(do_model_invoke())
+    print(do_prompt_chaining())
+    print(do_function_calling())
+    print(do_web_search())
+    print(do_hosted_mcp_calling())
 
 
 if __name__ == "__main__":

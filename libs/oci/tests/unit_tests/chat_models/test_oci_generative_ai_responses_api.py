@@ -7,17 +7,15 @@ from httpx import Request
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
+from oci_openai import OciSessionAuth, OciResourcePrincipalAuth, OciInstancePrincipalAuth
+from oci_openai.oci_openai import _resolve_base_url
 from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models.oci_generative_ai_responses_api import (
     COMPARTMENT_ID_HEADER,
     CONVERSATION_STORE_ID_HEADER,
-    ChatOCIOpenAI,
-    OCIInstancePrincipleAuth,
-    OCIResourcePrincipleAuth,
-    OCISessionAuth,
+    ChatOCIOpenAI
 )
-from langchain_oci.llms.utils import get_base_url
 
 COMPARTMENT_ID = "ocid1.compartment.oc1..dummy"
 CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1..dummy"
@@ -26,7 +24,7 @@ MODEL = "openai.gpt-4o"
 SESSION_PRINCIPAL = "session_principal"
 RESOURCE_PRINCIPAL = "resource_principal"
 INSTANCE_PRINCIPAL = "instance_principal"
-BASE_URL = get_base_url(region="us-chicago-1")
+BASE_URL = _resolve_base_url(region="us-chicago-1")
 RESPONSES_URL = f"{BASE_URL}/responses"
 RESPONSE_ID = "resp_123"
 
@@ -34,9 +32,9 @@ RESPONSE_ID = "resp_123"
 # Fixtures
 @pytest.fixture(
     params=[
-        (SESSION_PRINCIPAL, OCISessionAuth, {"profile_name": "DEFAULT"}),
-        (RESOURCE_PRINCIPAL, OCIResourcePrincipleAuth, {}),
-        (INSTANCE_PRINCIPAL, OCIInstancePrincipleAuth, {}),
+        (SESSION_PRINCIPAL, OciSessionAuth, {"profile_name": "DEFAULT"}),
+        (RESOURCE_PRINCIPAL, OciResourcePrincipalAuth, {}),
+        (INSTANCE_PRINCIPAL, OciInstancePrincipalAuth, {}),
     ],
     ids=[SESSION_PRINCIPAL, RESOURCE_PRINCIPAL, INSTANCE_PRINCIPAL],
 )
@@ -68,10 +66,10 @@ def auth_instance(request):
             },
         )
         patch_token = patch.object(
-            OCISessionAuth, "_load_token", return_value="fake_token_string"
+            OciSessionAuth, "_load_token", return_value="fake_token_string"
         )
         patch_private_key = patch.object(
-            OCISessionAuth, "_load_private_key", return_value="fake_private_key_data"
+            OciSessionAuth, "_load_private_key", return_value="fake_private_key_data"
         )
         patch_signer = patch(
             "oci.auth.signers.SecurityTokenSigner", return_value=MagicMock()

@@ -1537,6 +1537,27 @@ pytz = ">=2016.10"
 adk = ["docstring-parser (>=0.16) ; python_version >= \"3.10\" and python_version < \"4\"", "mcp (>=1.6.0) ; python_version >= \"3.10\" and python_version < \"4\"", "pydantic (>=2.10.6) ; python_version >= \"3.10\" and python_version < \"4\"", "rich (>=13.9.4) ; python_version >= \"3.10\" and python_version < \"4\""]
 
 [[package]]
+name = "oci-openai"
+version = "1.0.0"
+description = "OCI authentication and authorization utilities for OpenAI python SDK"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "oci_openai-1.0.0-py3-none-any.whl", hash = "sha256:7fc3b464c7f995b789729755e117a3d0cf911118a0a4f7d313fa57c1bd5f9853"},
+    {file = "oci_openai-1.0.0.tar.gz", hash = "sha256:328836457b0c14306083ea865be2397ee1e0e0a846fe296b0be9c552361546df"},
+]
+
+[package.dependencies]
+httpx = ">=0.23.0,<1"
+oci = ">=2.150.1"
+openai = ">=v1.108.1"
+requests = ">=2.32.1,<3.0.0"
+
+[package.extras]
+dev = ["ag2[openai]", "black (>=24.8.0,<25.0.0)", "isort (>=5.13.2,<6.0.0)", "mypy (>=1.11.1,<2.0.0)", "openai-agents (>=0.5.1)", "pytest (>=8.3.2,<9.0.0)", "pytest-asyncio", "pytest-cov (>=5.0.0,<6.0.0)", "pytest-httpx", "pytest-mock", "respx", "ruff (>=0.5.6,<0.6.0)", "typing-extensions (>=4.11,<5)"]
+
+[[package]]
 name = "openai"
 version = "2.7.1"
 description = "The official Python library for the openai API"
@@ -2976,4 +2997,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4.0"
-content-hash = "b7f16b4d57ec78ad1c122c1800a987fbd11cb4b4655c1d54046c1745945ee4cc"
+content-hash = "73ecec159261cf9a50212c947e5d29a005088aa4f6cd78572ca1cb519d099b91"

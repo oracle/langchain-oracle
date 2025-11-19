@@ -18,6 +18,7 @@ oci = ">=2.161.0"
 pydantic = ">=2,<3"
 aiohttp = ">=3.12.14"
 openai = "^2.6.1"
+oci-openai = "^1.0.0"
 
 [tool.poetry.group.test]
 optional = true
