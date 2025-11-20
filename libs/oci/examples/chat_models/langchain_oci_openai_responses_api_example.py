@@ -5,20 +5,18 @@ from oci_openai import OciSessionAuth
 from langchain_oci import ChatOCIOpenAI
 from rich import print
 
-COMPARTMENT_ID = ""
-CONVERSATION_STORE_ID = ""
-OVERRIDE_URL = ""
-REGION = ""
-MODEL = ""
-PROFILE_NAME = ""
-
+COMPARTMENT_ID="ocid1.compartment.oc1..aaaaaaaaexample"
+CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1.us-chicago-1.aaaaaaaaexample"
+SERVICE_ENDPOINT = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+REGION = "us-chicago-1"
+MODEL = "openai.gpt-4o"
+PROFILE_NAME = "oc1"
 
 def get_oci_openai_client():
     return ChatOCIOpenAI(
         auth=OciSessionAuth(profile_name=PROFILE_NAME),
         compartment_id=COMPARTMENT_ID,
-        region=REGION,
-        service_endpoint=OVERRIDE_URL,
+        service_endpoint=SERVICE_ENDPOINT,
         model=MODEL,
         conversation_store_id=CONVERSATION_STORE_ID,
     )

@@ -11,11 +11,8 @@ from oci_openai import OciSessionAuth, OciResourcePrincipalAuth, OciInstancePrin
 from oci_openai.oci_openai import _resolve_base_url
 from pydantic import BaseModel, Field
 
-from langchain_oci.chat_models.oci_generative_ai_responses_api import (
-    COMPARTMENT_ID_HEADER,
-    CONVERSATION_STORE_ID_HEADER,
-    ChatOCIOpenAI
-)
+from langchain_oci import ChatOCIOpenAI
+from langchain_oci.chat_models.oci_generative_ai import COMPARTMENT_ID_HEADER, CONVERSATION_STORE_ID_HEADER
 
 COMPARTMENT_ID = "ocid1.compartment.oc1..dummy"
 CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1..dummy"
