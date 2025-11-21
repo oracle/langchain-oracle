@@ -3,6 +3,7 @@
 
 """Test OCI Generative AI LLM service"""
 
+from typing import Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,12 +14,12 @@ from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 
 
 class MockResponseDict(dict):
-    def __getattr__(self, val):  # type: ignore[no-untyped-def]
+    def __getattr__(self, val):
         return self.get(val)
 
 
 class MockToolCall(dict):
-    def __getattr__(self, val):  # type: ignore[no-untyped-def]
+    def __getattr__(self, val):
         return self[val]
 
 
@@ -37,7 +38,7 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
 
     provider = model_id.split(".")[0].lower()
 
-    def mocked_response(*args):  # type: ignore[no-untyped-def]
+    def mocked_response(*args):
         response_text = "Assistant chat reply."
         response = None
         if provider == "cohere":
@@ -151,7 +152,7 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
     expected = "Assistant chat reply."
     actual = llm.invoke(messages, temperature=0.2)
     assert actual.content == expected
-    
+
     # Test total_tokens in additional_kwargs
     assert "total_tokens" in actual.additional_kwargs
     if provider == "cohere":
@@ -166,7 +167,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3-70b-instruct", client=oci_gen_ai_client)
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         # Mock response with tool calls
         return MockResponseDict(
             {
@@ -192,7 +193,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
                                                             {
                                                                 "type": "FUNCTION",
                                                                 "id": "call_456",
-                                                                "name": "get_weather",  # noqa: E501
+                                                                "name": "get_weather",
                                                                 "arguments": '{"location": "San Francisco"}',  # noqa: E501
                                                                 "attribute_map": {
                                                                     "id": "id",
@@ -231,7 +232,7 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
     messages = [HumanMessage(content="What's the weather like?")]
 
     # Test different tool choice options
-    tool_choices = [
+    tool_choices: list[Union[str, bool, dict[str, Union[str, dict[str, str]]]]] = [
         "get_weather",  # Specific tool
         "auto",  # Auto mode
         "none",  # No tools
@@ -252,6 +253,68 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
             tool_call = response.additional_kwargs["tool_calls"][0]
             assert tool_call["type"] == "function"
             assert tool_call["function"]["name"] == "get_weather"
+
+    # Test escaped JSON arguments (issue #52)
+    def mocked_response_escaped(*args, **kwargs):
+        """Mock response with escaped JSON arguments."""
+        return MockResponseDict(
+            {
+                "status": 200,
+                "data": MockResponseDict(
+                    {
+                        "chat_response": MockResponseDict(
+                            {
+                                "choices": [
+                                    MockResponseDict(
+                                        {
+                                            "message": MockResponseDict(
+                                                {
+                                                    "content": [
+                                                        MockResponseDict({"text": ""})
+                                                    ],
+                                                    "tool_calls": [
+                                                        MockResponseDict(
+                                                            {
+                                                                "type": "FUNCTION",
+                                                                "id": "call_escaped",
+                                                                "name": "get_weather",
+                                                                # Escaped JSON (the bug scenario) # noqa: E501
+                                                                "arguments": '"{\\"location\\": \\"San Francisco\\"}"',  # noqa: E501
+                                                                "attribute_map": {
+                                                                    "id": "id",
+                                                                    "type": "type",
+                                                                    "name": "name",
+                                                                    "arguments": "arguments",  # noqa: E501
+                                                                },
+                                                            }
+                                                        )
+                                                    ],
+                                                }
+                                            ),
+                                            "finish_reason": "tool_calls",
+                                        }
+                                    )
+                                ],
+                                "time_created": "2025-10-22T19:48:12.726000+00:00",
+                            }
+                        ),
+                        "model_id": "meta.llama-3-70b-instruct",
+                        "model_version": "1.0.0",
+                    }
+                ),
+                "request_id": "test_escaped",
+                "headers": MockResponseDict({"content-length": "366"}),
+            }
+        )
+
+    monkeypatch.setattr(llm.client, "chat", mocked_response_escaped)
+    response_escaped = llm.bind_tools(tools=[get_weather]).invoke(messages)
+
+    # Verify escaped JSON was correctly parsed to a dict
+    assert isinstance(response_escaped, AIMessage)
+    assert len(response_escaped.tool_calls) == 1
+    assert response_escaped.tool_calls[0]["name"] == "get_weather"
+    assert response_escaped.tool_calls[0]["args"] == {"location": "San Francisco"}
 
 
 @pytest.mark.requires("oci")
@@ -276,7 +339,7 @@ def test_cohere_tool_choice_validation(monkeypatch: MonkeyPatch) -> None:
         ).invoke(messages)
 
     # Mock response for the case without tool choice
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         return MockResponseDict(
             {
                 "status": 200,
@@ -317,7 +380,7 @@ def test_meta_tool_conversion(monkeypatch: MonkeyPatch) -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         request = args[0]
         # Check the conversion of tools to oci generic API spec
         # Function tool
@@ -406,6 +469,7 @@ def test_meta_tool_conversion(monkeypatch: MonkeyPatch) -> None:
 
     # For tool calls, the response content should be empty.
     assert response.content == ""
+    assert isinstance(response, AIMessage)
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0]["name"] == "function_tool"
 
@@ -422,7 +486,7 @@ def test_json_mode_output(monkeypatch: MonkeyPatch) -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="cohere.command-r-16k", client=oci_gen_ai_client)
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         return MockResponseDict(
             {
                 "status": 200,
@@ -472,10 +536,10 @@ def test_json_schema_output(monkeypatch: MonkeyPatch) -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="cohere.command-latest", client=oci_gen_ai_client)
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         # Verify that response_format is a JsonSchemaResponseFormat object
         request = args[0]
-        assert hasattr(request.chat_request, 'response_format')
+        assert hasattr(request.chat_request, "response_format")
         assert request.chat_request.response_format is not None
 
         return MockResponseDict(
@@ -549,7 +613,7 @@ def test_include_raw_output(monkeypatch: MonkeyPatch) -> None:
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="cohere.command-r-16k", client=oci_gen_ai_client)
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         return MockResponseDict(
             {
                 "status": 200,
@@ -602,17 +666,15 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
     # Track if the tool_calls processing branch is executed
     tool_calls_processed = False
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         nonlocal tool_calls_processed
         # Check if the request contains tool_calls in the message
         request = args[0]
         has_chat_request = hasattr(request, "chat_request")
-        has_messages = has_chat_request and hasattr(
-            request.chat_request, "messages"
-        )
+        has_messages = has_chat_request and hasattr(request.chat_request, "messages")
         if has_messages:
             for msg in request.chat_request.messages:
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
                     tool_calls_processed = True
                     break
         return MockResponseDict(
@@ -670,7 +732,7 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
                 "name": "get_weather",
                 "args": {"location": "San Francisco"},
             }
-        ]
+        ],
     )
 
     messages = [ai_message]
@@ -683,11 +745,11 @@ def test_ai_message_tool_calls_direct_field(monkeypatch: MonkeyPatch) -> None:
 @pytest.mark.requires("oci")
 def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> None:
     """Test AIMessage with tool_calls in additional_kwargs field."""
-  
+
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
 
-    def mocked_response(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def mocked_response(*args, **kwargs):
         return MockResponseDict(
             {
                 "status": 200,
@@ -745,7 +807,7 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
                     "args": {"location": "New York"},
                 }
             ]
-        }
+        },
     )
 
     messages = [ai_message]
@@ -755,23 +817,23 @@ def test_ai_message_tool_calls_additional_kwargs(monkeypatch: MonkeyPatch) -> No
     assert response.content == "I'll help you."
 
 
+@pytest.mark.requires("oci")
 def test_get_provider():
     """Test determining the provider based on the model_id."""
+    oci_gen_ai_client = MagicMock()
     model_provider_map = {
         "cohere.command-latest": "CohereProvider",
         "meta.llama-3.3-70b-instruct": "MetaProvider",
         "xai.grok-3": "GenericProvider",
     }
     for model_id, provider_name in model_provider_map.items():
-        assert (
-            ChatOCIGenAI(model_id=model_id)._provider.__class__.__name__
-            == provider_name
-        )
+        llm = ChatOCIGenAI(model_id=model_id, client=oci_gen_ai_client)
+        assert llm._provider.__class__.__name__ == provider_name
 
 
 @pytest.mark.requires("oci")
 def test_tool_choice_none_after_tool_results() -> None:
-    """Test that tool_choice is set to 'none' when max_sequential_tool_calls is exceeded.
+    """Test tool_choice='none' when max_sequential_tool_calls is exceeded.
 
     This prevents infinite loops with Meta Llama models by limiting the number
     of sequential tool calls.
@@ -783,7 +845,7 @@ def test_tool_choice_none_after_tool_results() -> None:
     llm = ChatOCIGenAI(
         model_id="meta.llama-3.3-70b-instruct",
         client=oci_gen_ai_client,
-        max_sequential_tool_calls=3  # Set limit to 3 for testing
+        max_sequential_tool_calls=3,  # Set limit to 3 for testing
     )
 
     # Define a simple tool function (following the pattern from other tests)
@@ -801,22 +863,40 @@ def test_tool_choice_none_after_tool_results() -> None:
     # Create conversation with 3 ToolMessages (at the limit)
     messages = [
         HumanMessage(content="What's the weather?"),
-        AIMessage(content="", tool_calls=[{"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_1", "name": "get_weather", "args": {"city": "Chicago"}}
+            ],
+        ),
         ToolMessage(content="Sunny, 65°F", tool_call_id="call_1"),
-        AIMessage(content="", tool_calls=[{"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}]),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_2", "name": "get_weather", "args": {"city": "New York"}}
+            ],
+        ),
         ToolMessage(content="Rainy, 55°F", tool_call_id="call_2"),
-        AIMessage(content="", tool_calls=[{"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}]),
-        ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3")
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_3", "name": "get_weather", "args": {"city": "Seattle"}}
+            ],
+        ),
+        ToolMessage(content="Cloudy, 60°F", tool_call_id="call_3"),
     ]
 
     # Prepare the request - need to pass tools from the bound model kwargs
-    request = llm_with_tools._prepare_request(
-        messages, stop=None, stream=False, **llm_with_tools.kwargs
+    request = llm._prepare_request(
+        messages,
+        stop=None,
+        stream=False,
+        **llm_with_tools.kwargs,  # type: ignore[attr-defined]
     )
 
     # Verify that tool_choice is set to 'none' because limit was reached
-    assert hasattr(request.chat_request, 'tool_choice')
+    assert hasattr(request.chat_request, "tool_choice")
     assert isinstance(request.chat_request.tool_choice, models.ToolChoiceNone)
     # Verify tools are still present (not removed, just choice is 'none')
-    assert hasattr(request.chat_request, 'tools')
+    assert hasattr(request.chat_request, "tools")
     assert len(request.chat_request.tools) > 0

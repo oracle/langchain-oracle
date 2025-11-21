@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-oci"
-version = "0.1.5"
+version = "0.1.6"
 description = "An integration package connecting OCI and LangChain"
 authors = []
 readme = "README.md"
@@ -34,7 +34,7 @@ pytest-socket = "^0.7.0"
 pytest-mock = "^3.15.0"
 pytest-httpx = "^0.28.0"
 responses = "^0.25.8"
-langgraph = "^0.6.11"
+langgraph = "^0.2.0"
 
 
 [tool.poetry.group.codespell]
@@ -47,12 +47,13 @@ codespell = "^2.2.6"
 optional = true
 
 [tool.poetry.group.test_integration.dependencies]
+langgraph = "^0.2.0"
 
 [tool.poetry.group.lint]
 optional = true
 
 [tool.poetry.group.lint.dependencies]
-ruff = "^0.1.8"
+ruff = "^0.13.1"
 
 [tool.poetry.group.typing.dependencies]
 mypy = "^1.7"
@@ -63,6 +64,11 @@ optional = true
 
 [tool.poetry.group.dev.dependencies]
 
+[tool.ruff]
+
+[tool.ruff.format]
+docstring-code-format = true
+
 [tool.ruff.lint]
 select = [
   "E",    # pycodestyle
@@ -70,10 +76,31 @@ select = [
   "I",    # isort
   "T201", # print
 ]
+ignore = [
+  "COM812",  # Messes with the formatter
+]
 
 [tool.mypy]
-ignore_missing_imports = "True"
-disallow_untyped_defs = "True"
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+error_summary = false
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+# Ignore missing imports only for specific untyped packages
+[[tool.mypy.overrides]]
+module = [
+    "oci.*",
+    "ads.*",
+    "langchain_openai.*",
+]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 omit = ["tests/*"]
@@ -98,7 +125,6 @@ addopts = "--snapshot-warn-unused --strict-markers --strict-config --durations=5
 markers = [
   "requires: mark tests as requiring a specific library",
   "asyncio: mark tests as requiring asyncio",
-  "compile: mark placeholder test used to compile integration tests without running them",
   "scheduled: mark tests to run in scheduled testing",
 ]
 asyncio_mode = "auto"

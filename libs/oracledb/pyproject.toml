@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-oracledb"
-version = "1.0.2"
+version = "1.1.0"
 description = "An integration package connecting Oracle Database and LangChain"
 authors = []
 readme = "README.md"
@@ -12,7 +12,10 @@ license = "UPL"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4.0"
-langchain-core = ">=0.3.15,<0.4"
+langchain-core = [
+ { version = "^0.3.15", python = "<3.10" },
+ { version = "^1.0.0", python = ">=3.10" }
+]
 langchain-community = ">=0.3.0"
 oracledb = ">=2.2.0"
 pydantic = ">=2,<3"
@@ -28,6 +31,10 @@ syrupy = "^4.0.2"
 pytest-asyncio = "^0.23.2"
 pytest-watcher = "^0.3.4"
 sentence-transformers = "^5.0.0"
+langchain-tests = [
+ { version = "^0.3.21", python = "<3.10" },
+ { version = "^1.0.0", python = ">=3.10" }
+]
 
 [tool.poetry.group.codespell]
 optional = true
@@ -44,7 +51,7 @@ optional = true
 optional = true
 
 [tool.poetry.group.lint.dependencies]
-ruff = "^0.1.8"
+ruff = "^0.13.1"
 
 [tool.poetry.group.typing.dependencies]
 mypy = "^1.7"
@@ -55,6 +62,8 @@ optional = true
 
 [tool.poetry.group.dev.dependencies]
 
+[tool.ruff]
+
 [tool.ruff.lint]
 select = [
   "E",    # pycodestyle
@@ -62,13 +71,25 @@ select = [
   "I",    # isort
   "T201", # print
 ]
+ignore = [
+  "COM812",  # Messes with the formatter
+]
 
 [tool.ruff.format]
 docstring-code-format = true
 
 [tool.mypy]
-ignore_missing_imports = "True"
-disallow_untyped_defs = "True"
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+error_summary = false
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
 
 [tool.coverage.run]
 omit = ["tests/*"]
@@ -93,7 +114,6 @@ addopts = "--snapshot-warn-unused --strict-markers --strict-config --durations=5
 markers = [
   "requires: mark tests as requiring a specific library",
   "asyncio: mark tests as requiring asyncio",
-  "compile: mark placeholder test used to compile integration tests without running them",
   "scheduled: mark tests to run in scheduled testing",
 ]
 asyncio_mode = "auto"

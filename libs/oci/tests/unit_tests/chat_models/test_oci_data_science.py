@@ -80,7 +80,7 @@ class MockResponse:
     def raise_for_status(self) -> None:
         """Mocked raise for status."""
         if 400 <= self.status_code < 600:
-            raise HTTPError()  # type: ignore[call-arg]
+            raise HTTPError(response=self)  # type: ignore[arg-type]
 
     def json(self) -> Dict:
         """Returns mocked json data."""
@@ -155,7 +155,7 @@ def test_stream_vllm(*args: Any) -> None:
         if output is None:
             output = chunk
         else:
-            output += chunk
+            output += chunk  # type: ignore[assignment]
         count += 1
     assert count == 5
     assert output is not None

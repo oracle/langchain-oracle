@@ -44,14 +44,26 @@ def get_min_version_from_toml(toml_path: str):
     for lib in MIN_VERSION_LIBS:
         # Check if the lib is present in the dependencies
         if lib in dependencies:
-            # Get the version string
-            version_string = dependencies[lib]
+            # Get the version string or list
+            version_spec = dependencies[lib]
 
-            # Use parse_version to get the minimum supported version from version_string
-            min_version = get_min_version(version_string)
+            # Handle list format (multiple version constraints for different Python versions)
+            if isinstance(version_spec, list):
+                # Extract all version strings from the list and find the minimum
+                versions = []
+                for spec in version_spec:
+                    if isinstance(spec, dict) and "version" in spec:
+                        versions.append(get_min_version(spec["version"]))
 
-            # Store the minimum version in the min_versions dictionary
-            min_versions[lib] = min_version
+                # If we found versions, use the minimum one
+                if versions:
+                    # Parse all versions and select the minimum
+                    min_version = min(versions, key=parse_version)
+                    min_versions[lib] = min_version
+            elif isinstance(version_spec, str):
+                # Handle simple string format
+                min_version = get_min_version(version_spec)
+                min_versions[lib] = min_version
 
     return min_versions
 

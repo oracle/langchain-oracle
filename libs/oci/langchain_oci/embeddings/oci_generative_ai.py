@@ -48,7 +48,7 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
             embeddings = OCIGenAIEmbeddings(
                 model_id="MY_EMBEDDING_MODEL",
                 service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-                compartment_id="MY_OCID"
+                compartment_id="MY_OCID",
             )
     """
 
@@ -125,7 +125,7 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
                 client_kwargs.pop("signer", None)
             elif values["auth_type"] == OCIAuthType(2).name:
 
-                def make_security_token_signer(oci_config):  # type: ignore[no-untyped-def]
+                def make_security_token_signer(oci_config):
                     pk = oci.signer.load_private_key_from_file(
                         oci_config.get("key_file"), None
                     )

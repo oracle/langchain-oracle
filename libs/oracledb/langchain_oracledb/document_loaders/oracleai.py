@@ -3,7 +3,7 @@
 """
 oracleai.py
 
-Defines OracleDocLoader and OracleTextSplitter for loading 
+Defines OracleDocLoader and OracleTextSplitter for loading
 and splitting documents using Oracle AI Vector Search.
 
 Authors:
@@ -130,7 +130,7 @@ class OracleDocReader:
             with open(file_path, "rb") as f:
                 data = f.read()
 
-            if data is None:
+            if not data:
                 return Document(page_content="", metadata=metadata)
 
             mdata = cursor.var(oracledb.DB_TYPE_CLOB)
@@ -151,7 +151,7 @@ class OracleDocReader:
             )
             cursor.close()
 
-            if mdata is None:
+            if mdata.getvalue() is None:
                 metadata = {}
             else:
                 doc_data = str(mdata.getvalue())
@@ -166,7 +166,7 @@ class OracleDocReader:
             metadata["_oid"] = doc_id
             metadata["_file"] = file_path
 
-            if text is None:
+            if text.getvalue() is None:
                 return Document(page_content="", metadata=metadata)
             else:
                 return Document(page_content=str(text.getvalue()), metadata=metadata)

@@ -3,13 +3,14 @@
 """
 oracleai.py
 
-Implements OracleEmbeddings for generating and handling 
+Implements OracleEmbeddings for generating and handling
 vector embeddings with Oracle AI Vector Search.
 
 Authors:
     - Harichandan Roy (hroy)
     - David Jiang (ddjiang)
 """
+
 from __future__ import annotations
 
 import json
@@ -100,9 +101,6 @@ class OracleEmbeddings(BaseModel, Embeddings):
         Returns:
             List of embeddings, one for each input text.
         """
-
-        if texts is None:
-            return None
 
         embeddings: List[List[float]] = []
         try:

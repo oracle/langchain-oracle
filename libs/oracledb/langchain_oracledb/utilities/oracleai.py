@@ -9,6 +9,7 @@ Authors:
     - Harichandan Roy (hroy)
     - David Jiang (ddjiang)
 """
+
 from __future__ import annotations
 
 import json
@@ -91,7 +92,7 @@ class OracleSummary:
                     summ=summary,
                 )
 
-                if summary is None:
+                if summary.getvalue() is None:
                     results.append("")
                 else:
                     results.append(str(summary.getvalue()))
@@ -113,7 +114,7 @@ class OracleSummary:
                     summ=summary,
                 )
 
-                if summary is None:
+                if summary.getvalue() is None:
                     results.append("")
                 else:
                     results.append(str(summary.getvalue()))
