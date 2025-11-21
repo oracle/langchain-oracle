@@ -268,9 +268,9 @@ class CohereProvider(Provider):
             hasattr(response.data.chat_response, "usage")
             and response.data.chat_response.usage
         ):
-            generation_info[
-                "total_tokens"
-            ] = response.data.chat_response.usage.total_tokens
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )
 
         # Include tool calls if available
         if self.chat_tool_calls(response):
@@ -648,9 +648,9 @@ class GenericProvider(Provider):
             hasattr(response.data.chat_response, "usage")
             and response.data.chat_response.usage
         ):
-            generation_info[
-                "total_tokens"
-            ] = response.data.chat_response.usage.total_tokens
+            generation_info["total_tokens"] = (
+                response.data.chat_response.usage.total_tokens
+            )
 
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(

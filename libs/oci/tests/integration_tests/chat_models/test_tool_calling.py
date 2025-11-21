@@ -190,13 +190,13 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
 
     # Verify final message is an AI response without tool calls
     final_message = messages[-1]
-    assert (
-        type(final_message).__name__ == "AIMessage"
-    ), "Final message should be AIMessage"
+    assert type(final_message).__name__ == "AIMessage", (
+        "Final message should be AIMessage"
+    )
     assert final_message.content, "Final message should have content"
-    assert not (
-        hasattr(final_message, "tool_calls") and final_message.tool_calls
-    ), "Final message should not have tool_calls (infinite loop prevention)"
+    assert not (hasattr(final_message, "tool_calls") and final_message.tool_calls), (
+        "Final message should not have tool_calls (infinite loop prevention)"
+    )
 
     # Note: Different models format responses differently. Some return
     # natural language, others may return the tool call syntax. The
@@ -428,7 +428,7 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Invoke agent with a diagnostic scenario
     result = agent.invoke(
-        {  # type: ignore
+        {
             "messages": [
                 SystemMessage(content=system_prompt),
                 HumanMessage(
