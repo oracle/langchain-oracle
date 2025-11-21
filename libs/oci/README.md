@@ -103,6 +103,28 @@ messages = [
     ]
 response = client.invoke(messages)
 ```
+NOTE: By default `store` argument is set to `True` which requires passing `conversation_store_id`. You can set `store` to `False` and not pass `conversation_store_id`.
+```python
+from oci_openai import (
+    OciSessionAuth,
+)
+from langchain_oci import ChatOCIOpenAI
+client = ChatOCIOpenAI(
+        auth=OciSessionAuth(profile_name="MY_PROFILE_NAME"),
+        compartment_id="MY_COMPARTMENT_ID",
+        region="us-chicago-1",
+        model="openai.gpt-4.1",
+        store=False
+    )
+messages = [
+        (
+            "system",
+            "You are a helpful translator. Translate the user sentence to French.",
+        ),
+        ("human", "I love programming."),
+    ]
+response = client.invoke(messages)
+```
 
 
 ## OCI Data Science Model Deployment Examples

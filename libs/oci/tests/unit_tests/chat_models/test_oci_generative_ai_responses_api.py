@@ -12,7 +12,8 @@ from oci_openai.oci_openai import _resolve_base_url
 from pydantic import BaseModel, Field
 
 from langchain_oci import ChatOCIOpenAI
-from langchain_oci.chat_models.oci_generative_ai import COMPARTMENT_ID_HEADER, CONVERSATION_STORE_ID_HEADER
+from langchain_oci.chat_models.oci_generative_ai import COMPARTMENT_ID_HEADER, CONVERSATION_STORE_ID_HEADER, \
+    _build_headers
 
 COMPARTMENT_ID = "ocid1.compartment.oc1..dummy"
 CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1..dummy"
@@ -379,3 +380,56 @@ def test_chat_graph(httpx_mock, auth_instance, oci_openai_client):
     assert content["type"] == "text"
     assert content["text"] == "Paris is the capital of France"
     _assert_common(httpx_mock=httpx_mock)
+
+
+def test_store_true_with_valid_store_id():
+    headers = _build_headers(
+        "comp123",
+        conversation_store_id="store456",
+        store=True
+    )
+    assert headers == {
+        COMPARTMENT_ID_HEADER: "comp123",
+        CONVERSATION_STORE_ID_HEADER: "store456",
+    }
+
+
+def test_store_true_missing_store_id_raises():
+    with pytest.raises(ValueError) as excinfo:
+        _build_headers(
+            "comp123",
+            conversation_store_id=None,
+            store=True
+        )
+
+    assert "Conversation Store Id must be provided" in str(excinfo.value)
+
+
+def test_store_default_true_requires_store_id():
+    # store defaults to True → should still raise
+    with pytest.raises(ValueError):
+        _build_headers("comp123")
+
+
+def test_store_false_ignores_store_id_requirement():
+    headers = _build_headers(
+        "comp123",
+        conversation_store_id=None,
+        store=False
+    )
+    assert headers == {
+        COMPARTMENT_ID_HEADER: "comp123",
+    }
+
+
+def test_store_false_includes_store_id_if_provided_but_not_required():
+    headers = _build_headers(
+        "comp123",
+        conversation_store_id="store456",
+        store=False
+    )
+    # Should NOT include store ID because store=False
+    assert headers == {
+        COMPARTMENT_ID_HEADER: "comp123",
+    }
+

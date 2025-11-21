@@ -1453,6 +1453,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     generation_info=generation_info,
                 )
 
+
 class ChatOCIOpenAI(ChatOpenAI):
     """A custom OCI OpenAI client implementation conforming to OpenAI Responses API.
 
@@ -1466,8 +1467,9 @@ class ChatOCIOpenAI(ChatOpenAI):
     Attributes:
         auth (httpx.Auth): Authentication handler for OCI request signing.
         compartment_id (str): OCI compartment ID for resource isolation
-        conversation_store_id (str): Conversation Store Id to use when generating responses
         model (str): Name of OpenAI model to use.
+        conversation_store_id (str | None): Conversation Store Id to use when generating responses.
+                                            Must be provided if store is set to False
         region (str | None): The OCI service region, e.g., 'us-chicago-1'.
                              Must be provided if service_endpoint and base_url are None
         service_endpoint (str | None): The OCI service endpoint. when service_endpoint
@@ -1572,29 +1574,44 @@ class ChatOCIOpenAI(ChatOpenAI):
             )
         return values
 
+
+
+
     def __init__(
         self,
         auth: httpx.Auth,
         compartment_id: str,
-        conversation_store_id: str,
         model: str,
+        conversation_store_id: Optional[str] = None,
         region: str = None,
         service_endpoint: str = None,
         base_url: str = None,
         **kwargs: Any,
     ):
+
         super().__init__(
             model=model,
             api_key=SecretStr(API_KEY),
             http_client=DefaultHttpxClient(
                 auth=auth,
-                headers={
-                    COMPARTMENT_ID_HEADER: compartment_id,
-                    CONVERSATION_STORE_ID_HEADER: conversation_store_id
-                }
+                headers=_build_headers(compartment_id=compartment_id, conversation_store_id=conversation_store_id, **kwargs)
             ),
             base_url=_resolve_base_url(region=region, service_endpoint=service_endpoint, base_url=base_url),
             use_responses_api=True,
             output_version=OUTPUT_VERSION,
             **kwargs,
         )
+
+def _build_headers(compartment_id, conversation_store_id=None, **kwargs):
+    store = kwargs.get("store", True)
+
+    headers = {COMPARTMENT_ID_HEADER: compartment_id}
+
+    if store:
+        if conversation_store_id is None:
+            raise ValueError(
+                "Conversation Store Id must be provided when store is set to True"
+            )
+        headers[CONVERSATION_STORE_ID_HEADER] = conversation_store_id
+
+    return headers
