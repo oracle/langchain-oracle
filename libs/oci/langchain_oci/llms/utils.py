@@ -4,10 +4,7 @@
 """Common utility functions for LLM APIs."""
 
 import re
-from typing import List, Dict
-
-import httpx
-from openai import DefaultHttpxClient, DefaultAsyncHttpxClient
+from typing import List
 
 
 def enforce_stop_tokens(text: str, stop: List[str]) -> str:

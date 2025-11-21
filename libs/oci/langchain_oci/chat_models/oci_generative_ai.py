@@ -54,7 +54,7 @@ from langchain_core.utils.function_calling import convert_to_openai_function
 from langchain_openai import ChatOpenAI
 from oci_openai.oci_openai import _resolve_base_url
 from openai import DefaultHttpxClient
-from pydantic import BaseModel, ConfigDict, model_validator, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
 from langchain_oci.llms.oci_generative_ai import OCIGenAIBase
 from langchain_oci.llms.utils import enforce_stop_tokens
@@ -75,6 +75,7 @@ JSON_TO_PYTHON_TYPES = {
     "object": "Dict",
     "any": "any",
 }
+
 
 class OCIUtils:
     """Utility functions for OCI Generative AI integration."""
@@ -267,9 +268,9 @@ class CohereProvider(Provider):
             hasattr(response.data.chat_response, "usage")
             and response.data.chat_response.usage
         ):
-            generation_info["total_tokens"] = (
-                response.data.chat_response.usage.total_tokens
-            )
+            generation_info[
+                "total_tokens"
+            ] = response.data.chat_response.usage.total_tokens
 
         # Include tool calls if available
         if self.chat_tool_calls(response):
@@ -647,9 +648,9 @@ class GenericProvider(Provider):
             hasattr(response.data.chat_response, "usage")
             and response.data.chat_response.usage
         ):
-            generation_info["total_tokens"] = (
-                response.data.chat_response.usage.total_tokens
-            )
+            generation_info[
+                "total_tokens"
+            ] = response.data.chat_response.usage.total_tokens
 
         if self.chat_tool_calls(response):
             generation_info["tool_calls"] = self.format_response_tool_calls(
@@ -1486,13 +1487,15 @@ class ChatOCIOpenAI(ChatOpenAI):
         auth (httpx.Auth): Authentication handler for OCI request signing.
         compartment_id (str): OCI compartment ID for resource isolation
         model (str): Name of OpenAI model to use.
-        conversation_store_id (str | None): Conversation Store Id to use when generating responses.
+        conversation_store_id (str | None): Conversation Store Id to use
+                                            when generating responses.
                                             Must be provided if store is set to False
         region (str | None): The OCI service region, e.g., 'us-chicago-1'.
                              Must be provided if service_endpoint and base_url are None
         service_endpoint (str | None): The OCI service endpoint. when service_endpoint
                                        is provided, the region will be ignored.
-        base_url (str | None): The OCI service full path URL. when base_url is provided, the region
+        base_url (str | None): The OCI service full path URL.
+                               when base_url is provided, the region
                                and service_endpoint will be ignored.
 
     Instantiate:
@@ -1500,6 +1503,7 @@ class ChatOCIOpenAI(ChatOpenAI):
 
             from oci_openai import OciResourcePrincipalAuth
             from langchain_oci import ChatOCIOpenAI
+
             client = ChatOCIOpenAI(
                 auth=OciResourcePrincipalAuth(),
                 compartment_id=COMPARTMENT_ID,
@@ -1514,9 +1518,10 @@ class ChatOCIOpenAI(ChatOpenAI):
             messages = [
                 (
                     "system",
-                    "You are a helpful translator. Translate the user sentence to French.",
+                    "You are a helpful translator. Translate the user
+                     sentence to French.",
                 ),
-                 ("human", "I love programming."),
+                ("human", "I love programming."),
             ]
             response = client.invoke(messages)
 
@@ -1527,7 +1532,8 @@ class ChatOCIOpenAI(ChatOpenAI):
                 [
                     (
                         "system",
-                        "You are a helpful assistant that translates {input_language} to {output_language}.",
+                        "You are a helpful assistant that translates
+                        {input_language} to {output_language}.",
                     ),
                     ("human", "{input}"),
                 ]
@@ -1549,6 +1555,7 @@ class ChatOCIOpenAI(ChatOpenAI):
                     ..., description="The city and state, e.g. San Francisco, CA"
                 )
 
+
             llm_with_tools = client.bind_tools([GetWeather])
             ai_msg = llm_with_tools.invoke(
                 "what is the weather like in San Francisco",
@@ -1560,7 +1567,8 @@ class ChatOCIOpenAI(ChatOpenAI):
 
             tool = {"type": "web_search_preview"}
             llm_with_tools = client.bind_tools([tool])
-            response = llm_with_tools.invoke("What was a positive news story from today?")
+            response = llm_with_tools.invoke("What was a
+            positive news story from today?")
 
     Hosted MCP Calling:
         .. code-block:: python
@@ -1592,33 +1600,36 @@ class ChatOCIOpenAI(ChatOpenAI):
             )
         return values
 
-
-
-
     def __init__(
         self,
         auth: httpx.Auth,
         compartment_id: str,
         model: str,
         conversation_store_id: Optional[str] = None,
-        region: str = None,
-        service_endpoint: str = None,
-        base_url: str = None,
+        region: Optional[str] = None,
+        service_endpoint: Optional[str] = None,
+        base_url: Optional[str] = None,
         **kwargs: Any,
     ):
-
         super().__init__(
             model=model,
             api_key=SecretStr(API_KEY),
             http_client=DefaultHttpxClient(
                 auth=auth,
-                headers=_build_headers(compartment_id=compartment_id, conversation_store_id=conversation_store_id, **kwargs)
+                headers=_build_headers(
+                    compartment_id=compartment_id,
+                    conversation_store_id=conversation_store_id,
+                    **kwargs,
+                ),
             ),
-            base_url=_resolve_base_url(region=region, service_endpoint=service_endpoint, base_url=base_url),
+            base_url=_resolve_base_url(
+                region=region, service_endpoint=service_endpoint, base_url=base_url
+            ),
             use_responses_api=True,
             output_version=OUTPUT_VERSION,
             **kwargs,
         )
+
 
 def _build_headers(compartment_id, conversation_store_id=None, **kwargs):
     store = kwargs.get("store", True)

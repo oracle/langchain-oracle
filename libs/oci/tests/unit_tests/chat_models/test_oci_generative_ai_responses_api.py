@@ -7,13 +7,20 @@ from httpx import Request
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
-from oci_openai import OciSessionAuth, OciResourcePrincipalAuth, OciInstancePrincipalAuth
+from oci_openai import (
+    OciInstancePrincipalAuth,
+    OciResourcePrincipalAuth,
+    OciSessionAuth,
+)
 from oci_openai.oci_openai import _resolve_base_url
 from pydantic import BaseModel, Field
 
 from langchain_oci import ChatOCIOpenAI
-from langchain_oci.chat_models.oci_generative_ai import COMPARTMENT_ID_HEADER, CONVERSATION_STORE_ID_HEADER, \
-    _build_headers
+from langchain_oci.chat_models.oci_generative_ai import (
+    COMPARTMENT_ID_HEADER,
+    CONVERSATION_STORE_ID_HEADER,
+    _build_headers,
+)
 
 COMPARTMENT_ID = "ocid1.compartment.oc1..dummy"
 CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1..dummy"
@@ -241,7 +248,7 @@ def oci_openai_client(auth_instance):
     )
     return client
 
-
+@pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_client_invoke(httpx_mock, auth_instance, oci_openai_client):
     # ---- Arrange ----
@@ -261,7 +268,7 @@ def test_client_invoke(httpx_mock, auth_instance, oci_openai_client):
     assert result.content[0]["text"] == "j'adore la programmation"
     _assert_common(httpx_mock=httpx_mock)
 
-
+@pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_prompt_chaining(httpx_mock, auth_instance, oci_openai_client):
     # ---- Arrange ----
@@ -292,7 +299,7 @@ def test_prompt_chaining(httpx_mock, auth_instance, oci_openai_client):
     assert result.content[0]["text"] == "j'adore la programmation"
     _assert_common(httpx_mock=httpx_mock)
 
-
+@pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_tools_invoke(httpx_mock, auth_instance, oci_openai_client):
     # ---- Arrange ----
@@ -310,7 +317,7 @@ def test_tools_invoke(httpx_mock, auth_instance, oci_openai_client):
     json.loads((ai_msg.content[0]["arguments"]))["location"] == "San Francisco, MA"
     _assert_common(httpx_mock=httpx_mock)
 
-
+@pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_web_search(httpx_mock, auth_instance, oci_openai_client):
     # ---- Arrange ----
@@ -351,7 +358,7 @@ def _set_mock_client_invoke_response_langgraph(httpx_mock):
         status_code=200,
     )
 
-
+@pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_chat_graph(httpx_mock, auth_instance, oci_openai_client):
     # ---- Arrange ----
@@ -383,11 +390,7 @@ def test_chat_graph(httpx_mock, auth_instance, oci_openai_client):
 
 
 def test_store_true_with_valid_store_id():
-    headers = _build_headers(
-        "comp123",
-        conversation_store_id="store456",
-        store=True
-    )
+    headers = _build_headers("comp123", conversation_store_id="store456", store=True)
     assert headers == {
         COMPARTMENT_ID_HEADER: "comp123",
         CONVERSATION_STORE_ID_HEADER: "store456",
@@ -396,11 +399,7 @@ def test_store_true_with_valid_store_id():
 
 def test_store_true_missing_store_id_raises():
     with pytest.raises(ValueError) as excinfo:
-        _build_headers(
-            "comp123",
-            conversation_store_id=None,
-            store=True
-        )
+        _build_headers("comp123", conversation_store_id=None, store=True)
 
     assert "Conversation Store Id must be provided" in str(excinfo.value)
 
@@ -412,24 +411,15 @@ def test_store_default_true_requires_store_id():
 
 
 def test_store_false_ignores_store_id_requirement():
-    headers = _build_headers(
-        "comp123",
-        conversation_store_id=None,
-        store=False
-    )
+    headers = _build_headers("comp123", conversation_store_id=None, store=False)
     assert headers == {
         COMPARTMENT_ID_HEADER: "comp123",
     }
 
 
 def test_store_false_includes_store_id_if_provided_but_not_required():
-    headers = _build_headers(
-        "comp123",
-        conversation_store_id="store456",
-        store=False
-    )
+    headers = _build_headers("comp123", conversation_store_id="store456", store=False)
     # Should NOT include store ID because store=False
     assert headers == {
         COMPARTMENT_ID_HEADER: "comp123",
     }
-

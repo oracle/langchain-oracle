@@ -1,16 +1,19 @@
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
-
 from oci_openai import OciSessionAuth
-from langchain_oci import ChatOCIOpenAI
+from pydantic import BaseModel, Field
 from rich import print
 
-COMPARTMENT_ID="ocid1.compartment.oc1..aaaaaaaaexample"
-CONVERSATION_STORE_ID = "ocid1.generativeaiconversationstore.oc1.us-chicago-1.aaaaaaaaexample"
+from langchain_oci import ChatOCIOpenAI
+
+COMPARTMENT_ID = "ocid1.compartment.oc1..aaaaaaaaexample"
+CONVERSATION_STORE_ID = (
+    "ocid1.generativeaiconversationstore.oc1.us-chicago-1.aaaaaaaaexample"
+)
 SERVICE_ENDPOINT = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
 REGION = "us-chicago-1"
 MODEL = "openai.gpt-4o"
 PROFILE_NAME = "oc1"
+
 
 def get_oci_openai_client():
     return ChatOCIOpenAI(
@@ -41,7 +44,8 @@ def do_prompt_chaining():
         [
             (
                 "system",
-                "You are a helpful assistant that translates {input_language} to {output_language}.",
+                "You are a helpful assistant that translates {input_language}"
+                " to {output_language}.",
             ),
             ("human", "{input}"),
         ]
