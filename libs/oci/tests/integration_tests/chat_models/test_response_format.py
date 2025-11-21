@@ -195,9 +195,9 @@ def test_with_structured_output_json_mode(model_id: str):
     )
 
     # Verify we got a Person object
-    assert isinstance(result, Person), (
-        f"Should return Person object, got {type(result)}"
-    )
+    assert isinstance(
+        result, Person
+    ), f"Should return Person object, got {type(result)}"
     assert hasattr(result, "name"), "Should have name attribute"
     assert hasattr(result, "age"), "Should have age attribute"
 
@@ -241,9 +241,9 @@ def test_with_structured_output_json_schema(model_id: str):
     )
 
     # Verify we got a Product object with correct types
-    assert isinstance(result, Product), (
-        f"Should return Product object, got {type(result)}"
-    )
+    assert isinstance(
+        result, Product
+    ), f"Should return Product object, got {type(result)}"
     assert isinstance(result.product_name, str), "product_name should be string"
     assert isinstance(result.price, (int, float)), "price should be numeric"
     assert isinstance(result.in_stock, bool), "in_stock should be boolean"
@@ -283,7 +283,7 @@ def test_response_format_via_model_kwargs():
 
     # Verify valid JSON
     try:
-        parsed = json.loads(response.content)
+        parsed = json.loads(response.content)  # type: ignore
         assert isinstance(parsed, dict), "Response should be a JSON object"
     except json.JSONDecodeError as e:
         pytest.fail(
@@ -318,9 +318,9 @@ def test_json_mode_complex_nested_structure():
 
         # Try to verify it has some nested structure
         has_nested = any(isinstance(v, (dict, list)) for v in parsed.values())
-        assert has_nested or len(str(parsed)) > 50, (
-            "Should have some nested structure or substantial content"
-        )
+        assert (
+            has_nested or len(str(parsed)) > 50
+        ), "Should have some nested structure or substantial content"
 
     except json.JSONDecodeError as e:
         pytest.fail(f"Complex JSON failed: {e}\nContent: {response.content}")

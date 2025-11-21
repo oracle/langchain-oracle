@@ -248,6 +248,7 @@ def oci_openai_client(auth_instance):
     )
     return client
 
+
 @pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_client_invoke(httpx_mock, auth_instance, oci_openai_client):
@@ -267,6 +268,7 @@ def test_client_invoke(httpx_mock, auth_instance, oci_openai_client):
     # ---- Assert ----
     assert result.content[0]["text"] == "j'adore la programmation"
     _assert_common(httpx_mock=httpx_mock)
+
 
 @pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
@@ -299,6 +301,7 @@ def test_prompt_chaining(httpx_mock, auth_instance, oci_openai_client):
     assert result.content[0]["text"] == "j'adore la programmation"
     _assert_common(httpx_mock=httpx_mock)
 
+
 @pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_tools_invoke(httpx_mock, auth_instance, oci_openai_client):
@@ -316,6 +319,7 @@ def test_tools_invoke(httpx_mock, auth_instance, oci_openai_client):
     assert ai_msg.content[0]["name"] == "get_current_weather"
     json.loads((ai_msg.content[0]["arguments"]))["location"] == "San Francisco, MA"
     _assert_common(httpx_mock=httpx_mock)
+
 
 @pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
@@ -358,6 +362,7 @@ def _set_mock_client_invoke_response_langgraph(httpx_mock):
         status_code=200,
     )
 
+
 @pytest.mark.requires("langchain_openai")
 @pytest.mark.usefixtures("httpx_mock")
 def test_chat_graph(httpx_mock, auth_instance, oci_openai_client):
@@ -380,7 +385,7 @@ def test_chat_graph(httpx_mock, auth_instance, oci_openai_client):
     # ---- Act ----
     app = workflow.compile()
     input_message = HumanMessage(content="What is the capital of France?")
-    result = app.invoke({"messages": [input_message]})
+    result = app.invoke({"messages": [input_message]})  # type: ignore
 
     # ---- Assert ----
     content = result["messages"][1].content[0]

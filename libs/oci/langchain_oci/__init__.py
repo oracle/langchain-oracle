@@ -32,5 +32,5 @@ __all__ = [
     "OCIModelDeploymentLLM",
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
-    "ChatOCIOpenAI"
+    "ChatOCIOpenAI",
 ]
