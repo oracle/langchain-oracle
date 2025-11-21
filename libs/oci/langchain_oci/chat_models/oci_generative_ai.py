@@ -563,10 +563,19 @@ class CohereProvider(Provider):
             if tool_id:
                 tool_call_ids.add(tool_id)
 
+            args = tool_call["function"].get("arguments")
+            # If args is a double-escaped JSON string, parse it twice to get the original JSON  # noqa: E501
+            try:
+                parsed_args = json.loads(json.loads(args))
+                args = json.dumps(parsed_args)
+            # If args is not a double-escaped JSON string, keep it as is
+            except (json.JSONDecodeError, TypeError):
+                pass
+
             tool_call_chunks.append(
                 tool_call_chunk(
                     name=tool_call["function"].get("name"),
-                    args=tool_call["function"].get("arguments"),
+                    args=args,
                     id=tool_id,
                     index=len(tool_call_ids) - 1,  # index tracking
                 )
@@ -1027,10 +1036,19 @@ class GenericProvider(Provider):
             if tool_id:
                 tool_call_ids.add(tool_id)
 
+            args = tool_call["function"].get("arguments")
+            # If args is a double-escaped JSON string, parse it twice to get the original JSON  # noqa: E501
+            try:
+                parsed_args = json.loads(json.loads(args))
+                args = json.dumps(parsed_args)
+            # If args is not a double-escaped JSON string, keep it as is
+            except (json.JSONDecodeError, TypeError):
+                pass
+
             tool_call_chunks.append(
                 tool_call_chunk(
                     name=tool_call["function"].get("name"),
-                    args=tool_call["function"].get("arguments"),
+                    args=args,
                     id=tool_id,
                     index=len(tool_call_ids) - 1,  # index tracking
                 )
