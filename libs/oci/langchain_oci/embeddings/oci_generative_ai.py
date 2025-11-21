@@ -125,7 +125,7 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
                 client_kwargs.pop("signer", None)
             elif values["auth_type"] == OCIAuthType(2).name:
 
-                def make_security_token_signer(oci_config):  # type: ignore[no-untyped-def]
+                def make_security_token_signer(oci_config):
                     pk = oci.signer.load_private_key_from_file(
                         oci_config.get("key_file"), None
                     )

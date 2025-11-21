@@ -95,7 +95,10 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
                 cursor.execute(self.query, self.parameter)
             else:
                 cursor.execute(self.query)
-            columns = [col[0] for col in cursor.description]
+
+            columns = (
+                [col[0] for col in cursor.description] if cursor.description else []
+            )
             data = cursor.fetchall()
             data = [
                 {

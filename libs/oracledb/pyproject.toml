@@ -79,20 +79,17 @@ ignore = [
 docstring-code-format = true
 
 [tool.mypy]
-ignore_missing_imports = "True"
-
-# Disable specific error codes that are causing issues
-disallow_untyped_defs = "False"
-disable_error_code = ["attr-defined", "assignment", "var-annotated", "override", "union-attr", "arg-type"]
-
-# TODO: LangChain Google settings
-# plugins = ["pydantic.mypy"]
-# strict = true
-# disallow_untyped_defs = true
-
-# # TODO: activate for 'strict' checking
-# disallow_any_generics = false
-# warn_return_any = false
+plugins = ["pydantic.mypy"]
+check_untyped_defs = true
+error_summary = false
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
 
 [tool.coverage.run]
 omit = ["tests/*"]

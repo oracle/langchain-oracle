@@ -92,7 +92,7 @@ class OracleSummary:
                     summ=summary,
                 )
 
-                if summary is None:
+                if summary.getvalue() is None:
                     results.append("")
                 else:
                     results.append(str(summary.getvalue()))
@@ -114,7 +114,7 @@ class OracleSummary:
                     summ=summary,
                 )
 
-                if summary is None:
+                if summary.getvalue() is None:
                     results.append("")
                 else:
                     results.append(str(summary.getvalue()))
