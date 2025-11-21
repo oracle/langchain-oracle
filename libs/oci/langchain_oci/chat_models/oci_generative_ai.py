@@ -1453,25 +1453,15 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     generation_info=generation_info,
                 )
 
-
-
-def get_sync_httpx_client(auth: httpx.Auth, compartment_id: str, conversation_store_id: str) -> httpx.Client:
-    return DefaultHttpxClient(
-                auth=auth,
-                headers={
-                    COMPARTMENT_ID_HEADER: compartment_id,
-                    CONVERSATION_STORE_ID_HEADER: conversation_store_id
-                },
-            )
 class ChatOCIOpenAI(ChatOpenAI):
-    """A custom OCI OpenAI client implementation confirming to OpenAI Responses API.
+    """A custom OCI OpenAI client implementation conforming to OpenAI Responses API.
 
     Setup:
       Install ``openai`` and ``langchain-openai``.
 
       .. code-block:: bash
 
-          pip install -U langchain-oci openai langchain-openai
+          pip install -U openai langchain-openai langchain-oci
 
     Attributes:
         auth (httpx.Auth): Authentication handler for OCI request signing.
@@ -1596,10 +1586,12 @@ class ChatOCIOpenAI(ChatOpenAI):
         super().__init__(
             model=model,
             api_key=SecretStr(API_KEY),
-            http_client=get_sync_httpx_client(
+            http_client=DefaultHttpxClient(
                 auth=auth,
-                compartment_id=compartment_id,
-                conversation_store_id=conversation_store_id
+                headers={
+                    COMPARTMENT_ID_HEADER: compartment_id,
+                    CONVERSATION_STORE_ID_HEADER: conversation_store_id
+                }
             ),
             base_url=_resolve_base_url(region=region, service_endpoint=service_endpoint, base_url=base_url),
             use_responses_api=True,

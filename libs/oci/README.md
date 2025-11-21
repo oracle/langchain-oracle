@@ -83,16 +83,15 @@ structured_llm.invoke("Tell me a joke about programming")
 `ChatOCIOpenAI` supports OpenAI Responses API.
 
 ```python
-from langchain_oci import (
-    ChatOCIOpenAI,
-    OCISessionAuth,
+from oci_openai import (
+    OciSessionAuth,
 )
+from langchain_oci import ChatOCIOpenAI
 client = ChatOCIOpenAI(
-        auth=OCISessionAuth(profile_name="MY_PROFILE_NAME"),
+        auth=OciSessionAuth(profile_name="MY_PROFILE_NAME"),
         compartment_id="MY_COMPARTMENT_ID",
-        region="MY_REGION",
-        override_url="MY_OVERRIDE_URL",
-        model="MY_MODEL",
+        region="us-chicago-1",
+        model="openai.gpt-4.1",
         conversation_store_id="MY_CONVERSATION_STORE_ID"
     )
 messages = [
