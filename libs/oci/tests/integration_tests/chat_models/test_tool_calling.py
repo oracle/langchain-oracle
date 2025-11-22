@@ -479,9 +479,10 @@ def test_multi_step_tool_orchestration(model_id: str):
     # the max_sequential_tool_calls limit, which is expected behavior.
     # The key is that it STOPPED (didn't continue infinitely).
     final_message = messages[-1]
-    assert type(final_message).__name__ in ["AIMessage", "ToolMessage"], (
-        "Final message should be AIMessage or ToolMessage"
-    )
+    assert type(final_message).__name__ in [
+        "AIMessage",
+        "ToolMessage",
+    ], "Final message should be AIMessage or ToolMessage"
 
     # Verify the agent didn't hit infinite loop by checking message count
     # With max_sequential_tool_calls=8, we expect roughly:

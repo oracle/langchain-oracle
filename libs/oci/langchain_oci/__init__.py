@@ -6,7 +6,7 @@ from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeploymentTGI,
     ChatOCIModelDeploymentVLLM,
 )
-from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
+from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI, ChatOCIOpenAI
 from langchain_oci.embeddings.oci_data_science_model_deployment_endpoint import (
     OCIModelDeploymentEndpointEmbeddings,
 )
@@ -32,4 +32,5 @@ __all__ = [
     "OCIModelDeploymentLLM",
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
+    "ChatOCIOpenAI",
 ]

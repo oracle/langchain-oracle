@@ -283,7 +283,7 @@ def test_response_format_via_model_kwargs():
 
     # Verify valid JSON
     try:
-        parsed = json.loads(response.content)
+        parsed = json.loads(response.content)  # type: ignore
         assert isinstance(parsed, dict), "Response should be a JSON object"
     except json.JSONDecodeError as e:
         pytest.fail(
