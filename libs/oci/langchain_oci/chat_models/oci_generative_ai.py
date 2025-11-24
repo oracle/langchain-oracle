@@ -100,22 +100,37 @@ class OCIUtils:
     @staticmethod
     def convert_oci_tool_call_to_langchain(tool_call: Any) -> ToolCall:
         """Convert an OCI tool call to a LangChain ToolCall."""
-        parsed = json.loads(tool_call.arguments)
+        # Check if this is a Generic/Meta format (has arguments as JSON string)
+        # or Cohere format (has parameters as dict)
+        attribute_map = getattr(tool_call, "attribute_map", None) or {}
 
-        # If the parsed result is a string, it means the JSON was escaped, so parse again  # noqa: E501
-        if isinstance(parsed, str):
-            try:
-                parsed = json.loads(parsed)
-            except json.JSONDecodeError:
-                # If it's not valid JSON, keep it as a string
-                pass
+        if "arguments" in attribute_map and tool_call.arguments is not None:
+            # Generic/Meta format: parse JSON arguments
+            parsed = json.loads(tool_call.arguments)
+
+            # If the parsed result is a string, it means JSON was escaped
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, keep it as a string
+                    pass
+            args = parsed
+        else:
+            # Cohere format: parameters is already a dict
+            args = tool_call.parameters
+
+        # Get tool call ID (generate one if not present)
+        tool_id = (
+            tool_call.id
+            if "id" in attribute_map
+            else uuid.uuid4().hex[:]
+        )
 
         return ToolCall(
             name=tool_call.name,
-            args=parsed
-            if "arguments" in tool_call.attribute_map
-            else tool_call.parameters,
-            id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
+            args=args,
+            id=tool_id,
         )
 
 
@@ -1423,9 +1438,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             # Add formatted version to generation_info if not already present
             # This avoids redundant formatting in chat_generation_info()
             if "tool_calls" not in generation_info:
-                generation_info["tool_calls"] = self._provider.format_response_tool_calls(
-                    raw_tool_calls
-                )
+                formatted = self._provider.format_response_tool_calls(raw_tool_calls)
+                generation_info["tool_calls"] = formatted
         message = AIMessage(
             content=content or "",
             additional_kwargs=generation_info,
