@@ -52,7 +52,6 @@ from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_function
 from langchain_openai import ChatOpenAI
-from oci_openai.oci_openai import _resolve_base_url
 from openai import DefaultHttpxClient
 from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
@@ -1611,6 +1610,14 @@ class ChatOCIOpenAI(ChatOpenAI):
         base_url: Optional[str] = None,
         **kwargs: Any,
     ):
+        try:
+            from oci_openai.oci_openai import _resolve_base_url
+        except ImportError as e:
+            raise ImportError(
+                "Could not import _resolve_base_url. "
+                "Please install: pip install oci-openai"
+            ) from e
+
         super().__init__(
             model=model,
             api_key=SecretStr(API_KEY),
