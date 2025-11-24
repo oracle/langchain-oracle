@@ -1,6 +1,6 @@
 # Copyright (c) 2023 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-
+import importlib
 import json
 import re
 import uuid
@@ -21,6 +21,7 @@ from typing import (
     Union,
 )
 
+import httpx
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import (
@@ -50,12 +51,18 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_function
-from pydantic import BaseModel, ConfigDict
+from langchain_openai import ChatOpenAI
+from openai import DefaultHttpxClient
+from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
 from langchain_oci.llms.oci_generative_ai import OCIGenAIBase
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"
+API_KEY = "<NOTUSED>"
+COMPARTMENT_ID_HEADER = "opc-compartment-id"
+CONVERSATION_STORE_ID_HEADER = "opc-conversation-store-id"
+OUTPUT_VERSION = "responses/v1"
 
 # Mapping of JSON schema types to Python types
 JSON_TO_PYTHON_TYPES = {
@@ -1463,3 +1470,184 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     ),
                     generation_info=generation_info,
                 )
+
+
+class ChatOCIOpenAI(ChatOpenAI):
+    """A custom OCI OpenAI client implementation conforming to OpenAI Responses API.
+
+    Setup:
+      Install ``openai`` and ``langchain-openai``.
+
+      .. code-block:: bash
+
+          pip install -U openai langchain-openai langchain-oci
+
+    Attributes:
+        auth (httpx.Auth): Authentication handler for OCI request signing.
+        compartment_id (str): OCI compartment ID for resource isolation
+        model (str): Name of OpenAI model to use.
+        conversation_store_id (str | None): Conversation Store Id to use
+                                            when generating responses.
+                                            Must be provided if store is set to False
+        region (str | None): The OCI service region, e.g., 'us-chicago-1'.
+                             Must be provided if service_endpoint and base_url are None
+        service_endpoint (str | None): The OCI service endpoint. when service_endpoint
+                                       is provided, the region will be ignored.
+        base_url (str | None): The OCI service full path URL.
+                               when base_url is provided, the region
+                               and service_endpoint will be ignored.
+
+    Instantiate:
+        .. code-block:: python
+
+            from oci_openai import OciResourcePrincipalAuth
+            from langchain_oci import ChatOCIOpenAI
+
+            client = ChatOCIOpenAI(
+                auth=OciResourcePrincipalAuth(),
+                compartment_id=COMPARTMENT_ID,
+                region="us-chicago-1",
+                model=MODEL,
+                conversation_store_id=CONVERSATION_STORE_ID,
+            )
+
+    Invoke:
+        .. code-block:: python
+
+            messages = [
+                (
+                    "system",
+                    "You are a helpful translator. Translate the user
+                     sentence to French.",
+                ),
+                ("human", "I love programming."),
+            ]
+            response = client.invoke(messages)
+
+    Prompt Chaining:
+        .. code-block:: python
+
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You are a helpful assistant that translates
+                        {input_language} to {output_language}.",
+                    ),
+                    ("human", "{input}"),
+                ]
+            )
+            chain = prompt | client
+            response = chain.invoke(
+                {
+                    "input_language": "English",
+                    "output_language": "German",
+                    "input": "I love programming.",
+                }
+            )
+
+    Function Calling:
+        .. code-block:: python
+
+            class GetWeather(BaseModel):
+                location: str = Field(
+                    ..., description="The city and state, e.g. San Francisco, CA"
+                )
+
+
+            llm_with_tools = client.bind_tools([GetWeather])
+            ai_msg = llm_with_tools.invoke(
+                "what is the weather like in San Francisco",
+            )
+            response = ai_msg.tool_calls
+
+    Web Search:
+        .. code-block:: python
+
+            tool = {"type": "web_search_preview"}
+            llm_with_tools = client.bind_tools([tool])
+            response = llm_with_tools.invoke("What was a
+            positive news story from today?")
+
+    Hosted MCP Calling:
+        .. code-block:: python
+
+             llm_with_mcp_tools = client.bind_tools(
+                [
+                    {
+                        "type": "mcp",
+                        "server_label": "deepwiki",
+                        "server_url": "https://mcp.deepwiki.com/mcp",
+                        "require_approval": "never",
+                    }
+                ]
+            )
+            response = llm_with_mcp_tools.invoke(
+                "What transport protocols does the 2025-03-26 version of the MCP "
+                "spec (modelcontextprotocol/modelcontextprotocol) support?"
+            )
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_openai(cls, values: Any) -> Any:
+        """Checks if langchain_openai is installed."""
+        if not importlib.util.find_spec("langchain_openai"):
+            raise ImportError(
+                "Could not import langchain_openai package. "
+                "Please install it with `pip install langchain_openai`."
+            )
+        return values
+
+    def __init__(
+        self,
+        auth: httpx.Auth,
+        compartment_id: str,
+        model: str,
+        conversation_store_id: Optional[str] = None,
+        region: Optional[str] = None,
+        service_endpoint: Optional[str] = None,
+        base_url: Optional[str] = None,
+        **kwargs: Any,
+    ):
+        try:
+            from oci_openai.oci_openai import _resolve_base_url
+        except ImportError as e:
+            raise ImportError(
+                "Could not import _resolve_base_url. "
+                "Please install: pip install oci-openai"
+            ) from e
+
+        super().__init__(
+            model=model,
+            api_key=SecretStr(API_KEY),
+            http_client=DefaultHttpxClient(
+                auth=auth,
+                headers=_build_headers(
+                    compartment_id=compartment_id,
+                    conversation_store_id=conversation_store_id,
+                    **kwargs,
+                ),
+            ),
+            base_url=_resolve_base_url(
+                region=region, service_endpoint=service_endpoint, base_url=base_url
+            ),
+            use_responses_api=True,
+            output_version=OUTPUT_VERSION,
+            **kwargs,
+        )
+
+
+def _build_headers(compartment_id, conversation_store_id=None, **kwargs):
+    store = kwargs.get("store", True)
+
+    headers = {COMPARTMENT_ID_HEADER: compartment_id}
+
+    if store:
+        if conversation_store_id is None:
+            raise ValueError(
+                "Conversation Store Id must be provided when store is set to True"
+            )
+        headers[CONVERSATION_STORE_ID_HEADER] = conversation_store_id
+
+    return headers
