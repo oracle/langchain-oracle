@@ -1314,7 +1314,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         )
         if use_parallel:
             # Validate Llama 3.x doesn't support parallel tool calls (early check)
-            if "llama" in self.model_id.lower() and not self._supports_parallel_tool_calls(self.model_id):
+            is_llama = "llama" in self.model_id.lower()
+            if is_llama and not self._supports_parallel_tool_calls(self.model_id):
                 raise ValueError(
                     f"Parallel tool calls not supported for {self.model_id}. "
                     "Only Llama 4+ models support this feature. "
