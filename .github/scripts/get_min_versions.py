@@ -1,8 +1,12 @@
 import sys
 
-import tomllib
 from packaging.version import parse as parse_version
 import re
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import pip._vendor.tomli as tomllib
 
 MIN_VERSION_LIBS = ["langchain-core"]
 
