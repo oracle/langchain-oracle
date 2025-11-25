@@ -82,9 +82,9 @@ def test_parallel_tool_calling_enabled():
     logging.info("\nQuery: 'What's the weather in New York City?'")
 
     start_time = time.time()
-    response = chat_with_tools.invoke([
-        HumanMessage(content="What's the weather in New York City?")
-    ])
+    response = chat_with_tools.invoke(
+        [HumanMessage(content="What's the weather in New York City?")]
+    )
     elapsed_time = time.time() - start_time
 
     logging.info(f"\nResponse time: {elapsed_time:.2f}s")
@@ -135,9 +135,9 @@ def test_parallel_tool_calling_disabled():
     logging.info("\nQuery: 'What's the weather in New York City?'")
 
     start_time = time.time()
-    response = chat_with_tools.invoke([
-        HumanMessage(content="What's the weather in New York City?")
-    ])
+    response = chat_with_tools.invoke(
+        [HumanMessage(content="What's the weather in New York City?")]
+    )
     elapsed_time = time.time() - start_time
 
     logging.info(f"\nResponse time: {elapsed_time:.2f}s")
@@ -181,14 +181,14 @@ def test_bind_tools_override():
     # Override with True in bind_tools
     chat_with_tools = chat.bind_tools(
         [get_weather, get_population],
-        parallel_tool_calls=True  # Override to enable
+        parallel_tool_calls=True,  # Override to enable
     )
 
     logging.info("\nQuery: 'What's the weather and population of Tokyo?'")
 
-    response = chat_with_tools.invoke([
-        HumanMessage(content="What's the weather and population of Tokyo?")
-    ])
+    response = chat_with_tools.invoke(
+        [HumanMessage(content="What's the weather and population of Tokyo?")]
+    )
 
     logging.info(f"\nResponse content: {response.content}")
     logging.info(f"Tool calls count: {len(response.tool_calls)}")
@@ -219,17 +219,14 @@ def test_cohere_model_error():
     )
 
     # Try to enable parallel tool calls with Cohere (should fail)
-    chat_with_tools = chat.bind_tools(
-        [get_weather],
-        parallel_tool_calls=True
-    )
+    chat_with_tools = chat.bind_tools([get_weather], parallel_tool_calls=True)
 
     logging.info("\nAttempting to use parallel_tool_calls with Cohere model...")
 
     try:
-        _ = chat_with_tools.invoke([
-            HumanMessage(content="What's the weather in Paris?")
-        ])
+        _ = chat_with_tools.invoke(
+            [HumanMessage(content="What's the weather in Paris?")]
+        )
         logging.info("❌ TEST FAILED: Should have raised ValueError")
         return False
     except ValueError as e:
@@ -313,6 +310,7 @@ def main():
     except Exception as e:
         logging.info(f"\n❌ ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
