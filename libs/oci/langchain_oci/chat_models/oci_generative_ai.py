@@ -1292,10 +1292,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 - False or None: no effect, default Meta behavior.
             parallel_tool_calls: Whether to enable parallel function calling.
                 If True, the model can call multiple tools simultaneously.
-                If False, tools are called sequentially.
-                If None (default), uses the class-level parallel_tool_calls setting.
-                Supported for models using GenericChatRequest (Meta, Llama, xAI Grok,
-                OpenAI, Mistral). Not supported for Cohere models.
+                If False or None (default), tools are called sequentially.
+                Supported for models using GenericChatRequest (Meta Llama 4+, xAI Grok,
+                OpenAI, Mistral). Not supported for Cohere models or Llama 3.x.
             kwargs: Any additional parameters are passed directly to
                 :meth:`~langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI.bind`.
         """
@@ -1305,14 +1304,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if tool_choice is not None:
             kwargs["tool_choice"] = self._provider.process_tool_choice(tool_choice)
 
-        # Add parallel tool calls support
-        # Use bind-time parameter if provided, else fall back to class default
-        use_parallel = (
-            parallel_tool_calls
-            if parallel_tool_calls is not None
-            else self.parallel_tool_calls
-        )
-        if use_parallel:
+        # Add parallel tool calls support (only when explicitly enabled)
+        if parallel_tool_calls:
             # Validate Llama 3.x doesn't support parallel tool calls (early check)
             is_llama = "llama" in self.model_id.lower()
             if is_llama and not self._supports_parallel_tool_calls(self.model_id):

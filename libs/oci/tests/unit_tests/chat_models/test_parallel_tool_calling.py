@@ -9,28 +9,6 @@ from langchain_oci.chat_models import ChatOCIGenAI
 
 
 @pytest.mark.requires("oci")
-def test_parallel_tool_calls_class_level():
-    """Test class-level parallel_tool_calls parameter."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
-        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
-        parallel_tool_calls=True,
-        client=oci_gen_ai_client,
-    )
-    assert llm.parallel_tool_calls is True
-
-
-@pytest.mark.requires("oci")
-def test_parallel_tool_calls_default_false():
-    """Test that parallel_tool_calls defaults to False."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
-        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8", client=oci_gen_ai_client
-    )
-    assert llm.parallel_tool_calls is False
-
-
-@pytest.mark.requires("oci")
 def test_parallel_tool_calls_bind_tools_explicit_true():
     """Test parallel_tool_calls=True in bind_tools."""
     oci_gen_ai_client = MagicMock()
@@ -70,13 +48,11 @@ def test_parallel_tool_calls_bind_tools_explicit_false():
 
 
 @pytest.mark.requires("oci")
-def test_parallel_tool_calls_bind_tools_uses_class_default():
-    """Test that bind_tools uses class default when not specified."""
+def test_parallel_tool_calls_bind_tools_default_none():
+    """Test that bind_tools without parallel_tool_calls doesn't enable it."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
-        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
-        parallel_tool_calls=True,  # Set class default
-        client=oci_gen_ai_client,
+        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8", client=oci_gen_ai_client
     )
 
     def tool1(x: int) -> int:
@@ -86,28 +62,7 @@ def test_parallel_tool_calls_bind_tools_uses_class_default():
     # Don't specify parallel_tool_calls in bind_tools
     llm_with_tools = llm.bind_tools([tool1])
 
-    # Should use class default (True)
-    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True
-
-
-@pytest.mark.requires("oci")
-def test_parallel_tool_calls_bind_tools_overrides_class_default():
-    """Test that bind_tools parameter overrides class default."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
-        model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
-        parallel_tool_calls=True,  # Set class default to True
-        client=oci_gen_ai_client,
-    )
-
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x + 1
-
-    # Override with False in bind_tools
-    llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=False)
-
-    # Should not set the parameter when explicitly False
+    # Should not have is_parallel_tool_calls set
     assert "is_parallel_tool_calls" not in llm_with_tools.kwargs
 
 
@@ -149,32 +104,6 @@ def test_parallel_tool_calls_cohere_raises_error():
         return x + 1
 
     llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=True)
-
-    # Should raise ValueError when trying to prepare request
-    with pytest.raises(ValueError, match="not supported for Cohere"):
-        llm_with_tools._prepare_request(
-            [HumanMessage(content="test")],
-            stop=None,
-            stream=False,
-            **llm_with_tools.kwargs,
-        )
-
-
-@pytest.mark.requires("oci")
-def test_parallel_tool_calls_cohere_class_level_raises_error():
-    """Test that Cohere models with class-level parallel_tool_calls raise error."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
-        model_id="cohere.command-r-plus",
-        parallel_tool_calls=True,  # Set at class level
-        client=oci_gen_ai_client,
-    )
-
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x + 1
-
-    llm_with_tools = llm.bind_tools([tool1])  # Uses class default
 
     # Should raise ValueError when trying to prepare request
     with pytest.raises(ValueError, match="not supported for Cohere"):
