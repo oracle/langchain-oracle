@@ -4,16 +4,16 @@ version = "0.2.0"
 description = "An integration package connecting OCI and LangChain"
 readme = "README.md"
 license = "UPL-1.0"
-requires-python = ">=3.9,<4.0"
+requires-python = ">=3.10,<4.0"
 dependencies = [
-    "langchain-core>=0.3.78,<1.0.0",
-    "langchain>=0.3.20,<1.0.0",
+    "langchain-core>=1.0.0,<2.0.0",
+    "langchain>=1.0.0,<2.0.0",
     "oci>=2.161.0",
     "pydantic>=2,<3",
     "aiohttp>=3.12.14",
     "openai>=2.6.1",
     "oci-openai>=1.0.0",
-    "langchain-openai>=0.3.35",
+    "langchain-openai>=1.0.0,<2.0.0",
 ]
 
 [project.urls]
@@ -32,13 +32,13 @@ pytest-cov = "^4.1.0"
 syrupy = "^4.0.2"
 pytest-asyncio = "^0.23.2"
 pytest-watcher = "^0.3.4"
-langchain-tests = "^0.3.12"
+langchain-tests = "^1.0.0"
 pytest-socket = "^0.7.0"
 pytest-mock = "^3.15.0"
 pytest-httpx = "^0.28.0"
 responses = "^0.25.8"
-langgraph = "^0.2.0"
-langchain-openai = "^0.3.35"
+langgraph = "^0.4.0"
+langchain-openai = "^1.0.0"
 
 
 [tool.poetry.group.codespell]
@@ -51,7 +51,7 @@ codespell = "^2.2.6"
 optional = true
 
 [tool.poetry.group.test_integration.dependencies]
-langgraph = "^0.2.0"
+langgraph = "^0.4.0"
 
 [tool.poetry.group.lint]
 optional = true
