@@ -132,16 +132,13 @@ Enable parallel tool calling to execute multiple tools simultaneously, improving
 ```python
 from langchain_oci import ChatOCIGenAI
 
-# Option 1: Set at class level for all tool bindings
 llm = ChatOCIGenAI(
     model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="MY_COMPARTMENT_ID",
-    parallel_tool_calls=True  # Enable parallel tool calling
 )
 
-# Option 2: Set per-binding
-llm = ChatOCIGenAI(model_id="meta.llama-4-maverick-17b-128e-instruct-fp8")
+# Enable parallel tool calling in bind_tools
 llm_with_tools = llm.bind_tools(
     [get_weather, calculate_tip, get_population],
     parallel_tool_calls=True  # Tools can execute simultaneously
