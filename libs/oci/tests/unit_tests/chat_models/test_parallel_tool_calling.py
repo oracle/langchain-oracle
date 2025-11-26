@@ -99,7 +99,7 @@ def test_parallel_tool_calls_passed_to_oci_api_meta():
 
 @pytest.mark.requires("oci")
 def test_parallel_tool_calls_cohere_raises_error():
-    """Test that Cohere models raise error for parallel tool calls."""
+    """Test that Cohere models raise error for parallel tool calls at bind_tools."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="cohere.command-r-plus", client=oci_gen_ai_client)
 
@@ -107,84 +107,14 @@ def test_parallel_tool_calls_cohere_raises_error():
         """Tool 1."""
         return x + 1
 
-    llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=True)
-
-    # Should raise ValueError when trying to prepare request
-    # RunnableBinding has _prepare_request and kwargs attributes at runtime
-    with pytest.raises(ValueError, match="not supported for Cohere"):
-        llm_with_tools._prepare_request(  # type: ignore[attr-defined]
-            [HumanMessage(content="test")],
-            stop=None,
-            stream=False,
-            **llm_with_tools.kwargs,  # type: ignore[attr-defined]
-        )
-
-
-@pytest.mark.requires("oci")
-def test_version_filter_llama_3_0_blocked():
-    """Test that Llama 3.0 models are blocked from parallel tool calling."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(model_id="meta.llama-3-70b-instruct", client=oci_gen_ai_client)
-
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x + 1
-
-    # Should raise ValueError when trying to enable parallel tool calling
-    with pytest.raises(ValueError, match="Llama 4\\+"):
+    # Should raise ValueError at bind_tools time (not at request time)
+    with pytest.raises(ValueError, match="not supported"):
         llm.bind_tools([tool1], parallel_tool_calls=True)
 
 
 @pytest.mark.requires("oci")
-def test_version_filter_llama_3_1_blocked():
-    """Test that Llama 3.1 models are blocked from parallel tool calling."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(model_id="meta.llama-3.1-70b-instruct", client=oci_gen_ai_client)
-
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x + 1
-
-    # Should raise ValueError
-    with pytest.raises(ValueError, match="Llama 4\\+"):
-        llm.bind_tools([tool1], parallel_tool_calls=True)
-
-
-@pytest.mark.requires("oci")
-def test_version_filter_llama_3_2_blocked():
-    """Test that Llama 3.2 models are blocked from parallel tool calling."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
-        model_id="meta.llama-3.2-11b-vision-instruct", client=oci_gen_ai_client
-    )
-
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x + 1
-
-    # Should raise ValueError
-    with pytest.raises(ValueError, match="Llama 4\\+"):
-        llm.bind_tools([tool1], parallel_tool_calls=True)
-
-
-@pytest.mark.requires("oci")
-def test_version_filter_llama_3_3_blocked():
-    """Test that Llama 3.3 models are blocked from parallel tool calling."""
-    oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
-
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x + 1
-
-    # Should raise ValueError - Llama 3.3 doesn't actually support parallel calls
-    with pytest.raises(ValueError, match="Llama 4\\+"):
-        llm.bind_tools([tool1], parallel_tool_calls=True)
-
-
-@pytest.mark.requires("oci")
-def test_version_filter_llama_4_allowed():
-    """Test that Llama 4 models are allowed parallel tool calling."""
+def test_parallel_tool_calls_meta_allowed():
+    """Test that Meta models are allowed parallel tool calling."""
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(
         model_id="meta.llama-4-maverick-17b-128e-instruct-fp8", client=oci_gen_ai_client
@@ -201,11 +131,11 @@ def test_version_filter_llama_4_allowed():
 
 
 @pytest.mark.requires("oci")
-def test_version_filter_other_models_allowed():
+def test_parallel_tool_calls_other_generic_models_allowed():
     """Test that other GenericChatRequest models are allowed parallel tool calling."""
     oci_gen_ai_client = MagicMock()
 
-    # Test with xAI Grok
+    # Test with xAI Grok (uses GenericProvider)
     llm_grok = ChatOCIGenAI(model_id="xai.grok-4-fast", client=oci_gen_ai_client)
 
     def tool1(x: int) -> int:
@@ -219,23 +149,18 @@ def test_version_filter_other_models_allowed():
 
 
 @pytest.mark.requires("oci")
-def test_version_filter_supports_parallel_tool_calls_method():
-    """Test the _supports_parallel_tool_calls method directly."""
+def test_provider_supports_parallel_tool_calls_property():
+    """Test the provider supports_parallel_tool_calls property."""
     oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
+
+    # Meta model uses GenericProvider which supports parallel tool calls
+    llm_meta = ChatOCIGenAI(
         model_id="meta.llama-4-maverick-17b-128e-instruct-fp8", client=oci_gen_ai_client
     )
+    assert llm_meta._provider.supports_parallel_tool_calls is True
 
-    # Test various model IDs
-    model_id = "meta.llama-4-maverick-17b-128e-instruct-fp8"
-    assert llm._supports_parallel_tool_calls(model_id) is True
-    # Llama 3.3 NOT supported
-    assert llm._supports_parallel_tool_calls("meta.llama-3.3-70b-instruct") is False
-    model_id = "meta.llama-3.2-11b-vision-instruct"
-    assert llm._supports_parallel_tool_calls(model_id) is False
-    assert llm._supports_parallel_tool_calls("meta.llama-3.1-70b-instruct") is False
-    assert llm._supports_parallel_tool_calls("meta.llama-3-70b-instruct") is False
-    assert llm._supports_parallel_tool_calls("cohere.command-r-plus") is False
-    assert llm._supports_parallel_tool_calls("xai.grok-4-fast") is True
-    assert llm._supports_parallel_tool_calls("openai.gpt-4") is True
-    assert llm._supports_parallel_tool_calls("mistral.mistral-large") is True
+    # Cohere model uses CohereProvider which does NOT support parallel tool calls
+    llm_cohere = ChatOCIGenAI(
+        model_id="cohere.command-r-plus", client=oci_gen_ai_client
+    )
+    assert llm_cohere._provider.supports_parallel_tool_calls is False
