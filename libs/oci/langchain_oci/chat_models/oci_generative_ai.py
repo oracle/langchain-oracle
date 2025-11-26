@@ -363,6 +363,14 @@ class CohereProvider(Provider):
 
         This includes conversion of chat history and tool call results.
         """
+        # Cohere models don't support parallel tool calls
+        if kwargs.get("is_parallel_tool_calls"):
+            raise ValueError(
+                "Parallel tool calls are not supported for Cohere models. "
+                "This feature is only available for models using GenericChatRequest "
+                "(Meta, Llama, xAI Grok, OpenAI, Mistral)."
+            )
+
         is_force_single_step = kwargs.get("is_force_single_step", False)
         oci_chat_history = []
 
@@ -851,6 +859,10 @@ class GenericProvider(Provider):
                 result["tool_choice"] = self.oci_tool_choice_none()
             # else: Allow model to decide (default behavior)
 
+        # Add parallel tool calls support (GenericChatRequest models)
+        if "is_parallel_tool_calls" in kwargs:
+            result["is_parallel_tool_calls"] = kwargs["is_parallel_tool_calls"]
+
         return result
 
     def _process_message_content(
@@ -1204,6 +1216,52 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         return request
 
+    def _supports_parallel_tool_calls(self, model_id: str) -> bool:
+        """Check if the model supports parallel tool calling.
+
+        Parallel tool calling is supported for:
+        - Llama 4+ only (tested and verified)
+        - Other GenericChatRequest models (xAI Grok, OpenAI, Mistral)
+
+        Not supported for:
+        - All Llama 3.x versions (3.0, 3.1, 3.2, 3.3)
+        - Cohere models
+
+        Args:
+            model_id: The model identifier
+                (e.g., "meta.llama-4-maverick-17b-128e-instruct-fp8")
+
+        Returns:
+            bool: True if model supports parallel tool calling, False otherwise
+        """
+        import re
+
+        # Extract provider from model_id
+        # (e.g., "meta" from "meta.llama-4-maverick-17b-128e-instruct-fp8")
+        provider = model_id.split(".")[0].lower()
+
+        # Cohere models don't support parallel tool calling
+        if provider == "cohere":
+            return False
+
+        # For Meta/Llama models, check version
+        if provider == "meta" and "llama" in model_id.lower():
+            # Extract version number
+            # (e.g., "4" from "meta.llama-4-maverick-17b-128e-instruct-fp8")
+            version_match = re.search(r"llama-(\d+)", model_id.lower())
+            if version_match:
+                major = int(version_match.group(1))
+
+                # Only Llama 4+ supports parallel tool calling
+                # Llama 3.x (including 3.3) does NOT support it based on testing
+                if major >= 4:
+                    return True
+
+                return False
+
+        # Other GenericChatRequest models (xAI Grok, OpenAI, Mistral) support it
+        return True
+
     def bind_tools(
         self,
         tools: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
@@ -1211,6 +1269,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "none", "required", "any"], bool]
         ] = None,
+        parallel_tool_calls: Optional[bool] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, BaseMessage]:
         """Bind tool-like objects to this chat model.
@@ -1231,6 +1290,11 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     {"type": "function", "function": {"name": <<tool_name>>}}:
                 calls <<tool_name>> tool.
                 - False or None: no effect, default Meta behavior.
+            parallel_tool_calls: Whether to enable parallel function calling.
+                If True, the model can call multiple tools simultaneously.
+                If False or None (default), tools are called sequentially.
+                Supported for models using GenericChatRequest (Meta Llama 4+, xAI Grok,
+                OpenAI, Mistral). Not supported for Cohere models or Llama 3.x.
             kwargs: Any additional parameters are passed directly to
                 :meth:`~langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI.bind`.
         """
@@ -1239,6 +1303,18 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
         if tool_choice is not None:
             kwargs["tool_choice"] = self._provider.process_tool_choice(tool_choice)
+
+        # Add parallel tool calls support (only when explicitly enabled)
+        if parallel_tool_calls:
+            # Validate Llama 3.x doesn't support parallel tool calls (early check)
+            is_llama = "llama" in self.model_id.lower()
+            if is_llama and not self._supports_parallel_tool_calls(self.model_id):
+                raise ValueError(
+                    f"Parallel tool calls not supported for {self.model_id}. "
+                    "Only Llama 4+ models support this feature. "
+                    "Llama 3.x (including 3.3) don't support parallel calls."
+                )
+            kwargs["is_parallel_tool_calls"] = True
 
         return super().bind(tools=formatted_tools, **kwargs)
 
