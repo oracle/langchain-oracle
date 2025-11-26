@@ -385,7 +385,7 @@ def test_chat_graph(httpx_mock, auth_instance, oci_openai_client):
     # ---- Act ----
     app = workflow.compile()
     input_message = HumanMessage(content="What is the capital of France?")
-    result = app.invoke({"messages": [input_message]})
+    result = app.invoke({"messages": [input_message]})  # type: ignore[arg-type]
 
     # ---- Assert ----
     content = result["messages"][1].content[0]
