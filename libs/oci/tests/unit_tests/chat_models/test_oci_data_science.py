@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, Dict, Generator, Optional
 from unittest import mock
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessageChunk
 from requests.exceptions import HTTPError
 
 from langchain_oci.chat_models import (
@@ -145,7 +145,7 @@ def test_stream_vllm(*args: Any) -> None:
         endpoint=CONST_ENDPOINT, model=CONST_MODEL_NAME, streaming=True
     )
     assert llm._headers().get("route") == CONST_COMPLETION_ROUTE
-    output: Optional[AIMessageChunk] = None
+    output: Optional[BaseMessageChunk] = None
     count = 0
     for chunk in llm.stream(CONST_PROMPT):
         assert isinstance(chunk, AIMessageChunk)
@@ -156,8 +156,7 @@ def test_stream_vllm(*args: Any) -> None:
         count += 1
     assert count == 5
     assert output is not None
-    if output is not None:
-        assert str(output.content).strip() == CONST_COMPLETION
+    assert str(output.content).strip() == CONST_COMPLETION
 
 
 async def mocked_async_streaming_response(
