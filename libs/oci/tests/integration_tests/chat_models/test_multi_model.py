@@ -26,7 +26,6 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
-
 # =============================================================================
 # Model Configurations
 # =============================================================================
@@ -252,9 +251,7 @@ def test_grok_structured_output(model_id: str):
     llm = create_llm(model_id)
     structured_llm = llm.with_structured_output(Summary)
 
-    result = structured_llm.invoke(
-        "Summarize: The Earth orbits the Sun once per year."
-    )
+    result = structured_llm.invoke("Summarize: The Earth orbits the Sun once per year.")
 
     # Grok may return None in some cases
     if result is not None:
@@ -350,9 +347,7 @@ def test_openai_tool_calling(model_id: str):
     llm = create_openai_llm(model_id)
     llm_with_tools = llm.bind_tools([get_info])
 
-    response = llm_with_tools.invoke(
-        [HumanMessage(content="Get info about Python")]
-    )
+    response = llm_with_tools.invoke([HumanMessage(content="Get info about Python")])
 
     assert isinstance(response, AIMessage)
     # OpenAI models should call the tool
@@ -466,39 +461,3 @@ def test_fast_models_respond_quickly():
         llm = create_llm(model_id, max_tokens=50)
         response = llm.invoke([HumanMessage(content="Hi")])
         assert isinstance(response, AIMessage)
-
-
-def main():
-    """Manual test runner for debugging."""
-    import sys
-
-    print("=" * 60)
-    print("Multi-Model Integration Tests")
-    print("=" * 60)
-
-    config = get_config()
-    print(f"\nEndpoint: {config['service_endpoint']}")
-    print(f"Profile: {config['auth_profile']}")
-
-    # Test each vendor
-    test_models = [
-        ("Meta Llama 4", "meta.llama-4-maverick-17b-128e-instruct-fp8"),
-        ("Cohere Command", "cohere.command-a-03-2025"),
-        ("xAI Grok", "xai.grok-3-mini-fast"),
-    ]
-
-    for name, model_id in test_models:
-        print(f"\n--- Testing {name} ({model_id}) ---")
-        try:
-            llm = create_llm(model_id)
-            response = llm.invoke([HumanMessage(content="Say hello")])
-            print(f"✓ Response: {response.content[:50]}...")
-        except Exception as e:
-            print(f"✗ Error: {e}")
-
-    print("\n" + "=" * 60)
-    print("Manual tests complete")
-
-
-if __name__ == "__main__":
-    main()

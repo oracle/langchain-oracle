@@ -16,7 +16,6 @@ Run with:
 """
 
 import os
-import sys
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -363,62 +362,3 @@ def test_tool_calls_structure(chat_model):
         assert "id" in tc
         assert "type" in tc
         assert tc["type"] == "tool_call"
-
-
-def main():
-    """Run tests manually for debugging."""
-    import langchain_core
-
-    print(f"langchain-core version: {langchain_core.__version__}")
-    print(f"Python version: {sys.version}")
-
-    config = get_test_config()
-    print(f"\nTest configuration:")
-    print(f"  Model: {config['model_id']}")
-    print(f"  Endpoint: {config['service_endpoint']}")
-    print(f"  Profile: {config['auth_profile']}")
-
-    chat = ChatOCIGenAI(
-        model_id=config["model_id"],
-        service_endpoint=config["service_endpoint"],
-        compartment_id=config["compartment_id"],
-        auth_profile=config["auth_profile"],
-        auth_type=config["auth_type"],
-        model_kwargs={"temperature": 0, "max_tokens": 256},
-    )
-
-    print("\n" + "=" * 60)
-    print("Running manual tests...")
-    print("=" * 60)
-
-    # Test 1: Basic invoke
-    print("\n1. Testing basic invoke...")
-    response = chat.invoke([HumanMessage(content="Say hello")])
-    print(f"   Response: {response.content[:50]}...")
-    print(f"   Type: {type(response).__name__}")
-
-    # Test 2: Tool calling
-    print("\n2. Testing tool calling...")
-    chat_tools = chat.bind_tools([get_weather])
-    response = chat_tools.invoke([HumanMessage(content="Weather in Tokyo?")])
-    print(f"   Tool calls: {response.tool_calls}")
-
-    # Test 3: Structured output
-    print("\n3. Testing structured output...")
-    structured = chat.with_structured_output(Joke)
-    joke = structured.invoke("Tell a joke")
-    print(f"   Setup: {joke.setup}")
-    print(f"   Punchline: {joke.punchline}")
-
-    # Test 4: Streaming
-    print("\n4. Testing streaming...")
-    chunks = list(chat.stream([HumanMessage(content="Count 1-3")]))
-    print(f"   Chunks received: {len(chunks)}")
-
-    print("\n" + "=" * 60)
-    print("All manual tests completed!")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()
