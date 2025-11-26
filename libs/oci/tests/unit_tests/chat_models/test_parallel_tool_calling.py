@@ -26,7 +26,8 @@ def test_parallel_tool_calls_bind_tools_explicit_true():
 
     llm_with_tools = llm.bind_tools([tool1, tool2], parallel_tool_calls=True)
 
-    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True
+    # RunnableBinding has kwargs attribute at runtime
+    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True  # type: ignore[attr-defined]
 
 
 @pytest.mark.requires("oci")
@@ -44,7 +45,8 @@ def test_parallel_tool_calls_bind_tools_explicit_false():
     llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=False)
 
     # When explicitly False, should not set the parameter
-    assert "is_parallel_tool_calls" not in llm_with_tools.kwargs
+    # RunnableBinding has kwargs attribute at runtime
+    assert "is_parallel_tool_calls" not in llm_with_tools.kwargs  # type: ignore[attr-defined]
 
 
 @pytest.mark.requires("oci")
@@ -63,7 +65,8 @@ def test_parallel_tool_calls_bind_tools_default_none():
     llm_with_tools = llm.bind_tools([tool1])
 
     # Should not have is_parallel_tool_calls set
-    assert "is_parallel_tool_calls" not in llm_with_tools.kwargs
+    # RunnableBinding has kwargs attribute at runtime
+    assert "is_parallel_tool_calls" not in llm_with_tools.kwargs  # type: ignore[attr-defined]
 
 
 @pytest.mark.requires("oci")
@@ -81,11 +84,12 @@ def test_parallel_tool_calls_passed_to_oci_api_meta():
     llm_with_tools = llm.bind_tools([get_weather], parallel_tool_calls=True)
 
     # Prepare a request
-    request = llm_with_tools._prepare_request(
+    # RunnableBinding has _prepare_request and kwargs attributes at runtime
+    request = llm_with_tools._prepare_request(  # type: ignore[attr-defined]
         [HumanMessage(content="What's the weather?")],
         stop=None,
         stream=False,
-        **llm_with_tools.kwargs,
+        **llm_with_tools.kwargs,  # type: ignore[attr-defined]
     )
 
     # Verify is_parallel_tool_calls is in the request
@@ -106,12 +110,13 @@ def test_parallel_tool_calls_cohere_raises_error():
     llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=True)
 
     # Should raise ValueError when trying to prepare request
+    # RunnableBinding has _prepare_request and kwargs attributes at runtime
     with pytest.raises(ValueError, match="not supported for Cohere"):
-        llm_with_tools._prepare_request(
+        llm_with_tools._prepare_request(  # type: ignore[attr-defined]
             [HumanMessage(content="test")],
             stop=None,
             stream=False,
-            **llm_with_tools.kwargs,
+            **llm_with_tools.kwargs,  # type: ignore[attr-defined]
         )
 
 
@@ -191,7 +196,8 @@ def test_version_filter_llama_4_allowed():
 
     # Should NOT raise ValueError
     llm_with_tools = llm.bind_tools([tool1], parallel_tool_calls=True)
-    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True
+    # RunnableBinding has kwargs attribute at runtime
+    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True  # type: ignore[attr-defined]
 
 
 @pytest.mark.requires("oci")
@@ -208,7 +214,8 @@ def test_version_filter_other_models_allowed():
 
     # Should NOT raise ValueError for Grok
     llm_with_tools = llm_grok.bind_tools([tool1], parallel_tool_calls=True)
-    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True
+    # RunnableBinding has kwargs attribute at runtime
+    assert llm_with_tools.kwargs.get("is_parallel_tool_calls") is True  # type: ignore[attr-defined]
 
 
 @pytest.mark.requires("oci")

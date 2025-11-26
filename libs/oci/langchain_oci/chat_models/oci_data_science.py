@@ -763,7 +763,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         }
         return ChatResult(generations=generations, llm_output=llm_output)
 
-    def bind_tools(
+    def bind_tools(  # type: ignore[override]
         self,
         tools: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
         **kwargs: Any,

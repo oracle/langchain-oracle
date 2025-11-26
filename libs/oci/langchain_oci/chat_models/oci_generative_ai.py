@@ -943,8 +943,8 @@ class GenericProvider(Provider):
                     "required": parameters.get("required", []),
                 },
             )
-        elif isinstance(tool, BaseTool):  # type: ignore[unreachable]
-            return self.oci_function_definition(  # type: ignore[unreachable]
+        elif isinstance(tool, BaseTool):
+            return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
                     tool.name, tool.description
@@ -1262,7 +1262,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         # Other GenericChatRequest models (xAI Grok, OpenAI, Mistral) support it
         return True
 
-    def bind_tools(
+    def bind_tools(  # type: ignore[override]
         self,
         tools: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
         *,
@@ -1307,10 +1307,11 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         # Add parallel tool calls support (only when explicitly enabled)
         if parallel_tool_calls:
             # Validate Llama 3.x doesn't support parallel tool calls (early check)
-            is_llama = "llama" in self.model_id.lower()
-            if is_llama and not self._supports_parallel_tool_calls(self.model_id):
+            model_id = self.model_id or ""
+            is_llama = "llama" in model_id.lower()
+            if is_llama and not self._supports_parallel_tool_calls(model_id):
                 raise ValueError(
-                    f"Parallel tool calls not supported for {self.model_id}. "
+                    f"Parallel tool calls not supported for {model_id}. "
                     "Only Llama 4+ models support this feature. "
                     "Llama 3.x (including 3.3) don't support parallel calls."
                 )

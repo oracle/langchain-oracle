@@ -93,18 +93,20 @@ def test_parallel_tool_calling_enabled():
     logging.info(f"\nResponse time: {elapsed_time:.2f}s")
     content = response.content[:200] if response.content else "(empty)"
     logging.info(f"Response content: {content}...")
-    logging.info(f"Tool calls count: {len(response.tool_calls)}")
+    # AIMessage has tool_calls attribute at runtime
+    tool_calls = getattr(response, "tool_calls", [])
+    logging.info(f"Tool calls count: {len(tool_calls)}")
 
-    if response.tool_calls:
+    if tool_calls:
         logging.info("\nTool calls:")
-        for i, tc in enumerate(response.tool_calls, 1):
+        for i, tc in enumerate(tool_calls, 1):
             logging.info(f"  {i}. {tc['name']}({tc['args']})")
     else:
         logging.info("\n⚠️  No tool calls in response.tool_calls")
         logging.info(f"Additional kwargs: {response.additional_kwargs.keys()}")
 
     # Verify we got tool calls
-    count = len(response.tool_calls)
+    count = len(tool_calls)
     assert count >= 1, f"Should have at least one tool call, got {count}"
 
     # Verify parallel_tool_calls was set
@@ -147,15 +149,17 @@ def test_parallel_tool_calling_disabled():
     logging.info(f"\nResponse time: {elapsed_time:.2f}s")
     content = response.content[:200] if response.content else "(empty)"
     logging.info(f"Response content: {content}...")
-    logging.info(f"Tool calls count: {len(response.tool_calls)}")
+    # AIMessage has tool_calls attribute at runtime
+    tool_calls = getattr(response, "tool_calls", [])
+    logging.info(f"Tool calls count: {len(tool_calls)}")
 
-    if response.tool_calls:
+    if tool_calls:
         logging.info("\nTool calls:")
-        for i, tc in enumerate(response.tool_calls, 1):
+        for i, tc in enumerate(tool_calls, 1):
             logging.info(f"  {i}. {tc['name']}({tc['args']})")
 
     # Verify we got tool calls
-    count = len(response.tool_calls)
+    count = len(tool_calls)
     assert count >= 1, f"Should have at least one tool call, got {count}"
 
     logging.info("\n✓ TEST 2 PASSED: Sequential tool calling works")
@@ -194,11 +198,13 @@ def test_multiple_tool_calls():
     )
 
     logging.info(f"\nResponse content: {response.content}")
-    logging.info(f"Tool calls count: {len(response.tool_calls)}")
+    # AIMessage has tool_calls attribute at runtime
+    tool_calls = getattr(response, "tool_calls", [])
+    logging.info(f"Tool calls count: {len(tool_calls)}")
 
-    if response.tool_calls:
+    if tool_calls:
         logging.info("\nTool calls:")
-        for i, tc in enumerate(response.tool_calls, 1):
+        for i, tc in enumerate(tool_calls, 1):
             logging.info(f"  {i}. {tc['name']}({tc['args']})")
 
     logging.info("\n✓ TEST 3 PASSED: Multiple tool calls query works")
@@ -262,7 +268,8 @@ def main():
     logging.info(f"  Endpoint: {endpoint}")
     profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
     logging.info(f"  Profile: {profile}")
-    logging.info(f"  Compartment: {os.environ.get('OCI_COMPARTMENT_ID')[:25]}...")
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID", "")
+    logging.info(f"  Compartment: {compartment_id[:25]}...")
 
     results = []
 

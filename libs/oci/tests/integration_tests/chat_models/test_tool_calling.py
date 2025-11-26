@@ -53,8 +53,8 @@ pytest tests/integration_tests/chat_models/test_tool_calling.py \
 import os
 
 import pytest
-from langchain.tools import StructuredTool
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import StructuredTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -428,7 +428,7 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Invoke agent with a diagnostic scenario
     result = agent.invoke(
-        {
+        {  # type: ignore[arg-type]
             "messages": [
                 SystemMessage(content=system_prompt),
                 HumanMessage(
