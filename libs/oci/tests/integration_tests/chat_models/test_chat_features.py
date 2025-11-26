@@ -19,10 +19,9 @@ from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     SystemMessage,
-    ToolMessage,
 )
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
@@ -212,9 +211,7 @@ def test_tool_choice_none(llm):
     tools = [add_numbers]
     llm_with_tools = llm.bind_tools(tools, tool_choice="none")
 
-    response = llm_with_tools.invoke(
-        [HumanMessage(content="What is 5 plus 3?")]
-    )
+    response = llm_with_tools.invoke([HumanMessage(content="What is 5 plus 3?")])
 
     # Should not make tool calls when tool_choice is none
     assert len(response.tool_calls) == 0
@@ -345,6 +342,7 @@ def test_stop_sequences():
 @pytest.mark.requires("oci")
 def test_invalid_tool_schema(llm):
     """Test handling of invalid tool definitions."""
+
     # Should handle tools without proper docstrings
     def bad_tool(x):
         return x
@@ -379,7 +377,7 @@ def test_system_message_role(llm):
     response_pirate = llm.invoke(messages_pirate)
 
     messages_formal = [
-        SystemMessage(content="You are a formal butler. Use extremely formal language."),
+        SystemMessage(content="You are a formal butler. Use formal language."),
         HumanMessage(content="How are you today?"),
     ]
     response_formal = llm.invoke(messages_formal)
