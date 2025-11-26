@@ -27,7 +27,7 @@ package-mode = true
 optional = true
 
 [tool.poetry.group.test.dependencies]
-pytest = "^7.4.3"
+pytest = "^8.0.0"
 pytest-cov = "^4.1.0"
 syrupy = "^4.0.2"
 pytest-asyncio = "^0.23.2"
@@ -35,9 +35,9 @@ pytest-watcher = "^0.3.4"
 langchain-tests = "^1.0.0"
 pytest-socket = "^0.7.0"
 pytest-mock = "^3.15.0"
-pytest-httpx = "^0.28.0"
+pytest-httpx = ">=0.30.0"
 responses = "^0.25.8"
-langgraph = "^0.4.0"
+langgraph = "^1.0.0"
 langchain-openai = "^1.0.0"
 
 
@@ -51,7 +51,7 @@ codespell = "^2.2.6"
 optional = true
 
 [tool.poetry.group.test_integration.dependencies]
-langgraph = "^0.4.0"
+langgraph = "^1.0.0"
 
 [tool.poetry.group.lint]
 optional = true
