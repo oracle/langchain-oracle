@@ -53,7 +53,7 @@ pytest tests/integration_tests/chat_models/test_tool_calling.py \
 import os
 
 import pytest
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
