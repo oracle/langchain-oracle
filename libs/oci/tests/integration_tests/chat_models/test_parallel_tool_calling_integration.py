@@ -227,19 +227,15 @@ def test_cohere_model_error():
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
     )
 
-    # Try to enable parallel tool calls with Cohere (should fail)
-    chat_with_tools = chat.bind_tools([get_weather], parallel_tool_calls=True)
-
     logging.info("\nAttempting to use parallel_tool_calls with Cohere model...")
 
+    # Try to enable parallel tool calls with Cohere (should fail at bind_tools)
     try:
-        _ = chat_with_tools.invoke(
-            [HumanMessage(content="What's the weather in Paris?")]
-        )
+        chat.bind_tools([get_weather], parallel_tool_calls=True)
         logging.info("❌ TEST FAILED: Should have raised ValueError")
         return False
     except ValueError as e:
-        if "not supported for Cohere" in str(e):
+        if "not supported" in str(e):
             logging.info(f"\n✓ Correctly raised error: {e}")
             logging.info("\n✓ TEST 4 PASSED: Cohere validation works")
             return True
