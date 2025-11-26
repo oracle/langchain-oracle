@@ -14,8 +14,8 @@
   },
   "homepage": "https://github.com/langchain-ai/langchainjs/tree/main/libs/langchain-oracle/",
   "scripts": {
-    "build": "turbo build:compile --filter @langchain/oracle",
-    "build:compile": "pnpm --filter @langchain/build compile @langchain/oracle",
+    "build": "tsc",
+    "build:compile": "tsc -p tsconfig.json",
     "lint:eslint": "eslint --cache src/",
     "lint:dpdm": "dpdm --skip-dynamic-imports circular --exit-code circular:1 --no-warning --no-tree src/*.ts src/**/*.ts",
     "lint": "pnpm lint:eslint && pnpm lint:dpdm",
@@ -44,10 +44,8 @@
   "devDependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@jest/globals": "^29.5.0",
-    "@langchain/core": "workspace:*",
-    "@langchain/eslint": "workspace:*",
-    "@langchain/standard-tests": "workspace:*",
-    "@langchain/textsplitters": "workspace:*",
+    "@langchain/core": "^1.0.0",
+    "@langchain/textsplitters": "^1.0.0",
     "@swc/jest": "^0.2.29",
     "@tsconfig/recommended": "^1.0.3",
     "@types/oracledb": "^6.6.0",
