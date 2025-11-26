@@ -57,13 +57,15 @@ def get_population(city: str) -> int:
 
 
 def test_parallel_tool_calling_enabled():
-    """Test parallel tool calling with parallel_tool_calls=True."""
+    """Test parallel tool calling with parallel_tool_calls=True in bind_tools."""
     logging.info("\n" + "=" * 80)
-    logging.info("TEST 1: Parallel Tool Calling ENABLED")
+    logging.info("TEST 1: Parallel Tool Calling ENABLED (via bind_tools)")
     logging.info("=" * 80)
 
     chat = ChatOCIGenAI(
-        model_id=os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct"),
+        model_id=os.environ.get(
+            "OCI_MODEL_ID", "meta.llama-4-maverick-17b-128e-instruct-fp8"
+        ),
         service_endpoint=os.environ.get(
             "OCI_GENAI_ENDPOINT",
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
@@ -72,11 +74,12 @@ def test_parallel_tool_calling_enabled():
         auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
         model_kwargs={"temperature": 0, "max_tokens": 500},
-        parallel_tool_calls=True,  # Enable parallel calling
     )
 
-    # Bind tools
-    chat_with_tools = chat.bind_tools([get_weather, calculate_tip, get_population])
+    # Bind tools with parallel_tool_calls=True
+    chat_with_tools = chat.bind_tools(
+        [get_weather, calculate_tip, get_population], parallel_tool_calls=True
+    )
 
     # Invoke with query that needs weather info
     logging.info("\nQuery: 'What's the weather in New York City?'")
@@ -116,7 +119,9 @@ def test_parallel_tool_calling_disabled():
     logging.info("=" * 80)
 
     chat = ChatOCIGenAI(
-        model_id=os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct"),
+        model_id=os.environ.get(
+            "OCI_MODEL_ID", "meta.llama-4-maverick-17b-128e-instruct-fp8"
+        ),
         service_endpoint=os.environ.get(
             "OCI_GENAI_ENDPOINT",
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
@@ -125,10 +130,9 @@ def test_parallel_tool_calling_disabled():
         auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
         model_kwargs={"temperature": 0, "max_tokens": 500},
-        parallel_tool_calls=False,  # Disable parallel calling (default)
     )
 
-    # Bind tools
+    # Bind tools without parallel_tool_calls (defaults to sequential)
     chat_with_tools = chat.bind_tools([get_weather, calculate_tip, get_population])
 
     # Same query as test 1
@@ -158,15 +162,16 @@ def test_parallel_tool_calling_disabled():
     return elapsed_time
 
 
-def test_bind_tools_override():
-    """Test that bind_tools can override class-level setting."""
+def test_multiple_tool_calls():
+    """Test query that should trigger multiple tool calls."""
     logging.info("\n" + "=" * 80)
-    logging.info("TEST 3: bind_tools Override of Class Setting")
+    logging.info("TEST 3: Multiple Tool Calls Query")
     logging.info("=" * 80)
 
-    # Create chat with parallel_tool_calls=False at class level
     chat = ChatOCIGenAI(
-        model_id=os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct"),
+        model_id=os.environ.get(
+            "OCI_MODEL_ID", "meta.llama-4-maverick-17b-128e-instruct-fp8"
+        ),
         service_endpoint=os.environ.get(
             "OCI_GENAI_ENDPOINT",
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
@@ -175,13 +180,11 @@ def test_bind_tools_override():
         auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
         model_kwargs={"temperature": 0, "max_tokens": 500},
-        parallel_tool_calls=False,  # Class default: disabled
     )
 
-    # Override with True in bind_tools
+    # Bind tools with parallel_tool_calls=True
     chat_with_tools = chat.bind_tools(
-        [get_weather, get_population],
-        parallel_tool_calls=True,  # Override to enable
+        [get_weather, get_population], parallel_tool_calls=True
     )
 
     logging.info("\nQuery: 'What's the weather and population of Tokyo?'")
@@ -198,7 +201,7 @@ def test_bind_tools_override():
         for i, tc in enumerate(response.tool_calls, 1):
             logging.info(f"  {i}. {tc['name']}({tc['args']})")
 
-    logging.info("\n✓ TEST 3 PASSED: bind_tools override works")
+    logging.info("\n✓ TEST 3 PASSED: Multiple tool calls query works")
 
 
 def test_cohere_model_error():
@@ -251,7 +254,9 @@ def main():
         sys.exit(1)
 
     logging.info("\nUsing configuration:")
-    model_id = os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct")
+    model_id = os.environ.get(
+        "OCI_MODEL_ID", "meta.llama-4-maverick-17b-128e-instruct-fp8"
+    )
     logging.info(f"  Model: {model_id}")
     endpoint = os.environ.get("OCI_GENAI_ENDPOINT", "default")
     logging.info(f"  Endpoint: {endpoint}")
@@ -269,8 +274,8 @@ def main():
         sequential_time = test_parallel_tool_calling_disabled()
         results.append(("Sequential (Disabled)", True))
 
-        test_bind_tools_override()
-        results.append(("bind_tools Override", True))
+        test_multiple_tool_calls()
+        results.append(("Multiple Tool Calls", True))
 
         cohere_test = test_cohere_model_error()
         results.append(("Cohere Validation", cohere_test))
