@@ -943,8 +943,8 @@ class GenericProvider(Provider):
                     "required": parameters.get("required", []),
                 },
             )
-        elif isinstance(tool, BaseTool):
-            return self.oci_function_definition(
+        elif isinstance(tool, BaseTool):  # type: ignore[unreachable]
+            return self.oci_function_definition(  # type: ignore[unreachable]
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
                     tool.name, tool.description
@@ -1262,7 +1262,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         # Other GenericChatRequest models (xAI Grok, OpenAI, Mistral) support it
         return True
 
-    def bind_tools(  # type: ignore[override]
+    def bind_tools(
         self,
         tools: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
         *,
