@@ -80,7 +80,7 @@ class MockResponse:
     def raise_for_status(self) -> None:
         """Mocked raise for status."""
         if 400 <= self.status_code < 600:
-            raise HTTPError(response=self)  # type: ignore[arg-type]
+            raise HTTPError(response=self)
 
     def json(self) -> Dict:
         """Returns mocked json data."""
@@ -152,7 +152,11 @@ def test_stream_vllm(*args: Any) -> None:
         if output is None:
             output = chunk
         else:
+<<<<<<< HEAD
             output = output + chunk
+=======
+            output += chunk
+>>>>>>> bb7ac7f (Fix mypy type errors for LangChain 1.x compatibility)
         count += 1
     # LangChain 1.x adds a final chunk with chunk_position='last', so we get 6 chunks
     assert count >= 5

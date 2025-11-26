@@ -71,7 +71,7 @@ def test_basic_invoke(chat_model):
     assert isinstance(response, AIMessage)
     assert response.content is not None
     assert len(response.content) > 0
-    assert "hello" in response.content.lower()
+    assert isinstance(response.content, str) and "hello" in response.content.lower()
 
 
 @pytest.mark.requires("oci")
@@ -100,7 +100,7 @@ def test_invoke_multi_turn(chat_model):
     response2 = chat_model.invoke(messages)
 
     assert isinstance(response2, AIMessage)
-    assert "alice" in response2.content.lower()
+    assert isinstance(response2.content, str) and "alice" in response2.content.lower()
 
 
 # =============================================================================
@@ -269,6 +269,7 @@ def test_response_format_json_object(chat_model):
     )
 
     assert isinstance(response, AIMessage)
+    assert isinstance(response.content, str)
     # Response should contain valid JSON (may be wrapped in markdown)
     import json
     import re

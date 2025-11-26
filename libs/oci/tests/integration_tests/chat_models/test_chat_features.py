@@ -308,6 +308,7 @@ def test_max_tokens_limit():
 
     # Response should be truncated due to max_tokens
     # Token count varies, but should be reasonably short
+    assert isinstance(response.content, str)
     assert len(response.content.split()) <= 20  # Rough word count check
 
 
@@ -405,7 +406,7 @@ def test_multi_turn_context_retention(llm):
 def test_long_context_handling(llm):
     """Test handling of longer context windows."""
     # Create a conversation with multiple turns
-    messages = [
+    messages: list[SystemMessage | HumanMessage | AIMessage] = [
         SystemMessage(content="You are a helpful assistant tracking a story."),
     ]
 
@@ -426,4 +427,5 @@ def test_long_context_handling(llm):
     messages.append(HumanMessage(content="What was the knight's horse named?"))
     final_response = llm.invoke(messages)
 
+    assert isinstance(final_response.content, str)
     assert "thunder" in final_response.content.lower()
