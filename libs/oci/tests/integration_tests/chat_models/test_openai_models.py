@@ -32,7 +32,8 @@ pytest tests/integration_tests/chat_models/test_openai_models.py -v
 
 Run specific test:
 ```bash
-pytest tests/integration_tests/chat_models/test_openai_models.py::test_openai_basic_completion -v
+pytest tests/integration_tests/chat_models/test_openai_models.py \
+  ::test_openai_basic_completion -v
 ```
 """
 
