@@ -778,7 +778,7 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
         formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
-        return super().bind(tools=formatted_tools, **kwargs)
+        return super().bind(tools=formatted_tools, **kwargs)  # type: ignore[return-value]
 
 
 class ChatOCIModelDeploymentVLLM(ChatOCIModelDeployment):
