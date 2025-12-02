@@ -107,6 +107,7 @@ module = [
     "ads.*",
     "langchain_openai.*",
     "oci_openai.*",
+    "rich.*",
 ]
 ignore_missing_imports = true
 

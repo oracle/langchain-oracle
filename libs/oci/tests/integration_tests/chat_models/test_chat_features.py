@@ -13,6 +13,7 @@ Run:
 """
 
 import os
+from typing import Union
 
 import pytest
 from langchain_core.messages import (
@@ -406,7 +407,7 @@ def test_multi_turn_context_retention(llm):
 def test_long_context_handling(llm):
     """Test handling of longer context windows."""
     # Create a conversation with multiple turns
-    messages: list[SystemMessage | HumanMessage | AIMessage] = [
+    messages: list[Union[SystemMessage, HumanMessage, AIMessage]] = [
         SystemMessage(content="You are a helpful assistant tracking a story."),
     ]
 
