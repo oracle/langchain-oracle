@@ -334,15 +334,18 @@ def test_ai_message_type(chat_model):
 
 @pytest.mark.requires("oci")
 def test_message_text_property(chat_model):
-    """Test that .text property works (LangChain 1.x change from .text())."""
+    """Test that .text works in both LangChain 0.3.x (method) and 1.x (property)."""
     response = chat_model.invoke([HumanMessage(content="Say hello")])
 
-    # LangChain 1.x: .text is a property, not a method
     # Both .content and .text should work
     assert response.content is not None
-    # .text property should exist and return same as .content
+
+    # Handle both LangChain versions:
+    # 0.3.x: .text is a method (callable)
+    # 1.x: .text is a property
     if hasattr(response, "text"):
-        assert response.text == response.content
+        text_value = response.text() if callable(response.text) else response.text
+        assert text_value == response.content
 
 
 @pytest.mark.requires("oci")
