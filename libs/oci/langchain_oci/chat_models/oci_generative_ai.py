@@ -1237,6 +1237,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
     def bind_tools(
         self,
         tools: Sequence[Union[Dict[str, Any], type, Callable, BaseTool]],
+        # Type annotation matches LangChain's BaseChatModel API.
+        # Runtime validation occurs in convert_to_openai_tool().
         *,
         tool_choice: Optional[
             Union[dict, str, Literal["auto", "none", "required", "any"], bool]
