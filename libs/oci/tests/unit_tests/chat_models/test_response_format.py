@@ -111,7 +111,6 @@ def test_with_structured_output_json_schema():
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
 
-    # This should not raise TypeError anymore
     from pydantic import BaseModel
 
     class TestSchema(BaseModel):
@@ -121,6 +120,36 @@ def test_with_structured_output_json_schema():
         age: int
 
     structured_llm = llm.with_structured_output(schema=TestSchema, method="json_schema")
+
+    # The structured LLM should be created without errors
+    assert structured_llm is not None
+
+
+@pytest.mark.requires("oci")
+def test_with_structured_output_json_schema_nested_refs():
+    """Test with_structured_output with json_schema method and nested refs."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+
+    from enum import Enum
+    from typing import List
+
+    from pydantic import BaseModel
+
+    class Color(Enum):
+        RED = "RED"
+        BLUE = "BLUE"
+        GREEN = "GREEN"
+
+    class Item(BaseModel):
+        name: str
+        color: Color  # Creates $ref to Color
+
+    class Response(BaseModel):
+        message: str
+        items: List[Item]  # Array with $ref inside
+
+    structured_llm = llm.with_structured_output(schema=Response, method="json_schema")
 
     # The structured LLM should be created without errors
     assert structured_llm is not None

@@ -118,6 +118,31 @@ class OCIUtils:
             id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
         )
 
+    @staticmethod
+    def resolve_schema_refs(schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        OCI Generative AI doesn't support $ref and $defs, so we inline all references.
+        """
+        defs = schema.get("$defs", {})  # OCI Generative AI doesn't support $defs
+
+        def resolve(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                if "$ref" in obj:
+                    ref = obj["$ref"]
+                    if ref.startswith("#/$defs/"):
+                        key = ref.split("/")[-1]
+                        return resolve(defs.get(key, obj))
+                    return obj  # Cannot resolve $ref, return unchanged
+                return {k: resolve(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [resolve(item) for item in obj]
+            return obj
+
+        resolved = resolve(schema)
+        if isinstance(resolved, dict):
+            resolved.pop("$defs", None)
+        return resolved
+
 
 class Provider(ABC):
     """Abstract base class for OCI Generative AI providers."""
@@ -1370,6 +1395,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 if is_pydantic_schema
                 else schema  # type: ignore[assignment]
             )
+
+            # Resolve $ref references as OCI doesn't support $ref and $defs
+            json_schema_dict = OCIUtils.resolve_schema_refs(json_schema_dict)
 
             response_json_schema = self._provider.oci_response_json_schema(
                 name=json_schema_dict.get("title", "response"),
