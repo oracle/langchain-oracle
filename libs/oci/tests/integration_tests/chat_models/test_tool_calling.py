@@ -427,8 +427,9 @@ def test_multi_step_tool_orchestration(model_id: str):
     comprehensive analysis."""
 
     # Invoke agent with a diagnostic scenario
+    # Langgraph invoke signature is generic; passing dict is valid at runtime
     result = agent.invoke(
-        {
+        {  # type: ignore[arg-type]
             "messages": [
                 SystemMessage(content=system_prompt),
                 HumanMessage(
