@@ -59,6 +59,9 @@
     "dotenv": "^16.6.1",
     "dpdm": "^3.14.0",
     "eslint": "^9",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-no-instanceof": "^1.0.1",
     "jest": "^29.5.0",
     "jest-environment-node": "^29.6.4",
     "jiti": "^2.6.1",
@@ -66,6 +69,7 @@
     "rollup": "^4.5.2",
     "ts-jest": "^29.1.0",
     "typescript": "~5.8.3",
+    "typescript-eslint": "^8.48.1",
     "vitest": "^3.2.4",
     "zod": "^3.25.76"
   },
