@@ -23,7 +23,7 @@
     "pack:dry": "pnpm build && npm pack --dry-run",
     "pack": "pnpm build && npm pack",
     "publish": "pnpm build && npm publish",
-    "clean": "rm -rf .turbo dist/",
+    "clean": "rm -rf dist/",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:int": "vitest run --mode int",
