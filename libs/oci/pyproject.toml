@@ -98,7 +98,7 @@ show_error_context = true
 warn_redundant_casts = true
 warn_unreachable = true
 warn_unused_configs = true
-warn_unused_ignores = false
+warn_unused_ignores = true
 
 # Ignore missing imports only for specific untyped packages
 [[tool.mypy.overrides]]
