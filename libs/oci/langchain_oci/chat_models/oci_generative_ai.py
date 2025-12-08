@@ -1287,7 +1287,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 )
             kwargs["is_parallel_tool_calls"] = True
 
-        return super().bind(tools=formatted_tools, **kwargs)
+        return super().bind(tools=formatted_tools, **kwargs)  # type: ignore[return-value, unused-ignore]
 
     def with_structured_output(
         self,
@@ -1360,7 +1360,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                     key_name=tool_name, first_tool_only=True
                 )
         elif method == "json_mode":
-            llm = self.bind(response_format={"type": "JSON_OBJECT"})
+            llm = self.bind(response_format={"type": "JSON_OBJECT"})  # type: ignore[assignment, unused-ignore]
             output_parser = (
                 PydanticOutputParser(pydantic_object=schema)
                 if is_pydantic_schema
@@ -1384,7 +1384,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
                 json_schema=response_json_schema
             )
 
-            llm = self.bind(response_format=response_format_obj)
+            llm = self.bind(response_format=response_format_obj)  # type: ignore[assignment, unused-ignore]
             if is_pydantic_schema:
                 output_parser = PydanticOutputParser(pydantic_object=schema)
             else:
