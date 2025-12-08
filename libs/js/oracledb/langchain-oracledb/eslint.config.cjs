@@ -31,14 +31,14 @@ module.exports = [
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
-      parser: tseslint.parser,              // ✅ correct parser object
+      parser: tseslint.parser,
       parserOptions: {
         project: "./tsconfig.json",
       },
     },
 
     plugins: {
-      "@typescript-eslint": tseslint.plugin, // ✅ correct plugin object
+      "@typescript-eslint": tseslint.plugin,
       "no-instanceof": noInstanceOf,
       import: importPlugin,
     },
