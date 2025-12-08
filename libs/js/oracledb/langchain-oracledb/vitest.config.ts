@@ -11,8 +11,9 @@ export default defineConfig((env) => {
       hideSkippedTests: true,
       testTimeout: 30_000,
       maxWorkers: 0.5,
-      exclude: ["**/*.int.test.ts", ...configDefaults.exclude],
-      setupFiles: ["dotenv/config"],
+      exclude: configDefaults.exclude,
+      setupFiles: [import.meta.resolve("dotenv/config")],
+      passWithNoTests: false,
     },
   };
 
@@ -62,6 +63,7 @@ export default defineConfig((env) => {
       environment: "node",
       include: configDefaults.include,
       typecheck: { enabled: true },
+      passWithNoTests: true,
     },
   };
 });
