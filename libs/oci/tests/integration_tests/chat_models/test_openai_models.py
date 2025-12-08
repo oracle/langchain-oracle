@@ -147,8 +147,8 @@ def test_openai_streaming(openai_config: dict):
 
     chunks = []
     for chunk in chat.stream([HumanMessage(content="Say hello")]):
-        assert isinstance(chunk, AIMessage), "Chunk should be AIMessage"  # type: ignore[unreachable]
-        chunks.append(chunk)  # type: ignore[unreachable]
+        assert isinstance(chunk, AIMessage), "Chunk should be AIMessage"
+        chunks.append(chunk)
 
     # Verify we got at least one chunk (streaming worked)
     assert len(chunks) > 0, "Should receive at least one chunk"
