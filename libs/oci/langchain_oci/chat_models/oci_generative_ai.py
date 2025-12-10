@@ -815,7 +815,12 @@ class GenericProvider(Provider):
                 message.tool_calls or message.additional_kwargs.get("tool_calls")
             ):
                 # Process content and tool calls for assistant messages
-                content = self._process_message_content(message.content)
+                if message.content:
+                    content = self._process_message_content(message.content)
+                # Issue 78 fix: Check if original content is empty BEFORE processing
+                # to prevent NullPointerException in OCI backend
+                else:
+                    content = [self.oci_chat_message_text_content(text=".")]
                 tool_calls = []
                 for tool_call in message.tool_calls:
                     tool_calls.append(
