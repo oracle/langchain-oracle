@@ -31,7 +31,12 @@ from langchain_core.language_models.chat_models import (
     agenerate_from_stream,
     generate_from_stream,
 )
-from langchain_core.messages import AIMessageChunk, BaseMessage, BaseMessageChunk
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    BaseMessageChunk,
+)
 from langchain_core.output_parsers import (
     JsonOutputParser,
     PydanticOutputParser,
@@ -765,11 +770,17 @@ class ChatOCIModelDeployment(BaseChatModel, BaseOCIModelDeployment):
 
     def bind_tools(
         self,
-        tools: Sequence[Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool]],
+        tools: Sequence[Union[Dict[str, Any], type, Callable, BaseTool]],
+        # Type annotation matches LangChain's BaseChatModel API.
+        # Runtime validation occurs in convert_to_openai_tool().
+        *,
+        tool_choice: Optional[str] = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
-        return super().bind(tools=formatted_tools, **kwargs)
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+        return super().bind(tools=formatted_tools, **kwargs)  # type: ignore[return-value, unused-ignore]
 
 
 class ChatOCIModelDeploymentVLLM(ChatOCIModelDeployment):

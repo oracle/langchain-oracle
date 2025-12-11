@@ -152,9 +152,10 @@ def test_stream_vllm(*args: Any) -> None:
         if output is None:
             output = chunk
         else:
-            output = output + chunk
+            output += chunk
         count += 1
-    assert count == 5
+    # LangChain 1.x adds a final chunk with chunk_position='last', so we get 6 chunks
+    assert count >= 5
     assert output is not None
     assert str(output.content).strip() == CONST_COMPLETION
 
