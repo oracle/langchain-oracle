@@ -1105,6 +1105,107 @@ class MetaProvider(GenericProvider):
     pass
 
 
+class GeminiProvider(GenericProvider):
+    """Provider for Google Gemini models.
+
+    This provider works around OCI's lack of support for ToolMessage and
+    tool_calls with Gemini models by converting tool interactions to
+    regular user/assistant messages.
+
+    The OCI GenAI service's translation layer for Gemini doesn't properly
+    handle:
+    - ToolMessage (role: TOOL)
+    - AssistantMessage with tool_calls
+
+    This provider converts:
+    - AIMessage with tool_calls → AssistantMessage with descriptive text
+    - ToolMessage → UserMessage with tool result
+    """
+
+    def messages_to_oci_params(
+        self, messages: List[BaseMessage], **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Convert LangChain messages to OCI chat parameters for Gemini.
+
+        This method transforms tool-related messages into regular messages
+        that Gemini can process through OCI's translation layer.
+
+        Args:
+            messages: List of LangChain BaseMessage objects
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            Dict containing OCI chat parameters
+        """
+        oci_messages = []
+
+        for message in messages:
+            if isinstance(message, ToolMessage):
+                # Convert ToolMessage to UserMessage with tool result
+                tool_name = message.name or "tool"
+                result_text = f"Function {tool_name} returned: {message.content}"
+                oci_message = self.oci_chat_message["USER"](
+                    content=[self.oci_chat_message_text_content(text=result_text)]
+                )
+            elif isinstance(message, AIMessage) and message.tool_calls:
+                # Convert AIMessage with tool_calls to regular AssistantMessage
+                # describing what tool would be called
+                tool_descriptions = []
+                for tc in message.tool_calls:
+                    args_str = json.dumps(tc.get("args", {}))
+                    tool_descriptions.append(
+                        f"I'll call {tc['name']} with arguments: {args_str}"
+                    )
+
+                # Handle content which may be string or list
+                raw_content = message.content
+                if isinstance(raw_content, list):
+                    # Extract text from list content
+                    content_text = " ".join(
+                        str(item)
+                        if isinstance(item, str)
+                        else str(item.get("text", ""))
+                        for item in raw_content
+                    )
+                else:
+                    content_text = str(raw_content) if raw_content else ""
+
+                if tool_descriptions:
+                    if content_text:
+                        content_text += "\n"
+                    content_text += "\n".join(tool_descriptions)
+
+                oci_message = self.oci_chat_message["ASSISTANT"](
+                    content=[self.oci_chat_message_text_content(text=content_text)],
+                    # Explicitly do NOT include tool_calls
+                )
+            elif isinstance(message, AIMessage):
+                # Regular AIMessage without tool_calls
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message["ASSISTANT"](content=content)
+            elif isinstance(message, HumanMessage):
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message["USER"](content=content)
+            elif isinstance(message, SystemMessage):
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message["SYSTEM"](content=content)
+            else:
+                # Fall back to parent implementation for unknown types
+                content = self._process_message_content(message.content)
+                role = message.type.upper() if hasattr(message, "type") else "USER"
+                if role in self.oci_chat_message:
+                    oci_message = self.oci_chat_message[role](content=content)
+                else:
+                    oci_message = self.oci_chat_message["USER"](content=content)
+
+            oci_messages.append(oci_message)
+
+        return {
+            "messages": oci_messages,
+            "api_format": self.chat_api_format,
+        }
+
+
 class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
     """ChatOCIGenAI chat model integration.
 
@@ -1189,6 +1290,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         return {
             "cohere": CohereProvider(),
             "meta": MetaProvider(),
+            "google": GeminiProvider(),
             "generic": GenericProvider(),
         }
 
