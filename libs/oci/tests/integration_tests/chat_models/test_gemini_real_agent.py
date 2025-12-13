@@ -30,9 +30,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Generator, List
 
 import pytest
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 from langchain_oci.chat_models import ChatOCIGenAI
@@ -191,8 +192,8 @@ def run_agent(task: str, llm: ChatOCIGenAI, max_iterations: int = 10) -> "list[s
     llm_with_tools = llm.bind_tools(tools)
     tool_map = {t.name: t for t in tools}
 
-    messages = [HumanMessage(content=task)]
-    executed_tools = []
+    messages: List[BaseMessage] = [HumanMessage(content=task)]
+    executed_tools: List[str] = []
 
     for i in range(max_iterations):
         response = llm_with_tools.invoke(messages)
@@ -241,7 +242,7 @@ class TestGeminiRealAgent:
         )
 
     @pytest.fixture
-    def work_dir(self) -> str:
+    def work_dir(self) -> Generator[str, None, None]:
         """Create temporary working directory."""
         dir_path = tempfile.mkdtemp(prefix="gemini_agent_test_")
         yield dir_path
@@ -330,7 +331,7 @@ class TestGeminiRealAgentCrossModel:
     """Test real agent works across different models."""
 
     @pytest.fixture
-    def work_dir(self) -> str:
+    def work_dir(self) -> Generator[str, None, None]:
         """Create temporary working directory."""
         dir_path = tempfile.mkdtemp(prefix="gemini_agent_test_")
         yield dir_path
