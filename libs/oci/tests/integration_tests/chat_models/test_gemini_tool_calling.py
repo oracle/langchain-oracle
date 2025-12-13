@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from langchain_oci.chat_models import ChatOCIGenAI
 
 
-def _content_to_str(content: str | list) -> str:
+def _content_to_str(content: "str | list") -> str:
     """Convert message content to string for assertions.
 
     AIMessage.content can be str or list[str | dict], so we need to
