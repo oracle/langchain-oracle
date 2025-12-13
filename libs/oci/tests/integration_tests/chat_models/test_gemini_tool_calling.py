@@ -39,6 +39,25 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+
+def _content_to_str(content: str | list) -> str:
+    """Convert message content to string for assertions.
+
+    AIMessage.content can be str or list[str | dict], so we need to
+    handle both cases for string operations like .lower().
+    """
+    if isinstance(content, str):
+        return content
+    # Handle list content by joining text parts
+    parts = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict) and "text" in item:
+            parts.append(str(item["text"]))
+    return " ".join(parts)
+
+
 # Test configuration from environment
 COMPARTMENT_ID = os.getenv(
     "OCI_COMPARTMENT_ID",
@@ -140,7 +159,7 @@ class TestGeminiToolResultProcessing:
         assert response is not None
         assert response.content
         # Verify the response mentions the weather data
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         assert any(
             term in content_lower for term in ["22", "sunny", "rome", "temperature"]
         ), f"Response should mention weather data: {response.content}"
@@ -173,7 +192,7 @@ class TestGeminiToolResultProcessing:
 
         assert response is not None
         assert response.content
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         assert any(term in content_lower for term in ["18", "tokyo", "cloudy"]), (
             f"Response should mention Tokyo weather: {response.content}"
         )
@@ -221,7 +240,7 @@ class TestGeminiToolResultProcessing:
         assert response is not None
         assert response.content
         # Should mention both cities or their weather
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         assert any(
             term in content_lower
             for term in ["paris", "london", "15", "12", "rainy", "foggy", "compare"]
@@ -316,7 +335,8 @@ class TestGeminiProviderSelection:
         assert response is not None
         assert response.content
         # Model should return "4" or mention "four"
-        assert "4" in response.content or "four" in response.content.lower()
+        content_str = _content_to_str(response.content)
+        assert "4" in content_str or "four" in content_str.lower()
 
 
 @pytest.mark.requires("oci")
@@ -394,7 +414,7 @@ class TestGeminiEdgeCases:
         assert response is not None
         assert response.content
         # Should reference some of the forecast data
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         assert any(
             term in content_lower
             for term in ["monday", "tuesday", "22", "24", "forecast", "weather"]
@@ -494,7 +514,7 @@ class TestGeminiParallelToolCalling:
 
         assert response is not None
         assert response.content
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         # Should mention at least some of the cities or their weather data
         mentioned_cities = sum(
             1 for city in ["new york", "london", "tokyo", "ny"] if city in content_lower
@@ -546,7 +566,7 @@ class TestGeminiParallelToolCalling:
 
         assert response is not None
         assert response.content
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         # Should reference both weather and stock data
         has_weather_ref = any(
             term in content_lower
@@ -675,7 +695,7 @@ class TestGeminiParallelToolCalling:
         assert response is not None
         assert response.content
         # Should handle the mixed success/error gracefully
-        content_lower = response.content.lower()
+        content_lower = _content_to_str(response.content).lower()
         # Should at least mention the successful weather data
         assert any(
             term in content_lower
