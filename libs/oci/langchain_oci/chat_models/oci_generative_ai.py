@@ -100,22 +100,33 @@ class OCIUtils:
     @staticmethod
     def convert_oci_tool_call_to_langchain(tool_call: Any) -> ToolCall:
         """Convert an OCI tool call to a LangChain ToolCall."""
-        parsed = json.loads(tool_call.arguments)
+        # Check if this is a Generic/Meta format (has arguments as JSON string)
+        # or Cohere format (has parameters as dict)
+        attribute_map = getattr(tool_call, "attribute_map", None) or {}
 
-        # If the parsed result is a string, it means the JSON was escaped, so parse again  # noqa: E501
-        if isinstance(parsed, str):
-            try:
-                parsed = json.loads(parsed)
-            except json.JSONDecodeError:
-                # If it's not valid JSON, keep it as a string
-                pass
+        if "arguments" in attribute_map and tool_call.arguments is not None:
+            # Generic/Meta format: parse JSON arguments
+            parsed = json.loads(tool_call.arguments)
+
+            # If the parsed result is a string, it means JSON was escaped
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, keep it as a string
+                    pass
+            args = parsed
+        else:
+            # Cohere format: parameters is already a dict
+            args = tool_call.parameters
+
+        # Get tool call ID (generate one if not present)
+        tool_id = tool_call.id if "id" in attribute_map else uuid.uuid4().hex[:]
 
         return ToolCall(
             name=tool_call.name,
-            args=parsed
-            if "arguments" in tool_call.attribute_map
-            else tool_call.parameters,
-            id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
+            args=args,
+            id=tool_id,
         )
 
     @staticmethod
@@ -308,11 +319,6 @@ class CohereProvider(Provider):
                 response.data.chat_response.usage.total_tokens
             )
 
-        # Include tool calls if available
-        if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(
-                self.chat_tool_calls(response)
-            )
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
@@ -701,10 +707,6 @@ class GenericProvider(Provider):
                 response.data.chat_response.usage.total_tokens
             )
 
-        if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(
-                self.chat_tool_calls(response)
-            )
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
@@ -1105,6 +1107,104 @@ class MetaProvider(GenericProvider):
     pass
 
 
+class GeminiProvider(GenericProvider):
+    """Provider for Google Gemini models.
+
+    This provider works around OCI's lack of support for ToolMessage and
+    tool_calls with Gemini models by converting tool interactions to
+    regular user/assistant messages.
+
+    The OCI GenAI service's translation layer for Gemini doesn't properly
+    handle:
+    - ToolMessage (role: TOOL)
+    - AssistantMessage with tool_calls
+
+    This provider converts:
+    - AIMessage with tool_calls → AssistantMessage with descriptive text
+    - ToolMessage → UserMessage with tool result
+    """
+
+    def messages_to_oci_params(
+        self, messages: List[BaseMessage], **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Convert LangChain messages to OCI chat parameters for Gemini.
+
+        This method transforms tool-related messages into regular messages
+        that Gemini can process through OCI's translation layer.
+
+        Args:
+            messages: List of LangChain BaseMessage objects
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            Dict containing OCI chat parameters
+        """
+        oci_messages = []
+
+        for message in messages:
+            if isinstance(message, ToolMessage):
+                # Convert ToolMessage to UserMessage with tool result
+                tool_name = message.name or "tool"
+                result_text = f"Function {tool_name} returned: {message.content}"
+                oci_message = self.oci_chat_message["USER"](
+                    content=[self.oci_chat_message_text_content(text=result_text)]
+                )
+            elif isinstance(message, AIMessage) and message.tool_calls:
+                # Convert AIMessage with tool_calls to regular AssistantMessage
+                # describing what tool would be called
+                tool_descriptions = []
+                for tc in message.tool_calls:
+                    args_str = json.dumps(tc.get("args", {}))
+                    tool_descriptions.append(
+                        f"I'll call {tc['name']} with arguments: {args_str}"
+                    )
+
+                # Handle content which may be string or list
+                raw_content = message.content
+                if isinstance(raw_content, list):
+                    # Extract text from list content
+                    content_text = " ".join(
+                        str(item)
+                        if isinstance(item, str)
+                        else str(item.get("text", ""))
+                        for item in raw_content
+                    )
+                else:
+                    content_text = str(raw_content) if raw_content else ""
+
+                if tool_descriptions:
+                    if content_text:
+                        content_text += "\n"
+                    content_text += "\n".join(tool_descriptions)
+
+                oci_message = self.oci_chat_message["ASSISTANT"](
+                    content=[self.oci_chat_message_text_content(text=content_text)],
+                    # Explicitly do NOT include tool_calls
+                )
+            elif isinstance(message, AIMessage):
+                # Regular AIMessage without tool_calls
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message["ASSISTANT"](content=content)
+            elif isinstance(message, HumanMessage):
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message["USER"](content=content)
+            elif isinstance(message, SystemMessage):
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message["SYSTEM"](content=content)
+            else:
+                # Fallback for unknown message types
+                role = self.get_role(message)
+                content = self._process_message_content(message.content)
+                oci_message = self.oci_chat_message[role](content=content)
+
+            oci_messages.append(oci_message)
+
+        return {
+            "messages": oci_messages,
+            "api_format": self.chat_api_format,
+        }
+
+
 class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
     """ChatOCIGenAI chat model integration.
 
@@ -1189,6 +1289,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         return {
             "cohere": CohereProvider(),
             "meta": MetaProvider(),
+            "google": GeminiProvider(),
             "generic": GenericProvider(),
         }
 
@@ -1475,6 +1576,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             content = enforce_stop_tokens(content, stop)
 
+        # Fetch raw tool calls once to avoid redundant calls
+        raw_tool_calls = self._provider.chat_tool_calls(response)
+
         generation_info = self._provider.chat_generation_info(response)
 
         llm_output = {
@@ -1483,12 +1587,16 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             "request_id": response.request_id,
             "content-length": response.headers["content-length"],
         }
+
         tool_calls = []
-        if "tool_calls" in generation_info:
+        if raw_tool_calls:
             tool_calls = [
                 OCIUtils.convert_oci_tool_call_to_langchain(tool_call)
-                for tool_call in self._provider.chat_tool_calls(response)
+                for tool_call in raw_tool_calls
             ]
+            if "tool_calls" not in generation_info:
+                formatted = self._provider.format_response_tool_calls(raw_tool_calls)
+                generation_info["tool_calls"] = formatted
         message = AIMessage(
             content=content or "",
             additional_kwargs=generation_info,
