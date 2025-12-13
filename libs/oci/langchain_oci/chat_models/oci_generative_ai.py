@@ -1200,10 +1200,72 @@ class GeminiProvider(GenericProvider):
 
             oci_messages.append(oci_message)
 
-        return {
+        result = {
             "messages": oci_messages,
             "api_format": self.chat_api_format,
         }
+
+        # BUGFIX: Intelligently manage tool_choice to prevent infinite loops
+        # while allowing legitimate multi-step tool orchestration.
+        # This mirrors the logic in GenericProvider.
+
+        def _should_allow_more_tool_calls(
+            msgs: List[BaseMessage], max_tool_calls: int
+        ) -> bool:
+            """
+            Determine if the model should be allowed to call more tools.
+
+            Returns False (force stop) if:
+            - Tool call limit exceeded
+            - Infinite loop detected (same tool called repeatedly with same args)
+
+            Returns True otherwise to allow multi-step tool orchestration.
+            """
+            # Count total tool calls made so far
+            tool_call_count = sum(1 for msg in msgs if isinstance(msg, ToolMessage))
+
+            # Safety limit: prevent runaway tool calling
+            if tool_call_count >= max_tool_calls:
+                return False
+
+            # Detect infinite loop: same tool called with same arguments in succession
+            recent_calls: list = []
+            for msg in reversed(msgs):
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        # Create signature: (tool_name, sorted_args)
+                        try:
+                            args_str = json.dumps(tc.get("args", {}), sort_keys=True)
+                            signature = (tc.get("name", ""), args_str)
+
+                            # Check if this exact call was made in last 2 calls
+                            if signature in recent_calls[-2:]:
+                                return False  # Infinite loop detected
+
+                            recent_calls.append(signature)
+                        except Exception:
+                            # If we can't serialize args, be conservative and continue
+                            pass
+
+                # Only check last 4 AI messages (last 4 tool call attempts)
+                if len(recent_calls) >= 4:
+                    break
+
+            return True
+
+        has_tool_results = any(isinstance(msg, ToolMessage) for msg in messages)
+        if has_tool_results and "tools" in kwargs and "tool_choice" not in kwargs:
+            max_tool_calls = kwargs.get("max_sequential_tool_calls", 8)
+            if not _should_allow_more_tool_calls(messages, max_tool_calls):
+                # Force model to stop and provide final answer
+                result["tool_choice"] = self.oci_tool_choice_none()
+            # else: Allow model to decide (default behavior)
+
+        # Add parallel tool calls support
+        if "is_parallel_tool_calls" in kwargs:
+            result["is_parallel_tool_calls"] = kwargs["is_parallel_tool_calls"]
+
+        return result
 
 
 class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
