@@ -1,11 +1,11 @@
-# @langchain/cohere
+# @langchain/oracle
 
-This package contains the LangChain.js integrations for Cohere through their SDK.
+This package contains the LangChain.js integrations for Oracle through their SDK.
 
 ## Installation
 
 ```bash npm2yarn
-npm install @langchain/cohere @langchain/core
+npm install @langchain/oracle @langchain/core
 ```
 
 This package, along with the main LangChain package, depends on [`@langchain/core`](https://npmjs.com/package/@langchain/core/).
@@ -17,8 +17,8 @@ You can do so by adding appropriate field to your project's `package.json` like 
   "name": "your-project",
   "version": "0.0.0",
   "dependencies": {
-    "@langchain/cohere": "^0.0.1",
-    "@langchain/core": "^0.3.0",
+    "@langchain/oracle": "^0.0.1",
+    "@langchain/core": "^0.3.0"
   },
   "resolutions": {
     "@langchain/core": "0.3.0"
@@ -36,73 +36,86 @@ You can do so by adding appropriate field to your project's `package.json` like 
 
 The field you need depends on the package manager you're using, but we recommend adding a field for the common `yarn`, `npm`, and `pnpm` to maximize compatibility.
 
-## Chat Models
+## Document Loaders
 
-This package contains the `ChatCohere` class, which is the recommended way to interface with the Cohere series of models.
-
-To use, install the requirements, and configure your environment.
-
-```bash
-export COHERE_API_KEY=your-api-key
-```
-
-Then initialize
+This package includes a document loader for loading documents from different sources and file formats.
 
 ```typescript
-import { HumanMessage } from "@langchain/core/messages";
-import { ChatCohere } from "@langchain/cohere";
+import {OracleDocLoader} from "@langchain/oracle";
 
-const model = new ChatCohere({
-  apiKey: process.env.COHERE_API_KEY,
-});
-const response = await model.invoke([new HumanMessage("Hello world!")]);
+const loader = new OracleDocLoader(conn, loader_params);
+const docs = await loader.load();
 ```
 
-### Streaming
+## Text Splitter
+
+This package includes a text splitter for chunking documents using the database.
 
 ```typescript
-import { HumanMessage } from "@langchain/core/messages";
-import { ChatCohere } from "@langchain/cohere";
+import {OracleTextSplitter} from "@langchain/oracle";
 
-const model = new ChatCohere({
-  apiKey: process.env.COHERE_API_KEY,
-});
-const response = await model.stream([new HumanMessage("Hello world!")]);
+const splitter = new OracleTextSplitter(conn, splitter_params);
+let chunks = await splitter.splitText(doc.pageContent);
 ```
 
 ## Embeddings
 
-This package also adds support for `CohereEmbeddings` embeddings model.
+This package includes a class for generating embeddings either inside or outside of the database.
 
 ```typescript
-import { ChatCohere } from "@langchain/cohere";
+import {OracleEmbeddings} from "@langchain/oracle";
 
-const embeddings = new ChatCohere({
-  apiKey: process.env.COHERE_API_KEY,
-});
-const res = await embeddings.embedQuery("Hello world");
+const embedder = new OracleEmbeddings(conn, embedder_params, proxy);
+const embed = await embedder.embedQuery(chunk);
+```
+
+## Summary
+
+This package includes a class for generating summaries either inside or outside of the database.
+
+Please check the [usage example](/docs/integrations/tools/oracleai).
+
+```typescript
+import {OracleSummary} from "@langchain/oracle";
+
+const model = new OracleSummary(conn, summary_params, proxy);
+const summary = await model.getSummary(doc.pageContent);
+```
+
+## Vector Store
+
+This package includes a vector store for storing, indexing, and querying data in the database.
+
+```typescript
+import {OracleVS} from "@langchain/oracle";
+
+oraclevs = new OracleVS(embedder, dbConfig);
+await oraclevs.initialize();
+
+await oraclevs.addDocuments(docs);
+const results = await oraclevs.similaritySearch("hello!", 3);
 ```
 
 ## Development
 
-To develop the `@langchain/cohere` package, you'll need to follow these instructions:
+To develop the `@langchain/oracle` package, you'll need to follow these instructions:
 
 ### Install dependencies
 
 ```bash
-yarn install
+pnpm install
 ```
 
 ### Build the package
 
 ```bash
-yarn build
+pnpm build
 ```
 
 Or from the repo root:
 
 ```bash
-yarn build --filter=@langchain/cohere
+pnpm build --filter @langchain/oracle
 ```
 
 ### Run tests
@@ -111,8 +124,8 @@ Test files should live within a `tests/` file in the `src/` folder. Unit tests s
 end in `.int.test.ts`:
 
 ```bash
-$ yarn test
-$ yarn test:int
+$ pnpm test
+$ pnpm test:int
 ```
 
 ### Lint & Format
@@ -120,9 +133,9 @@ $ yarn test:int
 Run the linter & formatter to ensure your code is up to standard:
 
 ```bash
-yarn lint && yarn format
+pnpm lint && pnpm format
 ```
 
 ### Adding new entrypoints
 
-If you add a new file to be exported, either import & re-export from `src/index.ts`, or add it to the `entrypoints` field in the `config` variable located inside `langchain.config.js` and run `yarn build` to generate the new entrypoint.
+If you add a new file to be exported, either import & re-export from `src/index.ts`, or add it to the `exports` field in the `package.json` file and run `pnpm build` to generate the new entrypoint.
