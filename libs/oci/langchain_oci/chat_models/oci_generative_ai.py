@@ -110,12 +110,17 @@ class OCIUtils:
                 # If it's not valid JSON, keep it as a string
                 pass
 
+        if "id" in tool_call.attribute_map and tool_call.id:
+            id = tool_call.id
+        else:
+            id = uuid.uuid4().hex
+
         return ToolCall(
             name=tool_call.name,
             args=parsed
             if "arguments" in tool_call.attribute_map
             else tool_call.parameters,
-            id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
+            id=id,
         )
 
     @staticmethod
@@ -815,7 +820,12 @@ class GenericProvider(Provider):
                 message.tool_calls or message.additional_kwargs.get("tool_calls")
             ):
                 # Process content and tool calls for assistant messages
-                content = self._process_message_content(message.content)
+                if message.content:
+                    content = self._process_message_content(message.content)
+                # Issue 78 fix: Check if original content is empty BEFORE processing
+                # to prevent NullPointerException in OCI backend
+                else:
+                    content = [self.oci_chat_message_text_content(text=".")]
                 tool_calls = []
                 for tool_call in message.tool_calls:
                     tool_calls.append(
