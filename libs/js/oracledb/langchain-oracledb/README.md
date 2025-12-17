@@ -1,6 +1,6 @@
 # @langchain/oracle
 
-This package contains the LangChain.js integrations for Oracle through their SDK.
+This package contains the LangChain.js integrations for Oracle.
 
 ## Installation
 
@@ -17,18 +17,18 @@ You can do so by adding appropriate field to your project's `package.json` like 
   "name": "your-project",
   "version": "0.0.0",
   "dependencies": {
-    "@langchain/oracle": "^0.0.1",
-    "@langchain/core": "^0.3.0"
+    "@langchain/oracle": "^0.3.1",
+    "@langchain/core": "^1.0.0"
   },
   "resolutions": {
-    "@langchain/core": "0.3.0"
+    "@langchain/core": "1.0.0"
   },
   "overrides": {
-    "@langchain/core": "0.3.0"
+    "@langchain/core": "1.0.0"
   },
   "pnpm": {
     "overrides": {
-      "@langchain/core": "0.3.0"
+      "@langchain/core": "1.0.0"
     }
   }
 }
@@ -72,8 +72,6 @@ const embed = await embedder.embedQuery(chunk);
 ## Summary
 
 This package includes a class for generating summaries either inside or outside of the database.
-
-Please check the [usage example](/docs/integrations/tools/oracleai).
 
 ```typescript
 import {OracleSummary} from "@langchain/oracle";
