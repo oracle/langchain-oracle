@@ -109,13 +109,18 @@ class OCIUtils:
             except json.JSONDecodeError:
                 # If it's not valid JSON, keep it as a string
                 pass
+        
+        if "id" in tool_call.attribute_map and tool_call.id:
+            id = tool_call.id
+        else:
+            id = uuid.uuid4().hex
 
         return ToolCall(
             name=tool_call.name,
             args=parsed
             if "arguments" in tool_call.attribute_map
             else tool_call.parameters,
-            id=tool_call.id if "id" in tool_call.attribute_map else uuid.uuid4().hex[:],
+            id=id
         )
 
     @staticmethod
