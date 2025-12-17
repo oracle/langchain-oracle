@@ -109,7 +109,7 @@ class OCIUtils:
             except json.JSONDecodeError:
                 # If it's not valid JSON, keep it as a string
                 pass
-        
+
         if "id" in tool_call.attribute_map and tool_call.id:
             id = tool_call.id
         else:
@@ -120,7 +120,7 @@ class OCIUtils:
             args=parsed
             if "arguments" in tool_call.attribute_map
             else tool_call.parameters,
-            id=id
+            id=id,
         )
 
     @staticmethod
