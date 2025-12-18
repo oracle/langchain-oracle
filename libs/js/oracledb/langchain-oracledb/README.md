@@ -10,7 +10,7 @@ npm install @langchain/oracle @langchain/core
 
 This package, along with the main LangChain package, depends on [`@langchain/core`](https://npmjs.com/package/@langchain/core/).
 If you are using this package with other LangChain packages, you should make sure that all of the packages depend on the same instance of @langchain/core.
-You can do so by adding appropriate field to your project's `package.json` like this:
+You can do so by adding an appropriate field to your project's `package.json` like this:
 
 ```json
 {
