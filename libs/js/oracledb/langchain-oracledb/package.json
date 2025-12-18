@@ -1,0 +1,86 @@
+{
+  "name": "@langchain/oracle",
+  "version": "0.3.0",
+  "description": "Oracle Database integration for LangChain.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:langchain-ai/langchainjs.git"
+  },
+  "homepage": "https://github.com/langchain-ai/langchainjs/tree/main/libs/langchain-oracle/",
+  "scripts": {
+    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:scripts",
+    "build:esm": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist/ && rm -rf dist/tests dist/**/tests",
+    "build:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist-cjs/ -p tsconfig.cjs.json && node scripts/move-cjs-to-dist.js && rm -rf dist-cjs",
+    "build:watch": "node scripts/create-entrypoints.js && tsc --outDir dist/ --watch",
+    "build:scripts": "node scripts/create-entrypoints.js && node scripts/check-tree-shaking.js",
+    "lint": "NODE_OPTIONS=--max-old-space-size=4096 eslint src && dpdm --exit-code circular:1 --no-warning --no-tree src/*.ts src/**/*.ts",
+    "lint:fix": "pnpm lint --fix",
+    "clean": "rm -rf dist/ && NODE_OPTIONS=--max-old-space-size=4096 node scripts/create-entrypoints.js pre",
+    "prepack": "pnpm build",
+    "release": "release-it --only-version --config .release-it.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:int": "vitest run --mode int",
+    "test:standard:unit": "vitest run --mode standard-unit",
+    "test:standard:int": "vitest run --mode standard-int",
+    "test:standard": "pnpm test:standard:unit && pnpm test:standard:int",
+    "format": "prettier --write \"src\"",
+    "format:check": "prettier --check \"src\""
+  },
+  "author": "LangChain",
+  "license": "MIT",
+  "dependencies": {
+    "htmlparser2": "^10.0.0",
+    "oracledb": "^6.10.0",
+    "uuid": "^10.0.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": "^1.0.0",
+    "@langchain/textsplitters": "^1.0.0"
+  },
+  "devDependencies": {
+    "@langchain/core": "^1.0.0",
+    "@langchain/textsplitters": "^1.0.0",
+    "@swc/core": "^1.3.90",
+    "@tsconfig/recommended": "^1.0.3",
+    "@types/oracledb": "^6.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "@vitest/coverage-v8": "^4.0.15",
+    "dotenv": "^17.2.3",
+    "dpdm": "^3.12.0",
+    "eslint": "^8.33.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-no-instanceof": "^1.0.1",
+    "eslint-plugin-prettier": "^4.2.1",
+    "prettier": "^2.8.3",
+    "rollup": "^4.5.2",
+    "typescript": "<5.2.0",
+    "typescript-eslint": "^8.48.1",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "index.cjs",
+    "index.js",
+    "index.d.ts"
+  ]
+}
