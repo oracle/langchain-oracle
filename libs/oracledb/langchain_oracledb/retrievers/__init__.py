@@ -3,7 +3,10 @@
 
 from langchain_oracledb.retrievers.hybrid_search import (
     OracleVectorizerPreference,
-    OracleVSHybridSearchRetriever,
+    OracleHybridSearchRetriever,
 )
 
-__all__ = ["OracleVectorizerPreference", "OracleVSHybridSearchRetriever"]
+__all__ = [
+    "OracleVectorizerPreference",
+    "OracleHybridSearchRetriever",
+]

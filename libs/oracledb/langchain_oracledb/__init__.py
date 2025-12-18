@@ -13,7 +13,7 @@ from langchain_oracledb.document_loaders.oracleai import (
 from langchain_oracledb.embeddings.oracleai import OracleEmbeddings
 from langchain_oracledb.retrievers.hybrid_search import (
     OracleVectorizerPreference,
-    OracleVSHybridSearchRetriever,
+    OracleHybridSearchRetriever,
 )
 from langchain_oracledb.utilities.oracleai import OracleSummary
 from langchain_oracledb.vectorstores.oraclevs import OracleVS
@@ -28,5 +28,5 @@ __all__ = [
     "OracleSummary",
     "OracleVS",
     "OracleVectorizerPreference",
-    "OracleVSHybridSearchRetriever",
+    "OracleHybridSearchRetriever",
 ]

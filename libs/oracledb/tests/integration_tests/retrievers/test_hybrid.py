@@ -19,7 +19,7 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.retrievers.hybrid_search import (
     OracleVectorizerPreference,
-    OracleVSHybridSearchRetriever,
+    OracleHybridSearchRetriever,
     acreate_hybrid_index,
     create_hybrid_index,
     drop_preference,
@@ -278,7 +278,7 @@ def test_hybrid_retrieval(
     )
     create_hybrid_index(connection, resource_names["index"], preference)
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs, idx_name=resource_names["index"], k=2
     )
 
@@ -290,7 +290,7 @@ def test_hybrid_retrieval(
     assert documents[0].metadata["id"] == "cncpt_15.5.3.2.2_P4"
     assert "score" not in documents[0].metadata
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         k=1,
@@ -304,7 +304,7 @@ def test_hybrid_retrieval(
     assert documents[0].metadata["vector_score"] > 0
     assert documents[0].metadata["text_score"] == 0
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         k=1,
@@ -434,7 +434,7 @@ async def test_hybrid_retrieval_async(
     )
     await acreate_hybrid_index(aconnection, resource_names["index"], preference)
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs, idx_name=resource_names["index"], k=2
     )
 
@@ -446,7 +446,7 @@ async def test_hybrid_retrieval_async(
     assert documents[0].metadata["id"] == "cncpt_15.5.3.2.2_P4"
     assert "score" not in documents[0].metadata
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         k=1,
@@ -460,7 +460,7 @@ async def test_hybrid_retrieval_async(
     assert documents[0].metadata["vector_score"] > 0
     assert documents[0].metadata["text_score"] == 0
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         k=1,
@@ -524,7 +524,7 @@ def test_docstring_example_sync(
 
     # From docstring: include 'return' values in retriever params
     # (allowed; retriever sets defaults internally)
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         search_mode="hybrid",
@@ -572,7 +572,7 @@ def test_retriever_params_validation_errors(
     with pytest.raises(
         ValueError, match="Cannot provide search_text as a parameter at the top level"
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"search_text": "bad"},
@@ -583,7 +583,7 @@ def test_retriever_params_validation_errors(
         ValueError,
         match=r"Cannot provide search_text as a parameter in params\['vector'\]",
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"vector": {"search_text": "bad"}},
@@ -593,7 +593,7 @@ def test_retriever_params_validation_errors(
         ValueError,
         match=r"Cannot provide search_text as a parameter in params\['text'\]",
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"text": {"search_text": "bad"}},
@@ -604,14 +604,14 @@ def test_retriever_params_validation_errors(
         ValueError,
         match=r"Cannot provide search_text as a parameter in params\['text'\]",
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"text": {"contains": "bad"}},
         )
 
     # Per-call invalid params should raise too
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs, idx_name=resource_names["index"]
     )
     with pytest.raises(
@@ -700,7 +700,7 @@ def test_hybrid_score_weight_effects(
     pref = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
     create_hybrid_index(connection, resource_names["index"], pref)
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         k=1,
@@ -720,6 +720,82 @@ def test_hybrid_score_weight_effects(
     score2 = md["score"]
 
     assert score1 != score2
+
+
+def test_create_hybrid_index_with_vector_store(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    sample_texts_and_metadatas,
+) -> None:
+    """
+    Create the hybrid index by passing the vector_store directly (without an explicit
+    OracleVectorizerPreference) and verify basic retrieval works.
+    """
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+
+    texts, metadatas = sample_texts_and_metadatas
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = OracleVS.from_texts(
+        texts,
+        model,
+        metadatas,
+        client=connection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+
+    # Create hybrid index by providing vector_store (preference is created internally)
+    create_hybrid_index(connection, resource_names["index"], vector_store=vs)
+
+    # Smoke-test retrieval to confirm the index is usable
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = retriever.invoke("database")
+    assert len(docs) >= 1
+
+
+@pytest.mark.asyncio
+async def test_create_hybrid_index_async_with_vector_store(
+    aconnection,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    sample_texts_and_metadatas,
+) -> None:
+    """
+    Async variant: create the hybrid index by passing vector_store directly and
+    verify retrieval works.
+    """
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+
+    texts, metadatas = sample_texts_and_metadatas
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = await OracleVS.afrom_texts(
+        texts,
+        model,
+        metadatas,
+        client=aconnection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+
+    # Create hybrid index by providing vector_store (preference is created internally)
+    await acreate_hybrid_index(aconnection, resource_names["index"], vector_store=vs)
+
+    # Smoke-test retrieval to confirm the index is usable
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = await retriever.ainvoke("database")
+    assert len(docs) >= 1
 
 
 @pytest.mark.asyncio
@@ -764,7 +840,7 @@ async def test_docstring_example_async(
         },
     )
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs, idx_name=resource_names["index"], k=2, return_scores=True
     )
     results = await retriever.ainvoke("latest SLA")
@@ -813,7 +889,7 @@ async def test_retriever_params_validation_errors_async(
     with pytest.raises(
         ValueError, match="Cannot provide search_text as a parameter at the top level"
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"search_text": "bad"},
@@ -822,7 +898,7 @@ async def test_retriever_params_validation_errors_async(
         ValueError,
         match=r"Cannot provide search_text as a parameter in params\['vector'\]",
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"vector": {"search_text": "bad"}},
@@ -831,13 +907,13 @@ async def test_retriever_params_validation_errors_async(
         ValueError,
         match=r"Cannot provide search_text as a parameter in params\['text'\]",
     ):
-        OracleVSHybridSearchRetriever(
+        OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name=resource_names["index"],
             params={"text": {"contains": "x"}},
         )
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs, idx_name=resource_names["index"]
     )
     with pytest.raises(
@@ -879,7 +955,7 @@ async def test_hybrid_score_weight_effects_async(
     )
     await acreate_hybrid_index(aconnection, resource_names["index"], pref)
 
-    retriever = OracleVSHybridSearchRetriever(
+    retriever = OracleHybridSearchRetriever(
         vector_store=vs,
         idx_name=resource_names["index"],
         k=1,

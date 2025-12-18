@@ -7,7 +7,7 @@ This module provides:
     by hybrid vector indexes.
 - create_hybrid_index/acreate_hybrid_index: build a HYBRID VECTOR INDEX over a text
     column using a vectorizer preference.
-- OracleVSHybridSearchRetriever: a retriever that calls DBMS_HYBRID_VECTOR.SEARCH
+- OracleHybridSearchRetriever: a retriever that calls DBMS_HYBRID_VECTOR.SEARCH
     to perform keyword, semantic, or hybrid retrieval against an OracleVS table.
 
 References:
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union, cast
 
 import oracledb
 from langchain_core.documents import Document
@@ -36,12 +36,9 @@ from langchain_oracledb.vectorstores.utils import (
     _ahandle_exceptions,
     _aindex_exists,
     _get_connection,
-    _get_index_name,
     _handle_exceptions,
     _index_exists,
     _quote_indentifier,
-    adrop_index,  # noqa: F401
-    drop_index,  # noqa: F401
     output_type_string_handler,
 )
 
@@ -125,7 +122,7 @@ class OracleVectorizerPreference:
         from langchain_oracledb.retrievers.hybrid_search import (
             OracleVectorizerPreference,
             create_hybrid_index,
-            OracleVSHybridSearchRetriever,
+            OracleHybridSearchRetriever,
         )
         import oracledb
 
@@ -154,7 +151,7 @@ class OracleVectorizerPreference:
         )
 
         # Build a retriever and search
-        retriever = OracleVSHybridSearchRetriever(vector_store=vs, idx_name="IDX_DOCS_HYB", k=5)
+        retriever = OracleHybridSearchRetriever(vector_store=vs, idx_name="IDX_DOCS_HYB", k=5)
         docs = retriever.invoke("refund policy for premium plan")
 
         # Cleanup when needed
@@ -173,7 +170,7 @@ class OracleVectorizerPreference:
             pref = await OracleVectorizerPreference.acreate_preference(vs, preference_name="PREF_DOCS_A")
             await acreate_hybrid_index(async_client, "IDX_DOCS_HYB_A", pref)
 
-            retriever = OracleVSHybridSearchRetriever(vector_store=vs, idx_name="IDX_DOCS_HYB_A", k=3)
+            retriever = OracleHybridSearchRetriever(vector_store=vs, idx_name="IDX_DOCS_HYB_A", k=3)
             results = await retriever.ainvoke("latest SLA")
 
             await pref.adrop_preference()
@@ -279,7 +276,9 @@ class OracleVectorizerPreference:
         self = cls.__new__(cls)
         self.params = params
         self.vs = vector_store
-        self.preference_name = preference_name or _get_index_name("pref")[0:30]
+        self.preference_name = (
+            preference_name or "pref" + str(uuid.uuid4()).replace("-", "")[0:15]
+        )
 
         preference_params = self._get_preference_parameters()
 
@@ -415,28 +414,54 @@ def _get_hybrid_index_ddl(
 def create_hybrid_index(
     client: Union[Connection, ConnectionPool],
     idx_name: str,
-    vectorizer_preference: OracleVectorizerPreference,
+    vectorizer_preference: Optional[OracleVectorizerPreference] = None,
+    vector_store: Optional[OracleVS] = None,
     params: Optional[dict[str, Any]] = None,
 ) -> None:
     """Create a HYBRID VECTOR INDEX if it does not already exist.
 
-    The index uses the provided OracleVectorizerPreference to supply the
-    vectorizer configuration. Additional options are accepted via params:
+    The index uses either the provided OracleVectorizerPreference or, if
+    vector_store is given, a temporary preference derived from its
+    OracleEmbeddings to supply the vectorizer configuration. Additional options
+    are accepted via params:
     - parameters: dict of INDEX PARAMETERS (excluding model/embedder_spec/vectorizer)
     - filter_by: list[str] -> FILTER BY clause
     - order_by: list[str], order_by_asc: bool -> ORDER BY ... ASC|DESC
     - parallel: int -> PARALLEL N
 
     Args:
-        client: oracledb connection or connection parameters
-            accepted by _get_connection.
+        client: oracledb connection or connection parameters accepted
+            by _get_connection.
         idx_name: Index name to create (quoted automatically).
-        vectorizer_preference: OracleVectorizerPreference to reference in the index.
+        vectorizer_preference: Existing OracleVectorizerPreference to
+            reference in the index. Mutually exclusive with vector_store.
+        vector_store: OracleVS instance. If provided, a temporary vectorizer preference
+            is created from its OracleEmbeddings for the duration of index creation,
+            then dropped. Mutually exclusive with vectorizer_preference.
         params: Optional dict of index options.
 
     Reference:
         https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/create-hybrid-vector-index.html
     """
+    if (not vector_store and not vectorizer_preference) or (
+        vector_store and vectorizer_preference
+    ):
+        raise ValueError(
+            "Exactly one of 'vector_store' or 'vectorizer_preference' must be provided."
+        )
+
+    drop = False
+    if vector_store:
+        vectorizer_preference = OracleVectorizerPreference.create_preference(
+            vector_store
+        )
+        drop = True
+
+    vectorizer_preference = cast(
+        OracleVectorizerPreference,
+        vectorizer_preference,
+    )
+
     idx_name = _quote_indentifier(idx_name)
     ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
 
@@ -448,12 +473,16 @@ def create_hybrid_index(
         else:
             logger.info(f"Index {idx_name} already exists...")
 
+    if drop:
+        vectorizer_preference.drop_preference()
+
 
 @_ahandle_exceptions
 async def acreate_hybrid_index(
     client: Union[AsyncConnection, AsyncConnectionPool],
     idx_name: str,
-    vectorizer_preference: OracleVectorizerPreference,
+    vectorizer_preference: Optional[OracleVectorizerPreference] = None,
+    vector_store: Optional[OracleVS] = None,
     params: Optional[dict[str, Any]] = None,
 ) -> None:
     """Async variant of create_hybrid_index.
@@ -461,14 +490,38 @@ async def acreate_hybrid_index(
     Creates the HYBRID VECTOR INDEX if it does not exist, using async APIs.
 
     Args:
-        client: oracledb connection or connection parameters.
+        client: oracledb async connection or connection parameters
+            accepted by _aget_connection.
         idx_name: Index name to create (quoted automatically).
-        vectorizer_preference: OracleVectorizerPreference to reference in the index.
+        vectorizer_preference: Existing OracleVectorizerPreference to reference in the
+            index. Mutually exclusive with vector_store.
+        vector_store: OracleVS instance. If provided, a temporary vectorizer preference
+            is created from its OracleEmbeddings for the duration of index creation,
+            then dropped. Mutually exclusive with vectorizer_preference.
         params: Optional dict of index options.
 
     Reference:
         https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/create-hybrid-vector-index.html
     """
+    if (not vector_store and not vectorizer_preference) or (
+        vector_store and vectorizer_preference
+    ):
+        raise ValueError(
+            "Exactly one of 'vector_store' or 'vectorizer_preference' must be provided."
+        )
+
+    drop = False
+    if vector_store:
+        vectorizer_preference = await OracleVectorizerPreference.acreate_preference(
+            vector_store
+        )
+        drop = True
+
+    vectorizer_preference = cast(
+        OracleVectorizerPreference,
+        vectorizer_preference,
+    )
+
     idx_name = _quote_indentifier(idx_name)
     ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
 
@@ -482,8 +535,11 @@ async def acreate_hybrid_index(
         else:
             logger.info(f"Index {idx_name} already exists...")
 
+    if drop:
+        await vectorizer_preference.adrop_preference()
 
-class OracleVSHybridSearchRetriever(BaseRetriever):
+
+class OracleHybridSearchRetriever(BaseRetriever):
     """LangChain retriever that executes DBMS_HYBRID_VECTOR.SEARCH against an OracleVS table.
 
     Modes:
@@ -506,7 +562,7 @@ class OracleVSHybridSearchRetriever(BaseRetriever):
     Example:
         Synchronous retrieval
 
-        retriever = OracleVSHybridSearchRetriever(
+        retriever = OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name="IDX_DOCS_HYB",
             search_mode="hybrid",
@@ -520,7 +576,7 @@ class OracleVSHybridSearchRetriever(BaseRetriever):
     Example:
         Async retrieval
 
-        results = await OracleVSHybridSearchRetriever(
+        results = await OracleHybridSearchRetriever(
             vector_store=vs,
             idx_name="IDX_DOCS_HYB",
             search_mode="semantic",
@@ -541,8 +597,6 @@ class OracleVSHybridSearchRetriever(BaseRetriever):
     )
     k: Optional[int] = 4
     """Number of documents to return."""
-    filter: Optional[dict[str, Any]] = None
-    """search filter"""
     params: Optional[dict[str, Any]] = {}
     """Search parameters"""
     return_scores: Optional[bool] = False
