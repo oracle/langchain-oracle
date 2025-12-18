@@ -1,7 +1,7 @@
 {
   "name": "@langchain/oracle",
   "version": "0.3.1",
-  "description": "Oracle integration for LangChain.js",
+  "description": "Oracle Database integration for LangChain.js",
   "type": "module",
   "engines": {
     "node": ">=18"
