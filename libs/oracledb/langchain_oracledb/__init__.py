@@ -11,6 +11,9 @@ from langchain_oracledb.document_loaders.oracleai import (
     OracleTextSplitter,
 )
 from langchain_oracledb.embeddings.oracleai import OracleEmbeddings
+from langchain_oracledb.retrievers.text_search import (
+    OracleTextSearchRetriever,
+)
 from langchain_oracledb.retrievers.hybrid_search import (
     OracleVectorizerPreference,
     OracleHybridSearchRetriever,
@@ -29,4 +32,5 @@ __all__ = [
     "OracleVS",
     "OracleVectorizerPreference",
     "OracleHybridSearchRetriever",
+    "OracleTextSearchRetriever",
 ]

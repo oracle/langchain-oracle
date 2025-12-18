@@ -111,6 +111,15 @@ def _quote_indentifier(name: str) -> str:
     return ".".join(groups)
 
 
+def _validate_indentifier(name: str):
+    name = name.strip()
+    reg = r'^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$'
+    pattern_validate = re.compile(reg)
+
+    if not pattern_validate.match(name):
+        raise ValueError(f"Identifier name {name} is not valid.")
+
+
 def _ahandle_exceptions(func: T) -> T:
     @functools.wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
