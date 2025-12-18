@@ -1,6 +1,6 @@
 # @langchain/oracle
 
-This package contains the LangChain.js integrations for Oracle.
+This package contains the LangChain.js integrations for Oracle Database.
 
 ## Installation
 
@@ -21,14 +21,14 @@ You can do so by adding appropriate field to your project's `package.json` like 
     "@langchain/core": "^1.0.0"
   },
   "resolutions": {
-    "@langchain/core": "1.0.0"
+    "@langchain/core": "^1.0.0"
   },
   "overrides": {
-    "@langchain/core": "1.0.0"
+    "@langchain/core": "^1.0.0"
   },
   "pnpm": {
     "overrides": {
-      "@langchain/core": "1.0.0"
+      "@langchain/core": "^1.0.0"
     }
   }
 }
