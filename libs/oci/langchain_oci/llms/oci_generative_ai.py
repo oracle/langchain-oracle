@@ -13,7 +13,7 @@ from langchain_core.outputs import GenerationChunk
 from langchain_core.utils import pre_init
 from pydantic import BaseModel, ConfigDict, Field
 
-from langchain_oci.common.auth import OCIAuthType, create_oci_client_kwargs
+from langchain_oci.common.auth import create_oci_client_kwargs
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"

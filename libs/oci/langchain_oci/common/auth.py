@@ -66,12 +66,8 @@ def create_oci_client_kwargs(
     elif auth_type == OCIAuthType.SECURITY_TOKEN.name:
 
         def make_security_token_signer(oci_config: Dict[str, Any]) -> Any:
-            pk = oci.signer.load_private_key_from_file(
-                oci_config.get("key_file"), None
-            )
-            with open(
-                oci_config.get("security_token_file"), encoding="utf-8"
-            ) as f:
+            pk = oci.signer.load_private_key_from_file(oci_config.get("key_file"), None)
+            with open(oci_config.get("security_token_file"), encoding="utf-8") as f:
                 st_string = f.read()
             return oci.auth.signers.SecurityTokenSigner(st_string, pk)
 
