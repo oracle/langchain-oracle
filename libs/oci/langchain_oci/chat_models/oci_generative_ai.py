@@ -218,7 +218,8 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             import warnings
 
             warnings.warn(
-                "OpenAI models require 'max_completion_tokens' instead of 'max_tokens'.",
+                "OpenAI models require 'max_completion_tokens' "
+                "instead of 'max_tokens'.",
                 UserWarning,
                 stacklevel=2,
             )

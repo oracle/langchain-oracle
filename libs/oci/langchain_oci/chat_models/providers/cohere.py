@@ -5,9 +5,26 @@
 
 import json
 import uuid
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Type,
+    Union,
+)
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.messages.tool import ToolCallChunk, tool_call_chunk
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_function

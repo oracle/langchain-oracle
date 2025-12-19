@@ -1,12 +1,21 @@
 # Copyright (c) 2023 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Generic provider implementation for OCI Generative AI (Meta, Llama, OpenAI, Mistral, etc.)."""
+"""Generic provider implementation for OCI Generative AI.
+
+Supports Meta Llama, xAI Grok, OpenAI, and Mistral models.
+"""
 
 import json
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Type, Union
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.messages.tool import ToolCallChunk, tool_call_chunk
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_function
