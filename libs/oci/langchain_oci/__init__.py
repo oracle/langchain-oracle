@@ -7,6 +7,7 @@ from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeploymentVLLM,
 )
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI, ChatOCIOpenAI
+from langchain_oci.common.auth import OCIAuthType
 from langchain_oci.embeddings.oci_data_science_model_deployment_endpoint import (
     OCIModelDeploymentEndpointEmbeddings,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "ChatOCIModelDeployment",
     "ChatOCIModelDeploymentTGI",
     "ChatOCIModelDeploymentVLLM",
+    "OCIAuthType",
     "OCIGenAIEmbeddings",
     "OCIModelDeploymentEndpointEmbeddings",
     "OCIGenAIBase",
