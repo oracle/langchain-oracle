@@ -18,8 +18,8 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.retrievers.hybrid_search import (
-    OracleVectorizerPreference,
     OracleHybridSearchRetriever,
+    OracleVectorizerPreference,
     acreate_hybrid_index,
     create_hybrid_index,
     drop_preference,

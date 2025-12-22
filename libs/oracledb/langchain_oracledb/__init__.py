@@ -11,12 +11,12 @@ from langchain_oracledb.document_loaders.oracleai import (
     OracleTextSplitter,
 )
 from langchain_oracledb.embeddings.oracleai import OracleEmbeddings
+from langchain_oracledb.retrievers.hybrid_search import (
+    OracleHybridSearchRetriever,
+    OracleVectorizerPreference,
+)
 from langchain_oracledb.retrievers.text_search import (
     OracleTextSearchRetriever,
-)
-from langchain_oracledb.retrievers.hybrid_search import (
-    OracleVectorizerPreference,
-    OracleHybridSearchRetriever,
 )
 from langchain_oracledb.utilities.oracleai import OracleSummary
 from langchain_oracledb.vectorstores.oraclevs import OracleVS
