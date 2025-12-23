@@ -285,57 +285,6 @@ def test_text_vs_sync_fuzzy_on_text(
     assert docs[0].metadata["score"] > 0
 
 
-def test_text_vs_sync_phrase_enforces_order(
-    connection,
-    cleanup,
-    resource_names,
-    db_embedder_params,
-    sample_docstring_texts_and_metadatas,
-) -> None:
-    """
-    Verify that a double-quoted phrase enforces token order:
-    - "refund policy" matches the refund doc
-    - "policy refund" yields no matches
-    """
-    proxy = ""
-    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
-
-    texts, metadatas = sample_docstring_texts_and_metadatas
-    drop_table_purge(connection, resource_names["table_vs"])
-
-    vs = OracleVS.from_texts(
-        texts,
-        model,
-        metadatas,
-        client=connection,
-        table_name=resource_names["table_vs"],
-        distance_strategy=DistanceStrategy.COSINE,
-    )
-
-    create_text_index(
-        connection,
-        idx_name=resource_names["index_vs_text"],
-        vector_store=vs,
-        column_name="text",
-    )
-
-    retriever = OracleTextSearchRetriever(
-        vector_store=vs,
-        column_name="text",
-        k=2,
-        return_scores=False,
-    )
-
-    # Exact phrase should match
-    docs_ok = retriever.invoke('"refund policy"')
-    assert len(docs_ok) == 1
-    assert docs_ok[0].metadata["id"] == "doc_refund"
-
-    # Reversed order should NOT match
-    docs_bad = retriever.invoke('"policy refund"')
-    assert len(docs_bad) == 0
-
-
 def test_text_vs_sync_index_on_metadata_not_allowed(
     connection,
     cleanup,
@@ -831,11 +780,7 @@ def test_text_vs_sync_literal_and_fuzzy_punctuation_grid(
 ) -> None:
     """
     Validate that punctuation in either the query or the indexed text does not change
-    retrieval results across the grid:
-      - fuzzy=False, literal_search=True
-      - fuzzy=False, literal_search=False
-      - fuzzy=True,  literal_search=True
-      - fuzzy=True,  literal_search=False
+    retrieval results.
     Uses an OracleVS-backed table.
     """
     # Dataset A: punctuation in the text, queries with and without punctuation
@@ -855,28 +800,18 @@ def test_text_vs_sync_literal_and_fuzzy_punctuation_grid(
         metas_a,
     )
 
-    combos = [
-        (False, True),
-        (False, False),
-        (True, True),
-        (True, False),
-    ]
     q_plain = "quick brown fox"
     q_punct = "quick, brown fox!!!"
 
-    for fuzzy, literal in combos:
+    for fuzzy in [True, False]:
         retr = OracleTextSearchRetriever(
             vector_store=vs_a,
             column_name="text",
             fuzzy=fuzzy,
-            literal_search=literal,
             k=1,
             return_scores=True,
         )
-        if not literal:
-            continue
-        else:
-            _assert_same_doc_sync(retr, q_plain, q_punct, expected_id="doc_fox")
+        _assert_same_doc_sync(retr, q_plain, q_punct, expected_id="doc_fox")
 
     # Dataset B: no punctuation in the text, queries contain punctuation variants
     texts_b = [
@@ -898,21 +833,15 @@ def test_text_vs_sync_literal_and_fuzzy_punctuation_grid(
     q_plain_b = "refund policy for premium"
     q_punct_b = "refund, policy for (premium) ???"
 
-    for fuzzy, literal in combos:
+    for fuzzy in [True, False]:
         retr_b = OracleTextSearchRetriever(
             vector_store=vs_b,
             column_name="text",
             fuzzy=fuzzy,
-            literal_search=literal,
             k=1,
             return_scores=True,
         )
-        if not literal:
-            continue
-        else:
-            _assert_same_doc_sync(
-                retr_b, q_plain_b, q_punct_b, expected_id="doc_refund"
-            )
+        _assert_same_doc_sync(retr_b, q_plain_b, q_punct_b, expected_id="doc_refund")
 
 
 @pytest.mark.asyncio
@@ -953,28 +882,18 @@ async def test_text_vs_async_literal_and_fuzzy_punctuation_grid(
         column_name="text",
     )
 
-    combos = [
-        (False, True),
-        (False, False),
-        (True, True),
-        (True, False),
-    ]
     q_plain = "quick brown fox"
     q_punct = "quick, brown fox!!!"
 
-    for fuzzy, literal in combos:
+    for fuzzy in [True, False]:
         retr = OracleTextSearchRetriever(
             vector_store=vs_a,
             column_name="text",
             fuzzy=fuzzy,
-            literal_search=literal,
             k=1,
             return_scores=True,
         )
-        if not literal:
-            continue
-        else:
-            await _assert_same_doc_async(retr, q_plain, q_punct, expected_id="doc_fox")
+        await _assert_same_doc_async(retr, q_plain, q_punct, expected_id="doc_fox")
 
     # Dataset B: no punctuation in the text, queries contain punctuation
     texts_b = [
@@ -1004,21 +923,17 @@ async def test_text_vs_async_literal_and_fuzzy_punctuation_grid(
     q_plain_b = "refund policy for premium"
     q_punct_b = "refund, policy for (premium) ???"
 
-    for fuzzy, literal in combos:
+    for fuzzy in [True, False]:
         retr_b = OracleTextSearchRetriever(
             vector_store=vs_b,
             column_name="text",
             fuzzy=fuzzy,
-            literal_search=literal,
             k=1,
             return_scores=True,
         )
-        if not literal:
-            continue
-        else:
-            await _assert_same_doc_async(
-                retr_b, q_plain_b, q_punct_b, expected_id="doc_refund"
-            )
+        await _assert_same_doc_async(
+            retr_b, q_plain_b, q_punct_b, expected_id="doc_refund"
+        )
 
 
 @pytest.mark.asyncio
@@ -1026,10 +941,10 @@ async def test_text_vs_async_literal_true_vs_false_operator_semantics(
     aconnection, connection, cleanup, resource_names
 ) -> None:
     """
-    Ensure Oracle Text operators are applied only when literal_search=False.
+    Ensure Oracle Text operators are applied only when operator_search=True.
     Using NEAR(...) should:
-      - return a match when literal_search=False
-      - return no matches when literal_search=True (treated as literal text)
+      - return a match when operator_search=True
+      - return no matches when operator_search=False (treated as literal text)
     """
     proxy = ""
     model = OracleEmbeddings(
@@ -1064,36 +979,35 @@ async def test_text_vs_async_literal_true_vs_false_operator_semantics(
         column_name="text",
     )
 
-    query = "NEAR((refund, policy))"
-    # literal_search=True -> treat operator literally, expect no match
+    query = "NEAR((policy, refund), 2, TRUE)"
     retr_true = OracleTextSearchRetriever(
         vector_store=vs,
         column_name="text",
-        literal_search=True,
+        operator_search=False,
         k=1,
         return_scores=True,
     )
-    docs_true = await retr_true.ainvoke(query)
-    assert len(docs_true) == 0
+    docs_false = await retr_true.ainvoke(query)
+    assert len(docs_false) == 1
+    assert docs_false[0].metadata.get("id") == "doc_refund"
 
-    # literal_search=False -> operator semantics applied, expect refund doc
+    # operator_search=True -> operator semantics applied, expect no doc
     retr_false = OracleTextSearchRetriever(
         vector_store=vs,
         column_name="text",
-        literal_search=False,
+        operator_search=True,
         k=1,
         return_scores=True,
     )
-    docs_false = await retr_false.ainvoke(query)
-    assert len(docs_false) == 1
-    assert docs_false[0].metadata.get("id") == "doc_refund"
+    docs_true = await retr_false.ainvoke(query)
+    assert len(docs_true) == 0
 
 
 def test_text_vs_sync_literal_true_vs_false_operator_semantics(
     connection, cleanup, resource_names
 ) -> None:
     """
-    Sync counterpart for literal_search True vs False behavior using NEAR(...).
+    Sync counterpart for operator_search True vs False behavior using NEAR(...).
     """
     texts = [
         "Refund policy for premium plan allows refunds within 30 days",
@@ -1111,32 +1025,32 @@ def test_text_vs_sync_literal_true_vs_false_operator_semantics(
         metas,
     )
 
-    query = "NEAR((refund, policy))"
+    query = "NEAR((policy, refund), 2, TRUE)"
     retr_true = OracleTextSearchRetriever(
         vector_store=vs,
         column_name="text",
-        literal_search=True,
+        operator_search=False,
         k=1,
         return_scores=True,
     )
-    docs_true = retr_true.invoke(query)
-    assert len(docs_true) == 0
+    docs_false = retr_true.invoke(query)
+    assert len(docs_false) == 1
+    assert docs_false[0].metadata.get("id") == "doc_refund"
 
     retr_false = OracleTextSearchRetriever(
         vector_store=vs,
         column_name="text",
-        literal_search=False,
+        operator_search=True,
         k=1,
         return_scores=True,
     )
-    docs_false = retr_false.invoke(query)
-    assert len(docs_false) == 1
-    assert docs_false[0].metadata.get("id") == "doc_refund"
+    docs_true = retr_false.invoke(query)
+    assert len(docs_true) == 0
 
 
 def test_text_vs_fuzzy_word(connection, cleanup, resource_names) -> None:
     """
-    Sync counterpart for literal_search True vs False behavior using NEAR(...).
+    Test fuzzy search
     """
     texts = [
         "Refund policy for premium plan allows refunds within 30 days",
@@ -1157,17 +1071,13 @@ def test_text_vs_fuzzy_word(connection, cleanup, resource_names) -> None:
     retr_true = OracleTextSearchRetriever(
         vector_store=vs,
         column_name="text",
-        literal_search=True,
+        operator_search=False,
         k=1,
         return_scores=True,
         fuzzy=True,
     )
 
-    query = "policy premium plan"
-    docs_true = retr_true.invoke(query)
-    assert len(docs_true) == 0
-
-    query = "policy for premium"
+    query = "policy premium plan near"
     docs_true = retr_true.invoke(query)
     assert len(docs_true) == 1
 

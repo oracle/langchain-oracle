@@ -15,14 +15,20 @@ Notes:
   (client + table_name + column_name).
 
 Query tips:
-- literal_search=True (default): the input is treated as literal text by wrapping
-  the entire query in { ... } so Oracle Text operators are not interpreted.
-- literal_search=False: the input is treated as an Oracle Text CONTAINS expression
-  and is passed as-is. See operator reference:
-  https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/oracle-text-CONTAINS-query-operators.html
-- fuzzy=True: this retriever tokenizes the query and applies FUZZY(...) per token.
-  If literal_search=True, tokens are combined with NEAR(..., slop, TRUE) to loosely
-  preserve adjacency; if literal_search=False, tokens are combined with AND.
+- operator_search=False (default): the input is treated as literal text. It is
+  tokenized on non-word characters and rewritten as an ACCUM expression of the
+  tokens. Each token is quoted, or when fuzzy=True, wrapped as FUZZY("token").
+  Examples:
+    "refund policy" -> '"refund" ACCUM "policy"'
+    fuzzy=True      -> 'fuzzy("refund") ACCUM fuzzy("policy")'
+- operator_search=True: the input is treated as an Oracle Text expression and
+  sent to CONTAINS unchanged (operators like NEAR, ABOUT, AND, OR, NOT, WITHIN,
+  etc. are honored). In this mode, fuzzy is ignored.
+- fuzzy helps match misspellings when operator_search=False by applying Oracle
+  Text FUZZY per token. See:
+  https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/FUZZY.html
+- Results are ordered by score descending; use return_scores=True to include
+  the score in each Document's metadata as "score".
 """
 
 from __future__ import annotations
@@ -190,39 +196,22 @@ async def acreate_text_index(
             logger.info(f"Index {idx_name} already exists...")
 
 
-def _generate_fuzzy_near_query(phrase, literal=True):
+def _generate_accum_query(query: str, fuzzy: Optional[bool] = False) -> str:
+    """Tokenize query on non-word boundaries and join with Oracle Text ACCUM.
+
+    Behavior:
+    - Splits on non-word characters, discarding empty tokens.
+    - When fuzzy is False: each token is quoted: "token".
+    - When fuzzy is True: wraps each token as FUZZY("token").
+    - Joins tokens with ' ACCUM '.
+
+    Examples:
+    'refund policy' -> '"refund" ACCUM "policy"'
+    fuzzy=True -> 'fuzzy("refund") ACCUM fuzzy("policy")'
     """
-    Generate a FUZZY-based CONTAINS expression from a phrase.
-
-    If literal is True, combine FUZZY(...) tokens with NEAR(..., slop, TRUE) to
-    loosely preserve order/adjacency. If literal is False, combine tokens with AND.
-
-    Args:
-        phrase (str): Input phrase.
-        literal (bool): When True use NEAR(FUZZY(...)); when False use
-            AND of FUZZY(...).
-
-    Returns:
-        str: Oracle Text CONTAINS expression built from FUZZY operators.
-    """
-    # 1. Remove punctuation
-    cleaned = re.sub(r"[^\w\s]", "", phrase)
-    words = cleaned.split()
-
-    fuzzy_words = [f"FUZZY({word})" for word in words]
-
-    if len(fuzzy_words) == 1:
-        return fuzzy_words[0]
-    elif len(fuzzy_words) == 0:
-        return ""
-
-    if literal:
-        total_words = len(words)
-        query = f"NEAR(({', '.join(fuzzy_words)}), {total_words - 2}, TRUE)"
-    else:
-        query = " AND ".join(fuzzy_words)
-
-    return query
+    words = re.split(r"\W+", query)
+    words = [f'"{word}"' if not fuzzy else f'fuzzy("{word}")' for word in words if word]
+    return " ACCUM ".join(words)
 
 
 class OracleTextSearchRetriever(BaseRetriever):
@@ -238,15 +227,12 @@ class OracleTextSearchRetriever(BaseRetriever):
     - table_name: Target table when not using OracleVS (quoted automatically).
     - column_name: Column to search. With OracleVS, allowed value: "text" only.
     - k: Number of results to return (default 4).
-    - fuzzy: If True, tokenizes the input and applies FUZZY(...) per token.
-      With literal_search=True tokens are combined with NEAR(...); with
-      literal_search=False tokens are combined with AND.
+    - fuzzy: Apply Oracle Text FUZZY per token when operator_search=False; ignored if
+      operator_search=True.
+    - operator_search: Treat the input as an Oracle Text expression; when True the
+      query is passed to CONTAINS unchanged and fuzzy is ignored.
     - return_scores: If True, includes Oracle Text SCORE(1) in metadata as "score".
     - returned_columns: Additional columns to return as metadata.
-    - literal_search: If True (default), treat input as literal text by wrapping
-      it with { ... } so Oracle Text operators are escaped. If False, treat the
-      input as an Oracle Text CONTAINS expression. See:
-      https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/oracle-text-CONTAINS-query-operators.html
 
     Example:
         retriever = OracleTextSearchRetriever(
@@ -261,14 +247,15 @@ class OracleTextSearchRetriever(BaseRetriever):
             print(d.page_content, d.metadata.get("score"))
 
     Query tips:
-    - literal_search=True (default): the input is wrapped in { ... } and treated
-      as literal text (operators are not interpreted).
-    - literal_search=False: the input is treated as an Oracle Text expression and
-      may use operators. See:
-      https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/oracle-text-CONTAINS-query-operators.html
-    - Fuzzy mode (fuzzy=True) applies FUZZY(...) per token. With literal_search=True
-      tokens are combined using NEAR(...); with literal_search=False tokens are
-      combined using AND.
+    - operator_search=False (default): query is tokenized on non-word characters
+      and rewritten as an ACCUM expression of tokens. Each token is quoted or,
+      if fuzzy=True, wrapped as FUZZY("token").
+      Examples:
+        "refund policy" -> '"refund" ACCUM "policy"'
+        fuzzy=True      -> 'fuzzy("refund") ACCUM fuzzy("policy")'
+    - operator_search=True: treat the input as an Oracle Text expression (NEAR,
+      ABOUT, AND, OR, NOT, WITHIN, etc.). The query is sent to CONTAINS
+      unchanged, and fuzzy is ignored.
     """
 
     vector_store: Optional[OracleVS] = None
@@ -282,15 +269,27 @@ class OracleTextSearchRetriever(BaseRetriever):
     k: Optional[int] = 4
     """Number of documents to return."""
     fuzzy: Optional[bool] = False
-    """Apply FUZZY(...) per token. With literal_search=True combine using NEAR(...);
-    with literal_search=False combine using AND."""
+    """Apply Oracle Text FUZZY expansion per token when operator_search is False.
+
+    - When False (default): tokens are quoted literally.
+    - When True: each token is wrapped as FUZZY("token"), allowing misspellings.
+    - Ignored when operator_search is True (query is sent as-is).
+    See: https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/FUZZY.html
+    """
     return_scores: Optional[bool] = False
     """If True, include Oracle Text SCORE(1) under metadata['score']."""  # noqa: E501
     returned_columns: Optional[list[str]] = None
     """Additional columns to fetch and include in metadata."""
-    literal_search: Optional[bool] = True
-    """If True (default) treat the input as literal text by wrapping in { ... }.
-    If False, treat the input as an Oracle Text CONTAINS expression. See:
+    operator_search: Optional[bool] = False
+    """
+    Interpret the input as an Oracle Text CONTAINS expression.
+
+    - True: the query is passed to CONTAINS unchanged and may include operators
+      like NEAR, ABOUT, AND, OR, NOT, WITHIN, etc. In this mode, fuzzy is ignored.
+    - False (default): the input is treated as literal text; it is tokenized and
+      rewritten as an ACCUM expression, with optional per-token FUZZY wrapping.
+
+    See:
     https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/oracle-text-CONTAINS-query-operators.html
     """
 
@@ -339,6 +338,10 @@ class OracleTextSearchRetriever(BaseRetriever):
         self.table_name = resolved_table
         self.column_name = resolved_column
         self.returned_columns = rc
+
+        if self.operator_search and self.fuzzy:
+            logger.warning("Fuzzy matching is ignored when operator search is enabled.")
+
         return self
 
     def _get_result_documents(self, rows: list[dict[str, Any]]) -> List[Document]:
@@ -382,10 +385,6 @@ class OracleTextSearchRetriever(BaseRetriever):
     def _get_relevant_documents(self, query: str, **kwargs: Any) -> List[Document]:
         """Execute a synchronous Oracle Text CONTAINS search.
 
-        The query string is passed directly to CONTAINS; when fuzzy=True, it is wrapped
-        as fuzzy(query). The search uses SCORE(1) with label '1' in CONTAINS and orders
-        results by SCORE descending, returning top-k rows.
-
         Args:
             query: Natural language query string or Oracle Text
               expression (e.g., fuzzy(cat)).
@@ -395,21 +394,9 @@ class OracleTextSearchRetriever(BaseRetriever):
             List[Document]: Top-k documents sorted by SCORE(1).
 
         Query notes:
-        - literal_search=True (default): the input is wrapped in { ... } and treated
-          as literal text (no operators).
-        - literal_search=False: the input is treated as an Oracle Text CONTAINS
-          expression and passed as-is. Operator reference:
-          https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/oracle-text-CONTAINS-query-operators.html
-        - With fuzzy=True, the query is split into tokens and each token is wrapped
-          with FUZZY(...). If literal_search=True, tokens are combined using
-          NEAR(...); otherwise they are combined using AND. Phrase semantics from
-          quotes are not preserved in fuzzy mode.
         """
-        if self.fuzzy:
-            query = _generate_fuzzy_near_query(query, self.literal_search)
-        elif self.literal_search:
-            query = query.replace("{", "{{").replace("}", "}}")
-            query = f"{{{query}}}"
+        if not self.operator_search:
+            query = _generate_accum_query(query, self.fuzzy)
 
         if not query:
             return []
@@ -462,21 +449,9 @@ class OracleTextSearchRetriever(BaseRetriever):
             List[Document]: Top-k documents sorted by SCORE(1).
 
         Query notes:
-        - literal_search=True (default): the input is wrapped in { ... } and treated
-          as literal text (no operators).
-        - literal_search=False: the input is treated as an Oracle Text CONTAINS
-          expression and passed as-is. Operator reference:
-          https://docs.oracle.com/en/database/oracle/oracle-database/19/ccref/oracle-text-CONTAINS-query-operators.html
-        - With fuzzy=True, the query is split into tokens and each token is wrapped
-          with FUZZY(...). If literal_search=True, tokens are combined using
-          NEAR(...); otherwise they are combined using AND.
-
         """
-        if self.fuzzy:
-            query = _generate_fuzzy_near_query(query, self.literal_search)
-        elif self.literal_search:
-            query = query.replace("{", "{{").replace("}", "}}")
-            query = f"{{{query}}}"
+        if not self.operator_search:
+            query = _generate_accum_query(query, self.fuzzy)
 
         if not query:
             return []
