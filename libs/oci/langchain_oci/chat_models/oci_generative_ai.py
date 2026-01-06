@@ -192,7 +192,7 @@ class OCIUtils:
                 if not k.startswith(("swagger_", "attribute_"))
             }
 
-        return UsageMetadata(**usage_kwargs)  # type: ignore[typeddict-item]
+        return UsageMetadata(**usage_kwargs)  # type: ignore
 
 
 class Provider(ABC):
