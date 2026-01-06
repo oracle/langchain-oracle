@@ -41,7 +41,7 @@ from langchain_core.messages import (
 try:
     from langchain_core.messages import UsageMetadata
 except ImportError:
-    UsageMetadata = None  # type: ignore[assignment,misc]
+    UsageMetadata = None  # type: ignore
 from langchain_core.messages.tool import ToolCallChunk, tool_call_chunk
 from langchain_core.output_parsers import (
     JsonOutputParser,
