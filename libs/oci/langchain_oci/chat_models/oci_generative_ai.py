@@ -36,8 +36,12 @@ from langchain_core.messages import (
     SystemMessage,
     ToolCall,
     ToolMessage,
-    UsageMetadata,
 )
+
+try:
+    from langchain_core.messages import UsageMetadata
+except ImportError:
+    UsageMetadata = None  # type: ignore[assignment,misc]
 from langchain_core.messages.tool import ToolCallChunk, tool_call_chunk
 from langchain_core.output_parsers import (
     JsonOutputParser,
@@ -150,7 +154,7 @@ class OCIUtils:
         return resolved
 
     @staticmethod
-    def create_usage_metadata(usage: Any) -> Optional[UsageMetadata]:
+    def create_usage_metadata(usage: Any) -> Optional[Any]:
         """
         Create UsageMetadata from OCI SDK usage object.
 
@@ -161,7 +165,7 @@ class OCIUtils:
             UsageMetadata object with token usage information,
             or None if usage is not available.
         """
-        if not usage:
+        if not usage or UsageMetadata is None:
             return None
 
         usage_kwargs: Dict[str, Any] = {
