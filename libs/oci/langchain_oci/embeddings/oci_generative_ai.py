@@ -8,8 +8,7 @@ from langchain_core.utils import pre_init
 from pydantic import BaseModel, ConfigDict
 
 from langchain_oci.common.auth import create_oci_client_kwargs
-
-CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"
+from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
 
 
 class OCIGenAIEmbeddings(BaseModel, Embeddings):

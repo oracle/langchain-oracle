@@ -94,6 +94,9 @@ class OCIUtils:
         return resolved
 
 
+# Prefix for custom endpoint OCIDs
+CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"
+
 # Mapping of JSON schema types to Python types
 JSON_TO_PYTHON_TYPES = {
     "string": "str",
