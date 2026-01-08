@@ -58,6 +58,8 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
                                     "tool_calls": None,
                                     "usage": MockResponseDict(
                                         {
+                                            "prompt_tokens": 30,
+                                            "completion_tokens": 20,
                                             "total_tokens": 50,
                                         }
                                     ),
@@ -124,6 +126,8 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
                                     "time_created": "2025-08-14T10:00:01.100000+00:00",
                                     "usage": MockResponseDict(
                                         {
+                                            "prompt_tokens": 45,
+                                            "completion_tokens": 30,
                                             "total_tokens": 75,
                                         }
                                     ),
@@ -159,6 +163,17 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
         assert actual.additional_kwargs["total_tokens"] == 50
     elif provider == "meta":
         assert actual.additional_kwargs["total_tokens"] == 75
+
+    # Test usage_metadata (new field, only available in langchain-core 1.0+)
+    if hasattr(actual, "usage_metadata") and actual.usage_metadata is not None:
+        if provider == "cohere":
+            assert actual.usage_metadata["input_tokens"] == 30
+            assert actual.usage_metadata["output_tokens"] == 20
+            assert actual.usage_metadata["total_tokens"] == 50
+        elif provider == "meta":
+            assert actual.usage_metadata["input_tokens"] == 45
+            assert actual.usage_metadata["output_tokens"] == 30
+            assert actual.usage_metadata["total_tokens"] == 75
 
 
 @pytest.mark.requires("oci")
