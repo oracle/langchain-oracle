@@ -179,6 +179,8 @@ def test_llm_chat(monkeypatch: MonkeyPatch, test_model_id: str) -> None:
 @pytest.mark.requires("oci")
 def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
     """Test tool calling with Meta models."""
+    import json
+
     oci_gen_ai_client = MagicMock()
     llm = ChatOCIGenAI(model_id="meta.llama-3-70b-instruct", client=oci_gen_ai_client)
 
@@ -330,6 +332,43 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
     assert len(response_escaped.tool_calls) == 1
     assert response_escaped.tool_calls[0]["name"] == "get_weather"
     assert response_escaped.tool_calls[0]["args"] == {"location": "San Francisco"}
+
+    # Test streaming with missing text key (Gemini scenario - issue #86)
+    mock_stream_events = [
+        MagicMock(
+            data=json.dumps(
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "ASSISTANT",
+                        "content": [{"type": "TEXT"}],  # No "text" key
+                        "toolCalls": [
+                            {  # No "id" key
+                                "type": "FUNCTION",
+                                "name": "get_weather",
+                                "arguments": '{"location": "Boston"}',
+                            }
+                        ],
+                    },
+                }
+            )
+        ),
+        MagicMock(data=json.dumps({"finishReason": "stop"})),
+    ]
+    mock_stream_response = MagicMock()
+    mock_stream_response.data.events.return_value = mock_stream_events
+    monkeypatch.setattr(  # noqa: E501
+        llm.client, "chat", lambda *args, **kwargs: mock_stream_response
+    )
+
+    # Should not raise KeyError on missing text key
+    chunks = list(llm.stream(messages))
+    tool_chunk = next((c for c in chunks if c.tool_call_chunks), None)
+    assert tool_chunk is not None
+    assert tool_chunk.tool_call_chunks[0]["name"] == "get_weather"
+    # Verify UUID was generated and index is correct (not -1)
+    assert tool_chunk.tool_call_chunks[0]["id"] != ""
+    assert tool_chunk.tool_call_chunks[0]["index"] == 0
 
 
 @pytest.mark.requires("oci")

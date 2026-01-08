@@ -1138,7 +1138,7 @@ class GenericProvider(Provider):
             # Generate ID if not provided by backend (e.g., Gemini models)
             if not tool_id:
                 tool_id = str(uuid.uuid4())
-            
+
             tool_call_ids.add(tool_id)
 
             tool_call_chunks.append(
