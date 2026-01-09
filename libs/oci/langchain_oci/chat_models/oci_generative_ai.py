@@ -724,7 +724,7 @@ class GenericProvider(Provider):
         content = event_data.get("message", {}).get("content", None)
         if not content:
             return ""
-        return content[0]["text"]
+        return content[0].get("text", "")
 
     def is_chat_stream_end(self, event_data: Dict) -> bool:
         """Determine if Meta chat stream event indicates the end."""
@@ -1135,8 +1135,11 @@ class GenericProvider(Provider):
 
         for tool_call in self.format_stream_tool_calls(tool_call_response):
             tool_id = tool_call.get("id")
-            if tool_id:
-                tool_call_ids.add(tool_id)
+            # Generate ID if not provided by backend (e.g., Gemini models)
+            if not tool_id:
+                tool_id = str(uuid.uuid4())
+
+            tool_call_ids.add(tool_id)
 
             tool_call_chunks.append(
                 tool_call_chunk(
