@@ -363,12 +363,12 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
 
     # Should not raise KeyError on missing text key
     chunks = list(llm.stream(messages))
-    tool_chunk = next((c for c in chunks if c.tool_call_chunks), None)
+    tool_chunk = next((c for c in chunks if c.tool_call_chunks), None)  # type: ignore[attr-defined]
     assert tool_chunk is not None
-    assert tool_chunk.tool_call_chunks[0]["name"] == "get_weather"
+    assert tool_chunk.tool_call_chunks[0]["name"] == "get_weather"  # type: ignore[attr-defined]
     # Verify UUID was generated and index is correct (not -1)
-    assert tool_chunk.tool_call_chunks[0]["id"] != ""
-    assert tool_chunk.tool_call_chunks[0]["index"] == 0
+    assert tool_chunk.tool_call_chunks[0]["id"] != ""  # type: ignore[attr-defined]
+    assert tool_chunk.tool_call_chunks[0]["index"] == 0  # type: ignore[attr-defined]
 
 
 @pytest.mark.requires("oci")
