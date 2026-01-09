@@ -1,23 +1,14 @@
 # Copyright (c) 2023 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-from enum import Enum
 from typing import Any, Dict, Iterator, List, Mapping, Optional
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.utils import pre_init
 from pydantic import BaseModel, ConfigDict
 
-CUSTOM_ENDPOINT_PREFIX = "ocid1.generativeaiendpoint"
-
-
-class OCIAuthType(Enum):
-    """OCI authentication types as enumerator."""
-
-    API_KEY = 1
-    SECURITY_TOKEN = 2
-    INSTANCE_PRINCIPAL = 3
-    RESOURCE_PRINCIPAL = 4
+from langchain_oci.common.auth import create_oci_client_kwargs
+from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
 
 
 class OCIGenAIEmbeddings(BaseModel, Embeddings):
@@ -109,49 +100,12 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings):
         try:
             import oci
 
-            client_kwargs = {
-                "config": {},
-                "signer": None,
-                "service_endpoint": values["service_endpoint"],
-                "retry_strategy": oci.retry.DEFAULT_RETRY_STRATEGY,
-                "timeout": (10, 240),  # default timeout config for OCI Gen AI service
-            }
-
-            if values["auth_type"] == OCIAuthType(1).name:
-                client_kwargs["config"] = oci.config.from_file(
-                    file_location=values["auth_file_location"],
-                    profile_name=values["auth_profile"],
-                )
-                client_kwargs.pop("signer", None)
-            elif values["auth_type"] == OCIAuthType(2).name:
-
-                def make_security_token_signer(oci_config):
-                    pk = oci.signer.load_private_key_from_file(
-                        oci_config.get("key_file"), None
-                    )
-                    with open(
-                        oci_config.get("security_token_file"), encoding="utf-8"
-                    ) as f:
-                        st_string = f.read()
-                    return oci.auth.signers.SecurityTokenSigner(st_string, pk)
-
-                client_kwargs["config"] = oci.config.from_file(
-                    file_location=values["auth_file_location"],
-                    profile_name=values["auth_profile"],
-                )
-                client_kwargs["signer"] = make_security_token_signer(
-                    oci_config=client_kwargs["config"]
-                )
-            elif values["auth_type"] == OCIAuthType(3).name:
-                client_kwargs["signer"] = (
-                    oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-                )
-            elif values["auth_type"] == OCIAuthType(4).name:
-                client_kwargs["signer"] = (
-                    oci.auth.signers.get_resource_principals_signer()
-                )
-            else:
-                raise ValueError("Please provide valid value to auth_type")
+            client_kwargs = create_oci_client_kwargs(
+                auth_type=values["auth_type"],
+                service_endpoint=values["service_endpoint"],
+                auth_file_location=values["auth_file_location"],
+                auth_profile=values["auth_profile"],
+            )
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
                 **client_kwargs
