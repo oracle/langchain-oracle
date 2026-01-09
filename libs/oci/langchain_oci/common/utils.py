@@ -6,10 +6,15 @@
 import json
 import re
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langchain_core.messages import ToolCall
 from pydantic import BaseModel
+
+try:
+    from langchain_core.messages import UsageMetadata
+except ImportError:
+    UsageMetadata = None  # type: ignore[assignment,misc,unused-ignore]
 
 
 class OCIUtils:
@@ -92,6 +97,41 @@ class OCIUtils:
         if isinstance(resolved, dict):
             resolved.pop("$defs", None)
         return resolved
+
+    @staticmethod
+    def create_usage_metadata(usage: Any) -> Optional[Any]:
+        """
+        Create UsageMetadata from OCI SDK usage object.
+
+        Args:
+            usage: OCI SDK usage object containing token counts and details
+
+        Returns:
+            UsageMetadata object with token usage information,
+            or None if usage is not available.
+        """
+        if not usage or UsageMetadata is None:
+            return None
+
+        from oci.util import to_dict
+
+        usage_kwargs: Dict[str, Any] = {
+            "input_tokens": getattr(usage, "prompt_tokens", 0),
+            "output_tokens": getattr(usage, "completion_tokens", 0),
+            "total_tokens": getattr(usage, "total_tokens", 0),
+        }
+
+        # Convert OCI SDK objects to dictionaries using built-in utility
+        if (
+            prompt_details := getattr(usage, "prompt_tokens_details", None)
+        ) is not None:
+            usage_kwargs["input_token_details"] = to_dict(prompt_details)
+        if (
+            completion_details := getattr(usage, "completion_tokens_details", None)
+        ) is not None:
+            usage_kwargs["output_token_details"] = to_dict(completion_details)
+
+        return UsageMetadata(**usage_kwargs)  # type: ignore
 
 
 # Prefix for custom endpoint OCIDs
