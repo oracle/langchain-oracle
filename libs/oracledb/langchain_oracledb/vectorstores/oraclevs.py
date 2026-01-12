@@ -10,15 +10,12 @@ LangChain for vector storage and search.
 from __future__ import annotations
 
 import array
-import functools
 import hashlib
 import inspect
 import json
 import logging
-import os
 import re
 import uuid
-from collections.abc import Awaitable
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -30,7 +27,6 @@ from typing import (
     Sequence,
     Tuple,
     Type,
-    TypeVar,
     Union,
     cast,
 )
@@ -38,7 +34,12 @@ from typing import (
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from oracledb import AsyncConnection, Connection
+    from oracledb import (
+        AsyncConnection,
+        AsyncConnectionPool,
+        Connection,
+        ConnectionPool,
+    )
 
 import numpy as np
 import oracledb
@@ -51,18 +52,26 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 
 from ..embeddings import OracleEmbeddings
+from .utils import (
+    _aget_connection,
+    _ahandle_exceptions,
+    _aindex_exists,
+    _atable_exists,
+    _get_connection,
+    _get_index_name,
+    _handle_exceptions,
+    _index_exists,
+    _quote_indentifier,
+    _table_exists,
+    adrop_table_purge,  # noqa: F401
+    drop_table_purge,  # noqa: F401
+    output_type_string_handler,
+)
 
 logger = logging.getLogger(__name__)
-log_level = os.getenv("LOG_LEVEL", "ERROR").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
 
 INTERNAL_ID_KEY = "__orcl_internal_doc_id"
 
-# define a type variable that can be any kind of function
-T = TypeVar("T", bound=Callable[..., Any])
 
 LOGICAL_MAP = {
     "$and": (" AND ", "({0})"),
@@ -351,203 +360,6 @@ def _generate_where_clause(filter: dict, bind_variables: List[str]) -> str:
     return res
 
 
-def _get_connection(client: Any) -> Optional[Connection]:
-    # check if ConnectionPool exists
-    connection_pool_class = getattr(oracledb, "ConnectionPool", None)
-
-    if isinstance(client, oracledb.Connection):
-        return client
-    elif connection_pool_class and isinstance(client, connection_pool_class):
-        return client.acquire()
-    else:
-        valid_types = "oracledb.Connection"
-        if connection_pool_class:
-            valid_types += " or oracledb.ConnectionPool"
-        raise TypeError(
-            f"Expected client of type {valid_types}, got {type(client).__name__}"
-        )
-
-
-async def _aget_connection(client: Any) -> Optional[AsyncConnection]:
-    # check if ConnectionPool exists
-    connection_pool_class = getattr(oracledb, "AsyncConnectionPool", None)
-
-    if isinstance(client, oracledb.AsyncConnection):
-        return client
-    elif connection_pool_class and isinstance(client, connection_pool_class):
-        return await client.acquire()
-    else:
-        valid_types = "oracledb.AsyncConnection"
-        if connection_pool_class:
-            valid_types += " or oracledb.AsyncConnectionPool"
-        raise TypeError(
-            f"Expected client of type {valid_types}, got {type(client).__name__}"
-        )
-
-
-def _handle_exceptions(func: T) -> T:
-    @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return func(*args, **kwargs)
-        except oracledb.Error as db_err:
-            # Handle a known type of error (e.g., DB-related) specifically
-            logger.exception("DB-related error occurred.")
-            raise RuntimeError(
-                "Failed due to a DB error: {}".format(db_err)
-            ) from db_err
-        except RuntimeError as runtime_err:
-            # Handle a runtime error
-            logger.exception("Runtime error occurred.")
-            raise RuntimeError(
-                "Failed due to a runtime error: {}".format(runtime_err)
-            ) from runtime_err
-        except ValueError as val_err:
-            # Handle another known type of error specifically
-            logger.exception("Validation error.")
-            raise ValueError("Validation failed: {}".format(val_err)) from val_err
-        except Exception as e:
-            # Generic handler for all other exceptions
-            logger.exception("An unexpected error occurred: {}".format(e))
-            raise RuntimeError("Unexpected error: {}".format(e)) from e
-
-    return cast(T, wrapper)
-
-
-def _ahandle_exceptions(func: T) -> T:
-    @functools.wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return await func(*args, **kwargs)
-        except oracledb.Error as db_err:
-            # Handle a known type of error (e.g., DB-related) specifically
-            logger.exception("DB-related error occurred.")
-            raise RuntimeError(
-                "Failed due to a DB error: {}".format(db_err)
-            ) from db_err
-        except RuntimeError as runtime_err:
-            # Handle a runtime error
-            logger.exception("Runtime error occurred.")
-            raise RuntimeError(
-                "Failed due to a runtime error: {}".format(runtime_err)
-            ) from runtime_err
-        except ValueError as val_err:
-            # Handle another known type of error specifically
-            logger.exception("Validation error.")
-            raise ValueError("Validation failed: {}".format(val_err)) from val_err
-        except Exception as e:
-            # Generic handler for all other exceptions
-            logger.exception("An unexpected error occurred: {}".format(e))
-            raise RuntimeError("Unexpected error: {}".format(e)) from e
-
-    return cast(T, wrapper)
-
-
-def _table_exists(connection: Connection, table_name: str) -> bool:
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(f"SELECT 1 FROM {table_name} WHERE ROWNUM < 1")
-            return True
-    except oracledb.DatabaseError as ex:
-        err_obj = ex.args
-        if err_obj[0].code == 942:
-            return False
-        raise
-
-
-async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
-    try:
-        with connection.cursor() as cursor:
-            await cursor.execute(f"SELECT 1 FROM {table_name} WHERE ROWNUM < 1")
-            return True
-    except oracledb.DatabaseError as ex:
-        err_obj = ex.args
-        if err_obj[0].code == 942:
-            return False
-        raise
-
-
-def _quote_indentifier(name: str) -> str:
-    name = name.strip()
-    reg = r'^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$'
-    pattern_validate = re.compile(reg)
-
-    if not pattern_validate.match(name):
-        raise ValueError(f"Identifier name {name} is not valid.")
-
-    pattern_match = r'"([^"]+)"|([^".]+)'
-    groups = re.findall(pattern_match, name)
-    groups = [m[0] or m[1] for m in groups]
-    groups = [f'"{g}"' for g in groups]
-
-    return ".".join(groups)
-
-
-@_handle_exceptions
-def _index_exists(
-    connection: Connection, index_name: str, table_name: Optional[str] = None
-) -> bool:
-    # check if the index exists
-    query = f"""
-        SELECT index_name 
-        FROM all_indexes 
-        WHERE index_name = :idx_name
-        {"AND table_name = :table_name" if table_name else ""} 
-        """
-
-    # this is an internal method, index_name and table_name comes with double quotes
-    index_name = index_name.replace('"', "")
-    if table_name:
-        table_name = table_name.replace('"', "")
-
-    with connection.cursor() as cursor:
-        # execute the query
-        if table_name:
-            cursor.execute(
-                query,
-                idx_name=index_name,
-                table_name=table_name,
-            )
-        else:
-            cursor.execute(query, idx_name=index_name)
-        result = cursor.fetchone()
-
-        # check if the index exists
-    return result is not None
-
-
-async def _aindex_exists(
-    connection: AsyncConnection, index_name: str, table_name: Optional[str] = None
-) -> bool:
-    # check if the index exists
-    query = f"""
-        SELECT index_name,  table_name
-        FROM all_indexes 
-        WHERE index_name = :idx_name
-        {"AND table_name = :table_name" if table_name else ""} 
-        """
-
-    # this is an internal method, index_name and table_name comes with double quotes
-    index_name = index_name.replace('"', "")
-    if table_name:
-        table_name = table_name.replace('"', "")
-
-    with connection.cursor() as cursor:
-        # execute the query
-        if table_name:
-            await cursor.execute(
-                query,
-                idx_name=index_name,
-                table_name=table_name,
-            )
-        else:
-            await cursor.execute(query, idx_name=index_name)
-        result = await cursor.fetchone()
-
-        # check if the index exists
-    return result is not None
-
-
 def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
     # dictionary to map distance strategies to their corresponding function
     # names
@@ -563,11 +375,6 @@ def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
 
     # if it's an unsupported distance strategy, raise an error
     raise ValueError(f"Unsupported distance strategy: {distance_strategy}")
-
-
-def _get_index_name(base_name: str) -> str:
-    unique_id = str(uuid.uuid4()).replace("-", "")
-    return f'"{base_name}_{unique_id}"'
 
 
 def _get_table_dict(embedding_dim: int) -> Dict:
@@ -614,30 +421,35 @@ async def _acreate_table(
 
 @_handle_exceptions
 def create_index(
-    client: Any,
+    client: Union[Connection, ConnectionPool],
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
 ) -> None:
-    connection = _get_connection(client)
-    if connection is None:
-        raise ValueError("Failed to acquire a connection.")
-    if params:
-        if "idx_name" in params:
-            params["idx_name"] = _quote_indentifier(params["idx_name"])
-        if params["idx_type"] == "HNSW":
-            _create_hnsw_index(
-                connection,
-                vector_store.table_name,
-                vector_store.distance_strategy,
-                params,
-            )
-        elif params["idx_type"] == "IVF":
-            _create_ivf_index(
-                connection,
-                vector_store.table_name,
-                vector_store.distance_strategy,
-                params,
-            )
+    with _get_connection(client) as connection:
+        if params:
+            if "idx_name" in params:
+                params["idx_name"] = _quote_indentifier(params["idx_name"])
+            if params["idx_type"] == "HNSW":
+                _create_hnsw_index(
+                    connection,
+                    vector_store.table_name,
+                    vector_store.distance_strategy,
+                    params,
+                )
+            elif params["idx_type"] == "IVF":
+                _create_ivf_index(
+                    connection,
+                    vector_store.table_name,
+                    vector_store.distance_strategy,
+                    params,
+                )
+            else:
+                _create_hnsw_index(
+                    connection,
+                    vector_store.table_name,
+                    vector_store.distance_strategy,
+                    params,
+                )
         else:
             _create_hnsw_index(
                 connection,
@@ -645,10 +457,6 @@ def create_index(
                 vector_store.distance_strategy,
                 params,
             )
-    else:
-        _create_hnsw_index(
-            connection, vector_store.table_name, vector_store.distance_strategy, params
-        )
     return
 
 
@@ -832,11 +640,11 @@ def _create_ivf_index(
 
 @_ahandle_exceptions
 async def acreate_index(
-    client: Any,
+    client: Union[AsyncConnection, AsyncConnectionPool],
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
 ) -> None:
-    async def context(connection: Any) -> None:
+    async with _aget_connection(client) as connection:
         if params:
             if "idx_name" in params:
                 params["idx_name"] = _quote_indentifier(params["idx_name"])
@@ -869,9 +677,6 @@ async def acreate_index(
                 vector_store.distance_strategy,
                 params,
             )
-
-    await _handle_context(client, context)
-    return
 
 
 async def _acreate_hnsw_index(
@@ -909,83 +714,34 @@ async def _acreate_ivf_index(
 
 
 @_handle_exceptions
-def drop_table_purge(client: Any, table_name: str) -> None:
-    """Drop a table and purge it from the database.
+def drop_index_if_exists(
+    client: Union[Connection, ConnectionPool], index_name: str
+) -> None:
+    """Drop an index if it exists.
 
     Args:
-        client: oracledb connection object.
-        table_name: The name of the table to drop.
+        client: The OracleDB connection object.
+        index_name: The name of the index to drop.
 
     Raises:
-        RuntimeError: If an error occurs while dropping the table.
+        RuntimeError: If an error occurs while dropping the index.
     """
-    connection = _get_connection(client)
-    table_name = _quote_indentifier(table_name)
-    if connection is None:
-        raise ValueError("Failed to acquire a connection.")
-    if _table_exists(connection, table_name):
-        with connection.cursor() as cursor:
-            ddl = f"DROP TABLE {table_name} PURGE"
-            cursor.execute(ddl)
-        logger.info(f"Table {table_name} dropped successfully...")
-    else:
-        logger.info(f"Table {table_name} not found...")
-    return
-
-
-@_ahandle_exceptions
-async def adrop_table_purge(client: Any, table_name: str) -> None:
-    """Drop a table and purge it from the database.
-
-    Args:
-        client: oracledb connection object.
-        table_name: The name of the table to drop.
-
-    Raises:
-        RuntimeError: If an error occurs while dropping the table.
-    """
-    table_name = _quote_indentifier(table_name)
-
-    async def context(connection: Any) -> None:
-        if await _atable_exists(connection, table_name):
+    with _get_connection(client) as connection:
+        index_name = _quote_indentifier(index_name)
+        if _index_exists(connection, index_name):
+            drop_query = f"DROP INDEX {index_name}"
             with connection.cursor() as cursor:
-                ddl = f"DROP TABLE {table_name} PURGE"
-                await cursor.execute(ddl)
-            logger.info(f"Table {table_name} dropped successfully...")
+                cursor.execute(drop_query)
+                logger.info(f"Index {index_name} has been dropped.")
         else:
-            logger.info(f"Table {table_name} not found...")
-
-    await _handle_context(client, context)
-    return
-
-
-@_handle_exceptions
-def drop_index_if_exists(client: Any, index_name: str) -> None:
-    """Drop an index if it exists.
-
-    Args:
-        client: The OracleDB connection object.
-        index_name: The name of the index to drop.
-
-    Raises:
-        RuntimeError: If an error occurs while dropping the index.
-    """
-    connection = _get_connection(client)
-    index_name = _quote_indentifier(index_name)
-    if connection is None:
-        raise ValueError("Failed to acquire a connection.")
-    if _index_exists(connection, index_name):
-        drop_query = f"DROP INDEX {index_name}"
-        with connection.cursor() as cursor:
-            cursor.execute(drop_query)
-            logger.info(f"Index {index_name} has been dropped.")
-    else:
-        logger.exception(f"Index {index_name} does not exist.")
+            logger.exception(f"Index {index_name} does not exist.")
     return
 
 
 @_ahandle_exceptions
-async def adrop_index_if_exists(client: Any, index_name: str) -> None:
+async def adrop_index_if_exists(
+    client: Union[AsyncConnection, AsyncConnectionPool], index_name: str
+) -> None:
     """Drop an index if it exists.
 
     Args:
@@ -997,7 +753,7 @@ async def adrop_index_if_exists(client: Any, index_name: str) -> None:
     """
     index_name = _quote_indentifier(index_name)
 
-    async def context(connection: Any) -> None:
+    async with _aget_connection(client) as connection:
         if await _aindex_exists(connection, index_name):
             drop_query = f"DROP INDEX {index_name}"
             with connection.cursor() as cursor:
@@ -1005,9 +761,6 @@ async def adrop_index_if_exists(client: Any, index_name: str) -> None:
                 logger.info(f"Index {index_name} has been dropped.")
         else:
             logger.exception(f"Index {index_name} does not exist.")
-
-    await _handle_context(client, context)
-    return
 
 
 def get_processed_ids(
@@ -1137,35 +890,6 @@ def _get_similarity_search_query(
     return query, bind_variables
 
 
-async def _handle_context(
-    client: Any,
-    context: Callable[
-        [Any],
-        Awaitable[Any],
-    ],
-) -> Any:
-    """
-    AsyncConnectionPool connections are not released automatically,
-    therefore needs to be used in a context manager
-    """
-    connection = await _aget_connection(client)
-    if connection is None:
-        raise ValueError("Failed to acquire a connection.")
-
-    if connection._pool:
-        async with connection as conn:
-            return await context(conn)
-    else:
-        return await context(connection)
-
-
-def output_type_string_handler(cursor: Any, metadata: Any) -> Any:
-    if metadata.type_code is oracledb.DB_TYPE_CLOB:
-        return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
-    if metadata.type_code is oracledb.DB_TYPE_NCLOB:
-        return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
-
-
 def _read_similarity_output(
     results: List, has_similarity_score: bool = False, has_embeddings: bool = False
 ) -> List:
@@ -1276,7 +1000,7 @@ class OracleVS(VectorStore):
     @_handle_exceptions
     def __init__(
         self,
-        client: Any,
+        client: Union[Connection, ConnectionPool],
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1291,29 +1015,26 @@ class OracleVS(VectorStore):
         Initialize the OracleVS store.
         For an async version, use OracleVS.acreate() instead.
         """
-        connection = _get_connection(client)
-        if connection is None:
-            raise ValueError("Failed to acquire a connection.")
+        with _get_connection(client) as connection:
+            self._initialize(
+                connection,
+                client,
+                embedding_function,
+                table_name,
+                distance_strategy,
+                query,
+                params,
+                mutate_on_duplicate,
+            )
 
-        self._initialize(
-            connection,
-            client,
-            embedding_function,
-            table_name,
-            distance_strategy,
-            query,
-            params,
-            mutate_on_duplicate,
-        )
-
-        embedding_dim = self.get_embedding_dimension()
-        _create_table(connection, self.table_name, embedding_dim)
+            embedding_dim = self.get_embedding_dimension()
+            _create_table(connection, self.table_name, embedding_dim)
 
     @classmethod
     @_ahandle_exceptions
     async def acreate(
         cls,
-        client: Any,
+        client: Union[AsyncConnection, AsyncConnectionPool],
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1330,7 +1051,7 @@ class OracleVS(VectorStore):
 
         self = cls.__new__(cls)
 
-        async def context(connection: Any) -> None:
+        async with _aget_connection(client) as connection:
             self._initialize(
                 connection,
                 client,
@@ -1345,14 +1066,12 @@ class OracleVS(VectorStore):
             embedding_dim = await self.aget_embedding_dimension()
             await _acreate_table(connection, self.table_name, embedding_dim)
 
-        await _handle_context(client, context)
-
         return self
 
     def _initialize(
         self,
         connection: Any,
-        client: Any,
+        client: Union[Connection, ConnectionPool, AsyncConnection, AsyncConnectionPool],
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1545,78 +1264,76 @@ class OracleVS(VectorStore):
                     {"id": _1, "meta": _2, "text": _3, "param": self.embeddings.params}
                 )
 
-        connection = _get_connection(self.client)
-        if connection is None:
-            raise ValueError("Failed to acquire a connection.")
-        error_indices = []
-        try:
-            with connection.cursor() as cursor:
-                # self.mutate_on_duplicate controls how inserts handle existing IDs.
-                # If False:
-                #   uses INSERT_QUERY.
-                #   existing rows having the same ID as the inserted row are not
-                #       updated.
-                #   with batcherrors=True, duplicate rows are skipped and their IDs
-                #       are not included in the `add_texts` return value (i.e., not
-                #       reported as successfully inserted).
-                #
-                # If True:
-                #   uses MERGE_QUERY.
-                #   existing rows having the same ID as the inserted row are updated
-                #       with the new data ("upsert").
-                #   the ID is included in the `add_texts` return value,
-                #       indicating a successful insert/update.
-                selected_query = (
-                    INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
-                )
-                if not isinstance(self.embeddings, OracleEmbeddings):
-                    cursor.setinputsizes(
-                        None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+        with _get_connection(self.client) as connection:
+            error_indices = []
+            try:
+                with connection.cursor() as cursor:
+                    # self.mutate_on_duplicate controls how inserts handle existing IDs.
+                    # If False:
+                    #   uses INSERT_QUERY.
+                    #   existing rows having the same ID as the inserted row are not
+                    #       updated.
+                    #   with batcherrors=True, duplicate rows are skipped and their IDs
+                    #       are not included in the `add_texts` return value (i.e., not
+                    #       reported as successfully inserted).
+                    #
+                    # If True:
+                    #   uses MERGE_QUERY.
+                    #   existing rows having the same ID as the inserted row are updated
+                    #       with the new data ("upsert").
+                    #   the ID is included in the `add_texts` return value,
+                    #       indicating a successful insert/update.
+                    selected_query = (
+                        INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
-                    cursor.executemany(
-                        selected_query.format(
-                            table_name=self.table_name, values=":1, :2, :3, :4"
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
-
-                else:
-                    if self.embeddings.proxy:
-                        cursor.execute(
-                            "begin utl_http.set_proxy(:proxy); end;",
-                            proxy=self.embeddings.proxy,
+                    if not isinstance(self.embeddings, OracleEmbeddings):
+                        cursor.setinputsizes(
+                            None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+                        )
+                        cursor.executemany(
+                            selected_query.format(
+                                table_name=self.table_name, values=":1, :2, :3, :4"
+                            ),
+                            docs,
+                            batcherrors=True,
                         )
 
-                    cursor.setinputsizes(
-                        meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                    )
+                    else:
+                        if self.embeddings.proxy:
+                            cursor.execute(
+                                "begin utl_http.set_proxy(:proxy); end;",
+                                proxy=self.embeddings.proxy,
+                            )
 
-                    cursor.executemany(
-                        selected_query.format(
-                            table_name=self.table_name,
-                            values=(
-                                ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                ":meta, :text"
+                        cursor.setinputsizes(
+                            meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
+                        )
+
+                        cursor.executemany(
+                            selected_query.format(
+                                table_name=self.table_name,
+                                values=(
+                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                    ":meta, :text"
+                                ),
                             ),
-                        ),
-                        docs,
-                        batcherrors=True,
-                    )
+                            docs,
+                            batcherrors=True,
+                        )
 
-                for error in cursor.getbatcherrors():
-                    error_indices.append(error.offset)
-                    logger.warning(
-                        "Could not insert row at offset %s due to error: %s",
-                        error.offset,
-                        error.message,
-                    )
+                    for error in cursor.getbatcherrors():
+                        error_indices.append(error.offset)
+                        logger.warning(
+                            "Could not insert row at offset %s due to error: %s",
+                            error.offset,
+                            error.message,
+                        )
 
-                connection.commit()
-        finally:
-            # do not change the input dict list
-            for i in range(len(original_ids)):
-                metadatas[i].pop(INTERNAL_ID_KEY, None)
+                    connection.commit()
+            finally:
+                # do not change the input dict list
+                for i in range(len(original_ids)):
+                    metadatas[i].pop(INTERNAL_ID_KEY, None)
 
         inserted_ids = [i for j, i in enumerate(original_ids) if j not in error_indices]
         return inserted_ids
@@ -1702,7 +1419,7 @@ class OracleVS(VectorStore):
                     {"id": _1, "meta": _2, "text": _3, "param": self.embeddings.params}
                 )
 
-        async def context(connection: Any) -> List[str]:
+        async with _aget_connection(self.client) as connection:
             if connection is None:
                 raise ValueError("Failed to acquire a connection.")
             error_indices = []
@@ -1763,10 +1480,6 @@ class OracleVS(VectorStore):
             inserted_ids = [
                 i for j, i in enumerate(original_ids) if j not in error_indices
             ]
-
-            return inserted_ids
-
-        inserted_ids = await _handle_context(self.client, context)
 
         return inserted_ids
 
@@ -1889,21 +1602,19 @@ class OracleVS(VectorStore):
         )
 
         # execute the query
-        connection = _get_connection(self.client)
-        if connection is None:
-            raise ValueError("Failed to acquire a connection.")
-        with connection.cursor() as cursor:
-            cursor.outputtypehandler = output_type_string_handler
-            params = {"embedding": embedding_arr}
-            for i, value in enumerate(bind_variables):
-                params[f"value{i}"] = value
+        with _get_connection(self.client) as connection:
+            with connection.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
+                params = {"embedding": embedding_arr}
+                for i, value in enumerate(bind_variables):
+                    params[f"value{i}"] = value
 
-            cursor.execute(query, **params)
-            results = cursor.fetchall()
+                cursor.execute(query, **params)
+                results = cursor.fetchall()
 
-            docs_and_scores = _read_similarity_output(
-                results, has_similarity_score=True
-            )
+                docs_and_scores = _read_similarity_output(
+                    results, has_similarity_score=True
+                )
 
         return docs_and_scores
 
@@ -1935,7 +1646,7 @@ class OracleVS(VectorStore):
             return_embeddings=False,
         )
 
-        async def context(connection: Any) -> List:
+        async with _aget_connection(self.client) as connection:
             # execute the query
             with connection.cursor() as cursor:
                 cursor.outputtypehandler = output_type_string_handler
@@ -1950,9 +1661,7 @@ class OracleVS(VectorStore):
                     results, has_similarity_score=True
                 )
 
-            return docs_and_scores
-
-        return await _handle_context(self.client, context)
+        return docs_and_scores
 
     @_handle_exceptions
     def similarity_search_by_vector_returning_embeddings(
@@ -1985,21 +1694,19 @@ class OracleVS(VectorStore):
         )
 
         # execute the query
-        connection = _get_connection(self.client)
-        if connection is None:
-            raise ValueError("Failed to acquire a connection.")
-        with connection.cursor() as cursor:
-            cursor.outputtypehandler = output_type_string_handler
-            params = {"embedding": embedding_arr}
-            for i, value in enumerate(bind_variables):
-                params[f"value{i}"] = value
+        with _get_connection(self.client) as connection:
+            with connection.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
+                params = {"embedding": embedding_arr}
+                for i, value in enumerate(bind_variables):
+                    params[f"value{i}"] = value
 
-            cursor.execute(query, **params)
-            results = cursor.fetchall()
+                cursor.execute(query, **params)
+                results = cursor.fetchall()
 
-            documents = _read_similarity_output(
-                results, has_similarity_score=True, has_embeddings=True
-            )
+                documents = _read_similarity_output(
+                    results, has_similarity_score=True, has_embeddings=True
+                )
 
         return documents
 
@@ -2031,7 +1738,7 @@ class OracleVS(VectorStore):
             return_embeddings=True,
         )
 
-        async def context(connection: Any) -> List:
+        async with _aget_connection(self.client) as connection:
             # execute the query
             with connection.cursor() as cursor:
                 cursor.outputtypehandler = output_type_string_handler
@@ -2045,9 +1752,7 @@ class OracleVS(VectorStore):
                     results, has_similarity_score=True, has_embeddings=True
                 )
 
-            return documents
-
-        return await _handle_context(self.client, context)
+        return documents
 
     def max_marginal_relevance_search_with_score_by_vector(
         self,
@@ -2328,17 +2033,14 @@ class OracleVS(VectorStore):
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
-        connection = _get_connection(self.client)
-        if connection is None:
-            raise ValueError("Failed to acquire a connection.")
+        with _get_connection(self.client) as connection:
+            documents = []
+            with connection.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
+                cursor.execute(ddl, bind_vars)
+                results = cursor.fetchall()
 
-        documents = []
-        with connection.cursor() as cursor:
-            cursor.outputtypehandler = output_type_string_handler
-            cursor.execute(ddl, bind_vars)
-            results = cursor.fetchall()
-
-            documents = _read_similarity_output(results)
+                documents = _read_similarity_output(results)
 
         return documents
 
@@ -2353,7 +2055,7 @@ class OracleVS(VectorStore):
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
-        async def context(connection: Any) -> List:
+        async with _aget_connection(self.client) as connection:
             documents = []
             with connection.cursor() as cursor:
                 cursor.outputtypehandler = output_type_string_handler
@@ -2361,10 +2063,6 @@ class OracleVS(VectorStore):
                 results = await cursor.fetchall()
 
                 documents = _read_similarity_output(results)
-
-            return documents
-
-        documents = await _handle_context(self.client, context)
 
         return documents
 
@@ -2379,12 +2077,10 @@ class OracleVS(VectorStore):
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 
-        connection = _get_connection(self.client)
-        if connection is None:
-            raise ValueError("Failed to acquire a connection.")
-        with connection.cursor() as cursor:
-            cursor.execute(ddl, bind_vars)
-            connection.commit()
+        with _get_connection(self.client) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(ddl, bind_vars)
+                connection.commit()
 
     @_ahandle_exceptions
     async def adelete(self, ids: Optional[List[str]] = None, **kwargs: Any) -> None:
@@ -2397,19 +2093,25 @@ class OracleVS(VectorStore):
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 
-        async def context(connection: Any) -> None:
+        async with _aget_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 await cursor.execute(ddl, bind_vars)
                 await connection.commit()
-
-        await _handle_context(self.client, context)
 
     @classmethod
     def _from_texts_helper(
         cls: Type[OracleVS],
         **kwargs: Any,
-    ) -> Tuple[Any, str, DistanceStrategy, str, Dict]:
-        client: Any = kwargs.get("client", None)
+    ) -> Tuple[
+        Union[Connection, ConnectionPool, AsyncConnection, AsyncConnectionPool],
+        str,
+        DistanceStrategy,
+        str,
+        Dict,
+    ]:
+        client: Union[
+            Connection, ConnectionPool, AsyncConnection, AsyncConnectionPool, None
+        ] = kwargs.get("client", None)
         if client is None:
             raise ValueError("client parameter is required...")
 
@@ -2447,7 +2149,7 @@ class OracleVS(VectorStore):
         ) = OracleVS._from_texts_helper(**kwargs)
 
         vss = cls(
-            client=client,
+            client=client,  # type: ignore[arg-type]
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
@@ -2476,7 +2178,7 @@ class OracleVS(VectorStore):
         ) = OracleVS._from_texts_helper(**kwargs)
 
         vss = await OracleVS.acreate(
-            client=client,
+            client=client,  # type: ignore[arg-type]
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
