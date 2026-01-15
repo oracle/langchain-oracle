@@ -53,7 +53,7 @@ pytest tests/integration_tests/chat_models/test_tool_calling.py \
 import os
 
 import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -151,14 +151,11 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
         "You are a helpful assistant. Use the available tools when "
         "needed to answer questions accurately."
     )
-    result = agent.invoke(
-        {
-            "messages": [
-                SystemMessage(content=system_msg),
-                HumanMessage(content="What's the weather in Chicago?"),
-            ]
-        }
-    )
+    input_messages: list[BaseMessage] = [
+        SystemMessage(content=system_msg),
+        HumanMessage(content="What's the weather in Chicago?"),
+    ]
+    result = agent.invoke({"messages": input_messages})
 
     messages = result["messages"]
 
@@ -210,14 +207,11 @@ def test_meta_llama_tool_calling(weather_tool: StructuredTool):
     model_id = "meta.llama-4-scout-17b-16e-instruct"
     agent = create_agent(model_id, weather_tool)
 
-    result = agent.invoke(
-        {
-            "messages": [
-                SystemMessage(content="You are a helpful assistant."),
-                HumanMessage(content="Check the weather in San Francisco."),
-            ]
-        }
-    )
+    input_messages: list[BaseMessage] = [
+        SystemMessage(content="You are a helpful assistant."),
+        HumanMessage(content="Check the weather in San Francisco."),
+    ]
+    result = agent.invoke({"messages": input_messages})
 
     messages = result["messages"]
     final_message = messages[-1]
@@ -237,14 +231,11 @@ def test_cohere_tool_calling(weather_tool: StructuredTool):
     model_id = "cohere.command-a-03-2025"
     agent = create_agent(model_id, weather_tool)
 
-    result = agent.invoke(
-        {
-            "messages": [
-                SystemMessage(content="You are a helpful assistant."),
-                HumanMessage(content="What's the weather like in New York?"),
-            ]
-        }
-    )
+    input_messages: list[BaseMessage] = [
+        SystemMessage(content="You are a helpful assistant."),
+        HumanMessage(content="What's the weather like in New York?"),
+    ]
+    result = agent.invoke({"messages": input_messages})
 
     messages = result["messages"]
     final_message = messages[-1]
@@ -428,19 +419,18 @@ def test_multi_step_tool_orchestration(model_id: str):
 
     # Invoke agent with a diagnostic scenario
     # Langgraph invoke signature is generic; passing dict is valid at runtime
+    input_messages: list[BaseMessage] = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(
+            content=(
+                "Investigate the payment-service resource. "
+                "It has high memory usage and restarts. "
+                "Determine root cause and recommend actions."
+            )
+        ),
+    ]
     result = agent.invoke(
-        {  # type: ignore[arg-type]
-            "messages": [
-                SystemMessage(content=system_prompt),
-                HumanMessage(
-                    content=(
-                        "Investigate the payment-service resource. "
-                        "It has high memory usage and restarts. "
-                        "Determine root cause and recommend actions."
-                    )
-                ),
-            ]
-        },
+        {"messages": input_messages},  # type: ignore[arg-type]
         config={"recursion_limit": 25},  # Allow enough recursion for multi-step
     )
 
