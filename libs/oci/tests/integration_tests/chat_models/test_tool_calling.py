@@ -429,8 +429,8 @@ def test_multi_step_tool_orchestration(model_id: str):
             )
         ),
     ]
-    result = agent.invoke(  # type: ignore[arg-type]
-        {"messages": input_messages},
+    result = agent.invoke(
+        {"messages": input_messages},  # type: ignore[arg-type]
         config={"recursion_limit": 25},  # Allow enough recursion for multi-step
     )
 
