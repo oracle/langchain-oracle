@@ -85,9 +85,7 @@ def main() -> None:
     # Get configuration from environment
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
     if not compartment_id:
-        raise ValueError(
-            "Please set OCI_COMPARTMENT_ID environment variable"
-        )
+        raise ValueError("Please set OCI_COMPARTMENT_ID environment variable")
 
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
@@ -127,9 +125,7 @@ Be concise and helpful in your responses.""",
         print(f"\nUser: {query}")
         print("-" * 40)
 
-        result = agent.invoke(
-            {"messages": [HumanMessage(content=query)]}
-        )
+        result = agent.invoke({"messages": [HumanMessage(content=query)]})
 
         # Print the final response
         final_message = result["messages"][-1]
@@ -137,8 +133,7 @@ Be concise and helpful in your responses.""",
 
         # Show tool calls if any were made
         tool_messages = [
-            m for m in result["messages"]
-            if type(m).__name__ == "ToolMessage"
+            m for m in result["messages"] if type(m).__name__ == "ToolMessage"
         ]
         if tool_messages:
             print(f"  (Used {len(tool_messages)} tool(s) to answer)")

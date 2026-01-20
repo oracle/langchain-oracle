@@ -93,9 +93,7 @@ class TestOCIReactAgentIntegration:
         region = os.environ.get("OCI_REGION", "us-chicago-1")
         return f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
-    def test_simple_tool_call(
-        self, compartment_id: str, service_endpoint: str
-    ) -> None:
+    def test_simple_tool_call(self, compartment_id: str, service_endpoint: str) -> None:
         """Test agent can make a simple tool call."""
         agent = create_oci_react_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
@@ -130,9 +128,7 @@ class TestOCIReactAgentIntegration:
         final_message = result["messages"][-1]
         assert final_message.content, "Final message should have content"
 
-    def test_multi_tool_agent(
-        self, compartment_id: str, service_endpoint: str
-    ) -> None:
+    def test_multi_tool_agent(self, compartment_id: str, service_endpoint: str) -> None:
         """Test agent with multiple tools."""
         agent = create_oci_react_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
@@ -149,9 +145,7 @@ class TestOCIReactAgentIntegration:
             max_tokens=512,
         )
 
-        result = agent.invoke(
-            {"messages": [HumanMessage(content="What is 25 * 4?")]}
-        )
+        result = agent.invoke({"messages": [HumanMessage(content="What is 25 * 4?")]})
 
         # Should get a response with the calculation
         final_message = result["messages"][-1]
@@ -305,7 +299,7 @@ def test_multi_model_support(model_id: str) -> None:
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
         auth_type="API_KEY",
-            auth_profile="API_KEY_AUTH",
+        auth_profile="API_KEY_AUTH",
         system_prompt="You are a helpful weather assistant.",
         temperature=0.3,
         max_tokens=512,

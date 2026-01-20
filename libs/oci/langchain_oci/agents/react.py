@@ -100,13 +100,13 @@ def create_oci_react_agent(
         >>> agent = create_oci_react_agent(
         ...     model_id="meta.llama-4-scout-17b-16e-instruct",
         ...     tools=[get_weather],
-        ...     system_prompt="You are a helpful weather assistant."
+        ...     system_prompt="You are a helpful weather assistant.",
         ... )
         >>>
         >>> from langchain_core.messages import HumanMessage
-        >>> result = agent.invoke({
-        ...     "messages": [HumanMessage(content="What's the weather in Chicago?")]
-        ... })
+        >>> result = agent.invoke(
+        ...     {"messages": [HumanMessage(content="What's the weather in Chicago?")]}
+        ... )
 
     Example:
         With checkpointing for conversation persistence:
@@ -123,7 +123,7 @@ def create_oci_react_agent(
         >>> # Conversations are persisted by thread_id
         >>> result = agent.invoke(
         ...     {"messages": [HumanMessage(content="What's the weather?")]},
-        ...     config={"configurable": {"thread_id": "user_123"}}
+        ...     config={"configurable": {"thread_id": "user_123"}},
         ... )
     """
     try:
