@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+# ruff: noqa: T201
 
 """
 Example: Creating a ReAct Agent with OCI Generative AI
@@ -47,23 +48,23 @@ def search_products(query: str) -> str:
     """Search the product database for items matching the query."""
     # In a real application, this would query a database
     products = {
-        "laptop": ["MacBook Pro - $1999", "Dell XPS 15 - $1499", "ThinkPad X1 - $1299"],
+        "laptop": ["MacBook Pro - $1999", "Dell XPS 15 - $1499", "ThinkPad X1"],
         "phone": ["iPhone 15 - $999", "Galaxy S24 - $899", "Pixel 8 - $699"],
-        "tablet": ["iPad Pro - $799", "Galaxy Tab S9 - $649", "Surface Pro - $999"],
+        "tablet": ["iPad Pro - $799", "Galaxy Tab S9 - $649", "Surface Pro"],
     }
     for category, items in products.items():
         if category in query.lower():
             return f"Found products: {', '.join(items)}"
-    return f"No products found matching '{query}'. Try searching for: laptop, phone, or tablet"
+    return f"No products found matching '{query}'. Try: laptop, phone, or tablet"
 
 
 @tool
 def get_product_details(product_name: str) -> str:
     """Get detailed information about a specific product."""
     details = {
-        "macbook pro": "MacBook Pro: 14-inch, M3 chip, 16GB RAM, 512GB SSD. Rating: 4.8/5. In stock.",
-        "iphone 15": "iPhone 15: 6.1-inch display, A16 chip, 128GB. Rating: 4.7/5. In stock.",
-        "ipad pro": "iPad Pro: 11-inch, M2 chip, 256GB. Rating: 4.9/5. In stock.",
+        "macbook pro": "MacBook Pro: 14-inch, M3 chip, 16GB RAM. Rating: 4.8/5.",
+        "iphone 15": "iPhone 15: 6.1-inch display, A16 chip. Rating: 4.7/5.",
+        "ipad pro": "iPad Pro: 11-inch, M2 chip, 256GB. Rating: 4.9/5.",
     }
     key = product_name.lower()
     for name, detail in details.items():
@@ -76,7 +77,7 @@ def get_product_details(product_name: str) -> str:
 def check_inventory(product_name: str) -> str:
     """Check inventory status for a product."""
     # Simulated inventory check
-    return f"Inventory check for {product_name}: 15 units available in warehouse, 3 in local store."
+    return f"{product_name}: 15 units in warehouse, 3 in local store."
 
 
 def main() -> None:
@@ -92,9 +93,9 @@ def main() -> None:
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
     print("Creating OCI ReAct Agent...")
-    print(f"  Model: meta.llama-4-scout-17b-16e-instruct")
+    print("  Model: meta.llama-4-scout-17b-16e-instruct")
     print(f"  Region: {region}")
-    print(f"  Tools: search_products, get_product_details, check_inventory")
+    print("  Tools: search_products, get_product_details, check_inventory")
     print()
 
     # Create the agent - just a few lines!
