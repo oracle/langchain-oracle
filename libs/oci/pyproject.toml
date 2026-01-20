@@ -17,6 +17,7 @@ dependencies = [
     "oci-openai>=1.0.0",
     "langchain-openai>=0.3.35,<1.0.0; python_version < '3.10'",
     "langchain-openai>=1.1.0,<2.0.0; python_version >= '3.10'",
+    "langgraph>=0.2.0,<2.0.0",
 ]
 
 [project.urls]
