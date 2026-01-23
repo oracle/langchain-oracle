@@ -1,11 +1,11 @@
-# @langchain/oracle
+# @langchain/oracledb
 
 This package contains the LangChain.js integrations for Oracle Database.
 
 ## Installation
 
 ```bash npm2yarn
-npm install @langchain/oracle @langchain/core
+npm install @langchain/oracledb @langchain/core
 ```
 
 This package, along with the main LangChain package, depends on [`@langchain/core`](https://npmjs.com/package/@langchain/core/).
@@ -17,7 +17,7 @@ You can do so by adding an appropriate field to your project's `package.json` li
   "name": "your-project",
   "version": "0.1.0",
   "dependencies": {
-    "@langchain/oracle": "^0.3.1",
+    "@langchain/oracledb": "^0.1.0",
     "@langchain/core": "^1.0.0"
   },
   "resolutions": {
@@ -41,7 +41,7 @@ The field you need depends on the package manager you're using, but we recommend
 This package includes a document loader for loading documents from different sources and file formats.
 
 ```typescript
-import {OracleDocLoader} from "@langchain/oracle";
+import {OracleDocLoader} from "@langchain/oracledb";
 
 const loader = new OracleDocLoader(conn, loader_params);
 const docs = await loader.load();
@@ -52,7 +52,7 @@ const docs = await loader.load();
 This package includes a text splitter for chunking documents using the database.
 
 ```typescript
-import {OracleTextSplitter} from "@langchain/oracle";
+import {OracleTextSplitter} from "@langchain/oracledb";
 
 const splitter = new OracleTextSplitter(conn, splitter_params);
 let chunks = await splitter.splitText(doc.pageContent);
@@ -63,7 +63,7 @@ let chunks = await splitter.splitText(doc.pageContent);
 This package includes a class for generating embeddings either inside or outside of the database.
 
 ```typescript
-import {OracleEmbeddings} from "@langchain/oracle";
+import {OracleEmbeddings} from "@langchain/oracledb";
 
 const embedder = new OracleEmbeddings(conn, embedder_params, proxy);
 const embed = await embedder.embedQuery(chunk);
@@ -74,7 +74,7 @@ const embed = await embedder.embedQuery(chunk);
 This package includes a class for generating summaries either inside or outside of the database.
 
 ```typescript
-import {OracleSummary} from "@langchain/oracle";
+import {OracleSummary} from "@langchain/oracledb";
 
 const model = new OracleSummary(conn, summary_params, proxy);
 const summary = await model.getSummary(doc.pageContent);
@@ -85,7 +85,7 @@ const summary = await model.getSummary(doc.pageContent);
 This package includes a vector store for storing, indexing, and querying data in the database.
 
 ```typescript
-import {OracleVS} from "@langchain/oracle";
+import {OracleVS} from "@langchain/oracledb";
 
 oraclevs = new OracleVS(embedder, dbConfig);
 await oraclevs.initialize();
@@ -96,7 +96,7 @@ const results = await oraclevs.similaritySearch("hello!", 3);
 
 ## Development
 
-To develop the `@langchain/oracle` package, you'll need to follow these instructions:
+To develop the `@langchain/oracledb` package, you'll need to follow these instructions:
 
 ### Install dependencies
 
@@ -113,7 +113,7 @@ pnpm build
 Or from the repo root:
 
 ```bash
-pnpm build --filter @langchain/oracle
+pnpm build --filter @langchain/oracledb
 ```
 
 ### Run tests
