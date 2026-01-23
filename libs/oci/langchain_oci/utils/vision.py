@@ -28,13 +28,21 @@ from typing import List, Union
 
 # Vision-capable models available in OCI Generative AI
 VISION_MODELS: List[str] = [
+    # Meta Llama models
     "meta.llama-3.2-90b-vision-instruct",
     "meta.llama-3.2-11b-vision-instruct",
     "meta.llama-4-scout-17b-16e-instruct",
     "meta.llama-4-maverick-17b-128e-instruct-fp8",
+    # Google Gemini models
     "google.gemini-2.5-flash",
     "google.gemini-2.5-pro",
     "google.gemini-2.5-flash-lite",
+    # xAI Grok models (Grok 4 and later)
+    "xai.grok-4",
+    "xai.grok-4-1-fast-reasoning",
+    "xai.grok-4-1-fast-non-reasoning",
+    "xai.grok-4-fast-reasoning",
+    "xai.grok-4-fast-non-reasoning",
 ]
 
 

@@ -117,6 +117,19 @@ def gemini_llm():
     )
 
 
+@pytest.fixture
+def grok4_llm():
+    """Create a ChatOCIGenAI instance with xAI Grok 4."""
+    config = get_config()
+    return ChatOCIGenAI(
+        model_id="xai.grok-4",
+        compartment_id=config["compartment_id"],
+        service_endpoint=config["service_endpoint"],
+        auth_profile=config["auth_profile"],
+        auth_type=config["auth_type"],
+    )
+
+
 @pytest.mark.requires("oci")
 class TestVisionBase64Images:
     """Tests for vision model capabilities with base64-encoded images."""
@@ -247,9 +260,14 @@ class TestVisionModelDetection:
             ("google.gemini-2.5-flash", True),
             ("google.gemini-2.5-pro", True),
             ("google.gemini-2.5-flash-lite", True),
+            ("xai.grok-4", True),
+            ("xai.grok-4-1-fast-reasoning", True),
+            ("xai.grok-4-fast-reasoning", True),
             ("meta.llama-3.3-70b-instruct", False),
             ("cohere.command-r-16k", False),
             ("cohere.command-a-03-2025", False),
+            ("xai.grok-3", False),
+            ("xai.grok-3-fast", False),
         ],
     )
     def test_is_vision_model(self, model_id, expected):
@@ -264,6 +282,7 @@ class TestVisionModelDetection:
         "meta.llama-3.2-90b-vision-instruct",
         "meta.llama-4-scout-17b-16e-instruct",
         "google.gemini-2.5-flash",
+        "xai.grok-4",
     ],
 )
 def test_vision_models_can_process_images(model_id):

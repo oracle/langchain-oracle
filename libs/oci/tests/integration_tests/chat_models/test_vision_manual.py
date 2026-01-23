@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201, E501, F541
 """Comprehensive vision testing script for all OCI GenAI vision models.
 
 This script tests vision capabilities with:
@@ -10,19 +11,18 @@ Models tested:
 - Meta Llama 3.2 90B Vision
 - Meta Llama 4 Scout
 - Google Gemini 2.5 Flash
-- Cohere Command A Vision (if V2 API available)
+- xAI Grok 4
 """
 
 import io
 import os
 import sys
-from pathlib import Path
 
 import requests
+from langchain_core.messages import HumanMessage
 from PIL import Image
 
-from langchain_core.messages import HumanMessage
-from langchain_oci import ChatOCIGenAI, encode_image, load_image
+from langchain_oci import ChatOCIGenAI, encode_image
 
 # Test configuration
 COMPARTMENT_ID = os.environ.get("OCI_COMPARTMENT_ID")
@@ -35,6 +35,7 @@ VISION_MODELS = [
     "meta.llama-3.2-90b-vision-instruct",
     "meta.llama-4-scout-17b-16e-instruct",
     "google.gemini-2.5-flash",
+    "xai.grok-4",
 ]
 
 
