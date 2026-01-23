@@ -176,6 +176,18 @@ class TestIsVisionModel:
         """Test detection of Llama 4 Maverick model (has vision)."""
         assert is_vision_model("meta.llama-4-maverick-17b-128e-instruct-fp8") is True
 
+    def test_vision_model_gemini_25_flash(self):
+        """Test detection of Google Gemini 2.5 Flash."""
+        assert is_vision_model("google.gemini-2.5-flash") is True
+
+    def test_vision_model_gemini_25_pro(self):
+        """Test detection of Google Gemini 2.5 Pro."""
+        assert is_vision_model("google.gemini-2.5-pro") is True
+
+    def test_vision_model_gemini_25_flash_lite(self):
+        """Test detection of Google Gemini 2.5 Flash Lite."""
+        assert is_vision_model("google.gemini-2.5-flash-lite") is True
+
     def test_non_vision_model_llama_33(self):
         """Test that Llama 3.3 70B is not detected as vision model."""
         assert is_vision_model("meta.llama-3.3-70b-instruct") is False
@@ -213,6 +225,8 @@ class TestVisionModelsConstant:
         assert "meta.llama-3.2-90b-vision-instruct" in VISION_MODELS
         assert "meta.llama-3.2-11b-vision-instruct" in VISION_MODELS
         assert "meta.llama-4-scout-17b-16e-instruct" in VISION_MODELS
+        assert "google.gemini-2.5-flash" in VISION_MODELS
+        assert "google.gemini-2.5-pro" in VISION_MODELS
 
     def test_all_vision_models_detected(self):
         """Test that all models in VISION_MODELS are detected by is_vision_model."""

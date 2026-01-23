@@ -32,6 +32,9 @@ VISION_MODELS: List[str] = [
     "meta.llama-3.2-11b-vision-instruct",
     "meta.llama-4-scout-17b-16e-instruct",
     "meta.llama-4-maverick-17b-128e-instruct-fp8",
+    "google.gemini-2.5-flash",
+    "google.gemini-2.5-pro",
+    "google.gemini-2.5-flash-lite",
 ]
 
 

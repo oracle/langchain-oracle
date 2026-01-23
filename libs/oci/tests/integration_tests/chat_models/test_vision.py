@@ -105,11 +105,11 @@ def llama4_scout_llm():
 
 
 @pytest.fixture
-def openai_llm():
-    """Create a ChatOCIGenAI instance with OpenAI GPT-4o."""
+def gemini_llm():
+    """Create a ChatOCIGenAI instance with Google Gemini 2.5 Flash."""
     config = get_config()
     return ChatOCIGenAI(
-        model_id="openai.gpt-4o",
+        model_id="google.gemini-2.5-flash",
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],
@@ -244,6 +244,9 @@ class TestVisionModelDetection:
             ("meta.llama-3.2-11b-vision-instruct", True),
             ("meta.llama-4-scout-17b-16e-instruct", True),
             ("meta.llama-4-maverick-17b-128e-instruct-fp8", True),
+            ("google.gemini-2.5-flash", True),
+            ("google.gemini-2.5-pro", True),
+            ("google.gemini-2.5-flash-lite", True),
             ("meta.llama-3.3-70b-instruct", False),
             ("cohere.command-r-16k", False),
             ("cohere.command-a-03-2025", False),
@@ -260,6 +263,7 @@ class TestVisionModelDetection:
     [
         "meta.llama-3.2-90b-vision-instruct",
         "meta.llama-4-scout-17b-16e-instruct",
+        "google.gemini-2.5-flash",
     ],
 )
 def test_vision_models_can_process_images(model_id):
