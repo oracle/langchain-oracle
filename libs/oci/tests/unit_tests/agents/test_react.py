@@ -1,14 +1,14 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Unit tests for create_oci_react_agent helper function."""
+"""Unit tests for create_oci_agent helper function."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.tools import tool
 
-from langchain_oci.agents.react import create_oci_react_agent
+from langchain_oci.agents.react import create_oci_agent
 from langchain_oci.common.auth import OCIAuthType
 
 
@@ -20,7 +20,7 @@ def dummy_tool(x: str) -> str:
 
 @pytest.mark.requires("oci", "langgraph")
 class TestCreateOCIReactAgent:
-    """Tests for create_oci_react_agent function."""
+    """Tests for create_oci_agent function."""
 
     def test_creates_agent_with_minimal_args(self) -> None:
         """Test agent creation with just model_id and tools."""
@@ -31,7 +31,7 @@ class TestCreateOCIReactAgent:
                     mock_llm_class.return_value = mock_llm_instance
                     mock_create.return_value = MagicMock()
 
-                    agent = create_oci_react_agent(
+                    agent = create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                     )
@@ -53,7 +53,7 @@ class TestCreateOCIReactAgent:
             # Clear any env vars that might be set
             with patch("os.environ.get", return_value=None):
                 with pytest.raises(ValueError, match="compartment_id must be provided"):
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                     )
@@ -65,7 +65,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         system_prompt="You are helpful.",
@@ -82,7 +82,7 @@ class TestCreateOCIReactAgent:
                     mock_create.return_value = MagicMock()
                     mock_checkpointer = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         checkpointer=mock_checkpointer,
@@ -98,7 +98,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         compartment_id="explicit-compartment",
@@ -120,7 +120,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         auth_type=OCIAuthType.SECURITY_TOKEN,
@@ -136,7 +136,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         auth_type="INSTANCE_PRINCIPAL",
@@ -155,7 +155,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                     )
@@ -174,7 +174,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         service_endpoint="https://custom.endpoint.com",
@@ -192,7 +192,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         interrupt_before=["tools"],
@@ -210,7 +210,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         debug=True,
@@ -228,7 +228,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         max_tokens=1024,
@@ -245,7 +245,7 @@ class TestCreateOCIReactAgent:
                     mock_create.return_value = MagicMock()
                     mock_store = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         store=mock_store,
@@ -265,7 +265,7 @@ class TestCreateOCIReactAgent:
                         """A function tool."""
                         return x
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[my_func],
                     )
@@ -281,7 +281,7 @@ class TestCreateOCIReactAgent:
                 with patch("langchain.agents.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
 
-                    create_oci_react_agent(
+                    create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                         top_p=0.9,
@@ -295,8 +295,8 @@ class TestCreateOCIReactAgent:
 
 @pytest.mark.requires("oci", "langgraph")
 def test_import_from_package() -> None:
-    """Test that create_oci_react_agent can be imported from langchain_oci."""
-    from langchain_oci import create_oci_react_agent as imported_func
+    """Test that create_oci_agent can be imported from langchain_oci."""
+    from langchain_oci import create_oci_agent as imported_func
 
     assert imported_func is not None
     assert callable(imported_func)

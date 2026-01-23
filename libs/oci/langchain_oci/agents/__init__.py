@@ -3,6 +3,6 @@
 
 """OCI Generative AI Agent helpers."""
 
-from langchain_oci.agents.react import create_oci_react_agent
+from langchain_oci.agents.react import create_oci_agent
 
-__all__ = ["create_oci_react_agent"]
+__all__ = ["create_oci_agent"]

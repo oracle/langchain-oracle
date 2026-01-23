@@ -6,7 +6,7 @@
 Example: Creating a ReAct Agent with OCI Generative AI
 
 This example demonstrates how to create a tool-using agent
-with OCI's Llama models using the create_oci_react_agent helper.
+with OCI's Llama models using the create_oci_agent helper.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ import os
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
-from langchain_oci import create_oci_react_agent
+from langchain_oci import create_oci_agent
 
 
 # Define some tools
@@ -97,7 +97,7 @@ def main() -> None:
     print()
 
     # Create the agent - just a few lines!
-    agent = create_oci_react_agent(
+    agent = create_oci_agent(
         model_id="meta.llama-4-scout-17b-16e-instruct",
         tools=[search_products, get_product_details, check_inventory],
         compartment_id=compartment_id,

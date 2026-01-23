@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Integration tests for create_oci_react_agent helper function.
+"""Integration tests for create_oci_agent helper function.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ import pytest
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
-from langchain_oci import create_oci_react_agent
+from langchain_oci import create_oci_agent
 
 
 @tool
@@ -80,7 +80,7 @@ def skip_if_no_oci_credentials() -> bool:
     reason="OCI credentials not available (OCI_COMPARTMENT_ID not set)",
 )
 class TestOCIReactAgentIntegration:
-    """Integration tests for create_oci_react_agent."""
+    """Integration tests for create_oci_agent."""
 
     @pytest.fixture
     def compartment_id(self) -> str:
@@ -95,7 +95,7 @@ class TestOCIReactAgentIntegration:
 
     def test_simple_tool_call(self, compartment_id: str, service_endpoint: str) -> None:
         """Test agent can make a simple tool call."""
-        agent = create_oci_react_agent(
+        agent = create_oci_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
             tools=[get_weather],
             compartment_id=compartment_id,
@@ -130,7 +130,7 @@ class TestOCIReactAgentIntegration:
 
     def test_multi_tool_agent(self, compartment_id: str, service_endpoint: str) -> None:
         """Test agent with multiple tools."""
-        agent = create_oci_react_agent(
+        agent = create_oci_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
             tools=[get_weather, calculate],
             compartment_id=compartment_id,
@@ -159,7 +159,7 @@ class TestOCIReactAgentIntegration:
         self, compartment_id: str, service_endpoint: str
     ) -> None:
         """Test agent responds without tool call when not needed."""
-        agent = create_oci_react_agent(
+        agent = create_oci_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
             tools=[get_weather],
             compartment_id=compartment_id,
@@ -187,7 +187,7 @@ class TestOCIReactAgentIntegration:
         from langgraph.checkpoint.memory import MemorySaver
 
         checkpointer = MemorySaver()
-        agent = create_oci_react_agent(
+        agent = create_oci_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
             tools=[get_weather],
             compartment_id=compartment_id,
@@ -243,7 +243,7 @@ def test_multi_model_tool_calling(model_id: str) -> None:
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
-    agent = create_oci_react_agent(
+    agent = create_oci_agent(
         model_id=model_id,
         tools=[get_weather],
         compartment_id=compartment_id,
@@ -286,14 +286,14 @@ def test_multi_model_tool_calling(model_id: str) -> None:
     ],
 )
 def test_multi_model_support(model_id: str) -> None:
-    """Test that create_oci_react_agent works with different models."""
+    """Test that create_oci_agent works with different models."""
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID") or os.environ.get(
         "OCI_COMP", ""
     )
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
-    agent = create_oci_react_agent(
+    agent = create_oci_agent(
         model_id=model_id,
         tools=[get_weather],
         compartment_id=compartment_id,

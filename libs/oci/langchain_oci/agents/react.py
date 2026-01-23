@@ -14,7 +14,7 @@ from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_oci.common.auth import OCIAuthType
 
 
-def create_oci_react_agent(
+def create_oci_agent(
     model_id: str,
     tools: Sequence[Union[BaseTool, Callable[..., Any]]],
     *,
@@ -83,7 +83,7 @@ def create_oci_react_agent(
     Example:
         Basic usage with a simple tool:
 
-        >>> from langchain_oci import create_oci_react_agent
+        >>> from langchain_oci import create_oci_agent
         >>> from langchain_core.tools import tool
         >>>
         >>> @tool
@@ -91,7 +91,7 @@ def create_oci_react_agent(
         ...     \"\"\"Get the current weather for a city.\"\"\"
         ...     return f"Weather in {city}: 72F, sunny"
         >>>
-        >>> agent = create_oci_react_agent(
+        >>> agent = create_oci_agent(
         ...     model_id="meta.llama-4-scout-17b-16e-instruct",
         ...     tools=[get_weather],
         ...     system_prompt="You are a helpful weather assistant.",
@@ -108,7 +108,7 @@ def create_oci_react_agent(
         >>> from langgraph.checkpoint.memory import MemorySaver
         >>>
         >>> checkpointer = MemorySaver()
-        >>> agent = create_oci_react_agent(
+        >>> agent = create_oci_agent(
         ...     model_id="meta.llama-4-scout-17b-16e-instruct",
         ...     tools=[get_weather],
         ...     checkpointer=checkpointer,
