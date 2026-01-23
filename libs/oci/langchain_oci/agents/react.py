@@ -29,9 +29,6 @@ def create_oci_react_agent(
     system_prompt: Optional[str] = None,
     checkpointer: Optional[Any] = None,
     store: Optional[Any] = None,
-    # Hooks
-    pre_model_hook: Optional[Any] = None,
-    post_model_hook: Optional[Any] = None,
     # Control flow
     interrupt_before: Optional[List[str]] = None,
     interrupt_after: Optional[List[str]] = None,
@@ -47,7 +44,7 @@ def create_oci_react_agent(
     """Create a ReAct agent using OCI Generative AI models.
 
     This is a convenience wrapper that creates a ChatOCIGenAI model,
-    binds the provided tools, and creates a LangGraph ReAct agent.
+    binds the provided tools, and creates an agent using langchain.agents.
 
     Args:
         model_id: OCI model identifier (e.g., "meta.llama-4-scout-17b-16e-instruct")
@@ -62,13 +59,10 @@ def create_oci_react_agent(
         auth_file_location: Path to OCI config file. Default: "~/.oci/config".
         max_sequential_tool_calls: Max tool calls before forcing stop. Default: 8.
             Prevents infinite loops while allowing multi-step orchestration.
-        system_prompt: System message for the agent. Passed as prompt
-            to create_react_agent.
+        system_prompt: System message for the agent.
         checkpointer: LangGraph checkpointer for persistence. Enables resuming
             conversations and human-in-the-loop workflows.
         store: LangGraph store for long-term memory across conversations.
-        pre_model_hook: Runnable to execute before each model call.
-        post_model_hook: Runnable to execute after each model call.
         interrupt_before: Node names to interrupt before (for human-in-the-loop).
         interrupt_after: Node names to interrupt after.
         temperature: Model temperature. If not specified, uses model default.
@@ -84,7 +78,7 @@ def create_oci_react_agent(
     Raises:
         ValueError: If compartment_id is not provided and OCI_COMPARTMENT_ID
             environment variable is not set.
-        ImportError: If langgraph is not installed.
+        ImportError: If langchain is not installed.
 
     Example:
         Basic usage with a simple tool:
@@ -127,11 +121,11 @@ def create_oci_react_agent(
         ... )
     """
     try:
-        from langgraph.prebuilt import create_react_agent
+        from langchain.agents import create_agent
     except ImportError as ex:
         raise ImportError(
-            "Could not import langgraph package. "
-            "Please install it with `pip install langgraph`."
+            "Could not import langchain package. "
+            "Please install it with `pip install langchain`."
         ) from ex
 
     # Resolve compartment_id from environment if not provided
@@ -179,7 +173,7 @@ def create_oci_react_agent(
         max_sequential_tool_calls=max_sequential_tool_calls,
     )
 
-    # Build kwargs for create_react_agent
+    # Build kwargs for create_agent
     agent_kwargs: dict[str, Any] = {
         "model": llm,
         "tools": list(tools),
@@ -187,19 +181,13 @@ def create_oci_react_agent(
 
     # Add optional parameters only if provided
     if system_prompt is not None:
-        agent_kwargs["prompt"] = system_prompt
+        agent_kwargs["system_prompt"] = system_prompt
 
     if checkpointer is not None:
         agent_kwargs["checkpointer"] = checkpointer
 
     if store is not None:
         agent_kwargs["store"] = store
-
-    if pre_model_hook is not None:
-        agent_kwargs["pre_model_hook"] = pre_model_hook
-
-    if post_model_hook is not None:
-        agent_kwargs["post_model_hook"] = post_model_hook
 
     if interrupt_before is not None:
         agent_kwargs["interrupt_before"] = interrupt_before
@@ -213,7 +201,7 @@ def create_oci_react_agent(
     if name is not None:
         agent_kwargs["name"] = name
 
-    # Create the agent using langgraph's create_react_agent
-    agent = create_react_agent(**agent_kwargs)
+    # Create the agent using langchain's create_agent
+    agent = create_agent(**agent_kwargs)
 
     return agent
