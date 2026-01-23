@@ -3,6 +3,8 @@
 
 """Unit tests for create_oci_agent helper function."""
 
+from contextlib import contextmanager
+from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +20,27 @@ def dummy_tool(x: str) -> str:
     return f"Result: {x}"
 
 
+@contextmanager
+def mock_create_agent() -> Generator[MagicMock, None, None]:
+    """Mock the agent creation function (works with both new and legacy APIs)."""
+    mock = MagicMock(return_value=MagicMock())
+
+    # Try to determine which API is available
+    try:
+        from langchain.agents import create_agent  # noqa: F401
+
+        has_new_api = True
+    except (ImportError, AttributeError):
+        has_new_api = False
+
+    if has_new_api:
+        with patch("langchain.agents.create_agent", mock):
+            yield mock
+    else:
+        with patch("langgraph.prebuilt.create_react_agent", mock):
+            yield mock
+
+
 @pytest.mark.requires("oci", "langgraph")
 class TestCreateOCIReactAgent:
     """Tests for create_oci_agent function."""
@@ -26,10 +49,9 @@ class TestCreateOCIReactAgent:
         """Test agent creation with just model_id and tools."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test-compartment"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
+                with mock_create_agent() as mock_create:
                     mock_llm_instance = MagicMock()
                     mock_llm_class.return_value = mock_llm_instance
-                    mock_create.return_value = MagicMock()
 
                     agent = create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
@@ -43,7 +65,7 @@ class TestCreateOCIReactAgent:
                     assert call_kwargs["model_id"] == expected_model
                     assert call_kwargs["compartment_id"] == "test-compartment"
 
-                    # Verify create_react_agent was called
+                    # Verify agent creation function was called
                     mock_create.assert_called_once()
                     assert agent is not None
 
@@ -58,13 +80,11 @@ class TestCreateOCIReactAgent:
                         tools=[dummy_tool],
                     )
 
-    def test_passes_system_prompt_as_state_modifier(self) -> None:
-        """Test that system_prompt is passed to create_react_agent."""
+    def test_passes_system_prompt(self) -> None:
+        """Test that system_prompt is passed to the agent creation function."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI"):
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent() as mock_create:
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -72,14 +92,17 @@ class TestCreateOCIReactAgent:
                     )
 
                     call_kwargs = mock_create.call_args.kwargs
-                    assert call_kwargs["system_prompt"] == "You are helpful."
+                    # Legacy API uses "prompt", new API uses "system_prompt"
+                    prompt_value = call_kwargs.get("prompt") or call_kwargs.get(
+                        "system_prompt"
+                    )
+                    assert prompt_value == "You are helpful."
 
     def test_passes_checkpointer(self) -> None:
         """Test that checkpointer is passed through."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI"):
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
+                with mock_create_agent() as mock_create:
                     mock_checkpointer = MagicMock()
 
                     create_oci_agent(
@@ -95,9 +118,7 @@ class TestCreateOCIReactAgent:
         """Test OCI-specific options are passed to ChatOCIGenAI."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -117,9 +138,7 @@ class TestCreateOCIReactAgent:
         """Test that auth_type can be passed as OCIAuthType enum."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -133,9 +152,7 @@ class TestCreateOCIReactAgent:
         """Test that auth_type can be passed as string."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -152,17 +169,17 @@ class TestCreateOCIReactAgent:
             {"OCI_COMPARTMENT_ID": "test", "OCI_REGION": "us-chicago-1"},
         ):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
                     )
 
                     call_kwargs = mock_llm_class.call_args.kwargs
-                    expected_endpoint = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
-                    assert call_kwargs["service_endpoint"] == expected_endpoint
+                    expected = (
+                        "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+                    )
+                    assert call_kwargs["service_endpoint"] == expected
 
     def test_explicit_service_endpoint(self) -> None:
         """Test that explicit service_endpoint takes precedence."""
@@ -171,9 +188,7 @@ class TestCreateOCIReactAgent:
             {"OCI_COMPARTMENT_ID": "test", "OCI_REGION": "us-chicago-1"},
         ):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -189,9 +204,7 @@ class TestCreateOCIReactAgent:
         """Test that interrupt_before and interrupt_after are passed."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI"):
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent() as mock_create:
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -207,9 +220,7 @@ class TestCreateOCIReactAgent:
         """Test that debug and name are passed."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI"):
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent() as mock_create:
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -225,9 +236,7 @@ class TestCreateOCIReactAgent:
         """Test that max_tokens is passed to model_kwargs."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],
@@ -241,8 +250,7 @@ class TestCreateOCIReactAgent:
         """Test that store is passed through."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI"):
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
+                with mock_create_agent() as mock_create:
                     mock_store = MagicMock()
 
                     create_oci_agent(
@@ -258,8 +266,7 @@ class TestCreateOCIReactAgent:
         """Test that callable functions can be passed as tools."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI"):
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
+                with mock_create_agent() as mock_create:
 
                     def my_func(x: str) -> str:
                         """A function tool."""
@@ -278,9 +285,7 @@ class TestCreateOCIReactAgent:
         """Test that extra model kwargs are passed through."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
             with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
-                with patch("langchain.agents.create_agent") as mock_create:
-                    mock_create.return_value = MagicMock()
-
+                with mock_create_agent():
                     create_oci_agent(
                         model_id="meta.llama-4-scout-17b-16e-instruct",
                         tools=[dummy_tool],

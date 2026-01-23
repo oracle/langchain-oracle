@@ -120,13 +120,26 @@ def create_oci_agent(
         ...     config={"configurable": {"thread_id": "user_123"}},
         ... )
     """
+    # Try langchain >= 1.0.0 first, fall back to langgraph for older versions
+    create_agent_func = None
+    use_legacy_api = False
+
     try:
         from langchain.agents import create_agent
-    except ImportError as ex:
-        raise ImportError(
-            "Could not import langchain package. "
-            "Please install it with `pip install langchain`."
-        ) from ex
+
+        create_agent_func = create_agent
+    except (ImportError, AttributeError):
+        # Fall back to langgraph.prebuilt for langchain < 1.0.0
+        try:
+            from langgraph.prebuilt import create_react_agent
+
+            create_agent_func = create_react_agent
+            use_legacy_api = True
+        except ImportError as ex:
+            raise ImportError(
+                "Could not import agent creation function. "
+                "Please install langchain>=1.0.0 or langgraph."
+            ) from ex
 
     # Resolve compartment_id from environment if not provided
     if compartment_id is None:
@@ -180,8 +193,12 @@ def create_oci_agent(
     }
 
     # Add optional parameters only if provided
+    # Handle different parameter names between APIs
     if system_prompt is not None:
-        agent_kwargs["system_prompt"] = system_prompt
+        if use_legacy_api:
+            agent_kwargs["prompt"] = system_prompt
+        else:
+            agent_kwargs["system_prompt"] = system_prompt
 
     if checkpointer is not None:
         agent_kwargs["checkpointer"] = checkpointer
@@ -201,7 +218,7 @@ def create_oci_agent(
     if name is not None:
         agent_kwargs["name"] = name
 
-    # Create the agent using langchain's create_agent
-    agent = create_agent(**agent_kwargs)
+    # Create the agent
+    agent = create_agent_func(**agent_kwargs)
 
     return agent
