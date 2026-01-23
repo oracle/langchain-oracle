@@ -121,7 +121,7 @@ def create_oci_agent(
         ... )
     """
     # Try langchain >= 1.0.0 first, fall back to langgraph for older versions
-    create_agent_func = None
+    create_agent_func: Callable[..., Any]
     use_legacy_api = False
 
     try:
