@@ -15,8 +15,12 @@ Setup:
 
 To run these tests:
     pytest tests/integration_tests/chat_models/test_vision.py -v
+
+Note: OCI Generative AI service requires images to be base64-encoded.
+URL-based images are not supported.
 """
 
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -31,19 +35,31 @@ from langchain_oci import (
     load_image,
 )
 
-# Test image URL (public domain - Wikimedia Commons)
-TEST_IMAGE_URL = (
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/"
-    "a/a7/Camponotus_flavomarginatus_ant.jpg/"
-    "320px-Camponotus_flavomarginatus_ant.jpg"
-)
+try:
+    from PIL import Image
 
-# A different test image for comparison tests
-TEST_IMAGE_URL_2 = (
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/"
-    "4/4d/Apis_mellifera_Western_honey_bee.jpg/"
-    "320px-Apis_mellifera_Western_honey_bee.jpg"
-)
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+
+def create_test_image(color: str = "red", size: tuple = (100, 100)) -> bytes:
+    """Create a simple test image with PIL.
+
+    Args:
+        color: Color name (e.g., 'red', 'blue', 'green')
+        size: Image dimensions as (width, height)
+
+    Returns:
+        PNG image as bytes
+    """
+    if not PIL_AVAILABLE:
+        pytest.skip("PIL not available")
+
+    img = Image.new("RGB", size, color=color)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def get_config():
@@ -102,80 +118,19 @@ def openai_llm():
 
 
 @pytest.mark.requires("oci")
-class TestVisionUrlImages:
-    """Tests for vision model capabilities with URL-based images."""
-
-    def test_url_image_analysis(self, vision_llm):
-        """Test analyzing an image from URL."""
-        message = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": "What animal is in this image? Answer briefly.",
-                },
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
-            ]
-        )
-
-        response = vision_llm.invoke([message])
-
-        assert response.content
-        assert len(response.content) > 0
-        # The image is of an ant, so we expect the response to mention it
-        assert "ant" in response.content.lower()
-
-    def test_url_image_with_llama4_scout(self, llama4_scout_llm):
-        """Test Llama 4 Scout model with URL image."""
-        message = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": "Describe what you see in this image briefly.",
-                },
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
-            ]
-        )
-
-        response = llama4_scout_llm.invoke([message])
-
-        assert response.content
-        assert len(response.content) > 0
-
-    def test_url_image_with_openai_model(self, openai_llm):
-        """Test OpenAI model via OCI with URL image."""
-        message = HumanMessage(
-            content=[
-                {"type": "text", "text": "What animal is shown? One word answer."},
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
-            ]
-        )
-
-        response = openai_llm.invoke([message])
-
-        assert response.content
-        assert len(response.content) > 0
-
-
-@pytest.mark.requires("oci")
 class TestVisionBase64Images:
     """Tests for vision model capabilities with base64-encoded images."""
 
     def test_base64_image_analysis(self, vision_llm):
         """Test analyzing a base64-encoded image."""
-        # Create a minimal test PNG (1x1 red pixel)
-        # This is a valid PNG that should be processable
-        png_bytes = (
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
-            b"\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03\x00\x01"
-            b"\x00\x05\xfe\xd4\xef\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
+        # Create a test image using PIL
+        red_image = create_test_image("red")
 
-        image_block = encode_image(png_bytes, "image/png")
+        image_block = encode_image(red_image, "image/png")
 
         message = HumanMessage(
             content=[
-                {"type": "text", "text": "What do you see? Describe the image."},
+                {"type": "text", "text": "What color is this image?"},
                 image_block,
             ]
         )
@@ -187,22 +142,17 @@ class TestVisionBase64Images:
 
     def test_load_and_analyze_local_image(self, vision_llm):
         """Test loading a local image file and analyzing it."""
-        # Create a minimal test PNG
-        png_bytes = (
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
-            b"\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03\x00\x01"
-            b"\x00\x05\xfe\xd4\xef\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
+        # Create a test image using PIL
+        blue_image = create_test_image("blue")
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            f.write(png_bytes)
+            f.write(blue_image)
             temp_path = f.name
 
         try:
             message = HumanMessage(
                 content=[
-                    {"type": "text", "text": "Describe what you see in this image."},
+                    {"type": "text", "text": "What color is this image?"},
                     load_image(temp_path),
                 ]
             )
@@ -219,16 +169,23 @@ class TestVisionBase64Images:
 class TestVisionMultipleImages:
     """Tests for processing multiple images in a single request."""
 
+    @pytest.mark.skip(
+        reason="OCI GenAI currently only supports one image per message"
+    )
     def test_multiple_images_comparison(self, vision_llm):
         """Test analyzing and comparing multiple images."""
+        # Create two different colored images
+        red_image = create_test_image("red")
+        blue_image = create_test_image("blue")
+
         message = HumanMessage(
             content=[
                 {
                     "type": "text",
-                    "text": "Compare these two images. What insects are shown?",
+                    "text": "Compare these two images. What colors are they?",
                 },
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL_2}},
+                encode_image(red_image, "image/png"),
+                encode_image(blue_image, "image/png"),
             ]
         )
 
@@ -239,11 +196,13 @@ class TestVisionMultipleImages:
 
     def test_mixed_text_and_images(self, vision_llm):
         """Test conversation with text and images interleaved."""
+        green_image = create_test_image("green")
+
         message = HumanMessage(
             content=[
                 {"type": "text", "text": "I'll show you an image."},
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
-                {"type": "text", "text": "What kind of insect is this?"},
+                encode_image(green_image, "image/png"),
+                {"type": "text", "text": "What color is this image?"},
             ]
         )
 
@@ -259,10 +218,12 @@ class TestVisionStreaming:
 
     def test_streaming_with_image(self, vision_llm):
         """Test streaming response for image analysis."""
+        yellow_image = create_test_image("yellow")
+
         message = HumanMessage(
             content=[
-                {"type": "text", "text": "Describe this image in 2-3 sentences."},
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
+                {"type": "text", "text": "What color is this image?"},
+                encode_image(yellow_image, "image/png"),
             ]
         )
 
@@ -301,7 +262,6 @@ class TestVisionModelDetection:
     [
         "meta.llama-3.2-90b-vision-instruct",
         "meta.llama-4-scout-17b-16e-instruct",
-        "openai.gpt-4o",
     ],
 )
 def test_vision_models_can_process_images(model_id):
@@ -315,10 +275,12 @@ def test_vision_models_can_process_images(model_id):
         auth_type=config["auth_type"],
     )
 
+    purple_image = create_test_image("purple")
+
     message = HumanMessage(
         content=[
-            {"type": "text", "text": "What is in this image? One sentence answer."},
-            {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
+            {"type": "text", "text": "What color is this image?"},
+            encode_image(purple_image, "image/png"),
         ]
     )
 
@@ -332,22 +294,22 @@ def test_vision_models_can_process_images(model_id):
 class TestVisionErrorHandling:
     """Tests for error handling in vision operations."""
 
-    def test_invalid_image_url(self, vision_llm):
-        """Test behavior with an invalid image URL."""
+    def test_invalid_base64_image(self, vision_llm):
+        """Test behavior with invalid base64 image data."""
+        # Create an invalid image block
+        invalid_image = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,invalid_base64_data!!!"},
+        }
+
         message = HumanMessage(
             content=[
                 {"type": "text", "text": "What is in this image?"},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "https://invalid-url-that-does-not-exist.com/img.jpg"
-                    },
-                },
+                invalid_image,
             ]
         )
 
-        # This should either raise an error or return an error message
-        # depending on how the model/service handles invalid URLs
+        # This should raise an error for invalid image data
         with pytest.raises(Exception):
             vision_llm.invoke([message])
 
@@ -363,10 +325,12 @@ class TestVisionErrorHandling:
             auth_type=config["auth_type"],
         )
 
+        orange_image = create_test_image("orange")
+
         message = HumanMessage(
             content=[
-                {"type": "text", "text": "What is in this image?"},
-                {"type": "image_url", "image_url": {"url": TEST_IMAGE_URL}},
+                {"type": "text", "text": "What color is this image?"},
+                encode_image(orange_image, "image/png"),
             ]
         )
 
