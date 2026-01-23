@@ -20,6 +20,12 @@ from langchain_oci.llms.oci_data_science_model_deployment_endpoint import (
     OCIModelDeploymentVLLM,
 )
 from langchain_oci.llms.oci_generative_ai import OCIGenAI, OCIGenAIBase
+from langchain_oci.utils.vision import (
+    VISION_MODELS,
+    encode_image,
+    is_vision_model,
+    load_image,
+)
 
 __all__ = [
     "ChatOCIGenAI",
@@ -37,4 +43,9 @@ __all__ = [
     "OCIModelDeploymentVLLM",
     "ChatOCIOpenAI",
     "create_oci_agent",
+    # Vision utilities
+    "load_image",
+    "encode_image",
+    "is_vision_model",
+    "VISION_MODELS",
 ]
