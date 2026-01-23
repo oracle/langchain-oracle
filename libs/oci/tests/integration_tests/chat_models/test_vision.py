@@ -169,9 +169,7 @@ class TestVisionBase64Images:
 class TestVisionMultipleImages:
     """Tests for processing multiple images in a single request."""
 
-    @pytest.mark.skip(
-        reason="OCI GenAI currently only supports one image per message"
-    )
+    @pytest.mark.skip(reason="OCI GenAI currently only supports one image per message")
     def test_multiple_images_comparison(self, vision_llm):
         """Test analyzing and comparing multiple images."""
         # Create two different colored images
