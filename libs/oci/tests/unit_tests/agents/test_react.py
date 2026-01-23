@@ -176,9 +176,7 @@ class TestCreateOCIReactAgent:
                     )
 
                     call_kwargs = mock_llm_class.call_args.kwargs
-                    expected = (
-                        "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
-                    )
+                    expected = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
                     assert call_kwargs["service_endpoint"] == expected
 
     def test_explicit_service_endpoint(self) -> None:
