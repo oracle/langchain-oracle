@@ -357,15 +357,19 @@ def test_multi_step_tool_orchestration(model_id: str):
     ]
 
     # Create agent with higher recursion limit to allow multi-step
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+    if not compartment_id:
+        pytest.skip("OCI_COMPARTMENT_ID not set")
+
     region = os.getenv("OCI_REGION", "us-chicago-1")
     endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
     chat_model = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
-        compartment_id=os.getenv("OCI_COMP"),
+        compartment_id=compartment_id,
         model_kwargs={"temperature": 0.2, "max_tokens": 2048, "top_p": 0.9},
-        auth_type="SECURITY_TOKEN",
-        auth_profile="DEFAULT",
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_file_location=os.path.expanduser("~/.oci/config"),
         disable_streaming="tool_calling",
         max_sequential_tool_calls=8,  # Allow up to 8 sequential tool calls
