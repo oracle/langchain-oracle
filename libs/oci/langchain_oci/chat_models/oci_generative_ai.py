@@ -232,10 +232,20 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         else:
             serving_mode = models.OnDemandServingMode(model_id=self.model_id)
 
+        # Check if V2 API should be used (for Cohere vision)
+        use_v2 = chat_params.pop("_use_v2_api", False)
+
+        if use_v2:
+            # Use V2 API (for vision support)
+            chat_request = self._provider.oci_chat_request_v2(**chat_params)
+        else:
+            # Use V1 API (standard)
+            chat_request = self._provider.oci_chat_request(**chat_params)
+
         request = models.ChatDetails(
             compartment_id=self.compartment_id,
             serving_mode=serving_mode,
-            chat_request=self._provider.oci_chat_request(**chat_params),
+            chat_request=chat_request,
         )
 
         return request

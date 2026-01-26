@@ -130,6 +130,19 @@ def grok4_llm():
     )
 
 
+@pytest.fixture
+def cohere_vision_llm():
+    """Create a ChatOCIGenAI instance with Cohere Command A Vision."""
+    config = get_config()
+    return ChatOCIGenAI(
+        model_id="cohere.command-a-vision",
+        compartment_id=config["compartment_id"],
+        service_endpoint=config["service_endpoint"],
+        auth_profile=config["auth_profile"],
+        auth_type=config["auth_type"],
+    )
+
+
 @pytest.mark.requires("oci")
 class TestVisionBase64Images:
     """Tests for vision model capabilities with base64-encoded images."""
@@ -263,6 +276,7 @@ class TestVisionModelDetection:
             ("xai.grok-4", True),
             ("xai.grok-4-1-fast-reasoning", True),
             ("xai.grok-4-fast-reasoning", True),
+            ("cohere.command-a-vision", True),
             ("meta.llama-3.3-70b-instruct", False),
             ("cohere.command-r-16k", False),
             ("cohere.command-a-03-2025", False),
@@ -283,6 +297,7 @@ class TestVisionModelDetection:
         "meta.llama-4-scout-17b-16e-instruct",
         "google.gemini-2.5-flash",
         "xai.grok-4",
+        "cohere.command-a-vision",
     ],
 )
 def test_vision_models_can_process_images(model_id):
@@ -358,3 +373,77 @@ class TestVisionErrorHandling:
         # This should raise an error since Cohere doesn't support images
         with pytest.raises(Exception):
             llm.invoke([message])
+
+
+@pytest.mark.requires("oci")
+class TestCohereVision:
+    """Tests specifically for Cohere Command A Vision model."""
+
+    def test_cohere_vision_basic_image_analysis(self, cohere_vision_llm):
+        """Test Cohere vision model with basic image analysis."""
+        # Create a simple colored test image
+        test_image = create_test_image("blue")
+        image_block = encode_image(test_image, "image/png")
+
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": "What is the dominant color in this image?"},
+                image_block,
+            ]
+        )
+
+        response = cohere_vision_llm.invoke([message])
+
+        assert response.content
+        assert len(response.content) > 0
+        # Cohere should recognize the color
+        assert "blue" in response.content.lower()
+
+    def test_cohere_vision_with_file(self, cohere_vision_llm):
+        """Test Cohere vision model loading image from file."""
+        # Create a test image file
+        green_image = create_test_image("green")
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(green_image)
+            temp_path = f.name
+
+        try:
+            message = HumanMessage(
+                content=[
+                    {"type": "text", "text": "Describe the color of this image."},
+                    load_image(temp_path),
+                ]
+            )
+
+            response = cohere_vision_llm.invoke([message])
+
+            assert response.content
+            assert len(response.content) > 0
+        finally:
+            Path(temp_path).unlink()
+
+    def test_cohere_vision_streaming(self, cohere_vision_llm):
+        """Test Cohere vision model with streaming."""
+        yellow_image = create_test_image("yellow")
+
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": "What color is this image? Answer in one word."},
+                encode_image(yellow_image, "image/png"),
+            ]
+        )
+
+        chunks = list(cohere_vision_llm.stream([message]))
+
+        assert len(chunks) > 0
+        # Combine all chunks to get full response
+        full_response = "".join(chunk.content for chunk in chunks if chunk.content)
+        assert len(full_response) > 0
+
+    def test_cohere_vision_model_detection(self):
+        """Test that cohere.command-a-vision is detected as a vision model."""
+        assert is_vision_model("cohere.command-a-vision") is True
+        # Other Cohere models should not be detected as vision models
+        assert is_vision_model("cohere.command-r-16k") is False
+        assert is_vision_model("cohere.command-a-03-2025") is False

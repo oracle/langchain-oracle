@@ -43,6 +43,8 @@ VISION_MODELS: List[str] = [
     "xai.grok-4-1-fast-non-reasoning",
     "xai.grok-4-fast-reasoning",
     "xai.grok-4-fast-non-reasoning",
+    # Cohere models
+    "cohere.command-a-vision",
 ]
 
 
