@@ -39,6 +39,14 @@ class CohereProvider(Provider):
 
     stop_sequence_key: str = "stop_sequences"
 
+    # V2 API type hints for vision support
+    oci_chat_request_v2: Optional[Type[Any]]
+    oci_chat_message_v2: Optional[Dict[str, Type[Any]]]
+    oci_text_content_v2: Optional[Type[Any]]
+    oci_image_content_v2: Optional[Type[Any]]
+    oci_image_url_v2: Optional[Type[Any]]
+    chat_api_format_v2: Optional[str]
+
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
 
@@ -250,6 +258,10 @@ class CohereProvider(Provider):
         """Convert LangChain message content to Cohere V2 content format."""
         from oci.generative_ai_inference import models
 
+        assert self.oci_text_content_v2 is not None, "V2 classes must be loaded"
+        assert self.oci_image_content_v2 is not None, "V2 classes must be loaded"
+        assert self.oci_image_url_v2 is not None, "V2 classes must be loaded"
+
         if isinstance(content, str):
             return [
                 self.oci_text_content_v2(
@@ -294,6 +306,9 @@ class CohereProvider(Provider):
         """
         Convert LangChain messages to OCI parameters for Cohere V2 API (vision support).
         """
+        assert self.oci_chat_message_v2 is not None, "V2 classes must be loaded"
+        assert self.chat_api_format_v2 is not None, "V2 classes must be loaded"
+
         v2_messages = []
 
         for msg in messages:
