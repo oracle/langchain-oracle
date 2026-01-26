@@ -58,7 +58,9 @@ class CohereProvider(Provider):
         self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
 
-        # V2 API classes - loaded lazily to avoid import errors if not available
+        # V2 API classes for vision support (cohere.command-a-vision)
+        # Note: Vision model requires dedicated AI cluster, not available on-demand
+        # Loaded lazily to avoid import errors if not available in older OCI SDK
         self._v2_classes_loaded = False
         self.oci_chat_request_v2 = None
         self.oci_chat_message_v2 = None
@@ -68,7 +70,13 @@ class CohereProvider(Provider):
         self.chat_api_format_v2 = None
 
     def _load_v2_classes(self) -> None:
-        """Lazy load Cohere V2 API classes for vision support."""
+        """Lazy load Cohere V2 API classes for vision support.
+
+        Note: Cohere Command A Vision (cohere.command-a-vision-07-2025) requires
+        a dedicated AI cluster. The model is available in 9 regions but not for
+        on-demand use. Implementation tested via unit tests; integration testing
+        requires dedicated cluster access.
+        """
         if self._v2_classes_loaded:
             return
 
