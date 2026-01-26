@@ -232,14 +232,20 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         else:
             serving_mode = models.OnDemandServingMode(model_id=self.model_id)
 
-        # Check if V2 API should be used (for Cohere vision)
+        # Check if V2 API should be used (currently for Cohere vision models)
+        # This flag is set by the provider's messages_to_oci_params() method when it
+        # detects multimodal content. The V2 API check is kept at this level (rather
+        # than within the provider) to maintain consistency across all providers and
+        # allow future providers to use V2 APIs without modifying core logic.
         use_v2 = chat_params.pop("_use_v2_api", False)
 
         if use_v2:
-            # Use V2 API (for vision support)
+            # Use V2 API: Supports multimodal content (text + images)
+            # Currently used by Cohere Command A Vision for image analysis
             chat_request = self._provider.oci_chat_request_v2(**chat_params)
         else:
-            # Use V1 API (standard)
+            # Use V1 API: Standard text-only chat requests
+            # Used by all models that don't require multimodal capabilities
             chat_request = self._provider.oci_chat_request(**chat_params)
 
         request = models.ChatDetails(

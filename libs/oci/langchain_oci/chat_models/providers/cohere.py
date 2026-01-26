@@ -219,24 +219,28 @@ class CohereProvider(Provider):
             )
         return formatted_tool_calls
 
-    def get_role(self, message: BaseMessage) -> str:
-        """Map a LangChain message to Cohere's role representation."""
-        if isinstance(message, HumanMessage):
-            return "USER"
-        elif isinstance(message, AIMessage):
-            return "CHATBOT"
-        elif isinstance(message, SystemMessage):
-            return "SYSTEM"
-        elif isinstance(message, ToolMessage):
-            return "TOOL"
-        raise ValueError(f"Unknown message type: {type(message)}")
+    def get_role(self, message: BaseMessage, use_v2: bool = False) -> str:
+        """Map a LangChain message to Cohere's role representation.
 
-    def get_role_v2(self, message: BaseMessage) -> str:
-        """Map a LangChain message to Cohere V2's role representation."""
+        Args:
+            message: The LangChain message to convert
+            use_v2: If True, use V2 API role names (e.g., "ASSISTANT" for AI messages).
+                   If False, use V1 API role names (e.g., "CHATBOT" for AI messages).
+
+        Returns:
+            The role string compatible with the selected API version.
+
+        Note:
+            The key difference between V1 and V2 is the AI message role:
+            - V1 API uses "CHATBOT" for AI-generated messages
+            - V2 API uses "ASSISTANT" for AI-generated messages (multimodal support)
+            All other roles (USER, SYSTEM, TOOL) are the same across both APIs.
+        """
         if isinstance(message, HumanMessage):
             return "USER"
         elif isinstance(message, AIMessage):
-            return "ASSISTANT"
+            # V1 uses "CHATBOT", V2 uses "ASSISTANT" for AI messages
+            return "ASSISTANT" if use_v2 else "CHATBOT"
         elif isinstance(message, SystemMessage):
             return "SYSTEM"
         elif isinstance(message, ToolMessage):
@@ -312,14 +316,16 @@ class CohereProvider(Provider):
         v2_messages = []
 
         for msg in messages:
-            role = self.get_role_v2(msg)
+            role = self.get_role(msg, use_v2=True)
             if isinstance(msg, (HumanMessage, SystemMessage)):
+                # User and system messages: can contain multimodal content (text + images)
                 content = self._content_to_v2(msg.content)
                 v2_messages.append(
                     self.oci_chat_message_v2[role](role=role, content=content)
                 )
             elif isinstance(msg, AIMessage):
-                # For AI messages, include text content
+                # AI messages: always require non-empty content in V2 API
+                # Use space as fallback if content is empty to satisfy API requirements
                 content = self._content_to_v2(msg.content if msg.content else " ")
                 v2_messages.append(
                     self.oci_chat_message_v2[role](role=role, content=content)
