@@ -217,18 +217,29 @@ class CohereProvider(Provider):
         from oci.generative_ai_inference import models
 
         if isinstance(content, str):
-            return [self.oci_text_content_v2(type=models.CohereContentV2.TYPE_TEXT, text=content)]
+            return [
+                self.oci_text_content_v2(
+                    type=models.CohereContentV2.TYPE_TEXT, text=content
+                )
+            ]
 
         v2_content = []
         for block in content:
             if isinstance(block, dict):
                 if block.get("type") == "text":
                     v2_content.append(
-                        self.oci_text_content_v2(type=models.CohereContentV2.TYPE_TEXT, text=block["text"])
+                        self.oci_text_content_v2(
+                            type=models.CohereContentV2.TYPE_TEXT,
+                            text=block["text"],
+                        )
                     )
                 elif block.get("type") == "image_url":
                     image_url = block.get("image_url", {})
-                    url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                    url = (
+                        image_url.get("url")
+                        if isinstance(image_url, dict)
+                        else image_url
+                    )
                     v2_content.append(
                         self.oci_image_content_v2(
                             type=models.CohereContentV2.TYPE_IMAGE_URL,
@@ -236,7 +247,11 @@ class CohereProvider(Provider):
                         )
                     )
             elif isinstance(block, str):
-                v2_content.append(self.oci_text_content_v2(type=models.CohereContentV2.TYPE_TEXT, text=block))
+                v2_content.append(
+                    self.oci_text_content_v2(
+                        type=models.CohereContentV2.TYPE_TEXT, text=block
+                    )
+                )
         return v2_content
 
     def _messages_to_oci_params_v2(

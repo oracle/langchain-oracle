@@ -429,7 +429,10 @@ class TestCohereVision:
 
         message = HumanMessage(
             content=[
-                {"type": "text", "text": "What color is this image? Answer in one word."},
+                {
+                    "type": "text",
+                    "text": "What color is this image? Answer in one word.",
+                },
                 encode_image(yellow_image, "image/png"),
             ]
         )
