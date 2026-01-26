@@ -43,7 +43,6 @@ class CohereProvider(Provider):
         from oci.generative_ai_inference import models
 
         self.oci_chat_request = models.CohereChatRequest
-        self.oci_chat_request_v2 = models.CohereChatRequestV2
         self.oci_tool = models.CohereTool
         self.oci_tool_param = models.CohereParameterDefinition
         self.oci_tool_result = models.CohereToolResult
@@ -54,21 +53,46 @@ class CohereProvider(Provider):
             "SYSTEM": models.CohereSystemMessage,
             "TOOL": models.CohereToolMessage,
         }
-        # V2 API message classes for vision support
-        self.oci_chat_message_v2 = {
-            "USER": models.CohereUserMessageV2,
-            "ASSISTANT": models.CohereAssistantMessageV2,
-            "SYSTEM": models.CohereSystemMessageV2,
-            "TOOL": models.CohereToolMessageV2,
-        }
-        self.oci_text_content_v2 = models.CohereTextContentV2
-        self.oci_image_content_v2 = models.CohereImageContentV2
-        self.oci_image_url_v2 = models.CohereImageUrlV2
 
         self.oci_response_json_schema = models.ResponseJsonSchema
         self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
-        self.chat_api_format_v2 = models.CohereChatRequestV2.API_FORMAT_COHEREV2
+
+        # V2 API classes - loaded lazily to avoid import errors if not available
+        self._v2_classes_loaded = False
+        self.oci_chat_request_v2 = None
+        self.oci_chat_message_v2 = None
+        self.oci_text_content_v2 = None
+        self.oci_image_content_v2 = None
+        self.oci_image_url_v2 = None
+        self.chat_api_format_v2 = None
+
+    def _load_v2_classes(self) -> None:
+        """Lazy load Cohere V2 API classes for vision support."""
+        if self._v2_classes_loaded:
+            return
+
+        try:
+            from oci.generative_ai_inference import models
+
+            self.oci_chat_request_v2 = models.CohereChatRequestV2
+            self.oci_chat_message_v2 = {
+                "USER": models.CohereUserMessageV2,
+                "ASSISTANT": models.CohereAssistantMessageV2,
+                "SYSTEM": models.CohereSystemMessageV2,
+                "TOOL": models.CohereToolMessageV2,
+            }
+            self.oci_text_content_v2 = models.CohereTextContentV2
+            self.oci_image_content_v2 = models.CohereImageContentV2
+            self.oci_image_url_v2 = models.CohereImageUrlV2
+            self.chat_api_format_v2 = models.CohereChatRequestV2.API_FORMAT_COHEREV2
+            self._v2_classes_loaded = True
+        except AttributeError as e:
+            raise RuntimeError(
+                "Cohere V2 API classes not available in this version of OCI SDK. "
+                "Please upgrade to the latest version to use vision features with "
+                "Cohere models."
+            ) from e
 
     def chat_response_to_text(self, response: Any) -> str:
         """Extract text from a Cohere chat response."""
@@ -209,6 +233,8 @@ class CohereProvider(Provider):
             if isinstance(msg, HumanMessage) and isinstance(msg.content, list):
                 for block in msg.content:
                     if isinstance(block, dict) and block.get("type") == "image_url":
+                        # Load V2 classes now that we know we need them
+                        self._load_v2_classes()
                         return True
         return False
 
