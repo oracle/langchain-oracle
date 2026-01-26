@@ -318,14 +318,14 @@ class CohereProvider(Provider):
         for msg in messages:
             role = self.get_role(msg, use_v2=True)
             if isinstance(msg, (HumanMessage, SystemMessage)):
-                # User and system messages: can contain multimodal content (text + images)
+                # User/system messages can contain multimodal content (text + images)
                 content = self._content_to_v2(msg.content)
                 v2_messages.append(
                     self.oci_chat_message_v2[role](role=role, content=content)
                 )
             elif isinstance(msg, AIMessage):
-                # AI messages: always require non-empty content in V2 API
-                # Use space as fallback if content is empty to satisfy API requirements
+                # AI messages always require non-empty content in V2 API
+                # Use space as fallback if empty to satisfy API requirements
                 content = self._content_to_v2(msg.content if msg.content else " ")
                 v2_messages.append(
                     self.oci_chat_message_v2[role](role=role, content=content)
