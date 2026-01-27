@@ -40,8 +40,8 @@ def get_config():
             "OCI_GENAI_ENDPOINT",
             "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com",
         ),
-        "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "API_KEY_AUTH"),
-        "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+        "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+        "auth_type": os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
     }
 
 
