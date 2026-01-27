@@ -886,13 +886,16 @@ def test_get_provider():
 
 
 @pytest.mark.requires("oci")
-def test_cohere_vision_detects_system_message_images() -> None:
+def test_cohere_vision_detects_system_message_images(monkeypatch: MonkeyPatch) -> None:
     """Test that Cohere V2 API detects images in SystemMessage content."""
     from langchain_core.messages import SystemMessage
 
     from langchain_oci.chat_models.providers.cohere import CohereProvider
 
     provider = CohereProvider()
+
+    # Mock _load_v2_classes to avoid RuntimeError in CI where V2 classes may not exist
+    monkeypatch.setattr(provider, "_load_v2_classes", lambda: None)
 
     # Test with image in HumanMessage - should detect
     human_msg_with_image = HumanMessage(
