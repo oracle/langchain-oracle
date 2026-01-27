@@ -158,6 +158,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         arbitrary_types_allowed=True,
     )
 
+    # Cached provider instance (not a Pydantic field to avoid serialization)
+    _cached_provider_instance: Optional[Provider] = None
+
     @property
     def _llm_type(self) -> str:
         """Return the type of the language model."""
@@ -174,8 +177,12 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
 
     @property
     def _provider(self) -> Any:
-        """Get the internal provider object"""
-        return self._get_provider(provider_map=self._provider_map)
+        """Get the internal provider object (cached for stateful providers)."""
+        if self._cached_provider_instance is None:
+            self._cached_provider_instance = self._get_provider(
+                provider_map=self._provider_map
+            )
+        return self._cached_provider_instance
 
     def _prepare_request(
         self,
@@ -242,7 +249,15 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if use_v2:
             # Use V2 API: Supports multimodal content (text + images)
             # Currently used by Cohere Command A Vision for image analysis
-            chat_request = self._provider.oci_chat_request_v2(**chat_params)
+            v2_request_class = getattr(self._provider, "oci_chat_request_v2", None)
+            if v2_request_class is None:
+                raise ValueError(
+                    f"V2 API is not supported by the current provider "
+                    f"({type(self._provider).__name__}). "
+                    "V2 API with multimodal support is only available for "
+                    "Cohere models."
+                )
+            chat_request = v2_request_class(**chat_params)
         else:
             # Use V1 API: Standard text-only chat requests
             # Used by all models that don't require multimodal capabilities

@@ -886,6 +886,73 @@ def test_get_provider():
 
 
 @pytest.mark.requires("oci")
+def test_cohere_vision_detects_system_message_images() -> None:
+    """Test that Cohere V2 API detects images in SystemMessage content."""
+    from langchain_core.messages import SystemMessage
+
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # Test with image in HumanMessage - should detect
+    human_msg_with_image = HumanMessage(
+        content=[
+            {"type": "text", "text": "What is this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,ABC"}},
+        ]
+    )
+    assert provider._has_vision_content([human_msg_with_image]) is True
+
+    # Test with image in SystemMessage - should also detect
+    system_msg_with_image = SystemMessage(
+        content=[
+            {"type": "text", "text": "You are an assistant analyzing this image:"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,XYZ"}},
+        ]
+    )
+    assert provider._has_vision_content([system_msg_with_image]) is True
+
+    # Test with text-only messages - should not detect
+    human_msg_text_only = HumanMessage(content="Hello")
+    system_msg_text_only = SystemMessage(content="You are a helpful assistant.")
+    text_only_msgs = [human_msg_text_only, system_msg_text_only]
+    assert provider._has_vision_content(text_only_msgs) is False
+
+
+@pytest.mark.requires("oci")
+def test_v2_api_guard_for_non_cohere_providers(monkeypatch: MonkeyPatch) -> None:
+    """Test that V2 API raises error for non-Cohere providers.
+
+    The V2 API guard ensures that only providers with oci_chat_request_v2
+    can use the V2 API path. This prevents runtime errors if someone
+    accidentally sets _use_v2_api=True for a non-supporting provider.
+    """
+    oci_gen_ai_client = MagicMock()
+
+    # Test with Meta model (uses GenericProvider via MetaProvider)
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+
+    # Mock the provider's messages_to_oci_params to return _use_v2_api=True
+    # This simulates what would happen if V2 API was incorrectly triggered
+    original_method = llm._provider.messages_to_oci_params
+
+    def mock_messages_to_oci_params(*args, **kwargs):
+        result = original_method(*args, **kwargs)
+        result["_use_v2_api"] = True  # Force V2 API flag
+        return result
+
+    monkeypatch.setattr(
+        llm._provider, "messages_to_oci_params", mock_messages_to_oci_params
+    )
+
+    message = HumanMessage(content="Test message")
+
+    # Now when _use_v2_api=True but provider doesn't support V2, should raise
+    with pytest.raises(ValueError, match="V2 API is not supported"):
+        llm._prepare_request([message], stop=None, stream=False)
+
+
+@pytest.mark.requires("oci")
 def test_tool_choice_none_after_tool_results() -> None:
     """Test tool_choice='none' when max_sequential_tool_calls is exceeded.
 

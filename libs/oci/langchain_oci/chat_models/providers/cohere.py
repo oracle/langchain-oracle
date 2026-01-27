@@ -102,6 +102,11 @@ class CohereProvider(Provider):
             self.oci_image_content_v2 = models.CohereImageContentV2
             self.oci_image_url_v2 = models.CohereImageUrlV2
             self.chat_api_format_v2 = models.CohereChatRequestV2.API_FORMAT_COHEREV2
+            # Store content type constants for use in _content_to_v2
+            self.cohere_content_v2_type_text = models.CohereContentV2.TYPE_TEXT
+            self.cohere_content_v2_type_image_url = (
+                models.CohereContentV2.TYPE_IMAGE_URL
+            )
             self._v2_classes_loaded = True
         except AttributeError as e:
             raise RuntimeError(
@@ -250,7 +255,10 @@ class CohereProvider(Provider):
     def _has_vision_content(self, messages: Sequence[BaseMessage]) -> bool:
         """Check if any message contains image content."""
         for msg in messages:
-            if isinstance(msg, HumanMessage) and isinstance(msg.content, list):
+            # Both HumanMessage and SystemMessage can contain multimodal content
+            if isinstance(msg, (HumanMessage, SystemMessage)) and isinstance(
+                msg.content, list
+            ):
                 for block in msg.content:
                     if isinstance(block, dict) and block.get("type") == "image_url":
                         # Load V2 classes now that we know we need them
@@ -260,8 +268,6 @@ class CohereProvider(Provider):
 
     def _content_to_v2(self, content: Union[str, List]) -> List[Any]:
         """Convert LangChain message content to Cohere V2 content format."""
-        from oci.generative_ai_inference import models
-
         assert self.oci_text_content_v2 is not None, "V2 classes must be loaded"
         assert self.oci_image_content_v2 is not None, "V2 classes must be loaded"
         assert self.oci_image_url_v2 is not None, "V2 classes must be loaded"
@@ -269,7 +275,7 @@ class CohereProvider(Provider):
         if isinstance(content, str):
             return [
                 self.oci_text_content_v2(
-                    type=models.CohereContentV2.TYPE_TEXT, text=content
+                    type=self.cohere_content_v2_type_text, text=content
                 )
             ]
 
@@ -279,7 +285,7 @@ class CohereProvider(Provider):
                 if block.get("type") == "text":
                     v2_content.append(
                         self.oci_text_content_v2(
-                            type=models.CohereContentV2.TYPE_TEXT,
+                            type=self.cohere_content_v2_type_text,
                             text=block["text"],
                         )
                     )
@@ -292,14 +298,14 @@ class CohereProvider(Provider):
                     )
                     v2_content.append(
                         self.oci_image_content_v2(
-                            type=models.CohereContentV2.TYPE_IMAGE_URL,
+                            type=self.cohere_content_v2_type_image_url,
                             image_url=self.oci_image_url_v2(url=url),
                         )
                     )
             elif isinstance(block, str):
                 v2_content.append(
                     self.oci_text_content_v2(
-                        type=models.CohereContentV2.TYPE_TEXT, text=block
+                        type=self.cohere_content_v2_type_text, text=block
                     )
                 )
         return v2_content
@@ -330,7 +336,12 @@ class CohereProvider(Provider):
                 v2_messages.append(
                     self.oci_chat_message_v2[role](role=role, content=content)
                 )
-            # Note: Tool messages not yet fully implemented for V2
+            elif isinstance(msg, ToolMessage):
+                raise NotImplementedError(
+                    "Tool messages are not yet supported with Cohere V2 API. "
+                    "Cohere vision models currently support text and image "
+                    "content only."
+                )
 
         oci_params = {
             "messages": v2_messages,
