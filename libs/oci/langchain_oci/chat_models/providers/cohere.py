@@ -39,6 +39,14 @@ class CohereProvider(Provider):
 
     stop_sequence_key: str = "stop_sequences"
 
+    # V2 API type hints for vision support
+    oci_chat_request_v2: Optional[Type[Any]]
+    oci_chat_message_v2: Optional[Dict[str, Type[Any]]]
+    oci_text_content_v2: Optional[Type[Any]]
+    oci_image_content_v2: Optional[Type[Any]]
+    oci_image_url_v2: Optional[Type[Any]]
+    chat_api_format_v2: Optional[str]
+
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
 
@@ -57,6 +65,55 @@ class CohereProvider(Provider):
         self.oci_response_json_schema = models.ResponseJsonSchema
         self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
+
+        # V2 API classes for vision support (cohere.command-a-vision)
+        # Note: Vision model requires dedicated AI cluster, not available on-demand
+        # Loaded lazily to avoid import errors if not available in older OCI SDK
+        self._v2_classes_loaded = False
+        self.oci_chat_request_v2 = None
+        self.oci_chat_message_v2 = None
+        self.oci_text_content_v2 = None
+        self.oci_image_content_v2 = None
+        self.oci_image_url_v2 = None
+        self.chat_api_format_v2 = None
+
+    def _load_v2_classes(self) -> None:
+        """Lazy load Cohere V2 API classes for vision support.
+
+        Note: Cohere Command A Vision (cohere.command-a-vision-07-2025) requires
+        a dedicated AI cluster. The model is available in 9 regions but not for
+        on-demand use. Implementation tested via unit tests; integration testing
+        requires dedicated cluster access.
+        """
+        if self._v2_classes_loaded:
+            return
+
+        try:
+            from oci.generative_ai_inference import models
+
+            self.oci_chat_request_v2 = models.CohereChatRequestV2
+            self.oci_chat_message_v2 = {
+                "USER": models.CohereUserMessageV2,
+                "ASSISTANT": models.CohereAssistantMessageV2,
+                "SYSTEM": models.CohereSystemMessageV2,
+                "TOOL": models.CohereToolMessageV2,
+            }
+            self.oci_text_content_v2 = models.CohereTextContentV2
+            self.oci_image_content_v2 = models.CohereImageContentV2
+            self.oci_image_url_v2 = models.CohereImageUrlV2
+            self.chat_api_format_v2 = models.CohereChatRequestV2.API_FORMAT_COHEREV2
+            # Store content type constants for use in _content_to_v2
+            self.cohere_content_v2_type_text = models.CohereContentV2.TYPE_TEXT
+            self.cohere_content_v2_type_image_url = (
+                models.CohereContentV2.TYPE_IMAGE_URL
+            )
+            self._v2_classes_loaded = True
+        except AttributeError as e:
+            raise RuntimeError(
+                "Cohere V2 API classes not available in this version of OCI SDK. "
+                "Please upgrade to the latest version to use vision features with "
+                "Cohere models."
+            ) from e
 
     def chat_response_to_text(self, response: Any) -> str:
         """Extract text from a Cohere chat response."""
@@ -167,17 +224,131 @@ class CohereProvider(Provider):
             )
         return formatted_tool_calls
 
-    def get_role(self, message: BaseMessage) -> str:
-        """Map a LangChain message to Cohere's role representation."""
+    def get_role(self, message: BaseMessage, use_v2: bool = False) -> str:
+        """Map a LangChain message to Cohere's role representation.
+
+        Args:
+            message: The LangChain message to convert
+            use_v2: If True, use V2 API role names (e.g., "ASSISTANT" for AI messages).
+                   If False, use V1 API role names (e.g., "CHATBOT" for AI messages).
+
+        Returns:
+            The role string compatible with the selected API version.
+
+        Note:
+            The key difference between V1 and V2 is the AI message role:
+            - V1 API uses "CHATBOT" for AI-generated messages
+            - V2 API uses "ASSISTANT" for AI-generated messages (multimodal support)
+            All other roles (USER, SYSTEM, TOOL) are the same across both APIs.
+        """
         if isinstance(message, HumanMessage):
             return "USER"
         elif isinstance(message, AIMessage):
-            return "CHATBOT"
+            # V1 uses "CHATBOT", V2 uses "ASSISTANT" for AI messages
+            return "ASSISTANT" if use_v2 else "CHATBOT"
         elif isinstance(message, SystemMessage):
             return "SYSTEM"
         elif isinstance(message, ToolMessage):
             return "TOOL"
         raise ValueError(f"Unknown message type: {type(message)}")
+
+    def _has_vision_content(self, messages: Sequence[BaseMessage]) -> bool:
+        """Check if any message contains image content."""
+        for msg in messages:
+            # Both HumanMessage and SystemMessage can contain multimodal content
+            if isinstance(msg, (HumanMessage, SystemMessage)) and isinstance(
+                msg.content, list
+            ):
+                for block in msg.content:
+                    if isinstance(block, dict) and block.get("type") == "image_url":
+                        # Load V2 classes now that we know we need them
+                        self._load_v2_classes()
+                        return True
+        return False
+
+    def _content_to_v2(self, content: Union[str, List]) -> List[Any]:
+        """Convert LangChain message content to Cohere V2 content format."""
+        assert self.oci_text_content_v2 is not None, "V2 classes must be loaded"
+        assert self.oci_image_content_v2 is not None, "V2 classes must be loaded"
+        assert self.oci_image_url_v2 is not None, "V2 classes must be loaded"
+
+        if isinstance(content, str):
+            return [
+                self.oci_text_content_v2(
+                    type=self.cohere_content_v2_type_text, text=content
+                )
+            ]
+
+        v2_content = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    v2_content.append(
+                        self.oci_text_content_v2(
+                            type=self.cohere_content_v2_type_text,
+                            text=block["text"],
+                        )
+                    )
+                elif block.get("type") == "image_url":
+                    image_url = block.get("image_url", {})
+                    url = (
+                        image_url.get("url")
+                        if isinstance(image_url, dict)
+                        else image_url
+                    )
+                    v2_content.append(
+                        self.oci_image_content_v2(
+                            type=self.cohere_content_v2_type_image_url,
+                            image_url=self.oci_image_url_v2(url=url),
+                        )
+                    )
+            elif isinstance(block, str):
+                v2_content.append(
+                    self.oci_text_content_v2(
+                        type=self.cohere_content_v2_type_text, text=block
+                    )
+                )
+        return v2_content
+
+    def _messages_to_oci_params_v2(
+        self, messages: Sequence[BaseMessage], **kwargs: Any
+    ) -> Dict[str, Any]:
+        """
+        Convert LangChain messages to OCI parameters for Cohere V2 API (vision support).
+        """
+        assert self.oci_chat_message_v2 is not None, "V2 classes must be loaded"
+        assert self.chat_api_format_v2 is not None, "V2 classes must be loaded"
+
+        v2_messages = []
+
+        for msg in messages:
+            role = self.get_role(msg, use_v2=True)
+            if isinstance(msg, (HumanMessage, SystemMessage)):
+                # User/system messages can contain multimodal content (text + images)
+                content = self._content_to_v2(msg.content)
+                v2_messages.append(
+                    self.oci_chat_message_v2[role](role=role, content=content)
+                )
+            elif isinstance(msg, AIMessage):
+                # AI messages always require non-empty content in V2 API
+                # Use space as fallback if empty to satisfy API requirements
+                content = self._content_to_v2(msg.content if msg.content else " ")
+                v2_messages.append(
+                    self.oci_chat_message_v2[role](role=role, content=content)
+                )
+            elif isinstance(msg, ToolMessage):
+                raise NotImplementedError(
+                    "Tool messages are not yet supported with Cohere V2 API. "
+                    "Cohere vision models currently support text and image "
+                    "content only."
+                )
+
+        oci_params = {
+            "messages": v2_messages,
+            "api_format": self.chat_api_format_v2,
+            "_use_v2_api": True,  # Flag to indicate V2 API should be used
+        }
+        return {k: v for k, v in oci_params.items() if v is not None}
 
     def messages_to_oci_params(
         self, messages: Sequence[BaseMessage], **kwargs: Any
@@ -187,6 +358,10 @@ class CohereProvider(Provider):
 
         This includes conversion of chat history and tool call results.
         """
+        # Check if vision content is present - if so, use V2 API
+        if self._has_vision_content(messages):
+            return self._messages_to_oci_params_v2(messages, **kwargs)
+
         # Cohere models don't support parallel tool calls
         if kwargs.get("is_parallel_tool_calls"):
             raise ValueError(

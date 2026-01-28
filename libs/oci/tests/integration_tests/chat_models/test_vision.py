@@ -3,21 +3,55 @@
 
 """Integration tests for vision/multi-modal support.
 
-These tests require:
+These tests verify consistent vision capabilities across all supported
+vision-capable models in OCI Generative AI:
+- Meta Llama 3.2 90B Vision
+- Meta Llama 4 Scout
+- Google Gemini 2.5 Flash
+- xAI Grok 4
+- Cohere Command A Vision (dedicated AI cluster only)
+
+## Test Organization
+
+Tests are organized into consistent groups that run across all providers:
+
+1. **TestVisionBase64Images** - Core base64 image analysis (all models)
+2. **TestVisionMultipleImages** - Multi-image and mixed content (all models)
+3. **TestVisionStreaming** - Streaming responses (all models)
+4. **TestVisionModelDetection** - Vision model detection utility
+5. **TestVisionErrorHandling** - Error cases (all models)
+6. **TestCohereVision** - Cohere-specific tests (dedicated cluster only)
+
+## Prerequisites
+
 1. Valid OCI credentials configured
 2. Access to OCI Generative AI service
 3. A compartment with vision-capable models enabled
 
-Setup:
+## Setup
+
     export OCI_COMPARTMENT_ID=<your-compartment-id>
     export OCI_CONFIG_PROFILE=DEFAULT
-    export OCI_AUTH_TYPE=API_KEY
+    export OCI_AUTH_TYPE=SECURITY_TOKEN
 
-To run these tests:
+## Running the Tests
+
+Run all vision tests:
     pytest tests/integration_tests/chat_models/test_vision.py -v
 
-Note: OCI Generative AI service requires images to be base64-encoded.
-URL-based images are not supported.
+Run tests for a specific model:
+    pytest tests/integration_tests/chat_models/test_vision.py -k "llama" -v
+    pytest tests/integration_tests/chat_models/test_vision.py -k "gemini" -v
+    pytest tests/integration_tests/chat_models/test_vision.py -k "grok" -v
+
+Run Cohere vision tests (requires dedicated AI cluster):
+    pytest tests/integration_tests/chat_models/test_vision.py -k "TestCohereVision" -v
+
+## Notes
+
+- OCI Generative AI service requires images to be base64-encoded
+- URL-based images are not supported
+- Cohere Command A Vision requires a dedicated AI cluster (not on-demand)
 """
 
 import io
@@ -78,9 +112,18 @@ def get_config():
     }
 
 
+# =============================================================================
+# Individual Model Fixtures - For model-specific tests
+# =============================================================================
+
+
 @pytest.fixture
 def vision_llm():
-    """Create a vision-capable ChatOCIGenAI instance with Llama 3.2 90B."""
+    """Create a vision-capable ChatOCIGenAI instance with Llama 3.2 90B.
+
+    Use `any_vision_llm` fixture for tests that should run across all models.
+    This fixture is for Llama-specific tests only.
+    """
     config = get_config()
     return ChatOCIGenAI(
         model_id="meta.llama-3.2-90b-vision-instruct",
@@ -93,7 +136,11 @@ def vision_llm():
 
 @pytest.fixture
 def llama4_scout_llm():
-    """Create a ChatOCIGenAI instance with Llama 4 Scout (vision-capable)."""
+    """Create a ChatOCIGenAI instance with Llama 4 Scout (vision-capable).
+
+    Use `any_vision_llm` fixture for tests that should run across all models.
+    This fixture is for Llama 4 Scout-specific tests only.
+    """
     config = get_config()
     return ChatOCIGenAI(
         model_id="meta.llama-4-scout-17b-16e-instruct",
@@ -106,7 +153,11 @@ def llama4_scout_llm():
 
 @pytest.fixture
 def gemini_llm():
-    """Create a ChatOCIGenAI instance with Google Gemini 2.5 Flash."""
+    """Create a ChatOCIGenAI instance with Google Gemini 2.5 Flash.
+
+    Use `any_vision_llm` fixture for tests that should run across all models.
+    This fixture is for Gemini-specific tests only.
+    """
     config = get_config()
     return ChatOCIGenAI(
         model_id="google.gemini-2.5-flash",
@@ -119,7 +170,11 @@ def gemini_llm():
 
 @pytest.fixture
 def grok4_llm():
-    """Create a ChatOCIGenAI instance with xAI Grok 4."""
+    """Create a ChatOCIGenAI instance with xAI Grok 4.
+
+    Use `any_vision_llm` fixture for tests that should run across all models.
+    This fixture is for Grok-specific tests only.
+    """
     config = get_config()
     return ChatOCIGenAI(
         model_id="xai.grok-4",
@@ -130,12 +185,65 @@ def grok4_llm():
     )
 
 
+@pytest.fixture
+def cohere_vision_llm():
+    """Create a ChatOCIGenAI instance with Cohere Command A Vision.
+
+    Note: This model requires a dedicated AI cluster and is not available
+    for on-demand use. Tests using this fixture will fail without a
+    dedicated cluster endpoint configured.
+    """
+    config = get_config()
+    return ChatOCIGenAI(
+        model_id="cohere.command-a-vision",
+        compartment_id=config["compartment_id"],
+        service_endpoint=config["service_endpoint"],
+        auth_profile=config["auth_profile"],
+        auth_type=config["auth_type"],
+    )
+
+
+# =============================================================================
+# Vision Model Fixtures - Consistent across all providers
+# =============================================================================
+
+# List of all vision-capable models for parametrized testing
+VISION_MODEL_IDS = [
+    "meta.llama-3.2-90b-vision-instruct",
+    "meta.llama-4-scout-17b-16e-instruct",
+    "google.gemini-2.5-flash",
+    "xai.grok-4",
+    # Note: cohere.command-a-vision requires dedicated AI cluster, tested separately
+]
+
+
+@pytest.fixture(params=VISION_MODEL_IDS)
+def any_vision_llm(request):
+    """Create a vision-capable ChatOCIGenAI instance for any supported model.
+
+    This parametrized fixture runs tests against all vision-capable models
+    to ensure consistent behavior across providers.
+    """
+    config = get_config()
+    return ChatOCIGenAI(
+        model_id=request.param,
+        compartment_id=config["compartment_id"],
+        service_endpoint=config["service_endpoint"],
+        auth_profile=config["auth_profile"],
+        auth_type=config["auth_type"],
+    )
+
+
 @pytest.mark.requires("oci")
 class TestVisionBase64Images:
-    """Tests for vision model capabilities with base64-encoded images."""
+    """Tests for vision model capabilities with base64-encoded images.
 
-    def test_base64_image_analysis(self, vision_llm):
-        """Test analyzing a base64-encoded image."""
+    These tests run against all vision-capable models to ensure consistent
+    behavior across Meta Llama, Google Gemini, and xAI Grok providers.
+    """
+
+    def test_base64_image_analysis(self, any_vision_llm):
+        """Test analyzing a base64-encoded image across all vision models."""
         # Create a test image using PIL
         red_image = create_test_image("red")
 
@@ -148,13 +256,13 @@ class TestVisionBase64Images:
             ]
         )
 
-        response = vision_llm.invoke([message])
+        response = any_vision_llm.invoke([message])
 
         assert response.content
         assert len(response.content) > 0
 
-    def test_load_and_analyze_local_image(self, vision_llm):
-        """Test loading a local image file and analyzing it."""
+    def test_load_and_analyze_local_image(self, any_vision_llm):
+        """Test loading a local image file and analyzing it across all vision models."""
         # Create a test image using PIL
         blue_image = create_test_image("blue")
 
@@ -170,7 +278,7 @@ class TestVisionBase64Images:
                 ]
             )
 
-            response = vision_llm.invoke([message])
+            response = any_vision_llm.invoke([message])
 
             assert response.content
             assert len(response.content) > 0
@@ -180,11 +288,15 @@ class TestVisionBase64Images:
 
 @pytest.mark.requires("oci")
 class TestVisionMultipleImages:
-    """Tests for processing multiple images in a single request."""
+    """Tests for processing multiple images in a single request.
+
+    These tests run against all vision-capable models to ensure consistent
+    behavior across providers.
+    """
 
     @pytest.mark.skip(reason="OCI GenAI currently only supports one image per message")
-    def test_multiple_images_comparison(self, vision_llm):
-        """Test analyzing and comparing multiple images."""
+    def test_multiple_images_comparison(self, any_vision_llm):
+        """Test analyzing and comparing multiple images across all vision models."""
         # Create two different colored images
         red_image = create_test_image("red")
         blue_image = create_test_image("blue")
@@ -200,12 +312,12 @@ class TestVisionMultipleImages:
             ]
         )
 
-        response = vision_llm.invoke([message])
+        response = any_vision_llm.invoke([message])
 
         assert response.content
         assert len(response.content) > 0
 
-    def test_mixed_text_and_images(self, vision_llm):
+    def test_mixed_text_and_images(self, any_vision_llm):
         """Test conversation with text and images interleaved."""
         green_image = create_test_image("green")
 
@@ -217,7 +329,7 @@ class TestVisionMultipleImages:
             ]
         )
 
-        response = vision_llm.invoke([message])
+        response = any_vision_llm.invoke([message])
 
         assert response.content
         assert len(response.content) > 0
@@ -225,10 +337,14 @@ class TestVisionMultipleImages:
 
 @pytest.mark.requires("oci")
 class TestVisionStreaming:
-    """Tests for streaming with vision models."""
+    """Tests for streaming with vision models.
 
-    def test_streaming_with_image(self, vision_llm):
-        """Test streaming response for image analysis."""
+    These tests run against all vision-capable models to ensure consistent
+    streaming behavior across providers.
+    """
+
+    def test_streaming_with_image(self, any_vision_llm):
+        """Test streaming response for image analysis across all vision models."""
         yellow_image = create_test_image("yellow")
 
         message = HumanMessage(
@@ -238,7 +354,7 @@ class TestVisionStreaming:
             ]
         )
 
-        chunks = list(vision_llm.stream([message]))
+        chunks = list(any_vision_llm.stream([message]))
 
         assert len(chunks) > 0
         # Combine all chunks to get full response
@@ -263,6 +379,7 @@ class TestVisionModelDetection:
             ("xai.grok-4", True),
             ("xai.grok-4-1-fast-reasoning", True),
             ("xai.grok-4-fast-reasoning", True),
+            ("cohere.command-a-vision", True),
             ("meta.llama-3.3-70b-instruct", False),
             ("cohere.command-r-16k", False),
             ("cohere.command-a-03-2025", False),
@@ -283,6 +400,7 @@ class TestVisionModelDetection:
         "meta.llama-4-scout-17b-16e-instruct",
         "google.gemini-2.5-flash",
         "xai.grok-4",
+        "cohere.command-a-vision",
     ],
 )
 def test_vision_models_can_process_images(model_id):
@@ -313,10 +431,13 @@ def test_vision_models_can_process_images(model_id):
 
 @pytest.mark.requires("oci")
 class TestVisionErrorHandling:
-    """Tests for error handling in vision operations."""
+    """Tests for error handling in vision operations.
 
-    def test_invalid_base64_image(self, vision_llm):
-        """Test behavior with invalid base64 image data."""
+    These tests verify consistent error handling across vision models.
+    """
+
+    def test_invalid_base64_image(self, any_vision_llm):
+        """Test behavior with invalid base64 image data across all vision models."""
         # Create an invalid image block
         invalid_image = {
             "type": "image_url",
@@ -332,12 +453,12 @@ class TestVisionErrorHandling:
 
         # This should raise an error for invalid image data
         with pytest.raises(Exception):
-            vision_llm.invoke([message])
+            any_vision_llm.invoke([message])
 
     def test_text_only_model_with_image(self):
         """Test that text-only models handle images appropriately."""
         config = get_config()
-        # Cohere models don't support vision
+        # Cohere command-r models don't support vision (only command-a-vision does)
         llm = ChatOCIGenAI(
             model_id="cohere.command-r-16k",
             compartment_id=config["compartment_id"],
@@ -355,6 +476,98 @@ class TestVisionErrorHandling:
             ]
         )
 
-        # This should raise an error since Cohere doesn't support images
+        # This should raise an error since Cohere command-r doesn't support images
         with pytest.raises(Exception):
             llm.invoke([message])
+
+
+# =============================================================================
+# Cohere Vision Tests - Requires Dedicated AI Cluster
+# =============================================================================
+
+
+@pytest.mark.requires("oci")
+class TestCohereVision:
+    """Tests specifically for Cohere Command A Vision model.
+
+    IMPORTANT: These tests require a dedicated AI cluster endpoint.
+    Cohere Command A Vision is not available for on-demand use.
+    Tests will fail with 404 errors if no dedicated cluster is configured.
+
+    To run these tests:
+        1. Provision a dedicated AI cluster with Cohere Command A Vision
+        2. Set OCI_GENAI_ENDPOINT to your dedicated cluster endpoint
+        3. Run: pytest -k "TestCohereVision" -v
+    """
+
+    def test_cohere_vision_basic_image_analysis(self, cohere_vision_llm):
+        """Test Cohere vision model with basic image analysis."""
+        # Create a simple colored test image
+        test_image = create_test_image("blue")
+        image_block = encode_image(test_image, "image/png")
+
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": "What is the dominant color in this image?"},
+                image_block,
+            ]
+        )
+
+        response = cohere_vision_llm.invoke([message])
+
+        assert response.content
+        assert len(response.content) > 0
+        # Cohere should recognize the color
+        assert "blue" in response.content.lower()
+
+    def test_cohere_vision_with_file(self, cohere_vision_llm):
+        """Test Cohere vision model loading image from file."""
+        # Create a test image file
+        green_image = create_test_image("green")
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(green_image)
+            temp_path = f.name
+
+        try:
+            message = HumanMessage(
+                content=[
+                    {"type": "text", "text": "Describe the color of this image."},
+                    load_image(temp_path),
+                ]
+            )
+
+            response = cohere_vision_llm.invoke([message])
+
+            assert response.content
+            assert len(response.content) > 0
+        finally:
+            Path(temp_path).unlink()
+
+    def test_cohere_vision_streaming(self, cohere_vision_llm):
+        """Test Cohere vision model with streaming."""
+        yellow_image = create_test_image("yellow")
+
+        message = HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": "What color is this image? Answer in one word.",
+                },
+                encode_image(yellow_image, "image/png"),
+            ]
+        )
+
+        chunks = list(cohere_vision_llm.stream([message]))
+
+        assert len(chunks) > 0
+        # Combine all chunks to get full response
+        full_response = "".join(chunk.content for chunk in chunks if chunk.content)
+        assert len(full_response) > 0
+
+    def test_cohere_vision_model_detection(self):
+        """Test that cohere.command-a-vision is detected as a vision model."""
+        assert is_vision_model("cohere.command-a-vision") is True
+        # Other Cohere models should not be detected as vision models
+        assert is_vision_model("cohere.command-r-16k") is False
+        assert is_vision_model("cohere.command-a-03-2025") is False

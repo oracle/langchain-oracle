@@ -205,12 +205,16 @@ class TestIsVisionModel:
         assert is_vision_model("xai.grok-3") is False
         assert is_vision_model("xai.grok-3-fast") is False
 
+    def test_vision_model_cohere_command_a_vision(self):
+        """Test detection of Cohere Command A Vision."""
+        assert is_vision_model("cohere.command-a-vision") is True
+
     def test_non_vision_model_llama_33(self):
         """Test that Llama 3.3 70B is not detected as vision model."""
         assert is_vision_model("meta.llama-3.3-70b-instruct") is False
 
     def test_non_vision_model_cohere(self):
-        """Test that Cohere models are not detected as vision models."""
+        """Test that non-vision Cohere models are not detected as vision models."""
         assert is_vision_model("cohere.command-r-16k") is False
         assert is_vision_model("cohere.command-a-03-2025") is False
 
@@ -246,6 +250,7 @@ class TestVisionModelsConstant:
         assert "google.gemini-2.5-pro" in VISION_MODELS
         assert "xai.grok-4" in VISION_MODELS
         assert "xai.grok-4-1-fast-reasoning" in VISION_MODELS
+        assert "cohere.command-a-vision" in VISION_MODELS
 
     def test_all_vision_models_detected(self):
         """Test that all models in VISION_MODELS are detected by is_vision_model."""
