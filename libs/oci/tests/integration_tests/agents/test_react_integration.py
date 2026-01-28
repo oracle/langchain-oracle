@@ -70,7 +70,7 @@ def calculate(expression: str) -> str:
 
 def skip_if_no_oci_credentials() -> bool:
     """Check if OCI credentials are available."""
-    compartment_id = os.environ.get("OCI_COMPARTMENT_ID") or os.environ.get("OCI_COMP")
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
     return compartment_id is None
 
 
@@ -85,7 +85,7 @@ class TestOCIReactAgentIntegration:
     @pytest.fixture
     def compartment_id(self) -> str:
         """Get compartment ID from environment."""
-        return os.environ.get("OCI_COMPARTMENT_ID") or os.environ.get("OCI_COMP", "")
+        return os.environ.get("OCI_COMPARTMENT_ID", "")
 
     @pytest.fixture
     def service_endpoint(self) -> str:
@@ -93,15 +93,31 @@ class TestOCIReactAgentIntegration:
         region = os.environ.get("OCI_REGION", "us-chicago-1")
         return f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
-    def test_simple_tool_call(self, compartment_id: str, service_endpoint: str) -> None:
+    @pytest.fixture
+    def auth_type(self) -> str:
+        """Get auth type from environment."""
+        return os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN")
+
+    @pytest.fixture
+    def auth_profile(self) -> str:
+        """Get auth profile from environment."""
+        return os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+
+    def test_simple_tool_call(
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
+    ) -> None:
         """Test agent can make a simple tool call."""
         agent = create_oci_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
             tools=[get_weather],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
-            auth_type="API_KEY",
-            auth_profile="API_KEY_AUTH",
+            auth_type=auth_type,
+            auth_profile=auth_profile,
             system_prompt=(
                 "You are a helpful weather assistant. "
                 "Use the get_weather tool to answer weather questions."
@@ -128,15 +144,21 @@ class TestOCIReactAgentIntegration:
         final_message = result["messages"][-1]
         assert final_message.content, "Final message should have content"
 
-    def test_multi_tool_agent(self, compartment_id: str, service_endpoint: str) -> None:
+    def test_multi_tool_agent(
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
+    ) -> None:
         """Test agent with multiple tools."""
         agent = create_oci_agent(
             model_id="meta.llama-4-scout-17b-16e-instruct",
             tools=[get_weather, calculate],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
-            auth_type="API_KEY",
-            auth_profile="API_KEY_AUTH",
+            auth_type=auth_type,
+            auth_profile=auth_profile,
             system_prompt=(
                 "You can check weather and do math. "
                 "Use the calculate tool for math questions."
@@ -156,7 +178,11 @@ class TestOCIReactAgentIntegration:
         )
 
     def test_agent_without_tool_call(
-        self, compartment_id: str, service_endpoint: str
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
     ) -> None:
         """Test agent responds without tool call when not needed."""
         agent = create_oci_agent(
@@ -164,8 +190,8 @@ class TestOCIReactAgentIntegration:
             tools=[get_weather],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
-            auth_type="API_KEY",
-            auth_profile="API_KEY_AUTH",
+            auth_type=auth_type,
+            auth_profile=auth_profile,
             system_prompt="You are a helpful assistant. Only use tools when necessary.",
             temperature=0.3,
             max_tokens=512,
@@ -181,7 +207,11 @@ class TestOCIReactAgentIntegration:
         assert final_message.content, "Should have a response"
 
     def test_agent_with_memory_checkpointer(
-        self, compartment_id: str, service_endpoint: str
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
     ) -> None:
         """Test agent with memory checkpointer for conversation persistence."""
         from langgraph.checkpoint.memory import MemorySaver
@@ -192,8 +222,8 @@ class TestOCIReactAgentIntegration:
             tools=[get_weather],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
-            auth_type="API_KEY",
-            auth_profile="API_KEY_AUTH",
+            auth_type=auth_type,
+            auth_profile=auth_profile,
             system_prompt="You are a helpful weather assistant.",
             checkpointer=checkpointer,
             temperature=0.3,

@@ -17,7 +17,7 @@ OpenAI models available on OCI Generative AI service.
 2. **Environment Variables**: Export the following:
    ```bash
    export OCI_REGION="us-chicago-1"  # or your region
-   export OCI_COMP="ocid1.compartment.oc1..your-compartment-id"
+   export OCI_COMPARTMENT_ID="ocid1.compartment.oc1..your-compartment-id"
    ```
 
 3. **OCI Config**: Ensure `~/.oci/config` exists with DEFAULT profile
@@ -48,9 +48,9 @@ from langchain_oci.chat_models import ChatOCIGenAI
 @pytest.fixture
 def openai_config():
     """Get OpenAI model configuration."""
-    compartment_id = os.environ.get("OCI_COMP")
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
     if not compartment_id:
-        pytest.skip("OCI_COMP environment variable not set")
+        pytest.skip("OCI_COMPARTMENT_ID not set")
 
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     return {

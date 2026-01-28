@@ -15,8 +15,10 @@ OCI Generative AI API calls for both JSON mode and JSON schema mode.
 
 2. **Environment Variables**: Export the following:
    ```bash
-   export OCI_REGION="us-chicago-1"  # or your region
-   export OCI_COMP="ocid1.compartment.oc1..your-compartment-id"
+   export OCI_COMPARTMENT_ID="ocid1.compartment.oc1..your-compartment-id"
+   export OCI_REGION="us-chicago-1"  # Optional, defaults to us-chicago-1
+   export OCI_AUTH_TYPE="SECURITY_TOKEN"  # Optional, defaults to SECURITY_TOKEN
+   export OCI_CONFIG_PROFILE="DEFAULT"  # Optional, defaults to DEFAULT
    ```
 
 3. **OCI Config**: Ensure `~/.oci/config` exists with DEFAULT profile
@@ -55,6 +57,10 @@ from langchain_oci.chat_models import ChatOCIGenAI
 
 def create_chat_model(model_id: str, response_format=None, **kwargs):
     """Create a ChatOCIGenAI instance for testing."""
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+    if not compartment_id:
+        pytest.skip("OCI_COMPARTMENT_ID not set")
+
     region = os.getenv("OCI_REGION", "us-chicago-1")
     endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
@@ -65,10 +71,10 @@ def create_chat_model(model_id: str, response_format=None, **kwargs):
     return ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
-        compartment_id=os.getenv("OCI_COMP"),
+        compartment_id=compartment_id,
         model_kwargs=model_kwargs,
-        auth_type="SECURITY_TOKEN",
-        auth_profile="DEFAULT",
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_file_location=os.path.expanduser("~/.oci/config"),
         **kwargs,
     )
@@ -259,6 +265,10 @@ def test_response_format_via_model_kwargs():
 
     This tests an alternative way to set response_format at initialization time.
     """
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+    if not compartment_id:
+        pytest.skip("OCI_COMPARTMENT_ID not set")
+
     model_id = "meta.llama-3.3-70b-instruct"
     region = os.getenv("OCI_REGION", "us-chicago-1")
     endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
@@ -266,14 +276,14 @@ def test_response_format_via_model_kwargs():
     llm = ChatOCIGenAI(
         model_id=model_id,
         service_endpoint=endpoint,
-        compartment_id=os.getenv("OCI_COMP"),
+        compartment_id=compartment_id,
         model_kwargs={
             "temperature": 0.1,
             "max_tokens": 512,
             "response_format": {"type": "JSON_OBJECT"},
         },
-        auth_type="SECURITY_TOKEN",
-        auth_profile="DEFAULT",
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_file_location=os.path.expanduser("~/.oci/config"),
     )
 

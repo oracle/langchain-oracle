@@ -73,8 +73,8 @@ def get_config():
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         ),
         "compartment_id": compartment_id,
-        "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "API_KEY_AUTH"),
-        "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+        "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+        "auth_type": os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
     }
 
 
