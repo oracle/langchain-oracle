@@ -102,7 +102,7 @@ def create_solid_color_image(color: str = "red", size: tuple = (100, 100)) -> by
     return buffer.getvalue()
 
 
-def test_model_with_image(
+def run_model_with_image(
     model_id: str, image_bytes: bytes, prompt: str, image_desc: str
 ) -> dict:
     """Test a vision model with an image."""
@@ -164,7 +164,7 @@ def main():
         image_bytes = create_solid_color_image(color)
 
         for model_id in VISION_MODELS:
-            result = test_model_with_image(
+            result = run_model_with_image(
                 model_id,
                 image_bytes,
                 f"What color is this image? One word answer.",
@@ -187,7 +187,7 @@ def main():
     gradient_bytes = create_gradient_image()
 
     for model_id in VISION_MODELS:
-        result = test_model_with_image(
+        result = run_model_with_image(
             model_id,
             gradient_bytes,
             "Describe the colors and patterns you see in this image.",
@@ -205,7 +205,7 @@ def main():
     stripes_bytes = create_pattern_image("stripes")
 
     for model_id in VISION_MODELS:
-        result = test_model_with_image(
+        result = run_model_with_image(
             model_id,
             stripes_bytes,
             "What pattern do you see in this image? Describe the colors.",
@@ -223,7 +223,7 @@ def main():
     checker_bytes = create_pattern_image("checkerboard")
 
     for model_id in VISION_MODELS:
-        result = test_model_with_image(
+        result = run_model_with_image(
             model_id,
             checker_bytes,
             "What pattern do you see in this image?",
