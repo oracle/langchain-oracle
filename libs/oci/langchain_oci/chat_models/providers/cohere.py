@@ -13,7 +13,6 @@ from typing import (
     Literal,
     Optional,
     Sequence,
-    Set,
     Type,
     Union,
 )
@@ -554,14 +553,14 @@ class CohereProvider(Provider):
         return None
 
     def process_stream_tool_calls(
-        self, event_data: Dict, tool_call_ids: Set[str]
+        self, event_data: Dict, tool_call_ids: Dict[int, str]
     ) -> List[ToolCallChunk]:
         """
         Process Cohere stream tool calls and return them as ToolCallChunk objects.
 
         Args:
             event_data: The event data from the stream
-            tool_call_ids: Set of existing tool call IDs for index tracking
+            tool_call_ids: Dict mapping tool call IDs for aggregation
 
         Returns:
             List of ToolCallChunk objects
@@ -572,10 +571,12 @@ class CohereProvider(Provider):
         if not tool_call_response:
             return tool_call_chunks
 
-        for tool_call in self.format_stream_tool_calls(tool_call_response):
+        for idx, tool_call in enumerate(
+            self.format_stream_tool_calls(tool_call_response)
+        ):
             tool_id = tool_call.get("id")
             if tool_id:
-                tool_call_ids.add(tool_id)
+                tool_call_ids[idx] = tool_id
 
             tool_call_chunks.append(
                 tool_call_chunk(
