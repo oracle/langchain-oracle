@@ -112,13 +112,9 @@ def to_data_uri(
 
     # File path
     path = Path(image_str)
-    detected_mime = (
-        mimetypes.guess_type(str(path))[0] or "image/png"
-    )
+    detected_mime = mimetypes.guess_type(str(path))[0] or "image/png"
     with open(path, "rb") as f:
-        encoded = base64.standard_b64encode(f.read()).decode(
-            "utf-8"
-        )
+        encoded = base64.standard_b64encode(f.read()).decode("utf-8")
     return f"data:{detected_mime};base64,{encoded}"
 
 
