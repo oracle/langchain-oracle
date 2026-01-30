@@ -18,6 +18,13 @@ on:
         required: true
         type: string
         default: 'libs/oci'
+  # --- FOR RELEASE MANAGER ---
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+  # ------------------------------------
 
 env:
   PYTHON_VERSION: "3.11"
@@ -25,6 +32,9 @@ env:
 
 jobs:
   test:
+    # --- SKIP JS PATHS ---
+    if: ${{ !contains(inputs.working-directory, 'libs/js') }}
+    # ---------------------------------
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
