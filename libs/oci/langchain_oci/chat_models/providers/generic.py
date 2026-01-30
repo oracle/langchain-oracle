@@ -119,8 +119,11 @@ class GenericProvider(Provider):
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract text from Meta chat response."""
-        message = response.data.chat_response.choices[0].message
+        """Extract text from chat response."""
+        choices = response.data.chat_response.choices
+        if not choices or choices[0].message is None:
+            return ""
+        message = choices[0].message
         content = message.content[0] if message.content else None
         return content.text if content else ""
 
@@ -136,11 +139,24 @@ class GenericProvider(Provider):
         return "finishReason" in event_data
 
     def chat_generation_info(self, response: Any) -> Dict[str, Any]:
-        """Extract generation metadata from Meta chat response."""
+        """Extract generation metadata from chat response."""
+        choices = response.data.chat_response.choices
+        finish_reason = choices[0].finish_reason if choices else None
         generation_info: Dict[str, Any] = {
-            "finish_reason": response.data.chat_response.choices[0].finish_reason,
+            "finish_reason": finish_reason,
             "time_created": str(response.data.chat_response.time_created),
         }
+
+        # Extract reasoning_content if present (OCI reasoning models).
+        # Reasoning models (e.g., xAI Grok-3-mini, OpenAI o1) return
+        # chain-of-thought in this field. We surface it in generation_info
+        # so it's accessible via response.generation_info["reasoning_content"]
+        # and response.additional_kwargs["reasoning_content"].
+        # Related upstream fix: https://github.com/langchain-ai/langchain/pull/34705
+        if choices and choices[0].message is not None:
+            reasoning = getattr(choices[0].message, "reasoning_content", None)
+            if reasoning:
+                generation_info["reasoning_content"] = reasoning
 
         # Include token usage if available
         if (
@@ -162,8 +178,11 @@ class GenericProvider(Provider):
         return {"finish_reason": event_data["finishReason"]}
 
     def chat_tool_calls(self, response: Any) -> List[Any]:
-        """Retrieve tool calls from Meta chat response."""
-        return response.data.chat_response.choices[0].message.tool_calls
+        """Retrieve tool calls from chat response."""
+        choices = response.data.chat_response.choices
+        if not choices or choices[0].message is None:
+            return []
+        return choices[0].message.tool_calls
 
     def chat_stream_tool_calls(self, event_data: Dict) -> List[Any]:
         """Retrieve tool calls from Meta stream event."""
