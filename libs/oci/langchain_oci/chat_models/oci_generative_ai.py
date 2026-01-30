@@ -16,7 +16,6 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
-    Set,
     Type,
     Union,
 )
@@ -534,7 +533,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         """
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
         response = self.client.chat(request)
-        tool_call_ids: Set[str] = set()
+        tool_call_ids: Dict[int, str] = {}
 
         for event in response.data.events():
             event_data = json.loads(event.data)
