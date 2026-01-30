@@ -21,10 +21,12 @@ from langchain_oci.llms.oci_data_science_model_deployment_endpoint import (
 )
 from langchain_oci.llms.oci_generative_ai import OCIGenAI, OCIGenAIBase
 from langchain_oci.utils.vision import (
+    IMAGE_EMBEDDING_MODELS,
     VISION_MODELS,
     encode_image,
     is_vision_model,
     load_image,
+    to_data_uri,
 )
 
 __all__ = [
@@ -32,6 +34,7 @@ __all__ = [
     "ChatOCIModelDeployment",
     "ChatOCIModelDeploymentTGI",
     "ChatOCIModelDeploymentVLLM",
+    "ChatOCIOpenAI",
     "OCIAuthType",
     "OCIGenAIEmbeddings",
     "OCIModelDeploymentEndpointEmbeddings",
@@ -41,11 +44,12 @@ __all__ = [
     "OCIModelDeploymentLLM",
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
-    "ChatOCIOpenAI",
     "create_oci_agent",
-    # Vision utilities
+    # Vision / image utilities
     "load_image",
     "encode_image",
     "is_vision_model",
+    "to_data_uri",
     "VISION_MODELS",
+    "IMAGE_EMBEDDING_MODELS",
 ]

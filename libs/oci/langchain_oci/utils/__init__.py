@@ -4,15 +4,19 @@
 """Utility functions for langchain-oci."""
 
 from langchain_oci.utils.vision import (
+    IMAGE_EMBEDDING_MODELS,
     VISION_MODELS,
     encode_image,
     is_vision_model,
     load_image,
+    to_data_uri,
 )
 
 __all__ = [
-    "load_image",
+    "IMAGE_EMBEDDING_MODELS",
+    "VISION_MODELS",
     "encode_image",
     "is_vision_model",
-    "VISION_MODELS",
+    "load_image",
+    "to_data_uri",
 ]
