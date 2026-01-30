@@ -378,6 +378,21 @@ class GenericProvider(Provider):
         """
         # Check BaseTool first since it's callable but needs special handling
         if isinstance(tool, BaseTool):
+            # Use args_schema.model_json_schema() if available — it preserves
+            # rich schema metadata (enum, min/max, pattern, etc.) that tool.args
+            # loses via Pydantic re-generation through tool_call_schema.
+            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
+                schema = tool.args_schema.model_json_schema()
+                properties = schema.get("properties", {})
+                required = schema.get("required", [])
+            else:
+                properties = tool.args
+                required = [
+                    p_name
+                    for p_name, p_def in properties.items()
+                    if "default" not in p_def
+                ]
+
             return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -386,17 +401,10 @@ class GenericProvider(Provider):
                 parameters={
                     "type": "object",
                     "properties": {
-                        p_name: {
-                            "type": p_def.get("type", "any"),
-                            "description": p_def.get("description", ""),
-                        }
-                        for p_name, p_def in tool.args.items()
+                        p_name: self._sanitize_tool_property(p_def)
+                        for p_name, p_def in properties.items()
                     },
-                    "required": [
-                        p_name
-                        for p_name, p_def in tool.args.items()
-                        if "default" not in p_def
-                    ],
+                    "required": required,
                 },
             )
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
@@ -419,6 +427,89 @@ class GenericProvider(Provider):
             "Tool must be passed in as a BaseTool "
             "instance, TypedDict class, or BaseModel type."
         )
+
+    # JSON Schema properties safe to pass through to OCI GenAI API.
+    # OCI's FunctionDefinition.parameters accepts any JSON Schema object.
+    _PASSTHROUGH_KEYS = {
+        "type",
+        "description",
+        "enum",
+        "const",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "items",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "properties",
+        "required",
+        "additionalProperties",
+        "default",
+        "examples",
+    }
+
+    @classmethod
+    def _sanitize_tool_property(cls, p_def: Dict[str, Any]) -> Dict[str, Any]:
+        """Sanitize a tool property schema for OCI GenAI API compatibility.
+
+        Preserves JSON-Schema-standard properties (enum, format, min/max,
+        pattern, items, etc.) while resolving Pydantic v2 ``anyOf`` patterns
+        (generated for ``Optional[T]``). Falls back to ``"string"`` for
+        unrecognized schemas.
+
+        Args:
+            p_def: Property definition from tool schema.
+
+        Returns:
+            Sanitized property dict with allowed JSON Schema properties.
+        """
+        allowed = cls._PASSTHROUGH_KEYS
+
+        # Resolve anyOf first (Pydantic v2 Optional[T] pattern)
+        if "anyOf" in p_def and "type" not in p_def:
+            non_null = [
+                t
+                for t in p_def["anyOf"]
+                if not (isinstance(t, dict) and t.get("type") == "null")
+            ]
+            if non_null:
+                resolved = dict(non_null[0])
+            else:
+                resolved = {"type": "string"}
+            # Merge top-level metadata into resolved type
+            for key in allowed:
+                if key in p_def and key not in resolved:
+                    resolved[key] = p_def[key]
+            p_def = resolved
+
+        # Build result with allowed keys only
+        result: Dict[str, Any] = {}
+        for key in allowed:
+            if key in p_def:
+                result[key] = p_def[key]
+
+        # Ensure type and description are always present
+        if "type" not in result:
+            result["type"] = "string"
+        if "description" not in result:
+            result["description"] = ""
+
+        # Recursively sanitize nested items/properties
+        if "items" in result and isinstance(result["items"], dict):
+            result["items"] = cls._sanitize_tool_property(result["items"])
+        if "properties" in result and isinstance(result["properties"], dict):
+            result["properties"] = {
+                k: cls._sanitize_tool_property(v)
+                for k, v in result["properties"].items()
+            }
+
+        return result
 
     def process_tool_choice(
         self,
