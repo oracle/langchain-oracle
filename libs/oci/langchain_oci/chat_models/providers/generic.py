@@ -151,10 +151,6 @@ class GenericProvider(Provider):
                 response.data.chat_response.usage.total_tokens
             )
 
-        if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(
-                self.chat_tool_calls(response)
-            )
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
