@@ -29,16 +29,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
-      - name: Publish to NPM
+          cache: 'pnpm'
+          cache-dependency-path: 'libs/js/oracledb/langchain-oracledb/pnpm-lock.yaml'
+      - name: Install & Build
         working-directory: libs/js/oracledb/langchain-oracledb
         run: |
-          npm ci
-          npm run build
-          npm publish --access public
+          pnpm install
+          pnpm run build
+      - name: Publish
+        working-directory: libs/js/oracledb/langchain-oracledb
+        run: pnpm publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
