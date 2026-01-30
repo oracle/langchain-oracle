@@ -63,17 +63,12 @@ describe("Integrated Testing ", () => {
       embeddings: embedder,
     };
 
-    let total_chunk_id = 0;
     const total_chunks = [];
 
     // iterate through docs
     const docs = await loader.load();
     for (const [doc_id, doc] of docs.entries()) {
-      // console.log("doc_id=" + doc_id);
-      // console.log(doc);
-
       const summary = await summarizer.getSummary(doc.pageContent);
-      // console.log(summary);
 
       // chunk doc
       const chunks = await splitter.splitText(doc.pageContent);
@@ -86,14 +81,12 @@ describe("Integrated Testing ", () => {
 
         // add chunk metadata
         // id is optional
-        // chunk_metadata.id = String(total_chunk_id + 1);
         chunk_metadata.doc_id = String(doc_id + 1);
         chunk_metadata.chunk_id = String(chunk_id + 1);
         chunk_metadata.summary = summary;
         total_chunks.push(
           new Document({ pageContent: chunk, metadata: chunk_metadata })
         );
-        total_chunk_id += 1;
       }
     }
 
