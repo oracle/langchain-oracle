@@ -1,0 +1,64 @@
+name: Release Manager
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      paths_released: ${{ steps.release.outputs.paths_released }}
+      oracledb_js_released: ${{ steps.release.outputs['libs/js/oracledb/langchain-oracledb--release_created'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          manifest-file: .release-please-manifest.json
+          config-file: release-please-config.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-js:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.oracledb_js_released == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+          cache-dependency-path: 'libs/js/oracledb/langchain-oracledb/pnpm-lock.yaml'
+      - name: Install & Build
+        working-directory: libs/js/oracledb/langchain-oracledb
+        run: |
+          pnpm install
+          pnpm run build
+      - name: Publish
+        working-directory: libs/js/oracledb/langchain-oracledb
+        run: pnpm publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # PYTHON WORKER
+  publish-python:
+    needs: release-please
+    # Only run if a Python path was actually released
+    if: ${{ needs.release-please.outputs.paths_released != '[]' && needs.release-please.outputs.paths_released != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        path: ${{ fromJSON(needs.release-please.outputs.paths_released) }}
+    uses: ./.github/workflows/_release.yml
+    with:
+      working-directory: ${{ matrix.path }}
+    secrets: inherit

@@ -1,0 +1,21 @@
+{
+  "packages": {
+    "libs/js/oracledb/langchain-oracledb": {
+      "release-type": "node",
+      "package-name": "@langchain/oracledb",
+      "component": "js-oracledb"
+    },
+    "libs/oracledb": {
+      "release-type": "python",
+      "package-name": "langchain-oracledb",
+      "component": "py-oracledb"
+    },
+    "libs/oci": {
+      "release-type": "python",
+      "package-name": "langchain-oci",
+      "component": "py-oci"
+    }
+  },
+  "include-component-in-tag": true,
+  "tag-separator": "@"
+}

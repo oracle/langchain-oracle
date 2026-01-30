@@ -1,0 +1,5 @@
+{
+  "libs/js/oracledb/langchain-oracledb": "0.1.0",
+  "libs/oci": "0.2.2",
+  "libs/oracledb": "1.2.0"
+}
