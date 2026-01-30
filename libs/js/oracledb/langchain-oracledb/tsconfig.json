@@ -1,9 +1,10 @@
 {
   "extends": "@tsconfig/recommended",
   "compilerOptions": {
-    "outDir": "../dist",
-    "rootDir": "./src",
-    "target": "ES2021",
+    "allowJs": true,
+    "allowUnreachableCode": false,
+    "esModuleInterop": true,
+    "declaration": true,
     "lib": [
       "ES2021",
       "ES2022.Object",
@@ -11,16 +12,20 @@
     ],
     "module": "ES2020",
     "moduleResolution": "nodenext",
-    "esModuleInterop": true,
-    "declaration": true,
+    "newLine": "LF",
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "useDefineForClassFields": true,
+    "outDir": "../dist",
+    "pretty": true,
+    "rootDir": "./src",
+    "sourceMap": true,
+    "strict": true,
+    "strictNullChecks": true,
     "strictPropertyInitialization": false,
-    "allowJs": true,
-    "strict": true
+    "target": "ES2021",
+    "useDefineForClassFields": true
   },
   "include": [
     "src/**/*"
