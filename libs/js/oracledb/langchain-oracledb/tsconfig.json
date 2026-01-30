@@ -3,8 +3,8 @@
   "compilerOptions": {
     "allowJs": true,
     "allowUnreachableCode": false,
-    "esModuleInterop": true,
     "declaration": true,
+    "esModuleInterop": true,
     "lib": [
       "ES2021",
       "ES2022.Object",
