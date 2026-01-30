@@ -63,7 +63,7 @@ describe("Integrated Testing ", () => {
       embeddings: embedder,
     };
 
-    let total_chunk_id = 0;
+    // let total_chunk_id = 0;
     const total_chunks = [];
 
     // iterate through docs
@@ -93,7 +93,7 @@ describe("Integrated Testing ", () => {
         total_chunks.push(
           new Document({ pageContent: chunk, metadata: chunk_metadata })
         );
-        total_chunk_id += 1;
+        // total_chunk_id += 1;
       }
     }
 
