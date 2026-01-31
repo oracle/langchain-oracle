@@ -116,9 +116,9 @@ class OCIUtils:
         from oci.util import to_dict
 
         usage_kwargs: Dict[str, Any] = {
-            "input_tokens": getattr(usage, "prompt_tokens", 0),
-            "output_tokens": getattr(usage, "completion_tokens", 0),
-            "total_tokens": getattr(usage, "total_tokens", 0),
+            "input_tokens": getattr(usage, "prompt_tokens", None) or 0,
+            "output_tokens": getattr(usage, "completion_tokens", None) or 0,
+            "total_tokens": getattr(usage, "total_tokens", None) or 0,
         }
 
         # Convert OCI SDK objects to dictionaries using built-in utility
