@@ -205,7 +205,10 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             ) from ex
 
         oci_params = self._provider.messages_to_oci_params(
-            messages, max_sequential_tool_calls=self.max_sequential_tool_calls, **kwargs
+            messages,
+            max_sequential_tool_calls=self.max_sequential_tool_calls,
+            model_id=self.model_id,
+            **kwargs,
         )
 
         oci_params["is_stream"] = stream
