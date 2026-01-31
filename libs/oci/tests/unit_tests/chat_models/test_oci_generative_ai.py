@@ -370,6 +370,114 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
     assert tool_chunk.tool_call_chunks[0]["id"] != ""  # type: ignore[attr-defined, unused-ignore]
     assert tool_chunk.tool_call_chunks[0]["index"] == 0  # type: ignore[attr-defined, unused-ignore]
 
+    # Test GPT-OSS fragmented streaming (ID only in first chunk - issue #XX)
+    mock_stream_events_gpt = [
+        MagicMock(
+            data=json.dumps(
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "ASSISTANT",
+                        "content": [{"type": "TEXT", "text": ""}],
+                        "toolCalls": [
+                            {
+                                "id": "call_abc123",
+                                "name": "get_weather",
+                                "arguments": '{"loc',
+                            }
+                        ],
+                    },
+                }
+            )
+        ),
+        MagicMock(
+            data=json.dumps(
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "ASSISTANT",
+                        "content": [{"type": "TEXT", "text": ""}],
+                        "toolCalls": [
+                            {
+                                "arguments": 'ation": "NYC"}',
+                            }
+                        ],
+                    },
+                }
+            )
+        ),
+        MagicMock(data=json.dumps({"finishReason": "tool_calls"})),
+    ]
+    mock_stream_response_gpt = MagicMock()
+    mock_stream_response_gpt.data.events.return_value = mock_stream_events_gpt
+    monkeypatch.setattr(
+        llm.client, "chat", lambda *args, **kwargs: mock_stream_response_gpt
+    )
+
+    chunks_gpt = list(llm.stream(messages))
+    final_msg = None
+    for c in chunks_gpt:
+        final_msg = c if final_msg is None else final_msg + c
+    assert final_msg is not None
+    assert len(final_msg.tool_calls) == 1  # type: ignore[attr-defined, unused-ignore]
+    assert final_msg.tool_calls[0]["name"] == "get_weather"  # type: ignore[attr-defined, unused-ignore]
+    assert final_msg.tool_calls[0]["args"] == {"location": "NYC"}  # type: ignore[attr-defined, unused-ignore]
+
+    # Test Grok parallel tool calls (same idx, different IDs - issue #XX)
+    mock_stream_events_grok = [
+        MagicMock(
+            data=json.dumps(
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "ASSISTANT",
+                        "content": [{"type": "TEXT", "text": ""}],
+                        "toolCalls": [
+                            {
+                                "id": "call_weather",
+                                "name": "get_weather",
+                                "arguments": '{"location": "Tokyo"}',
+                            }
+                        ],
+                    },
+                }
+            )
+        ),
+        MagicMock(
+            data=json.dumps(
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "ASSISTANT",
+                        "content": [{"type": "TEXT", "text": ""}],
+                        "toolCalls": [
+                            {
+                                "id": "call_time",
+                                "name": "get_time",
+                                "arguments": '{"timezone": "PST"}',
+                            }
+                        ],
+                    },
+                }
+            )
+        ),
+        MagicMock(data=json.dumps({"finishReason": "tool_calls"})),
+    ]
+    mock_stream_response_grok = MagicMock()
+    mock_stream_response_grok.data.events.return_value = mock_stream_events_grok
+    monkeypatch.setattr(
+        llm.client, "chat", lambda *args, **kwargs: mock_stream_response_grok
+    )
+
+    chunks_grok = list(llm.stream(messages))
+    final_msg_grok = None
+    for c in chunks_grok:
+        final_msg_grok = c if final_msg_grok is None else final_msg_grok + c
+    assert final_msg_grok is not None
+    assert len(final_msg_grok.tool_calls) == 2  # type: ignore[attr-defined, unused-ignore]
+    assert final_msg_grok.tool_calls[0]["name"] == "get_weather"  # type: ignore[attr-defined, unused-ignore]
+    assert final_msg_grok.tool_calls[1]["name"] == "get_time"  # type: ignore[attr-defined, unused-ignore]
+
 
 @pytest.mark.requires("oci")
 def test_cohere_tool_choice_validation(monkeypatch: MonkeyPatch) -> None:

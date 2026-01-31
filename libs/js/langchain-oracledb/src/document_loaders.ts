@@ -141,7 +141,7 @@ export class OracleDocLoader extends BaseDocumentLoader {
                             sys.dbms_assert.qualified_sql_name(:qn) from dual`;
       const binds = [col, qn];
       await this.conn.execute(sql, binds);
-    } catch (error) {
+    } catch {
       throw new Error("Invalid owner, table, or column name");
     }
 

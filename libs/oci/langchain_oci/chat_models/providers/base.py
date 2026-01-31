@@ -4,7 +4,7 @@
 """Abstract base class for OCI Generative AI providers."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from langchain_core.messages import BaseMessage
 from langchain_core.messages.tool import ToolCallChunk
@@ -97,7 +97,7 @@ class Provider(ABC):
     def process_stream_tool_calls(
         self,
         event_data: Dict,
-        tool_call_ids: Set[str],
+        tool_call_ids: Dict[int, str],
     ) -> List[ToolCallChunk]:
         """Process streaming tool calls from event data into chunks."""
         ...
