@@ -378,9 +378,17 @@ class GenericProvider(Provider):
         """
         # Check BaseTool first since it's callable but needs special handling
         if isinstance(tool, BaseTool):
-            # Use convert_to_openai_function to get full schema with $defs
-            as_json_schema_function = convert_to_openai_function(tool)
-            parameters = as_json_schema_function.get("parameters", {})
+            # Use model_json_schema() if available to preserve json_schema_extra
+            # constraints (enum, format, etc.) that convert_to_openai_function strips
+            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
+                schema = tool.args_schema.model_json_schema()
+                # Resolve $ref/$defs — OCI doesn't support JSON Schema references
+                schema = OCIUtils.resolve_schema_refs(schema)
+                parameters = schema
+            else:
+                # Fallback to convert_to_openai_function for tools without args_schema
+                as_json_schema_function = convert_to_openai_function(tool)
+                parameters = as_json_schema_function.get("parameters", {})
 
             # Resolve $ref references as OCI doesn't support them
             resolved_params = OCIUtils.resolve_schema_refs(parameters)
