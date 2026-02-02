@@ -378,6 +378,36 @@ class GenericProvider(Provider):
         """
         # Check BaseTool first since it's callable but needs special handling
         if isinstance(tool, BaseTool):
+            # Use convert_to_openai_function to get full schema with $defs
+            as_json_schema_function = convert_to_openai_function(tool)
+            parameters = as_json_schema_function.get("parameters", {})
+
+            # Resolve $ref references as OCI doesn't support them
+            resolved_params = OCIUtils.resolve_schema_refs(parameters)
+
+            # Resolve anyOf patterns (Pydantic v2 Optional[T]) to prevent type: "any"
+            def resolve_anyof(obj: Any) -> Any:
+                if isinstance(obj, dict):
+                    if "anyOf" in obj and "type" not in obj:
+                        # Extract first non-null type from anyOf
+                        non_null = [
+                            t
+                            for t in obj["anyOf"]
+                            if not (isinstance(t, dict) and t.get("type") == "null")
+                        ]
+                        if non_null:
+                            # Merge first non-null type with parent properties
+                            resolved = {**obj, **non_null[0]}
+                            resolved.pop("anyOf", None)
+                            return resolve_anyof(resolved)
+                    return {k: resolve_anyof(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [resolve_anyof(item) for item in obj]
+                return obj
+
+            resolved_params = resolve_anyof(resolved_params)
+            properties = resolved_params.get("properties", {})
+
             return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -385,18 +415,8 @@ class GenericProvider(Provider):
                 ),
                 parameters={
                     "type": "object",
-                    "properties": {
-                        p_name: {
-                            "type": p_def.get("type", "any"),
-                            "description": p_def.get("description", ""),
-                        }
-                        for p_name, p_def in tool.args.items()
-                    },
-                    "required": [
-                        p_name
-                        for p_name, p_def in tool.args.items()
-                        if "default" not in p_def
-                    ],
+                    "properties": properties,
+                    "required": resolved_params.get("required", []),
                 },
             )
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
