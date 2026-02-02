@@ -462,6 +462,31 @@ class CohereProvider(Provider):
         # Remove keys with None values
         return {k: v for k, v in oci_params.items() if v is not None}
 
+    @staticmethod
+    def _enrich_description(description: str, p_def: Dict[str, Any]) -> str:
+        """Embed schema constraints into the description for Cohere models.
+
+        CohereParameterDefinition only supports type, description, and
+        is_required. Rich schema metadata (enum, format, range, pattern)
+        is embedded into the description string so the LLM can still see
+        and respect these constraints.
+        """
+        parts = [description] if description else []
+        if "enum" in p_def:
+            parts.append(f"Allowed values: {p_def['enum']}")
+        if "format" in p_def:
+            parts.append(f"Format: {p_def['format']}")
+        if "minimum" in p_def or "maximum" in p_def:
+            range_parts = []
+            if "minimum" in p_def:
+                range_parts.append(f"min={p_def['minimum']}")
+            if "maximum" in p_def:
+                range_parts.append(f"max={p_def['maximum']}")
+            parts.append(f"Range: {', '.join(range_parts)}")
+        if "pattern" in p_def:
+            parts.append(f"Pattern: {p_def['pattern']}")
+        return ". ".join(parts) if parts else ""
+
     def convert_to_oci_tool(
         self,
         tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
@@ -473,6 +498,17 @@ class CohereProvider(Provider):
         or Pydantic models/callables.
         """
         if isinstance(tool, BaseTool):
+            # Use args_schema.model_json_schema() to get rich properties
+            # (enum, constraints) that tool.args loses via tool_call_schema.
+            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
+                schema = tool.args_schema.model_json_schema()
+                # Resolve $ref/$defs and anyOf — OCI doesn't support them
+                schema = OCIUtils.resolve_schema_refs(schema)
+                schema = OCIUtils.resolve_anyof(schema)
+                properties = schema.get("properties", {})
+            else:
+                properties = tool.args
+
             return self.oci_tool(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -480,14 +516,16 @@ class CohereProvider(Provider):
                 ),
                 parameter_definitions={
                     p_name: self.oci_tool_param(
-                        description=p_def.get("description", ""),
+                        description=self._enrich_description(
+                            p_def.get("description", ""), p_def
+                        ),
                         type=JSON_TO_PYTHON_TYPES.get(
                             p_def.get("type"),
                             p_def.get("type", "any"),
                         ),
                         is_required="default" not in p_def,
                     )
-                    for p_name, p_def in tool.args.items()
+                    for p_name, p_def in properties.items()
                 },
             )
         elif isinstance(tool, dict):
@@ -501,7 +539,9 @@ class CohereProvider(Provider):
                 description=tool.get("description"),
                 parameter_definitions={
                     p_name: self.oci_tool_param(
-                        description=p_def.get("description", ""),
+                        description=self._enrich_description(
+                            p_def.get("description", ""), p_def
+                        ),
                         type=JSON_TO_PYTHON_TYPES.get(
                             p_def.get("type"),
                             p_def.get("type", "any"),
@@ -523,7 +563,9 @@ class CohereProvider(Provider):
                 ),
                 parameter_definitions={
                     p_name: self.oci_tool_param(
-                        description=p_def.get("description", ""),
+                        description=self._enrich_description(
+                            p_def.get("description", ""), p_def
+                        ),
                         type=JSON_TO_PYTHON_TYPES.get(
                             p_def.get("type"),
                             p_def.get("type", "any"),

@@ -378,6 +378,20 @@ class GenericProvider(Provider):
         """
         # Check BaseTool first since it's callable but needs special handling
         if isinstance(tool, BaseTool):
+            # Use model_json_schema() if available to preserve json_schema_extra
+            # constraints (enum, format, etc.) that convert_to_openai_function strips
+            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
+                schema = tool.args_schema.model_json_schema()
+                parameters = schema
+            else:
+                as_json_schema_function = convert_to_openai_function(tool)
+                parameters = as_json_schema_function.get("parameters", {})
+
+            # Resolve $ref/$defs and anyOf — OCI doesn't support them
+            resolved_params = OCIUtils.resolve_schema_refs(parameters)
+            resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            properties = resolved_params.get("properties", {})
+
             return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -385,18 +399,8 @@ class GenericProvider(Provider):
                 ),
                 parameters={
                     "type": "object",
-                    "properties": {
-                        p_name: {
-                            "type": p_def.get("type", "any"),
-                            "description": p_def.get("description", ""),
-                        }
-                        for p_name, p_def in tool.args.items()
-                    },
-                    "required": [
-                        p_name
-                        for p_name, p_def in tool.args.items()
-                        if "default" not in p_def
-                    ],
+                    "properties": properties,
+                    "required": resolved_params.get("required", []),
                 },
             )
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
