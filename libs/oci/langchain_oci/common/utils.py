@@ -99,6 +99,31 @@ class OCIUtils:
         return resolved
 
     @staticmethod
+    def resolve_anyof(obj: Any) -> Any:
+        """Resolve Pydantic v2 ``anyOf`` patterns (from ``Optional[T]``).
+
+        Pydantic v2 emits ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}``
+        for ``Optional[int]``.  OCI models don't understand ``anyOf``, so we
+        pick the first non-null branch and merge any top-level metadata
+        (description, default, enum, etc.) into it.
+        """
+        if isinstance(obj, dict):
+            if "anyOf" in obj and "type" not in obj:
+                non_null = [
+                    t
+                    for t in obj["anyOf"]
+                    if not (isinstance(t, dict) and t.get("type") == "null")
+                ]
+                if non_null:
+                    resolved = {**obj, **non_null[0]}
+                    resolved.pop("anyOf", None)
+                    return OCIUtils.resolve_anyof(resolved)
+            return {k: OCIUtils.resolve_anyof(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [OCIUtils.resolve_anyof(item) for item in obj]
+        return obj
+
+    @staticmethod
     def create_usage_metadata(usage: Any) -> Optional[Any]:
         """
         Create UsageMetadata from OCI SDK usage object.

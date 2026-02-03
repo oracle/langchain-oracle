@@ -10,9 +10,10 @@
   "types": "./index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git@github.com:langchain-ai/langchainjs.git"
+    "url": "git+https://github.com/oracle/langchain-oracle.git",
+    "directory": "libs/js/oracledb/langchain-oracledb"
   },
-  "homepage": "https://github.com/langchain-ai/langchainjs/tree/main/libs/langchain-oracle/",
+  "homepage": "https://github.com/oracle/langchain-oracle/tree/main/libs/js/oracledb/langchain-oracledb",
   "scripts": {
     "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:scripts",
     "build:esm": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist/ && rm -rf dist/tests dist/**/tests",

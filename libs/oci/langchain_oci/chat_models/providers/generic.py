@@ -8,7 +8,7 @@ Supports Meta Llama, xAI Grok, OpenAI, and Mistral models.
 
 import json
 import uuid
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from langchain_core.messages import (
     AIMessage,
@@ -378,6 +378,20 @@ class GenericProvider(Provider):
         """
         # Check BaseTool first since it's callable but needs special handling
         if isinstance(tool, BaseTool):
+            # Use model_json_schema() if available to preserve json_schema_extra
+            # constraints (enum, format, etc.) that convert_to_openai_function strips
+            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
+                schema = tool.args_schema.model_json_schema()
+                parameters = schema
+            else:
+                as_json_schema_function = convert_to_openai_function(tool)
+                parameters = as_json_schema_function.get("parameters", {})
+
+            # Resolve $ref/$defs and anyOf — OCI doesn't support them
+            resolved_params = OCIUtils.resolve_schema_refs(parameters)
+            resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            properties = resolved_params.get("properties", {})
+
             return self.oci_function_definition(
                 name=tool.name,
                 description=OCIUtils.remove_signature_from_tool_description(
@@ -385,18 +399,8 @@ class GenericProvider(Provider):
                 ),
                 parameters={
                     "type": "object",
-                    "properties": {
-                        p_name: {
-                            "type": p_def.get("type", "any"),
-                            "description": p_def.get("description", ""),
-                        }
-                        for p_name, p_def in tool.args.items()
-                    },
-                    "required": [
-                        p_name
-                        for p_name, p_def in tool.args.items()
-                        if "default" not in p_def
-                    ],
+                    "properties": properties,
+                    "required": resolved_params.get("required", []),
                 },
             )
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
@@ -471,14 +475,14 @@ class GenericProvider(Provider):
         )
 
     def process_stream_tool_calls(
-        self, event_data: Dict, tool_call_ids: Set[str]
+        self, event_data: Dict, tool_call_ids: Dict[int, str]
     ) -> List[ToolCallChunk]:
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
 
         Args:
             event_data: The event data from the stream
-            tool_call_ids: Set of existing tool call IDs for index tracking
+            tool_call_ids: Dict mapping tool call index to ID for aggregation
 
         Returns:
             List of ToolCallChunk objects
@@ -489,20 +493,36 @@ class GenericProvider(Provider):
         if not tool_call_response:
             return tool_call_chunks
 
-        for tool_call in self.format_stream_tool_calls(tool_call_response):
+        for idx, tool_call in enumerate(
+            self.format_stream_tool_calls(tool_call_response)
+        ):
             tool_id = tool_call.get("id")
-            # Generate ID if not provided by backend (e.g., Gemini models)
-            if not tool_id:
-                tool_id = str(uuid.uuid4())
 
-            tool_call_ids.add(tool_id)
+            if tool_id:
+                if idx not in tool_call_ids or tool_call_ids[idx] == tool_id:
+                    # New idx - use idx as index
+                    # Same ID at same idx - reuse idx as index
+                    index = idx
+                else:
+                    # Different ID at same idx - parallel tool call (Grok pattern)
+                    # New idx - use len(tool_call_ids) as index
+                    index = len(tool_call_ids)
+            elif idx in tool_call_ids:
+                # Subsequent chunk - reuse stored ID (gpt-oss pattern)
+                index = idx
+                tool_id = tool_call_ids[index]
+            else:
+                # No ID and no stored ID - generate new one (e.g., Gemini models)
+                tool_id = str(uuid.uuid4())
+                index = idx
+            tool_call_ids[index] = tool_id
 
             tool_call_chunks.append(
                 tool_call_chunk(
                     name=tool_call["function"].get("name"),
                     args=tool_call["function"].get("arguments"),
                     id=tool_id,
-                    index=len(tool_call_ids) - 1,  # index tracking
+                    index=index,
                 )
             )
         return tool_call_chunks
