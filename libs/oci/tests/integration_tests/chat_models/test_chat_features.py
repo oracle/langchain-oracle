@@ -470,9 +470,10 @@ def test_reasoning_model_returns_reasoning_content(model_id: str) -> None:
     result = llm.invoke([HumanMessage(content="What is 17 * 23?")])
 
     reasoning = result.additional_kwargs.get("reasoning_content")
-    # Skip if SDK doesn't support reasoning_content yet
-    if reasoning is None:
-        pytest.skip("OCI SDK does not yet return reasoning_content for this model")
+    assert reasoning is not None, (
+        f"{model_id}: expected reasoning_content, got: "
+        f"{list(result.additional_kwargs.keys())}"
+    )
     assert len(reasoning) > 10, f"{model_id}: reasoning too short: {reasoning!r}"
     assert result.content, f"{model_id}: content should not be empty"
 
