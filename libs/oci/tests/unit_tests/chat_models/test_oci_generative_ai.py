@@ -18,6 +18,30 @@ class MockResponseDict(dict):
         return self.get(val)
 
 
+class MockStrictResponse:
+    """Mock that raises AttributeError for missing attributes (like real SDK objects).
+
+    Unlike MockResponseDict, this only exposes explicitly set attributes.
+    Used to simulate V2 SDK responses where V1 attributes (e.g. .text) don't exist.
+    """
+
+    def __init__(self, attrs: dict):
+        for k, v in attrs.items():
+            if isinstance(v, dict):
+                setattr(self, k, MockStrictResponse(v))
+            elif isinstance(v, list):
+                setattr(
+                    self,
+                    k,
+                    [
+                        MockStrictResponse(item) if isinstance(item, dict) else item
+                        for item in v
+                    ],
+                )
+            else:
+                setattr(self, k, v)
+
+
 class MockToolCall(dict):
     def __getattr__(self, val):
         return self[val]
@@ -1332,3 +1356,296 @@ class TestNullGuards:
             assert result.usage_metadata["input_tokens"] == 0
             assert result.usage_metadata["output_tokens"] == 0
             assert result.usage_metadata["total_tokens"] == 0
+
+
+# =============================================================================
+# Cohere V2 Response Parsing Tests
+# =============================================================================
+
+
+@pytest.mark.requires("oci")
+def test_cohere_v2_response_parsing(monkeypatch: MonkeyPatch) -> None:
+    """Test Cohere V2 API response parsing (vision models).
+
+    Cohere V2 API returns a different response structure:
+    - Text: .message.content[].text instead of .text
+    - Citations: .message.citations instead of .citations
+    - Tool calls: .message.tool_calls instead of .tool_calls
+    """
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="cohere.command-a-vision", client=oci_gen_ai_client)
+
+    # Mock _load_v2_classes and V2 request class to avoid SDK dependency
+    provider = llm._provider
+    monkeypatch.setattr(provider, "_load_v2_classes", lambda: None)
+    provider.oci_chat_request_v2 = MagicMock()
+    provider.chat_api_format_v2 = "COHEREV2"
+    provider.oci_chat_message_v2 = {
+        "USER": MagicMock(),
+        "ASSISTANT": MagicMock(),
+        "SYSTEM": MagicMock(),
+    }
+    provider.oci_text_content_v2 = MagicMock()
+    provider.oci_image_content_v2 = MagicMock()
+    provider.oci_image_url_v2 = MagicMock()
+    provider.cohere_content_v2_type_text = "TEXT"
+
+    def mocked_response(*args):
+        # Use MockStrictResponse for chat_response so V1 attributes (.text)
+        # are truly absent, forcing the V2 parsing path
+        v2_chat_response = MockStrictResponse(
+            {
+                "finish_reason": "COMPLETE",
+                "message": {
+                    "content": [
+                        {"type": "TEXT", "text": "The image shows a red square."},
+                    ],
+                    "tool_calls": None,
+                    "citations": [{"start": 0, "end": 10, "text": "ref"}],
+                },
+                "usage": {
+                    "prompt_tokens": 50,
+                    "completion_tokens": 25,
+                    "total_tokens": 75,
+                },
+            }
+        )
+        return MockResponseDict(
+            {
+                "status": 200,
+                "data": MockResponseDict(
+                    {
+                        "chat_response": v2_chat_response,
+                        "model_id": "cohere.command-a-vision",
+                        "model_version": "1.0.0",
+                    }
+                ),
+                "request_id": "test-v2-response",
+                "headers": MockResponseDict({"content-length": "200"}),
+            }
+        )
+
+    monkeypatch.setattr(llm.client, "chat", mocked_response)
+
+    messages = [HumanMessage(content="What color is this image?")]
+    result = llm.invoke(messages, temperature=0.2)
+
+    assert result.content == "The image shows a red square."
+    assert result.additional_kwargs["finish_reason"] == "COMPLETE"
+    assert result.additional_kwargs["total_tokens"] == 75
+    # V2 citations should be extracted from message.citations
+    citations = result.additional_kwargs["citations"]
+    assert len(citations) == 1
+    assert citations[0].start == 0
+    assert citations[0].end == 10
+    assert citations[0].text == "ref"
+
+
+@pytest.mark.requires("oci")
+def test_cohere_v2_response_empty_content(monkeypatch: MonkeyPatch) -> None:
+    """Test V2 response parsing when message.content is empty or None."""
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # V2 response with empty content list
+    response_empty = MockResponseDict(
+        {
+            "data": MockResponseDict(
+                {
+                    "chat_response": MockStrictResponse(
+                        {
+                            "message": {"content": [], "tool_calls": None},
+                            "finish_reason": "COMPLETE",
+                        }
+                    )
+                }
+            )
+        }
+    )
+    assert provider.chat_response_to_text(response_empty) == ""
+
+    # V2 response with None content
+    response_none = MockResponseDict(
+        {
+            "data": MockResponseDict(
+                {
+                    "chat_response": MockStrictResponse(
+                        {
+                            "message": {"content": None, "tool_calls": None},
+                            "finish_reason": "COMPLETE",
+                        }
+                    )
+                }
+            )
+        }
+    )
+    assert provider.chat_response_to_text(response_none) == ""
+
+
+@pytest.mark.requires("oci")
+def test_cohere_v2_tool_calls_on_message(monkeypatch: MonkeyPatch) -> None:
+    """Test V2 tool calls are retrieved from .message.tool_calls."""
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    mock_tool_call = MockToolCall(
+        {"name": "get_weather", "parameters": {"city": "NYC"}}
+    )
+
+    # V2 response: tool_calls on .message, not on chat_response directly
+    # Use MockStrictResponse so .tool_calls is absent on chat_response itself
+    v2_message = MockStrictResponse(
+        {
+            "content": [{"type": "TEXT", "text": ""}],
+            "tool_calls": [mock_tool_call],
+            "citations": None,
+        }
+    )
+    # Use the real MockToolCall (not converted by MockStrictResponse)
+    v2_message.tool_calls = [mock_tool_call]  # type: ignore[attr-defined]
+
+    v2_chat_resp = MockStrictResponse(
+        {
+            "message": {"content": [], "tool_calls": [], "citations": None},
+            "finish_reason": "COMPLETE",
+        }
+    )
+    v2_chat_resp.message = v2_message  # type: ignore[attr-defined]
+
+    response_v2 = MockResponseDict(
+        {"data": MockResponseDict({"chat_response": v2_chat_resp})}
+    )
+
+    tool_calls = provider.chat_tool_calls(response_v2)
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["name"] == "get_weather"
+    assert tool_calls[0]["parameters"] == {"city": "NYC"}
+
+    # V2 response: no tool calls
+    v2_message_no_tools = MockStrictResponse(
+        {
+            "content": [{"type": "TEXT", "text": "Hello"}],
+            "tool_calls": None,
+            "citations": None,
+        }
+    )
+    v2_chat_resp_no_tools = MockStrictResponse(
+        {
+            "message": {"content": [], "tool_calls": None, "citations": None},
+            "finish_reason": "COMPLETE",
+        }
+    )
+    v2_chat_resp_no_tools.message = v2_message_no_tools  # type: ignore[attr-defined]
+
+    response_v2_no_tools = MockResponseDict(
+        {"data": MockResponseDict({"chat_response": v2_chat_resp_no_tools})}
+    )
+    assert provider.chat_tool_calls(response_v2_no_tools) == []
+
+
+@pytest.mark.requires("oci")
+def test_cohere_is_vision_model() -> None:
+    """Test _is_vision_model() detection logic."""
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # Vision models
+    assert provider._is_vision_model("cohere.command-a-vision") is True
+    assert provider._is_vision_model("cohere.command-a-vision-07-2025") is True
+    assert provider._is_vision_model("cohere.COMMAND-A-VISION") is True
+
+    # Non-vision models
+    assert provider._is_vision_model("cohere.command-r-16k") is False
+    assert provider._is_vision_model("cohere.command-r-08-2024") is False
+    assert provider._is_vision_model("meta.llama-3.3-70b-instruct") is False
+
+    # Edge cases
+    assert provider._is_vision_model(None) is False
+    assert provider._is_vision_model("") is False
+
+
+@pytest.mark.requires("oci")
+def test_cohere_vision_model_forces_v2_api(monkeypatch: MonkeyPatch) -> None:
+    """Test that vision model_id forces V2 API even without image content.
+
+    When model_id contains 'vision', the provider should use V2 API format
+    regardless of whether the messages contain images. This is because the
+    Cohere Command A Vision model always requires V2 API format.
+    """
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # Mock V2 classes to avoid SDK dependency
+    monkeypatch.setattr(provider, "_load_v2_classes", lambda: None)
+    provider.oci_chat_request_v2 = MagicMock()
+    provider.chat_api_format_v2 = "COHEREV2"
+    provider.oci_chat_message_v2 = {
+        "USER": MagicMock(),
+        "ASSISTANT": MagicMock(),
+        "SYSTEM": MagicMock(),
+    }
+    provider.oci_text_content_v2 = MagicMock()
+    provider.oci_image_content_v2 = MagicMock()
+    provider.oci_image_url_v2 = MagicMock()
+    provider.cohere_content_v2_type_text = "TEXT"
+
+    # Text-only message, but vision model should still use V2
+    messages = [HumanMessage(content="What is 2 + 2?")]
+    params = provider.messages_to_oci_params(
+        messages, model_id="cohere.command-a-vision"
+    )
+
+    assert params.get("_use_v2_api") is True
+    assert params.get("api_format") == "COHEREV2"
+
+
+@pytest.mark.requires("oci")
+def test_cohere_non_vision_model_uses_v1_api() -> None:
+    """Test that non-vision Cohere models use V1 API (no _use_v2_api flag)."""
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    messages = [HumanMessage(content="Hello")]
+    params = provider.messages_to_oci_params(messages, model_id="cohere.command-r-16k")
+
+    assert "_use_v2_api" not in params
+    assert params.get("api_format") is not None
+
+
+@pytest.mark.requires("oci")
+def test_cohere_v2_stream_to_text() -> None:
+    """Test V2 streaming text extraction from message.content[].text."""
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # V2 stream event with text content
+    v2_event = {
+        "apiFormat": "COHEREV2",
+        "message": {
+            "role": "ASSISTANT",
+            "content": [{"type": "TEXT", "text": "Hello"}],
+        },
+    }
+    assert provider.chat_stream_to_text(v2_event) == "Hello"
+
+    # V2 stream finish event (has finishReason)
+    v2_finish = {
+        "apiFormat": "COHEREV2",
+        "message": {"role": "ASSISTANT"},
+        "finishReason": "COMPLETE",
+    }
+    assert provider.chat_stream_to_text(v2_finish) == ""
+
+    # V1 stream event still works
+    v1_event = {"text": "World"}
+    assert provider.chat_stream_to_text(v1_event) == "World"
+
+    # V1 finish event with text and finishReason
+    v1_finish = {"text": "", "finishReason": "COMPLETE"}
+    assert provider.chat_stream_to_text(v1_finish) == ""
