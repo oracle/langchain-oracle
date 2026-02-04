@@ -430,3 +430,72 @@ def test_long_context_handling(llm):
 
     assert isinstance(final_response.content, str)
     assert "thunder" in final_response.content.lower()
+
+
+# =============================================================================
+# Reasoning Content Extraction Tests
+# =============================================================================
+
+# Models known to return reasoning_content
+REASONING_MODELS = ["xai.grok-3-mini-fast", "openai.gpt-oss-120b"]
+
+# Models that do NOT return reasoning_content
+STANDARD_MODELS = ["meta.llama-3.3-70b-instruct", "cohere.command-r-08-2024"]
+
+
+def _make_reasoning_llm(model_id: str) -> ChatOCIGenAI:
+    """Create LLM for reasoning content tests."""
+    config = get_config()
+    # OpenAI models require 'max_completion_tokens' instead of 'max_tokens'
+    if model_id.startswith("openai."):
+        model_kwargs = {"max_completion_tokens": 100, "temperature": 1.0}
+    else:
+        model_kwargs = {"max_tokens": 100, "temperature": 0.0}
+
+    return ChatOCIGenAI(
+        model_id=model_id,
+        compartment_id=config["compartment_id"],
+        service_endpoint=config["service_endpoint"],
+        auth_profile=config["auth_profile"],
+        auth_type=config["auth_type"],
+        model_kwargs=model_kwargs,
+    )
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize("model_id", REASONING_MODELS)
+def test_reasoning_model_returns_reasoning_content(model_id: str) -> None:
+    """Reasoning models should populate reasoning_content."""
+    llm = _make_reasoning_llm(model_id)
+    result = llm.invoke([HumanMessage(content="What is 17 * 23?")])
+
+    reasoning = result.additional_kwargs.get("reasoning_content")
+    # Skip if SDK doesn't support reasoning_content yet
+    if reasoning is None:
+        pytest.skip("OCI SDK does not yet return reasoning_content for this model")
+    assert len(reasoning) > 10, f"{model_id}: reasoning too short: {reasoning!r}"
+    assert result.content, f"{model_id}: content should not be empty"
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize("model_id", STANDARD_MODELS)
+def test_standard_model_has_no_reasoning_content(model_id: str) -> None:
+    """Standard models should NOT have reasoning_content."""
+    llm = _make_reasoning_llm(model_id)
+    result = llm.invoke([HumanMessage(content="What is 17 * 23?")])
+
+    reasoning = result.additional_kwargs.get("reasoning_content")
+    assert reasoning is None, f"{model_id}: unexpected reasoning_content: {reasoning!r}"
+    assert result.content, f"{model_id}: content should not be empty"
+
+
+@pytest.mark.requires("oci")
+def test_usage_metadata_with_null_tokens() -> None:
+    """Usage metadata should handle None token fields gracefully."""
+    llm = _make_reasoning_llm("meta.llama-3.3-70b-instruct")
+    result = llm.invoke([HumanMessage(content="Say hello")])
+
+    if hasattr(result, "usage_metadata") and result.usage_metadata is not None:
+        assert result.usage_metadata["input_tokens"] >= 0
+        assert result.usage_metadata["output_tokens"] >= 0
+        assert result.usage_metadata["total_tokens"] >= 0

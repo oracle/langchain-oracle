@@ -119,13 +119,14 @@ class GenericProvider(Provider):
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract text from chat response."""
-        choices = response.data.chat_response.choices
-        if not choices or choices[0].message is None:
+        """Extract text from chat response, or '' if unavailable."""
+        chat_resp = getattr(response.data, "chat_response", None)
+        choices = getattr(chat_resp, "choices", None)
+        if not choices:
             return ""
-        message = choices[0].message
-        content = message.content[0] if message.content else None
-        return content.text if content else ""
+        msg = getattr(choices[0], "message", None)
+        content = msg.content[0] if msg and msg.content else None
+        return getattr(content, "text", "") or ""
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
@@ -147,12 +148,7 @@ class GenericProvider(Provider):
             "time_created": str(response.data.chat_response.time_created),
         }
 
-        # Extract reasoning_content if present (OCI reasoning models).
-        # Reasoning models (e.g., xAI Grok-3-mini, OpenAI o1) return
-        # chain-of-thought in this field. We surface it in generation_info
-        # so it's accessible via response.generation_info["reasoning_content"]
-        # and response.additional_kwargs["reasoning_content"].
-        # Related upstream fix: https://github.com/langchain-ai/langchain/pull/34705
+        # Surface reasoning_content from reasoning models (xAI Grok, OpenAI o1).
         if choices and choices[0].message is not None:
             reasoning = getattr(choices[0].message, "reasoning_content", None)
             if reasoning:
