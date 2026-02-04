@@ -378,6 +378,12 @@ class CohereProvider(Provider):
         }
         return {k: v for k, v in oci_params.items() if v is not None}
 
+    def _is_vision_model(self, model_id: Optional[str]) -> bool:
+        """Check if the model is a Cohere vision model requiring V2 API."""
+        if not model_id:
+            return False
+        return "vision" in model_id.lower()
+
     def messages_to_oci_params(
         self, messages: Sequence[BaseMessage], **kwargs: Any
     ) -> Dict[str, Any]:
@@ -386,8 +392,10 @@ class CohereProvider(Provider):
 
         This includes conversion of chat history and tool call results.
         """
-        # Check if vision content is present - if so, use V2 API
-        if self._has_vision_content(messages):
+        # Vision models require V2 API always, not just for image content
+        model_id = kwargs.get("model_id")
+        if self._is_vision_model(model_id) or self._has_vision_content(messages):
+            self._load_v2_classes()
             return self._messages_to_oci_params_v2(messages, **kwargs)
 
         # Cohere models don't support parallel tool calls
