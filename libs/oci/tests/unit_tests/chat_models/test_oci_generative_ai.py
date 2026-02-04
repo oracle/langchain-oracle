@@ -3,7 +3,7 @@
 
 """Test OCI Generative AI LLM service"""
 
-from typing import Union
+from typing import Optional, Union
 from unittest.mock import MagicMock
 
 import pytest
@@ -1033,7 +1033,7 @@ def test_tool_choice_none_after_tool_results() -> None:
 
 def _make_reasoning_response(
     text: str = "The answer is 42.",
-    reasoning_content: str | None = None,
+    reasoning_content: Optional[str] = None,
     finish_reason: str = "completed",
 ) -> MockResponseDict:
     """Build a mock Generic API response with optional reasoning_content."""
