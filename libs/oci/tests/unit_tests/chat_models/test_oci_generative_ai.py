@@ -1373,9 +1373,7 @@ def test_cohere_v2_response_parsing(monkeypatch: MonkeyPatch) -> None:
     - Tool calls: .message.tool_calls instead of .tool_calls
     """
     oci_gen_ai_client = MagicMock()
-    llm = ChatOCIGenAI(
-        model_id="cohere.command-a-vision", client=oci_gen_ai_client
-    )
+    llm = ChatOCIGenAI(model_id="cohere.command-a-vision", client=oci_gen_ai_client)
 
     # Mock _load_v2_classes and V2 request class to avoid SDK dependency
     provider = llm._provider
@@ -1506,13 +1504,15 @@ def test_cohere_v2_tool_calls_on_message(monkeypatch: MonkeyPatch) -> None:
         }
     )
     # Use the real MockToolCall (not converted by MockStrictResponse)
-    v2_message.tool_calls = [mock_tool_call]
+    v2_message.tool_calls = [mock_tool_call]  # type: ignore[attr-defined]
 
     v2_chat_resp = MockStrictResponse(
-        {"message": {"content": [], "tool_calls": [], "citations": None},
-         "finish_reason": "COMPLETE"}
+        {
+            "message": {"content": [], "tool_calls": [], "citations": None},
+            "finish_reason": "COMPLETE",
+        }
     )
-    v2_chat_resp.message = v2_message
+    v2_chat_resp.message = v2_message  # type: ignore[attr-defined]
 
     response_v2 = MockResponseDict(
         {"data": MockResponseDict({"chat_response": v2_chat_resp})}
@@ -1532,10 +1532,12 @@ def test_cohere_v2_tool_calls_on_message(monkeypatch: MonkeyPatch) -> None:
         }
     )
     v2_chat_resp_no_tools = MockStrictResponse(
-        {"message": {"content": [], "tool_calls": None, "citations": None},
-         "finish_reason": "COMPLETE"}
+        {
+            "message": {"content": [], "tool_calls": None, "citations": None},
+            "finish_reason": "COMPLETE",
+        }
     )
-    v2_chat_resp_no_tools.message = v2_message_no_tools
+    v2_chat_resp_no_tools.message = v2_message_no_tools  # type: ignore[attr-defined]
 
     response_v2_no_tools = MockResponseDict(
         {"data": MockResponseDict({"chat_response": v2_chat_resp_no_tools})}
@@ -1609,9 +1611,41 @@ def test_cohere_non_vision_model_uses_v1_api() -> None:
     provider = CohereProvider()
 
     messages = [HumanMessage(content="Hello")]
-    params = provider.messages_to_oci_params(
-        messages, model_id="cohere.command-r-16k"
-    )
+    params = provider.messages_to_oci_params(messages, model_id="cohere.command-r-16k")
 
     assert "_use_v2_api" not in params
     assert params.get("api_format") is not None
+
+
+@pytest.mark.requires("oci")
+def test_cohere_v2_stream_to_text() -> None:
+    """Test V2 streaming text extraction from message.content[].text."""
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # V2 stream event with text content
+    v2_event = {
+        "apiFormat": "COHEREV2",
+        "message": {
+            "role": "ASSISTANT",
+            "content": [{"type": "TEXT", "text": "Hello"}],
+        },
+    }
+    assert provider.chat_stream_to_text(v2_event) == "Hello"
+
+    # V2 stream finish event (has finishReason)
+    v2_finish = {
+        "apiFormat": "COHEREV2",
+        "message": {"role": "ASSISTANT"},
+        "finishReason": "COMPLETE",
+    }
+    assert provider.chat_stream_to_text(v2_finish) == ""
+
+    # V1 stream event still works
+    v1_event = {"text": "World"}
+    assert provider.chat_stream_to_text(v1_event) == "World"
+
+    # V1 finish event with text and finishReason
+    v1_finish = {"text": "", "finishReason": "COMPLETE"}
+    assert provider.chat_stream_to_text(v1_finish) == ""

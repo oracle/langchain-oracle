@@ -134,13 +134,19 @@ class CohereProvider(Provider):
         return ""
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
-        """Extract text from a Cohere chat stream event."""
+        """Extract text from a Cohere chat stream event (V1 or V2)."""
+        # Return empty string if finish reason or tool calls are present
+        if "finishReason" in event_data or "toolCalls" in event_data:
+            return ""
+        # V1 API: text at top level
         if "text" in event_data:
-            # Return empty string if finish reason or tool calls are present in stream
-            if "finishReason" in event_data or "toolCalls" in event_data:
-                return ""
-            else:
-                return event_data["text"]
+            return event_data["text"]
+        # V2 API: text in message.content[].text
+        message = event_data.get("message")
+        if message:
+            for block in message.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "TEXT":
+                    return block.get("text", "")
         return ""
 
     def is_chat_stream_end(self, event_data: Dict) -> bool:
