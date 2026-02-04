@@ -3,7 +3,7 @@
 
 """Test OCI Generative AI LLM service"""
 
-from typing import Optional, Union
+from typing import Optional, Union, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -1649,3 +1649,203 @@ def test_cohere_v2_stream_to_text() -> None:
     # V1 finish event with text and finishReason
     v1_finish = {"text": "", "finishReason": "COMPLETE"}
     assert provider.chat_stream_to_text(v1_finish) == ""
+
+
+# =============================================================================
+# Flatten Parallel Tool Calls Tests
+# =============================================================================
+
+
+class TestFlattenParallelToolCalls:
+    """Tests for OCIUtils.flatten_parallel_tool_calls."""
+
+    def test_no_tool_calls_unchanged(self) -> None:
+        """Messages without tool calls pass through unchanged."""
+        from langchain_core.messages import SystemMessage
+
+        from langchain_oci.common.utils import OCIUtils
+
+        messages = [
+            SystemMessage(content="You are helpful."),
+            HumanMessage(content="Hello"),
+            AIMessage(content="Hi there!"),
+        ]
+        result = OCIUtils.flatten_parallel_tool_calls(messages)
+        assert len(result) == 3
+        assert result[0].content == "You are helpful."
+        assert result[1].content == "Hello"
+        assert result[2].content == "Hi there!"
+
+    def test_single_tool_call_unchanged(self) -> None:
+        """A single tool call (no parallel) passes through unchanged."""
+        from langchain_core.messages import ToolMessage
+
+        from langchain_oci.common.utils import OCIUtils
+
+        messages = [
+            HumanMessage(content="What's the weather?"),
+            AIMessage(
+                content="Let me check.",
+                tool_calls=[
+                    {"id": "call_1", "name": "get_weather", "args": {"city": "NYC"}}
+                ],
+            ),
+            ToolMessage(content="Sunny, 72F", tool_call_id="call_1"),
+        ]
+        result = OCIUtils.flatten_parallel_tool_calls(messages)
+        assert len(result) == 3
+        assert isinstance(result[0], HumanMessage)
+        assert isinstance(result[1], AIMessage)
+        assert len(result[1].tool_calls) == 1
+        assert isinstance(result[2], ToolMessage)
+
+    def test_parallel_tool_calls_flattened(self) -> None:
+        """Two parallel tool calls get split into 2 sequential AI->Tool pairs."""
+        from langchain_core.messages import ToolMessage
+
+        from langchain_oci.common.utils import OCIUtils
+
+        messages = [
+            HumanMessage(content="Weather in NYC and LA?"),
+            AIMessage(
+                content="Let me check both.",
+                tool_calls=[
+                    {"id": "call_1", "name": "get_weather", "args": {"city": "NYC"}},
+                    {"id": "call_2", "name": "get_weather", "args": {"city": "LA"}},
+                ],
+            ),
+            ToolMessage(content="Sunny, 72F", tool_call_id="call_1"),
+            ToolMessage(content="Cloudy, 65F", tool_call_id="call_2"),
+        ]
+        result = OCIUtils.flatten_parallel_tool_calls(messages)
+
+        # HumanMessage + 2x (AIMessage, ToolMessage) = 5
+        assert len(result) == 5
+
+        # First: original HumanMessage
+        assert isinstance(result[0], HumanMessage)
+
+        # Second: AI with first tool call, keeps original content
+        assert isinstance(result[1], AIMessage)
+        assert result[1].content == "Let me check both."
+        assert len(result[1].tool_calls) == 1
+        assert result[1].tool_calls[0]["id"] == "call_1"
+
+        # Third: matching ToolMessage
+        assert isinstance(result[2], ToolMessage)
+        assert result[2].tool_call_id == "call_1"
+
+        # Fourth: AI with second tool call, placeholder content
+        assert isinstance(result[3], AIMessage)
+        assert result[3].content == "."
+        assert len(result[3].tool_calls) == 1
+        assert result[3].tool_calls[0]["id"] == "call_2"
+
+        # Fifth: matching ToolMessage
+        assert isinstance(result[4], ToolMessage)
+        assert result[4].tool_call_id == "call_2"
+
+    def test_three_parallel_tool_calls(self) -> None:
+        """Three parallel tool calls get split into 3 sequential pairs."""
+        from langchain_core.messages import ToolMessage
+
+        from langchain_oci.common.utils import OCIUtils
+
+        messages = [
+            HumanMessage(content="Check three cities"),
+            AIMessage(
+                content="Checking all three.",
+                tool_calls=[
+                    {"id": "c1", "name": "get_weather", "args": {"city": "NYC"}},
+                    {"id": "c2", "name": "get_weather", "args": {"city": "LA"}},
+                    {"id": "c3", "name": "get_weather", "args": {"city": "CHI"}},
+                ],
+            ),
+            ToolMessage(content="Sunny", tool_call_id="c1"),
+            ToolMessage(content="Cloudy", tool_call_id="c2"),
+            ToolMessage(content="Rainy", tool_call_id="c3"),
+        ]
+        result = OCIUtils.flatten_parallel_tool_calls(messages)
+
+        # HumanMessage + 3x (AIMessage, ToolMessage) = 7
+        assert len(result) == 7
+
+        # First AI keeps original content
+        ai1 = cast(AIMessage, result[1])
+        assert ai1.content == "Checking all three."
+        assert ai1.tool_calls[0]["id"] == "c1"
+
+        # Second and third AI get placeholder
+        ai2 = cast(AIMessage, result[3])
+        assert ai2.content == "."
+        assert ai2.tool_calls[0]["id"] == "c2"
+
+        ai3 = cast(AIMessage, result[5])
+        assert ai3.content == "."
+        assert ai3.tool_calls[0]["id"] == "c3"
+
+    def test_empty_messages(self) -> None:
+        """Empty message list returns empty list."""
+        from langchain_oci.common.utils import OCIUtils
+
+        result = OCIUtils.flatten_parallel_tool_calls([])
+        assert result == []
+
+
+@pytest.mark.requires("oci")
+class TestGeminiModelIdRouting:
+    """Tests that model_id routing triggers flattening for Google models."""
+
+    def test_google_model_triggers_flattening(self) -> None:
+        """Google model ID triggers flatten_parallel_tool_calls."""
+        from langchain_core.messages import ToolMessage
+
+        from langchain_oci.chat_models.providers.generic import GenericProvider
+
+        provider = GenericProvider()
+        messages = [
+            HumanMessage(content="Check two cities"),
+            AIMessage(
+                content="Checking.",
+                tool_calls=[
+                    {"id": "c1", "name": "weather", "args": {"city": "NYC"}},
+                    {"id": "c2", "name": "weather", "args": {"city": "LA"}},
+                ],
+            ),
+            ToolMessage(content="Sunny", tool_call_id="c1"),
+            ToolMessage(content="Cloudy", tool_call_id="c2"),
+        ]
+        result = provider.messages_to_oci_params(
+            messages, model_id="google.gemini-2.5-flash"
+        )
+
+        # After flattening: 2 sequential pairs = 4 AI/Tool OCI messages + 1 Human
+        oci_msgs = result["messages"]
+        assert len(oci_msgs) == 5
+
+    def test_non_google_model_no_flattening(self) -> None:
+        """Non-Google model ID does not trigger flattening."""
+        from langchain_core.messages import ToolMessage
+
+        from langchain_oci.chat_models.providers.generic import GenericProvider
+
+        provider = GenericProvider()
+        messages = [
+            HumanMessage(content="Check two cities"),
+            AIMessage(
+                content="Checking.",
+                tool_calls=[
+                    {"id": "c1", "name": "weather", "args": {"city": "NYC"}},
+                    {"id": "c2", "name": "weather", "args": {"city": "LA"}},
+                ],
+            ),
+            ToolMessage(content="Sunny", tool_call_id="c1"),
+            ToolMessage(content="Cloudy", tool_call_id="c2"),
+        ]
+        result = provider.messages_to_oci_params(
+            messages, model_id="meta.llama-3.3-70b-instruct"
+        )
+
+        # No flattening: 1 Human + 1 AI (with 2 tool_calls) + 2 Tool = 4
+        oci_msgs = result["messages"]
+        assert len(oci_msgs) == 4
