@@ -48,6 +48,7 @@ from langchain_openai import ChatOpenAI
 from openai import DefaultHttpxClient
 from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
+from langchain_oci.chat_models.async_mixin import ChatOCIGenAIAsyncMixin
 from langchain_oci.chat_models.providers import (
     CohereProvider,
     GenericProvider,
@@ -84,7 +85,7 @@ def _build_headers(
     return headers
 
 
-class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
+class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
     """ChatOCIGenAI chat model integration.
 
     Setup:
