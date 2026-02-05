@@ -1651,6 +1651,61 @@ def test_cohere_v2_stream_to_text() -> None:
     assert provider.chat_stream_to_text(v1_finish) == ""
 
 
+@pytest.mark.requires("oci")
+def test_custom_endpoint_defaults_to_generic_provider() -> None:
+    """Test custom endpoints default to generic provider with warning."""
+    import warnings
+
+    oci_gen_ai_client = MagicMock()
+    endpoint_ocid = "ocid1.generativeaiendpoint.oc1.us-chicago-1.xxxxx"
+
+    # Create the instance
+    llm = ChatOCIGenAI(model_id=endpoint_ocid, client=oci_gen_ai_client)
+
+    # Warning is triggered when _provider property is accessed
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        provider = llm._provider  # Access the property to trigger warning
+
+        # Check that a warning was issued
+        assert len(w) == 1
+        assert "Using 'generic' provider for custom endpoint" in str(w[0].message)
+        assert endpoint_ocid in str(w[0].message)
+
+        # Check that it defaults to GenericProvider
+        assert provider.__class__.__name__ == "GenericProvider"
+
+
+@pytest.mark.requires("oci")
+def test_custom_endpoint_explicit_provider() -> None:
+    """Test that custom endpoints can explicitly set provider to suppress warning."""
+    import warnings
+
+    oci_gen_ai_client = MagicMock()
+    endpoint_ocid = "ocid1.generativeaiendpoint.oc1.us-chicago-1.xxxxx"
+
+    # With explicit provider, no warning should be issued
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        llm = ChatOCIGenAI(
+            model_id=endpoint_ocid, provider="generic", client=oci_gen_ai_client
+        )
+
+        # No warning should be issued when provider is explicit
+        assert len(w) == 0
+        assert llm._provider.__class__.__name__ == "GenericProvider"
+
+    # Test with cohere provider
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        llm_cohere = ChatOCIGenAI(
+            model_id=endpoint_ocid, provider="cohere", client=oci_gen_ai_client
+        )
+
+        assert len(w) == 0
+        assert llm_cohere._provider.__class__.__name__ == "CohereProvider"
+
+
 # =============================================================================
 # Flatten Parallel Tool Calls Tests
 # =============================================================================

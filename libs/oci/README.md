@@ -23,23 +23,57 @@ This repository includes two main integration categories:
 
 ## OCI Generative AI Examples
 
-### 1. Use a Chat Model
+OCI Generative AI supports two types of models:
+- **On-Demand Models**: Pre-hosted foundation models.
+- **DAC Models**: Models hosted on Dedicated AI Clusters (DAC), including custom models imported from Hugging Face or Object Storage
+
+### 1a. Use a Chat Model (On-Demand)
 
 `ChatOCIGenAI` class exposes chat models from OCI Generative AI.
 
 ```python
 from langchain_oci import ChatOCIGenAI
 
+# Using a pre-hosted on-demand model
 llm = ChatOCIGenAI(
-        model_id="MY_MODEL_ID",
-        service_endpoint="MY_SERVICE_ENDPOINT",
-        compartment_id="MY_COMPARTMENT_ID",
-        model_kwargs={"max_tokens": 1024}, # Use max_completion_tokens instead of max_tokens for OpenAI models
-        auth_profile="MY_AUTH_PROFILE",
-        is_stream=True,
-        auth_type="SECURITY_TOKEN"
-llm.invoke("Sing a ballad of LangChain.")
+    model_id="MY_MODEL_ID",  # Pre-hosted model ID
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
+    compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
+    model_kwargs={"max_tokens": 1024}, # Use max_completion_tokens instead of max_tokens for OpenAI models
+    auth_profile="MY_AUTH_PROFILE",
+    is_stream=True,
+    auth_type="SECURITY_TOKEN"
+)
+
+response = llm.invoke("Sing a ballad of LangChain.")
 ```
+
+### 1b. Use a Chat Model (Imported Model on DAC)
+
+For models you've imported and deployed on a Dedicated AI Cluster:
+
+```python
+from langchain_oci import ChatOCIGenAI
+
+# Using an imported model on Dedicated AI Cluster
+llm = ChatOCIGenAI(
+    model_id="ocid1.generativeaiendpoint.oc1.us-chicago-1.xxxxx",  # Endpoint OCID from your DAC
+    provider="generic",  # Provider type: "generic" (most models) or "cohere"
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
+    compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
+    auth_type="SECURITY_TOKEN",  # Authentication type
+    auth_profile="MY_AUTH_PROFILE",
+    model_kwargs={"temperature": 0.7, "max_tokens": 500},
+)
+
+response = llm.invoke("Hello, what is your name?")
+```
+
+**Additional Arguments for Imported Models:**
+- `model_id`: Use the **endpoint OCID** (starts with `ocid1.generativeaiendpoint`)
+- `provider`: Use `"generic"` for most models (Llama, Gemini, Grok, etc.) or `"cohere"` for Cohere models. Default to "generic" if not specified.
+- `service_endpoint`: Use regional API endpoint (not the internal cluster URL)
+
 
 ### 2. Use a Completion Model
 `OCIGenAI` class exposes LLMs from OCI Generative AI.
