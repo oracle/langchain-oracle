@@ -6,9 +6,9 @@
 import json
 import re
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from langchain_core.messages import ToolCall
+from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from pydantic import BaseModel
 
 try:
@@ -157,6 +157,67 @@ class OCIUtils:
             usage_kwargs["output_token_details"] = to_dict(completion_details)
 
         return UsageMetadata(**usage_kwargs)  # type: ignore
+
+    @staticmethod
+    def flatten_parallel_tool_calls(
+        messages: List[BaseMessage],
+    ) -> List[BaseMessage]:
+        """Flatten parallel tool calls into sequential AI->Tool pairs.
+
+        Gemini models require each function call turn to have exactly one
+        matching function response. When the model makes N parallel tool
+        calls (one AIMessage with N tool_calls followed by N ToolMessages),
+        this method splits them into N sequential (AIMessage, ToolMessage)
+        pairs so each turn has a 1:1 call-to-response mapping.
+
+        Non-Gemini models are unaffected — this is only called when needed.
+        """
+        result: List[BaseMessage] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+
+            if isinstance(msg, AIMessage) and len(msg.tool_calls or []) > 1:
+                tool_calls = msg.tool_calls
+
+                # Collect consecutive ToolMessages following this AIMessage
+                j = i + 1
+                while j < len(messages) and isinstance(messages[j], ToolMessage):
+                    j += 1
+                tool_msgs = messages[i + 1 : j]
+
+                # Map tool_call_id -> ToolMessage for correct pairing
+                tool_msg_map = {
+                    tm.tool_call_id: tm
+                    for tm in tool_msgs
+                    if isinstance(tm, ToolMessage)
+                }
+
+                # Create sequential AI -> Tool pairs
+                for idx, tc in enumerate(tool_calls):
+                    # First keeps original content; rest get placeholder
+                    content = msg.content if idx == 0 else "."
+                    if not content:
+                        content = "."
+
+                    synthetic_ai = AIMessage(
+                        content=content,
+                        tool_calls=[tc],
+                    )
+                    result.append(synthetic_ai)
+
+                    # Add matching ToolMessage
+                    tc_id = tc.get("id") or ""
+                    matching = tool_msg_map.get(tc_id)
+                    if matching:
+                        result.append(matching)
+
+                i = j  # Skip past processed ToolMessages
+            else:
+                result.append(msg)
+                i += 1
+
+        return result
 
 
 # Prefix for custom endpoint OCIDs

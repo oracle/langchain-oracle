@@ -253,6 +253,8 @@ class GenericProvider(Provider):
         Args:
             messages: List of LangChain BaseMessage objects
             **kwargs: Additional keyword arguments
+                model_id: Optional model ID for provider-specific handling.
+                    Gemini models require 1:1 function call/response pairing.
 
         Returns:
             Dict containing OCI chat parameters
@@ -260,6 +262,12 @@ class GenericProvider(Provider):
         Raises:
             ValueError: If message content is invalid
         """
+        # Gemini requires 1:1 function_call to function_response per turn.
+        # Flatten parallel tool calls into sequential pairs.
+        model_id = kwargs.get("model_id", "")
+        if model_id and model_id.startswith("google."):
+            messages = OCIUtils.flatten_parallel_tool_calls(messages)
+
         oci_messages = []
 
         for message in messages:
