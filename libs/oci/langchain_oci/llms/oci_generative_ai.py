@@ -239,6 +239,7 @@ class OCIGenAI(LLM, OCIGenAIBase):
         """Get the provider map"""
         return {
             "cohere": CohereProvider(),
+            "meta": MetaProvider(),
             "generic": GenericProvider(),
         }
 

@@ -1009,7 +1009,7 @@ def test_get_provider():
     oci_gen_ai_client = MagicMock()
     model_provider_map = {
         "cohere.command-latest": "CohereProvider",
-        "meta.llama-3.3-70b-instruct": "GenericProvider",
+        "meta.llama-3.3-70b-instruct": "MetaProvider",
         "xai.grok-3": "GenericProvider",
     }
     for model_id, provider_name in model_provider_map.items():
@@ -1064,7 +1064,7 @@ def test_v2_api_guard_for_non_cohere_providers(monkeypatch: MonkeyPatch) -> None
     """
     oci_gen_ai_client = MagicMock()
 
-    # Test with Meta model (uses GenericProvider)
+    # Test with Meta model (uses GenericProvider via MetaProvider)
     llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
 
     # Mock the provider's messages_to_oci_params to return _use_v2_api=True

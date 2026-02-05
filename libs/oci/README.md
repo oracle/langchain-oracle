@@ -24,7 +24,7 @@ This repository includes two main integration categories:
 ## OCI Generative AI Examples
 
 OCI Generative AI supports two types of models:
-- **On-Demand Models**: Pre-hosted foundation models (Meta Llama, Cohere, Google Gemini, etc.)
+- **On-Demand Models**: Pre-hosted foundation models.
 - **DAC Models**: Models hosted on Dedicated AI Clusters (DAC), including custom models imported from Hugging Face or Object Storage
 
 ### 1a. Use a Chat Model (On-Demand)
@@ -37,7 +37,7 @@ from langchain_oci import ChatOCIGenAI
 # Using a pre-hosted on-demand model
 # Using a pre-hosted on-demand model
 llm = ChatOCIGenAI(
-    model_id="MY_MODEL_ID",  # Pre-hosted model ID, for example: meta.llama-3.3-70b-instruct
+    model_id="MY_MODEL_ID",  # Pre-hosted model ID
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
     compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
     model_kwargs={"max_tokens": 1024}, # Use max_completion_tokens instead of max_tokens for OpenAI models
