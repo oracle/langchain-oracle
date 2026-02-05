@@ -51,7 +51,6 @@ from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 from langchain_oci.chat_models.providers import (
     CohereProvider,
     GenericProvider,
-    MetaProvider,
     Provider,
 )
 from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, OCIUtils
@@ -170,7 +169,6 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         """Mapping from provider name to provider instance."""
         return {
             "cohere": CohereProvider(),
-            "meta": MetaProvider(),
             "generic": GenericProvider(),
         }
 
