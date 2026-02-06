@@ -1,5 +1,5 @@
 {
-  "name": "@langchain/oracledb",
+  "name": "@oracle/langchain-oracledb",
   "version": "0.1.0",
   "description": "Oracle Database integration for LangChain.js",
   "type": "module",
