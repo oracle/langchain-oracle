@@ -3,7 +3,7 @@
 
 """Image embedding mixin for OCIGenAIEmbeddings.
 
-Provides embed_image() and embed_images() methods that convert images
+Provides embed_image() and embed_image_batch() methods that convert images
 to data URIs and call the OCI embed_text API with input_type="IMAGE".
 
 This mixin is mixed into OCIGenAIEmbeddings so that the core embeddings
@@ -59,14 +59,14 @@ class ImageEmbeddingMixin:
         Returns:
             Embedding vector for the image.
         """
-        return self.embed_images([image], mime_type=mime_type)[0]
+        return self.embed_image_batch([image], mime_type=mime_type)[0]
 
-    def embed_images(
+    def embed_image_batch(
         self,
         images: Sequence[Union[str, bytes, Path]],
         mime_type: str = "image/png",
     ) -> List[List[float]]:
-        """Embed multiple images.
+        """Embed multiple images in a batch.
 
         Each image is embedded individually (the OCI API accepts one
         image per request). Requires a multimodal embedding model.

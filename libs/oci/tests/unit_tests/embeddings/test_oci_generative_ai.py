@@ -241,7 +241,7 @@ class TestEmbedDocuments:
 
 
 # =============================================================================
-# Tests: embed_image / embed_images
+# Tests: embed_image / embed_image_batch
 # =============================================================================
 
 
@@ -275,15 +275,15 @@ class TestEmbedImages:
         result = emb.embed_image(str(img_file))
         assert result == [0.7, 0.8]
 
-    def test_embed_images_multiple(self) -> None:
-        """embed_images calls API once per image."""
+    def test_embed_image_batch_multiple(self) -> None:
+        """embed_image_batch calls API once per image."""
         emb = _make_embeddings()
         emb.client.embed_text.side_effect = [
             _mock_embed_response([[1.0, 2.0]]),
             _mock_embed_response([[3.0, 4.0]]),
             _mock_embed_response([[5.0, 6.0]]),
         ]
-        result = emb.embed_images(
+        result = emb.embed_image_batch(
             [
                 b"img1",
                 b"img2",
@@ -295,9 +295,9 @@ class TestEmbedImages:
         assert result[2] == [5.0, 6.0]
         assert emb.client.embed_text.call_count == 3
 
-    def test_embed_images_empty(self) -> None:
+    def test_embed_image_batch_empty(self) -> None:
         emb = _make_embeddings()
-        result = emb.embed_images([])
+        result = emb.embed_image_batch([])
         assert result == []
         emb.client.embed_text.assert_not_called()
 
@@ -370,11 +370,11 @@ class TestInputTypePassthrough:
         request_obj = emb.client.embed_text.call_args[0][0]
         assert request_obj.input_type is None
 
-    def test_image_type_in_embed_images(self) -> None:
-        """embed_images sets input_type=IMAGE on the request."""
+    def test_image_type_in_embed_image_batch(self) -> None:
+        """embed_image_batch sets input_type=IMAGE on the request."""
         emb = _make_embeddings()
         emb.client.embed_text.return_value = _mock_embed_response([[0.1]])
-        emb.embed_images([b"fake_png_bytes"])
+        emb.embed_image_batch([b"fake_png_bytes"])
 
         request_obj = emb.client.embed_text.call_args[0][0]
         assert request_obj.input_type == "IMAGE"

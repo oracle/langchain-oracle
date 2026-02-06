@@ -207,13 +207,13 @@ class TestImageEmbedding:
         assert len(vector) == 1536
 
     def test_embed_multiple_images(self, embeddings: OCIGenAIEmbeddings) -> None:
-        """embed_images handles multiple images."""
+        """embed_image_batch handles multiple images."""
         images = [
             create_test_image((255, 0, 0)),
             create_test_image((0, 255, 0)),
             create_test_image((0, 0, 255)),
         ]
-        vectors = embeddings.embed_images(images)
+        vectors = embeddings.embed_image_batch(images)
 
         assert len(vectors) == 3
         for v in vectors:
@@ -341,7 +341,7 @@ class TestInputType:
 
     The OCI embed API supports SEARCH_DOCUMENT, SEARCH_QUERY,
     CLASSIFICATION, and CLUSTERING input types for text.
-    IMAGE input type is set automatically by embed_image/embed_images.
+    IMAGE input type is set automatically by embed_image/embed_image_batch.
     """
 
     @pytest.mark.parametrize(
@@ -490,13 +490,13 @@ class TestMultiModelImageEmbedding:
         ids=[m[0] for m in IMAGE_MODELS_WITH_DIMS],
     )
     def test_multiple_images(self, model_id: str, expected_dims: int) -> None:
-        """embed_images works with each multimodal model."""
+        """embed_image_batch works with each multimodal model."""
         emb = make_embeddings(model_id=model_id)
         images = [
             create_test_image((255, 0, 0)),
             create_test_image((0, 255, 0)),
         ]
-        vectors = emb.embed_images(images)
+        vectors = emb.embed_image_batch(images)
         assert len(vectors) == 2
         for v in vectors:
             assert len(v) == expected_dims
