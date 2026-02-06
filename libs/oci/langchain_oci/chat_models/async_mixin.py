@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import agenerate_from_stream
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolCall
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 from langchain_oci.common.async_support import OCIAsyncClient
@@ -69,6 +69,9 @@ class ChatOCIGenAIAsyncMixin:
 
         if not self.model_id:  # type: ignore[attr-defined]
             raise ValueError("Model ID is required for chat.")
+
+        # Apply provider-specific parameter transformations
+        chat_params = self._provider.normalize_params(chat_params)  # type: ignore[attr-defined]
 
         # Build serving mode
         from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
@@ -152,10 +155,9 @@ class ChatOCIGenAIAsyncMixin:
 
         tool_calls = []
         if "tool_calls" in generation_info:
-            tool_calls = [
-                OCIUtils.convert_oci_tool_call_to_langchain(tc)
-                for tc in self._extract_tool_calls(response_data)
-            ]
+            tool_calls = self._convert_dict_tool_calls_to_langchain(
+                self._extract_tool_calls(response_data)
+            )
 
         usage_metadata = self._extract_usage_metadata(response_data)
 
@@ -285,12 +287,81 @@ class ChatOCIGenAIAsyncMixin:
         if "citations" in chat_response:
             info["citations"] = chat_response["citations"]
 
-        # Tool calls
+        # Tool calls - format directly from dict since async returns JSON dicts
         tool_calls = self._extract_tool_calls(response_data)
         if tool_calls:
-            info["tool_calls"] = self._provider.format_response_tool_calls(tool_calls)  # type: ignore[attr-defined]
+            info["tool_calls"] = self._format_tool_calls_from_dict(tool_calls)
 
         return {k: v for k, v in info.items() if v is not None}
+
+    def _format_tool_calls_from_dict(
+        self, tool_calls: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Format tool calls from async response dicts to LangChain format."""
+        import json
+
+        formatted = []
+        for tc in tool_calls:
+            # Handle both 'arguments' (Generic/Meta) and 'parameters' (Cohere) formats
+            if "arguments" in tc:
+                # Arguments is a JSON string in Generic format
+                args = tc.get("arguments", "{}")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {"_raw_arguments": args}
+            else:
+                # Cohere uses 'parameters' as a dict
+                args = tc.get("parameters", {})
+
+            formatted.append(
+                {
+                    "id": tc.get("id", ""),
+                    "function": {
+                        "name": tc.get("name", ""),
+                        "arguments": args,
+                    },
+                    "type": "function",
+                }
+            )
+        return formatted
+
+    def _convert_dict_tool_calls_to_langchain(
+        self, tool_calls: List[Dict[str, Any]]
+    ) -> List[ToolCall]:
+        """Convert dict tool calls from async response to LangChain ToolCall format."""
+        import uuid
+
+        return [
+            ToolCall(
+                name=tc.get("name", ""),
+                args=self._parse_tool_args(tc),
+                id=tc.get("id") or uuid.uuid4().hex,
+            )
+            for tc in tool_calls
+        ]
+
+    def _parse_tool_args(self, tc: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse tool call arguments from dict, handling JSON strings."""
+        import json
+
+        # Cohere uses 'parameters' as a dict
+        if "arguments" not in tc:
+            return tc.get("parameters", {})
+
+        args = tc.get("arguments", "{}")
+        if not isinstance(args, str):
+            return args
+
+        try:
+            parsed = json.loads(args)
+            # Handle double-encoded JSON
+            if isinstance(parsed, str):
+                parsed = json.loads(parsed)
+            return parsed
+        except json.JSONDecodeError:
+            return {"_raw_arguments": args}
 
     def _extract_tool_calls(self, response_data: Dict[str, Any]) -> List[Any]:
         """Extract tool calls from async response data."""

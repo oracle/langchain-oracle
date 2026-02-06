@@ -133,7 +133,9 @@ class TestChatOCIGenAIAsyncMixin:
             "modelVersion": "1.0",
         }
 
-        async def mock_chat_async(*args, **kwargs) -> AsyncIterator[Dict[str, Any]]:
+        async def mock_chat_async(
+            *args: Any, **kwargs: Any
+        ) -> AsyncIterator[Dict[str, Any]]:
             yield mock_response
 
         with patch.object(OCIAsyncClient, "chat_async", side_effect=mock_chat_async):
@@ -147,14 +149,16 @@ class TestChatOCIGenAIAsyncMixin:
     async def test_astream(self, llm):
         """Test async streaming."""
         # Mock streaming events
-        stream_events = [
+        stream_events: list[Dict[str, Any]] = [
             {"message": {"content": [{"type": "TEXT", "text": "Hello"}]}},
             {"message": {"content": [{"type": "TEXT", "text": ", "}]}},
             {"message": {"content": [{"type": "TEXT", "text": "world!"}]}},
             {"finishReason": "stop"},
         ]
 
-        async def mock_chat_async(*args, **kwargs) -> AsyncIterator[Dict[str, Any]]:
+        async def mock_chat_async(
+            *args: Any, **kwargs: Any
+        ) -> AsyncIterator[Dict[str, Any]]:
             for event in stream_events:
                 yield event
 
@@ -174,12 +178,14 @@ class TestChatOCIGenAIAsyncMixin:
         """Test that agenerate uses streaming when is_stream is True."""
         llm.is_stream = True
 
-        stream_events = [
+        stream_events: list[Dict[str, Any]] = [
             {"message": {"content": [{"type": "TEXT", "text": "Streamed!"}]}},
             {"finishReason": "stop"},
         ]
 
-        async def mock_chat_async(*args, **kwargs) -> AsyncIterator[Dict[str, Any]]:
+        async def mock_chat_async(
+            *args: Any, **kwargs: Any
+        ) -> AsyncIterator[Dict[str, Any]]:
             for event in stream_events:
                 yield event
 
@@ -276,3 +282,343 @@ class TestAsyncResponseParsing:
             assert usage["input_tokens"] == 100
             assert usage["output_tokens"] == 50
             assert usage["total_tokens"] == 150
+
+
+class TestAsyncSupportHelpers:
+    """Tests for async support helper functions."""
+
+    def test_snake_to_camel_simple(self):
+        """Test snake_case to camelCase conversion."""
+        from langchain_oci.common.async_support import _snake_to_camel
+
+        assert _snake_to_camel("hello_world") == "helloWorld"
+        assert _snake_to_camel("model_id") == "modelId"
+        assert _snake_to_camel("is_stream") == "isStream"
+
+    def test_snake_to_camel_single_word(self):
+        """Test conversion with single word (no underscore)."""
+        from langchain_oci.common.async_support import _snake_to_camel
+
+        assert _snake_to_camel("hello") == "hello"
+        assert _snake_to_camel("model") == "model"
+
+    def test_snake_to_camel_multiple_underscores(self):
+        """Test conversion with multiple underscores."""
+        from langchain_oci.common.async_support import _snake_to_camel
+
+        assert _snake_to_camel("max_output_tokens") == "maxOutputTokens"
+        assert _snake_to_camel("a_b_c_d") == "aBCD"
+
+    def test_convert_keys_to_camel_dict(self):
+        """Test recursive key conversion in dicts."""
+        from langchain_oci.common.async_support import _convert_keys_to_camel
+
+        input_dict = {
+            "model_id": "test",
+            "is_stream": True,
+            "nested_object": {"inner_key": "value"},
+        }
+        expected = {
+            "modelId": "test",
+            "isStream": True,
+            "nestedObject": {"innerKey": "value"},
+        }
+        assert _convert_keys_to_camel(input_dict) == expected
+
+    def test_convert_keys_to_camel_list(self):
+        """Test key conversion in lists."""
+        from langchain_oci.common.async_support import _convert_keys_to_camel
+
+        input_list = [{"item_one": 1}, {"item_two": 2}]
+        expected = [{"itemOne": 1}, {"itemTwo": 2}]
+        assert _convert_keys_to_camel(input_list) == expected
+
+    def test_convert_keys_to_camel_primitives(self):
+        """Test that primitives are returned unchanged."""
+        from langchain_oci.common.async_support import _convert_keys_to_camel
+
+        assert _convert_keys_to_camel("hello") == "hello"
+        assert _convert_keys_to_camel(42) == 42
+        assert _convert_keys_to_camel(None) is None
+        assert _convert_keys_to_camel(True) is True
+
+
+class TestAsyncClientErrorHandling:
+    """Tests for OCIAsyncClient error handling."""
+
+    def test_ensure_signer_raises_on_invalid_config(self):
+        """Test that invalid config raises an error."""
+        invalid_config = {
+            "tenancy": "invalid",
+            "user": "invalid",
+            "fingerprint": "invalid",
+            "key_file": "/nonexistent/path",
+        }
+
+        with pytest.raises(ValueError, match="Failed to create OCI signer"):
+            OCIAsyncClient(
+                service_endpoint="https://test.endpoint.com",
+                signer=None,
+                config=invalid_config,
+            )
+
+    @pytest.mark.asyncio
+    async def test_chat_async_http_error(self, mock_signer):
+        """Test that HTTP errors are properly raised."""
+        from contextlib import asynccontextmanager
+
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+
+        class MockResponse:
+            status = 400
+
+            async def text(self):
+                return "Bad Request"
+
+        @asynccontextmanager
+        async def mock_arequest(*args, **kwargs):
+            yield MockResponse()
+
+        with patch.object(client, "_arequest", mock_arequest):
+            with pytest.raises(RuntimeError, match="OCI GenAI request failed"):
+                async for _ in client.chat_async(
+                    compartment_id="test",
+                    chat_request_dict={},
+                    serving_mode_dict={},
+                ):
+                    pass
+
+
+class TestAsyncStreamParsing:
+    """Tests for SSE stream parsing."""
+
+    @pytest.mark.asyncio
+    async def test_parse_sse_async_valid_data(self, mock_signer):
+        """Test parsing valid SSE data."""
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+
+        class MockStreamReader:
+            def __init__(self, lines):
+                self.lines = iter(lines)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self.lines)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        sse_lines = [
+            b'data: {"message": "hello"}',
+            b"",  # Empty line should be skipped
+            b'data: {"message": "world"}',
+        ]
+
+        stream = MockStreamReader(sse_lines)
+        events = []
+        async for event in client._parse_sse_async(stream):  # type: ignore[arg-type]
+            events.append(event)
+
+        assert len(events) == 2
+        assert events[0] == {"message": "hello"}
+        assert events[1] == {"message": "world"}
+
+    @pytest.mark.asyncio
+    async def test_parse_sse_async_done_marker(self, mock_signer):
+        """Test that [DONE] marker is skipped."""
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+
+        class MockStreamReader:
+            def __init__(self, lines):
+                self.lines = iter(lines)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self.lines)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        sse_lines = [
+            b'data: {"message": "hello"}',
+            b"data: [DONE]",
+        ]
+
+        stream = MockStreamReader(sse_lines)
+        events = []
+        async for event in client._parse_sse_async(stream):  # type: ignore[arg-type]
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0] == {"message": "hello"}
+
+    @pytest.mark.asyncio
+    async def test_parse_sse_async_invalid_json(self, mock_signer):
+        """Test that invalid JSON is skipped."""
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+
+        class MockStreamReader:
+            def __init__(self, lines):
+                self.lines = iter(lines)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self.lines)
+                except StopIteration:
+                    raise StopAsyncIteration
+
+        sse_lines = [
+            b'data: {"valid": "json"}',
+            b"data: {invalid json}",
+            b'data: {"another": "valid"}',
+        ]
+
+        stream = MockStreamReader(sse_lines)
+        events = []
+        async for event in client._parse_sse_async(stream):  # type: ignore[arg-type]
+            events.append(event)
+
+        assert len(events) == 2
+        assert events[0] == {"valid": "json"}
+        assert events[1] == {"another": "valid"}
+
+
+class TestAsyncGenerationEdgeCases:
+    """Tests for async generation edge cases."""
+
+    @pytest.fixture
+    def llm_with_mock(self, mock_oci_client, mock_signer):
+        """Create a ChatOCIGenAI instance with mocked dependencies."""
+        llm = ChatOCIGenAI(
+            model_id="meta.llama-3-70b-instruct",
+            compartment_id="test-compartment",
+            service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+            client=mock_oci_client,
+        )
+        llm.oci_signer = mock_signer
+        llm.oci_config = {}
+        return llm
+
+    @pytest.mark.asyncio
+    async def test_agenerate_no_response_raises_error(self, llm_with_mock):
+        """Test that missing response raises RuntimeError."""
+
+        async def mock_chat_async_empty(*args, **kwargs):
+            return
+            yield  # Make this a generator that yields nothing
+
+        with patch.object(
+            OCIAsyncClient, "chat_async", side_effect=mock_chat_async_empty
+        ):
+            messages = [HumanMessage(content="Hello")]
+            with pytest.raises(RuntimeError, match="No response received"):
+                await llm_with_mock._agenerate(messages)
+
+    @pytest.mark.asyncio
+    async def test_astream_with_run_manager(self, llm_with_mock):
+        """Test streaming with callback manager."""
+        from unittest.mock import AsyncMock
+
+        stream_events: list[Dict[str, Any]] = [
+            {"message": {"content": [{"type": "TEXT", "text": "Hello"}]}},
+            {"finishReason": "stop"},
+        ]
+
+        async def mock_chat_async(*args, **kwargs):
+            for event in stream_events:
+                yield event
+
+        mock_run_manager = AsyncMock()
+        mock_run_manager.on_llm_new_token = AsyncMock()
+
+        with patch.object(OCIAsyncClient, "chat_async", side_effect=mock_chat_async):
+            messages = [HumanMessage(content="Hello")]
+            chunks = []
+            async for chunk in llm_with_mock._astream(
+                messages, run_manager=mock_run_manager
+            ):
+                chunks.append(chunk)
+
+            # Should have called on_llm_new_token for the content chunk
+            assert mock_run_manager.on_llm_new_token.called
+
+    def test_extract_content_empty_response(self, llm_with_mock):
+        """Test content extraction with empty response."""
+        response_data: Dict[str, Any] = {"chatResponse": {}}
+        content = llm_with_mock._extract_content_from_response(response_data)
+        assert content == ""
+
+    def test_extract_content_string_content(self, llm_with_mock):
+        """Test content extraction when content is a string."""
+        response_data = {
+            "chatResponse": {"choices": [{"message": {"content": "direct string"}}]}
+        }
+        content = llm_with_mock._extract_content_from_response(response_data)
+        assert content == "direct string"
+
+    def test_extract_tool_calls_cohere_v1(self, llm_with_mock):
+        """Test tool call extraction from Cohere V1 format."""
+        response_data = {
+            "chatResponse": {
+                "toolCalls": [{"name": "search", "parameters": {"query": "test"}}]
+            }
+        }
+        tool_calls = llm_with_mock._extract_tool_calls(response_data)
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "search"
+
+    def test_extract_tool_calls_cohere_v2(self, llm_with_mock):
+        """Test tool call extraction from Cohere V2 format."""
+        response_data = {
+            "chatResponse": {
+                "message": {"toolCalls": [{"name": "calculator", "arguments": "{}"}]}
+            }
+        }
+        tool_calls = llm_with_mock._extract_tool_calls(response_data)
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "calculator"
+
+    def test_extract_tool_calls_empty(self, llm_with_mock):
+        """Test tool call extraction with no tool calls."""
+        response_data: Dict[str, Any] = {"chatResponse": {}}
+        tool_calls = llm_with_mock._extract_tool_calls(response_data)
+        assert tool_calls == []
+
+    def test_extract_generation_info_with_citations(self, llm_with_mock):
+        """Test generation info extraction with Cohere documents/citations."""
+        response_data = {
+            "chatResponse": {
+                "finishReason": "stop",
+                "documents": [{"id": "doc1", "snippet": "test"}],
+                "citations": [{"start": 0, "end": 5, "document_ids": ["doc1"]}],
+            }
+        }
+        info = llm_with_mock._extract_generation_info(response_data)
+        assert info["finish_reason"] == "stop"
+        assert "documents" in info
+        assert "citations" in info
+
+    def test_extract_usage_metadata_none(self, llm_with_mock):
+        """Test usage metadata extraction with no usage data."""
+        response_data: Dict[str, Any] = {"chatResponse": {}}
+        usage = llm_with_mock._extract_usage_metadata(response_data)
+        assert usage is None
