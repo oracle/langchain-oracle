@@ -119,10 +119,14 @@ class GenericProvider(Provider):
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract text from Meta chat response."""
-        message = response.data.chat_response.choices[0].message
-        content = message.content[0] if message.content else None
-        return content.text if content else ""
+        """Extract text from chat response, or '' if unavailable."""
+        chat_resp = getattr(response.data, "chat_response", None)
+        choices = getattr(chat_resp, "choices", None)
+        if not choices:
+            return ""
+        msg = getattr(choices[0], "message", None)
+        content = msg.content[0] if msg and msg.content else None
+        return getattr(content, "text", "") or ""
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
@@ -136,11 +140,19 @@ class GenericProvider(Provider):
         return "finishReason" in event_data
 
     def chat_generation_info(self, response: Any) -> Dict[str, Any]:
-        """Extract generation metadata from Meta chat response."""
+        """Extract generation metadata from chat response."""
+        choices = response.data.chat_response.choices
+        finish_reason = choices[0].finish_reason if choices else None
         generation_info: Dict[str, Any] = {
-            "finish_reason": response.data.chat_response.choices[0].finish_reason,
+            "finish_reason": finish_reason,
             "time_created": str(response.data.chat_response.time_created),
         }
+
+        # Surface reasoning_content from reasoning models (xAI Grok, OpenAI o1).
+        if choices and choices[0].message is not None:
+            reasoning = getattr(choices[0].message, "reasoning_content", None)
+            if reasoning:
+                generation_info["reasoning_content"] = reasoning
 
         # Include token usage if available
         if (
@@ -162,8 +174,11 @@ class GenericProvider(Provider):
         return {"finish_reason": event_data["finishReason"]}
 
     def chat_tool_calls(self, response: Any) -> List[Any]:
-        """Retrieve tool calls from Meta chat response."""
-        return response.data.chat_response.choices[0].message.tool_calls
+        """Retrieve tool calls from chat response."""
+        choices = response.data.chat_response.choices
+        if not choices or choices[0].message is None:
+            return []
+        return choices[0].message.tool_calls
 
     def chat_stream_tool_calls(self, event_data: Dict) -> List[Any]:
         """Retrieve tool calls from Meta stream event."""
@@ -238,6 +253,8 @@ class GenericProvider(Provider):
         Args:
             messages: List of LangChain BaseMessage objects
             **kwargs: Additional keyword arguments
+                model_id: Optional model ID for provider-specific handling.
+                    Gemini models require 1:1 function call/response pairing.
 
         Returns:
             Dict containing OCI chat parameters
@@ -245,6 +262,12 @@ class GenericProvider(Provider):
         Raises:
             ValueError: If message content is invalid
         """
+        # Gemini requires 1:1 function_call to function_response per turn.
+        # Flatten parallel tool calls into sequential pairs.
+        model_id = kwargs.get("model_id", "")
+        if model_id and model_id.startswith("google."):
+            messages = OCIUtils.flatten_parallel_tool_calls(messages)
+
         oci_messages = []
 
         for message in messages:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Mapping, Optional
 
@@ -171,7 +172,13 @@ class OCIGenAIBase(BaseModel, ABC):
                 "the model_id to derive the provider."
             )
         elif self.model_id.startswith(CUSTOM_ENDPOINT_PREFIX):
-            raise ValueError("provider is required for custom endpoints.")
+            warnings.warn(
+                f"Using 'generic' provider for custom endpoint {self.model_id}. "
+                "If this is a Cohere model, explicitly set provider='cohere'.",
+                UserWarning,
+                stacklevel=2,
+            )
+            provider = "generic"
         else:
             provider = self.model_id.split(".")[0].lower()
             # Use generic provider for non-custom endpoint
