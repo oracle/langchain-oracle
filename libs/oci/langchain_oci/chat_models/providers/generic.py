@@ -562,3 +562,19 @@ class MetaProvider(GenericProvider):
     """Provider for Meta models. This provider is for backward compatibility."""
 
     pass
+
+
+class OpenAIProvider(GenericProvider):
+    """Provider for OpenAI models (GPT-4, GPT-5, o1, o3, etc.).
+
+    Handles OpenAI-specific parameter requirements:
+    - max_tokens → max_completion_tokens
+    """
+
+    param_transforms = {"max_tokens": "max_completion_tokens"}
+
+
+class GoogleProvider(GenericProvider):
+    """Provider for Google models (Gemini)."""
+
+    pass
