@@ -38,12 +38,12 @@
   "license": "MIT",
   "dependencies": {
     "htmlparser2": "^10.0.0",
-    "oracledb": "^6.10.0",
     "uuid": "^10.0.0"
   },
   "peerDependencies": {
     "@langchain/core": "^1.0.0",
-    "@langchain/textsplitters": "^1.0.0"
+    "@langchain/textsplitters": "^1.0.0",
+    "oracledb": "^6.10.0"
   },
   "devDependencies": {
     "@langchain/core": "^1.0.0",
