@@ -26,6 +26,7 @@ const generateFiles = () => {
       const nrOfDots = key.split("/").length - 1;
       const relativePath = "../".repeat(nrOfDots) || "./";
       const compiledPath = `${relativePath}dist/${value}.js`;
+      const declarationPath = `${relativePath}dist/${value}.js`;
       return [
         [
           `${key}.cjs`,
@@ -33,6 +34,7 @@ const generateFiles = () => {
         ],
         [`${key}.js`, `export * from '${compiledPath}'`],
         [`${key}.d.ts`, `export * from '${compiledPath}'`],
+        [`${key}.d.cts`, `export * from '${declarationPath}'`],
       ];
     }
   );

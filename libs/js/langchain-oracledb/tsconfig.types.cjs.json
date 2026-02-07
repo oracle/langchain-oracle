@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.cjs.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist-types-cjs",
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}
+
