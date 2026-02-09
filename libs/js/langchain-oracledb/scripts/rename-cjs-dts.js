@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 
+// Recursively visit every file inside `dir`, invoking `handler` on each file path.
+// Used twice below: first to rename `.d.ts` to `.d.cts`, then to copy those `.d.cts` files into `dist/`.
 function walk(dir, handler) {
   for (const file of fs.readdirSync(dir)) {
     const full = path.join(dir, file);
