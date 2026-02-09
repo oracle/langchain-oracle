@@ -62,7 +62,7 @@ class CohereProvider(Provider):
         }
 
         self.oci_response_json_schema = models.ResponseJsonSchema
-        self._cohere_response_json_format_class = models.CohereResponseJsonFormat
+        self.oci_cohere_response_json_format = models.CohereResponseJsonFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
 
         # V2 API classes for vision support (cohere.command-a-vision)
@@ -144,7 +144,7 @@ class CohereProvider(Provider):
         if not isinstance(schema_dict, dict):
             raise ValueError(f"Schema must be a dict, got {type(schema_dict)}")
 
-        return self._cohere_response_json_format_class(schema=schema_dict)
+        return self.oci_cohere_response_json_format(schema=schema_dict)
 
     def chat_response_to_text(self, response: Any) -> str:
         """Extract text from a Cohere chat response (V1 or V2)."""
