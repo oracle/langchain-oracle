@@ -62,7 +62,7 @@ class CohereProvider(Provider):
         }
 
         self.oci_response_json_schema = models.ResponseJsonSchema
-        self.oci_json_schema_response_format = models.JsonSchemaResponseFormat
+        self._cohere_response_json_format_class = models.CohereResponseJsonFormat
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_COHERE
 
         # V2 API classes for vision support (cohere.command-a-vision)
@@ -113,6 +113,38 @@ class CohereProvider(Provider):
                 "Please upgrade to the latest version to use vision features with "
                 "Cohere models."
             ) from e
+
+    def oci_json_schema_response_format(self, json_schema: Any) -> Any:
+        """Create CohereResponseJsonFormat with the schema dict.
+
+        CohereResponseJsonFormat expects a plain dict for the schema parameter.
+        This method extracts the schema dict from the ResponseJsonSchema object.
+
+        Args:
+            json_schema: ResponseJsonSchema object or dict
+
+        Returns:
+            CohereResponseJsonFormat object
+
+        Raises:
+            ValueError: If json_schema is None or invalid
+        """
+        if json_schema is None:
+            raise ValueError("json_schema cannot be None")
+
+        # Extract the actual schema dict from the ResponseJsonSchema object
+        # CohereResponseJsonFormat expects: schema={"type": "object", "properties":...}
+        if hasattr(json_schema, "schema"):
+            schema_dict = json_schema.schema
+            if schema_dict is None:
+                raise ValueError("ResponseJsonSchema.schema cannot be None")
+        else:
+            schema_dict = json_schema
+
+        if not isinstance(schema_dict, dict):
+            raise ValueError(f"Schema must be a dict, got {type(schema_dict)}")
+
+        return self._cohere_response_json_format_class(schema=schema_dict)
 
     def chat_response_to_text(self, response: Any) -> str:
         """Extract text from a Cohere chat response (V1 or V2)."""

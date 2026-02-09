@@ -156,6 +156,60 @@ def test_with_structured_output_json_schema_nested_refs():
 
 
 @pytest.mark.requires("oci")
+def test_with_structured_output_json_schema_cohere():
+    """Test with_structured_output with json_schema method for Cohere models."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="cohere.command-r-08-2024", client=oci_gen_ai_client)
+
+    from pydantic import BaseModel, Field
+
+    class ProductInfo(BaseModel):
+        """Product information"""
+
+        product_name: str = Field(description="Name of the product")
+        price: float = Field(description="Price in USD")
+        in_stock: bool = Field(description="Whether product is available")
+
+    structured_llm = llm.with_structured_output(
+        schema=ProductInfo, method="json_schema"
+    )
+
+    # The structured LLM should be created without errors
+    assert structured_llm is not None
+
+
+@pytest.mark.requires("oci")
+def test_cohere_json_schema_response_format():
+    """Test Cohere provider's oci_json_schema_response_format method."""
+    from oci.generative_ai_inference import models
+
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    # Test with ResponseJsonSchema object
+    response_json_schema = models.ResponseJsonSchema(
+        name="TestSchema",
+        description="Test",
+        schema={"type": "object", "properties": {"name": {"type": "string"}}},
+        is_strict=True,
+    )
+
+    result = provider.oci_json_schema_response_format(json_schema=response_json_schema)
+
+    # Verify it returns CohereResponseJsonFormat
+    assert isinstance(result, models.CohereResponseJsonFormat)
+    assert result.type == "JSON_OBJECT"
+    assert result.schema == {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+    }
+
+    # Verify no double nesting
+    assert "schema" not in result.schema
+
+
+@pytest.mark.requires("oci")
 def test_response_format_json_schema_object():
     """Test response_format with JsonSchemaResponseFormat object."""
     from oci.generative_ai_inference import models

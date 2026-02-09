@@ -218,8 +218,7 @@ def test_with_structured_output_json_mode(model_id: str):
     "model_id",
     [
         "meta.llama-3.3-70b-instruct",
-        # Note: Cohere models use CohereResponseFormat, not JsonSchemaResponseFormat
-        # so json_schema method is not supported for Cohere models
+        "cohere.command-r-08-2024",
     ],
 )
 def test_with_structured_output_json_schema(model_id: str):
@@ -228,8 +227,7 @@ def test_with_structured_output_json_schema(model_id: str):
     This verifies that JSON schema mode works with the OCI API and properly
     constrains the output to match the provided schema.
 
-    Note: This test only runs with Meta Llama models as Cohere models require
-    a different response format type (CohereResponseFormat vs JsonSchemaResponseFormat).
+    Supports both Generic models (Meta, Mistral) and Cohere models.
     """
 
     class Product(BaseModel):
