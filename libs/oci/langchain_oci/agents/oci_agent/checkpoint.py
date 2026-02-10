@@ -174,7 +174,7 @@ def _serialize_message(msg: BaseMessage) -> dict[str, Any]:
     Returns:
         Dictionary representation.
     """
-    base = {
+    base: dict[str, Any] = {
         "type": msg.__class__.__name__,
         "content": msg.content,
     }
@@ -518,7 +518,10 @@ class LangGraphCheckpointerAdapter(BaseCheckpointer):
         config = self._make_config(thread_id)
         try:
             for lg_tuple in self._lg_checkpointer.list(config):
-                lg_checkpoint = lg_tuple.checkpoint if hasattr(lg_tuple, "checkpoint") else lg_tuple
+                if hasattr(lg_tuple, "checkpoint"):
+                    lg_checkpoint = lg_tuple.checkpoint
+                else:
+                    lg_checkpoint = lg_tuple
                 channel_values = lg_checkpoint.get("channel_values", {})
                 messages = channel_values.get("messages", [])
                 serialized = tuple(_serialize_message(m) for m in messages)

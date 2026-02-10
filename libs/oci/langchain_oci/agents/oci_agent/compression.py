@@ -81,7 +81,7 @@ def compress_messages(
     if config.strategy == CompressionStrategy.SMART_TRIM:
         return _smart_trim_compress(messages, config)
 
-    return CompressionResult(messages=messages, dropped_count=0)
+    raise ValueError(f"Unknown compression strategy: {config.strategy}")
 
 
 def _fixed_window_compress(
@@ -117,17 +117,12 @@ def _smart_trim_compress(
     - Human message + following AI response
     """
     from langchain_core.messages import (
-        AIMessage,
-        HumanMessage,
         SystemMessage,
-        ToolMessage,
     )
 
     groups = _identify_message_groups(list(messages))
 
-    system_groups = [
-        g for g in groups if any(isinstance(m, SystemMessage) for m in g)
-    ]
+    system_groups = [g for g in groups if any(isinstance(m, SystemMessage) for m in g)]
     other_groups = [
         g for g in groups if not any(isinstance(m, SystemMessage) for m in g)
     ]
