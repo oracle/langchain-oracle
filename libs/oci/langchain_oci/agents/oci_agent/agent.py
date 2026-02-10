@@ -276,14 +276,14 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     def _init_state(
         self,
         input_data: Union[str, dict],
-        message_history: list[dict] | None = None,
+        message_history: list[Union[dict, BaseMessage]] | None = None,
     ) -> AgentState:
         """Initialize agent state from input.
 
         Args:
             input_data: User query string or dict with messages.
             message_history: Optional conversation history as list of
-                {"role": "user"|"assistant", "content": "..."} dicts.
+                BaseMessage objects or {"role": "user"|"assistant", "content": "..."} dicts.
 
         Returns:
             Initial AgentState.
@@ -297,14 +297,19 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         # Add conversation history if provided
         if message_history:
             for msg in message_history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role in ("human", "user"):
-                    messages.append(HumanMessage(content=content))
-                elif role in ("ai", "assistant"):
-                    messages.append(AIMessage(content=content))
-                elif role == "system":
-                    messages.append(SystemMessage(content=content))
+                if isinstance(msg, BaseMessage):
+                    # Native LangChain message - use directly
+                    messages.append(msg)
+                elif isinstance(msg, dict):
+                    # Dict format
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if role in ("human", "user"):
+                        messages.append(HumanMessage(content=content))
+                    elif role in ("ai", "assistant"):
+                        messages.append(AIMessage(content=content))
+                    elif role == "system":
+                        messages.append(SystemMessage(content=content))
 
         # Handle input format
         if isinstance(input_data, str):
@@ -426,7 +431,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         input_data: Union[str, dict],
         config: RunnableConfig | None = None,
         *,
-        message_history: list[dict] | None = None,
+        message_history: list[Union[dict, BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> AgentResult:
         """Run agent to completion.
@@ -435,7 +440,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             input_data: User query string or dict with messages.
             config: Optional runnable configuration.
             message_history: Optional conversation history as list of
-                {"role": "user"|"assistant", "content": "..."} dicts.
+                BaseMessage objects or {"role": "...", "content": "..."} dicts.
             thread_id: Optional thread identifier for checkpointing.
                 If provided with a checkpointer, enables persistent
                 conversations that can be resumed.
@@ -575,7 +580,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         input_data: Union[str, dict],
         config: RunnableConfig | None = None,
         *,
-        message_history: list[dict] | None = None,
+        message_history: list[Union[dict, BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> Iterator[AgentEvent]:
         """Stream agent events during execution.
@@ -586,7 +591,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             input_data: User query string or dict with messages.
             config: Optional runnable configuration.
             message_history: Optional conversation history as list of
-                {"role": "user"|"assistant", "content": "..."} dicts.
+                BaseMessage objects or {"role": "...", "content": "..."} dicts.
             thread_id: Optional thread identifier for checkpointing.
                 If provided with a checkpointer, enables persistent
                 conversations that can be resumed.
