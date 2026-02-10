@@ -44,7 +44,9 @@ from langchain_oci.agents.oci_agent.checkpoint import (
     BaseCheckpointer,
     Checkpoint,
     FileCheckpointer,
+    LangGraphCheckpointerAdapter,
     MemoryCheckpointer,
+    wrap_checkpointer,
 )
 from langchain_oci.agents.oci_agent.compression import (
     CompressionConfig,
@@ -144,4 +146,6 @@ __all__ = [
     "Checkpoint",
     "MemoryCheckpointer",
     "FileCheckpointer",
+    "LangGraphCheckpointerAdapter",
+    "wrap_checkpointer",
 ]

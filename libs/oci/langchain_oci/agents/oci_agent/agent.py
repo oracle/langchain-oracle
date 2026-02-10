@@ -116,6 +116,7 @@ from langchain_oci.agents.oci_agent.checkpoint import (
     BaseCheckpointer,
     Checkpoint,
     MemoryCheckpointer,
+    wrap_checkpointer,
 )
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_oci.common.auth import OCIAuthType
@@ -218,7 +219,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             max_messages=max_messages,
         )
         self._hooks = hooks or AgentHooks()
-        self._checkpointer = checkpointer
+        self._checkpointer = wrap_checkpointer(checkpointer) if checkpointer else None
         self._confidence_signals: list[ConfidenceSignal] = []
 
         # Build model kwargs

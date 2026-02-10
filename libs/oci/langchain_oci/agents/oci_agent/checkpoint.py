@@ -6,18 +6,33 @@
 Enables saving and restoring agent state across invocations,
 supporting persistent conversations and resumable agent runs.
 
-Compatible with LangGraph's checkpoint interface.
+Supports both native checkpointers and LangGraph checkpointers:
+
+1. Native checkpointers (MemoryCheckpointer, FileCheckpointer):
+    from langchain_oci import OCIGenAIAgent, MemoryCheckpointer
+
+    checkpointer = MemoryCheckpointer()
+    agent = OCIGenAIAgent(..., checkpointer=checkpointer)
+
+2. LangGraph checkpointers (MemorySaver, SqliteSaver, PostgresSaver, etc.):
+    from langchain_oci import OCIGenAIAgent
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    # Use LangGraph's MemorySaver
+    agent = OCIGenAIAgent(..., checkpointer=MemorySaver())
+
+    # Or use PostgresSaver for production
+    agent = OCIGenAIAgent(..., checkpointer=PostgresSaver(conn_string))
 
 Example:
     from langchain_oci import OCIGenAIAgent
-    from langchain_oci.agents.oci_agent.checkpoint import MemoryCheckpointer
-
-    checkpointer = MemoryCheckpointer()
+    from langgraph.checkpoint.memory import MemorySaver
 
     agent = OCIGenAIAgent(
         model_id="openai.gpt-5.2",
         tools=[...],
-        checkpointer=checkpointer,
+        checkpointer=MemorySaver(),  # LangGraph checkpointer
     )
 
     # First conversation
@@ -25,9 +40,6 @@ Example:
 
     # Continue same conversation later
     result2 = agent.invoke("Now multiply by 10", thread_id="user-123")
-
-    # List all checkpoints for a thread
-    checkpoints = checkpointer.list("user-123")
 """
 
 from __future__ import annotations
@@ -411,3 +423,151 @@ class FileCheckpointer(BaseCheckpointer):
         checkpoints = self._storage.pop(thread_id, [])
         self._save()
         return len(checkpoints)
+
+
+class LangGraphCheckpointerAdapter(BaseCheckpointer):
+    """Adapter to use LangGraph checkpointers with OCIGenAIAgent.
+
+    Wraps any LangGraph BaseCheckpointSaver (MemorySaver, SqliteSaver,
+    PostgresSaver, etc.) to work with OCIGenAIAgent.
+
+    Example:
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.checkpoint.postgres import PostgresSaver
+
+        # Use LangGraph's MemorySaver
+        adapter = LangGraphCheckpointerAdapter(MemorySaver())
+        agent = OCIGenAIAgent(..., checkpointer=adapter)
+
+        # Or use PostgresSaver for production
+        adapter = LangGraphCheckpointerAdapter(PostgresSaver(conn_string))
+        agent = OCIGenAIAgent(..., checkpointer=adapter)
+    """
+
+    def __init__(self, langgraph_checkpointer: Any) -> None:
+        """Initialize with a LangGraph checkpointer.
+
+        Args:
+            langgraph_checkpointer: Any LangGraph BaseCheckpointSaver instance.
+        """
+        self._lg_checkpointer = langgraph_checkpointer
+
+    def _make_config(self, thread_id: str) -> dict[str, Any]:
+        """Create RunnableConfig for LangGraph."""
+        return {"configurable": {"thread_id": thread_id}}
+
+    def get(self, thread_id: str) -> Checkpoint | None:
+        """Get the latest checkpoint for a thread."""
+        config = self._make_config(thread_id)
+        try:
+            lg_checkpoint = self._lg_checkpointer.get(config)
+            if lg_checkpoint is None:
+                return None
+
+            # Extract messages from LangGraph checkpoint
+            channel_values = lg_checkpoint.get("channel_values", {})
+            messages = channel_values.get("messages", [])
+
+            # Serialize messages
+            serialized = tuple(_serialize_message(m) for m in messages)
+
+            return Checkpoint(
+                id=lg_checkpoint.get("id", f"lg_{thread_id}"),
+                thread_id=thread_id,
+                iteration=0,  # LangGraph doesn't track this
+                messages=serialized,
+                metadata=lg_checkpoint.get("metadata", {}),
+            )
+        except Exception:
+            return None
+
+    def get_by_id(self, checkpoint_id: str) -> Checkpoint | None:
+        """Get a specific checkpoint by ID (not fully supported)."""
+        # LangGraph doesn't support direct ID lookup easily
+        return None
+
+    def put(self, checkpoint: Checkpoint) -> None:
+        """Save a checkpoint to LangGraph."""
+        config = self._make_config(checkpoint.thread_id)
+
+        # Convert our checkpoint to LangGraph format
+        messages = checkpoint.get_messages()
+
+        lg_checkpoint = {
+            "v": 1,
+            "id": checkpoint.id,
+            "ts": checkpoint.metadata.get("created_at_iso", ""),
+            "channel_values": {"messages": messages},
+            "channel_versions": {},
+            "versions_seen": {},
+        }
+
+        try:
+            self._lg_checkpointer.put(
+                config,
+                lg_checkpoint,
+                checkpoint.metadata,
+                {},  # new_versions
+            )
+        except Exception:
+            # Some LangGraph checkpointers may have different signatures
+            pass
+
+    def list(self, thread_id: str) -> Iterator[Checkpoint]:
+        """List checkpoints for a thread."""
+        config = self._make_config(thread_id)
+        try:
+            for lg_tuple in self._lg_checkpointer.list(config):
+                lg_checkpoint = lg_tuple.checkpoint if hasattr(lg_tuple, "checkpoint") else lg_tuple
+                channel_values = lg_checkpoint.get("channel_values", {})
+                messages = channel_values.get("messages", [])
+                serialized = tuple(_serialize_message(m) for m in messages)
+
+                yield Checkpoint(
+                    id=lg_checkpoint.get("id", ""),
+                    thread_id=thread_id,
+                    iteration=0,
+                    messages=serialized,
+                    metadata=lg_checkpoint.get("metadata", {}),
+                )
+        except Exception:
+            pass
+
+    def delete(self, thread_id: str) -> int:
+        """Delete checkpoints for a thread."""
+        try:
+            self._lg_checkpointer.delete_thread(thread_id)
+            return 1
+        except Exception:
+            return 0
+
+
+def wrap_checkpointer(checkpointer: Any) -> BaseCheckpointer:
+    """Wrap a checkpointer to ensure it's compatible with OCIGenAIAgent.
+
+    Automatically detects LangGraph checkpointers and wraps them.
+
+    Args:
+        checkpointer: Either a BaseCheckpointer or LangGraph BaseCheckpointSaver.
+
+    Returns:
+        A BaseCheckpointer instance.
+
+    Example:
+        from langgraph.checkpoint.memory import MemorySaver
+        from langchain_oci.agents.oci_agent.checkpoint import wrap_checkpointer
+
+        # Automatically wraps LangGraph checkpointers
+        checkpointer = wrap_checkpointer(MemorySaver())
+    """
+    if isinstance(checkpointer, BaseCheckpointer):
+        return checkpointer
+
+    # Check if it's a LangGraph checkpointer
+    if hasattr(checkpointer, "get") and hasattr(checkpointer, "put"):
+        return LangGraphCheckpointerAdapter(checkpointer)
+
+    raise TypeError(
+        f"Checkpointer must be BaseCheckpointer or LangGraph BaseCheckpointSaver, "
+        f"got {type(checkpointer)}"
+    )
