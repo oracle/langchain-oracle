@@ -1673,3 +1673,108 @@ class TestAgentLangGraphNode:
             assert isinstance(result, dict)
             assert "final_answer" in result
             assert "messages" in result
+
+
+class TestAsyncToolExecution:
+    """Tests for async tool execution functionality."""
+
+    def test_aexecute_tool_exists(self):
+        """Test _aexecute_tool method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "_aexecute_tool")
+
+    @pytest.mark.asyncio
+    async def test_aexecute_tool_with_sync_tool(self):
+        """Test async tool execution falls back to sync for non-async tools."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+        from langchain_core.tools import tool
+
+        @tool
+        def sync_tool(x: str) -> str:
+            """A sync tool."""
+            return f"result: {x}"
+
+        # Create mock agent
+        with patch.object(OCIGenAIAgent, "__init__", lambda self: None):
+            agent = OCIGenAIAgent.__new__(OCIGenAIAgent)
+            agent._tools = {"sync_tool": sync_tool}
+
+            # Execute tool async
+            execution = await agent._aexecute_tool(
+                "sync_tool", "tc_123", {"x": "test"}
+            )
+
+            assert execution.success is True
+            assert execution.result == "result: test"
+            assert execution.tool_name == "sync_tool"
+            assert execution.tool_call_id == "tc_123"
+            assert execution.duration_ms > 0
+
+    @pytest.mark.asyncio
+    async def test_aexecute_tool_with_async_tool(self):
+        """Test async tool execution uses native ainvoke when available."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+        import asyncio
+
+        # Create a mock tool with ainvoke
+        async_tool = MagicMock()
+        async_tool.name = "async_tool"
+
+        async def mock_ainvoke(args):
+            await asyncio.sleep(0.001)  # Simulate async work
+            return f"async result: {args.get('x', '')}"
+
+        async_tool.ainvoke = mock_ainvoke
+
+        # Create mock agent
+        with patch.object(OCIGenAIAgent, "__init__", lambda self: None):
+            agent = OCIGenAIAgent.__new__(OCIGenAIAgent)
+            agent._tools = {"async_tool": async_tool}
+
+            # Execute tool async
+            execution = await agent._aexecute_tool(
+                "async_tool", "tc_456", {"x": "test"}
+            )
+
+            assert execution.success is True
+            assert execution.result == "async result: test"
+            assert execution.tool_name == "async_tool"
+
+    @pytest.mark.asyncio
+    async def test_aexecute_tool_unknown_tool(self):
+        """Test async tool execution handles unknown tools."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        with patch.object(OCIGenAIAgent, "__init__", lambda self: None):
+            agent = OCIGenAIAgent.__new__(OCIGenAIAgent)
+            agent._tools = {}
+
+            execution = await agent._aexecute_tool(
+                "unknown_tool", "tc_789", {"x": "test"}
+            )
+
+            assert execution.success is False
+            assert "Unknown tool" in execution.error
+
+    @pytest.mark.asyncio
+    async def test_aexecute_tool_handles_error(self):
+        """Test async tool execution handles errors gracefully."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        # Create a tool that raises an error
+        error_tool = MagicMock()
+        error_tool.name = "error_tool"
+        error_tool.invoke = MagicMock(side_effect=RuntimeError("Tool failed"))
+
+        with patch.object(OCIGenAIAgent, "__init__", lambda self: None):
+            agent = OCIGenAIAgent.__new__(OCIGenAIAgent)
+            agent._tools = {"error_tool": error_tool}
+
+            execution = await agent._aexecute_tool(
+                "error_tool", "tc_error", {}
+            )
+
+            assert execution.success is False
+            assert "Tool failed" in execution.error
+            assert execution.duration_ms >= 0
