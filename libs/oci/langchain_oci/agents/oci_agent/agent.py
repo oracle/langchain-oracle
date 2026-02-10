@@ -112,6 +112,11 @@ from langchain_oci.agents.oci_agent.termination import (
     TerminationReason,
     check_termination,
 )
+from langchain_oci.agents.oci_agent.checkpoint import (
+    BaseCheckpointer,
+    Checkpoint,
+    MemoryCheckpointer,
+)
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_oci.common.auth import OCIAuthType
 
@@ -137,6 +142,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         enable_compression: Whether to compress messages to prevent overflow.
         hooks: Lifecycle callbacks for tool/iteration events.
         loop_threshold: Repeated tool calls to consider a loop.
+        checkpointer: Optional checkpoint storage for persistent conversations.
     """
 
     def __init__(
@@ -163,6 +169,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         enable_compression: bool = True,
         max_messages: int = 20,
         hooks: AgentHooks | None = None,
+        checkpointer: BaseCheckpointer | None = None,
         # Model parameters
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -189,6 +196,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             enable_compression: Compress messages to prevent context overflow.
             max_messages: Maximum messages before compression.
             hooks: Lifecycle callbacks for tool/iteration events.
+            checkpointer: Optional checkpoint storage for persistent conversations.
             temperature: Model temperature.
             max_tokens: Maximum tokens to generate.
         """
@@ -210,6 +218,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             max_messages=max_messages,
         )
         self._hooks = hooks or AgentHooks()
+        self._checkpointer = checkpointer
         self._confidence_signals: list[ConfidenceSignal] = []
 
         # Build model kwargs
@@ -417,6 +426,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         config: RunnableConfig | None = None,
         *,
         message_history: list[dict] | None = None,
+        thread_id: str | None = None,
     ) -> AgentResult:
         """Run agent to completion.
 
@@ -425,13 +435,18 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             config: Optional runnable configuration.
             message_history: Optional conversation history as list of
                 {"role": "user"|"assistant", "content": "..."} dicts.
+            thread_id: Optional thread identifier for checkpointing.
+                If provided with a checkpointer, enables persistent
+                conversations that can be resumed.
 
         Returns:
             AgentResult with final answer and execution details.
         """
         # Consume the stream to get the final result
         final_event = None
-        for event in self.stream(input_data, config, message_history=message_history):
+        for event in self.stream(
+            input_data, config, message_history=message_history, thread_id=thread_id
+        ):
             if isinstance(event, TerminateEvent):
                 final_event = event
                 break
@@ -560,6 +575,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         config: RunnableConfig | None = None,
         *,
         message_history: list[dict] | None = None,
+        thread_id: str | None = None,
     ) -> Iterator[AgentEvent]:
         """Stream agent events during execution.
 
@@ -570,11 +586,35 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             config: Optional runnable configuration.
             message_history: Optional conversation history as list of
                 {"role": "user"|"assistant", "content": "..."} dicts.
+            thread_id: Optional thread identifier for checkpointing.
+                If provided with a checkpointer, enables persistent
+                conversations that can be resumed.
 
         Yields:
             AgentEvent instances (ThinkEvent, ToolStartEvent, etc.).
         """
-        state = self._init_state(input_data, message_history)
+        # Restore from checkpoint if available
+        restored_messages: list[BaseMessage] = []
+        parent_checkpoint_id: str | None = None
+
+        if thread_id and self._checkpointer:
+            checkpoint = self._checkpointer.get(thread_id)
+            if checkpoint:
+                restored_messages = checkpoint.get_messages()
+                parent_checkpoint_id = checkpoint.id
+
+        # Initialize state, incorporating restored messages
+        if restored_messages and not message_history:
+            # Convert restored messages to history format
+            history = []
+            for msg in restored_messages:
+                if isinstance(msg, HumanMessage):
+                    history.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    history.append({"role": "assistant", "content": msg.content})
+            state = self._init_state(input_data, history)
+        else:
+            state = self._init_state(input_data, message_history)
         termination_reason = None
         total_tool_calls = 0
 
@@ -792,6 +832,21 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
 
         # Get final answer
         final_answer = self._get_final_answer(state)
+
+        # Save checkpoint if checkpointer is configured
+        if thread_id and self._checkpointer:
+            checkpoint = Checkpoint.create(
+                thread_id=thread_id,
+                iteration=state.iteration,
+                messages=list(state.messages),
+                metadata={
+                    "termination_reason": termination_reason or "unknown",
+                    "total_tool_calls": total_tool_calls,
+                    "confidence": state.confidence,
+                },
+                parent_id=parent_checkpoint_id,
+            )
+            self._checkpointer.put(checkpoint)
 
         # Trigger terminate hook
         self._hooks.trigger_terminate(
