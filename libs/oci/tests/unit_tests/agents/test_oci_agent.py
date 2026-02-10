@@ -1320,3 +1320,266 @@ class TestHooks:
 
         assert metrics["total_tool_calls"] == 1
         assert metrics["tool_errors"] == 1
+
+
+# =============================================================================
+# Checkpoint Tests
+# =============================================================================
+
+
+class TestCheckpoint:
+    """Tests for Checkpoint model."""
+
+    def test_checkpoint_creation(self):
+        """Test creating a checkpoint."""
+        from langchain_oci.agents.oci_agent.checkpoint import Checkpoint
+
+        messages = [HumanMessage(content="Hello"), AIMessage(content="Hi there")]
+        checkpoint = Checkpoint.create(
+            thread_id="thread-1",
+            iteration=2,
+            messages=messages,
+            metadata={"extra": "data"},
+        )
+
+        assert checkpoint.thread_id == "thread-1"
+        assert checkpoint.iteration == 2
+        assert len(checkpoint.messages) == 2
+        assert checkpoint.metadata["extra"] == "data"
+        assert "created_at" in checkpoint.metadata
+        assert checkpoint.id.startswith("ckpt_")
+
+    def test_checkpoint_get_messages(self):
+        """Test deserializing messages from checkpoint."""
+        from langchain_oci.agents.oci_agent.checkpoint import Checkpoint
+
+        messages = [
+            HumanMessage(content="Hello"),
+            AIMessage(content="Hi"),
+            ToolMessage(content="result", tool_call_id="tc_1"),
+        ]
+        checkpoint = Checkpoint.create(
+            thread_id="t1", iteration=1, messages=messages
+        )
+
+        restored = checkpoint.get_messages()
+        assert len(restored) == 3
+        assert isinstance(restored[0], HumanMessage)
+        assert isinstance(restored[1], AIMessage)
+        assert isinstance(restored[2], ToolMessage)
+        assert restored[0].content == "Hello"
+
+    def test_checkpoint_to_dict_from_dict(self):
+        """Test checkpoint serialization round-trip."""
+        from langchain_oci.agents.oci_agent.checkpoint import Checkpoint
+
+        messages = [HumanMessage(content="Test")]
+        original = Checkpoint.create(
+            thread_id="t1", iteration=1, messages=messages
+        )
+
+        data = original.to_dict()
+        restored = Checkpoint.from_dict(data)
+
+        assert restored.id == original.id
+        assert restored.thread_id == original.thread_id
+        assert restored.iteration == original.iteration
+        assert restored.messages == original.messages
+
+    def test_checkpoint_is_frozen(self):
+        """Test that checkpoint is immutable."""
+        from langchain_oci.agents.oci_agent.checkpoint import Checkpoint
+
+        checkpoint = Checkpoint.create(
+            thread_id="t1", iteration=1, messages=[]
+        )
+
+        with pytest.raises(Exception):  # frozen dataclass
+            checkpoint.thread_id = "new"
+
+
+class TestMemoryCheckpointer:
+    """Tests for MemoryCheckpointer."""
+
+    def test_put_and_get(self):
+        """Test saving and retrieving checkpoints."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+        checkpoint = Checkpoint.create(
+            thread_id="t1", iteration=1, messages=[HumanMessage(content="Hi")]
+        )
+
+        checkpointer.put(checkpoint)
+        retrieved = checkpointer.get("t1")
+
+        assert retrieved is not None
+        assert retrieved.id == checkpoint.id
+        assert retrieved.thread_id == "t1"
+
+    def test_get_returns_latest(self):
+        """Test that get returns the most recent checkpoint."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+
+        # Add two checkpoints
+        ckpt1 = Checkpoint.create(thread_id="t1", iteration=1, messages=[])
+        ckpt2 = Checkpoint.create(thread_id="t1", iteration=2, messages=[])
+
+        checkpointer.put(ckpt1)
+        checkpointer.put(ckpt2)
+
+        latest = checkpointer.get("t1")
+        assert latest.id == ckpt2.id
+        assert latest.iteration == 2
+
+    def test_get_nonexistent_thread(self):
+        """Test getting checkpoint for nonexistent thread."""
+        from langchain_oci.agents.oci_agent.checkpoint import MemoryCheckpointer
+
+        checkpointer = MemoryCheckpointer()
+        result = checkpointer.get("nonexistent")
+        assert result is None
+
+    def test_list_checkpoints(self):
+        """Test listing all checkpoints for a thread."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+
+        for i in range(3):
+            ckpt = Checkpoint.create(thread_id="t1", iteration=i, messages=[])
+            checkpointer.put(ckpt)
+
+        checkpoints = list(checkpointer.list("t1"))
+        assert len(checkpoints) == 3
+        assert [c.iteration for c in checkpoints] == [0, 1, 2]
+
+    def test_delete_thread(self):
+        """Test deleting all checkpoints for a thread."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+
+        for i in range(3):
+            ckpt = Checkpoint.create(thread_id="t1", iteration=i, messages=[])
+            checkpointer.put(ckpt)
+
+        deleted = checkpointer.delete("t1")
+        assert deleted == 3
+        assert checkpointer.get("t1") is None
+
+    def test_get_by_id(self):
+        """Test getting checkpoint by ID."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+        checkpoint = Checkpoint.create(
+            thread_id="t1", iteration=1, messages=[]
+        )
+        checkpointer.put(checkpoint)
+
+        retrieved = checkpointer.get_by_id(checkpoint.id)
+        assert retrieved is not None
+        assert retrieved.id == checkpoint.id
+
+    def test_checkpoint_count(self):
+        """Test counting checkpoints."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+        assert checkpointer.checkpoint_count == 0
+
+        for thread in ["t1", "t2"]:
+            for i in range(2):
+                ckpt = Checkpoint.create(thread_id=thread, iteration=i, messages=[])
+                checkpointer.put(ckpt)
+
+        assert checkpointer.checkpoint_count == 4
+        assert checkpointer.thread_count == 2
+
+    def test_clear(self):
+        """Test clearing all checkpoints."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            Checkpoint,
+            MemoryCheckpointer,
+        )
+
+        checkpointer = MemoryCheckpointer()
+        ckpt = Checkpoint.create(thread_id="t1", iteration=1, messages=[])
+        checkpointer.put(ckpt)
+
+        checkpointer.clear()
+        assert checkpointer.checkpoint_count == 0
+        assert checkpointer.thread_count == 0
+
+
+class TestLangGraphCheckpointerAdapter:
+    """Tests for LangGraph checkpointer adapter."""
+
+    def test_wrap_native_checkpointer(self):
+        """Test wrapping a native checkpointer (no-op)."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            MemoryCheckpointer,
+            wrap_checkpointer,
+        )
+
+        native = MemoryCheckpointer()
+        wrapped = wrap_checkpointer(native)
+        assert wrapped is native
+
+    def test_wrap_langgraph_checkpointer(self):
+        """Test wrapping a LangGraph checkpointer."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            LangGraphCheckpointerAdapter,
+            wrap_checkpointer,
+        )
+
+        # Create a mock LangGraph checkpointer
+        mock_lg = MagicMock()
+        mock_lg.get = MagicMock(return_value=None)
+        mock_lg.put = MagicMock()
+
+        wrapped = wrap_checkpointer(mock_lg)
+        assert isinstance(wrapped, LangGraphCheckpointerAdapter)
+
+    def test_wrap_invalid_type(self):
+        """Test wrapping an invalid type raises error."""
+        from langchain_oci.agents.oci_agent.checkpoint import wrap_checkpointer
+
+        with pytest.raises(TypeError):
+            wrap_checkpointer("not a checkpointer")
+
+    def test_adapter_get_returns_none_for_empty(self):
+        """Test adapter returns None for empty thread."""
+        from langchain_oci.agents.oci_agent.checkpoint import (
+            LangGraphCheckpointerAdapter,
+        )
+
+        mock_lg = MagicMock()
+        mock_lg.get = MagicMock(return_value=None)
+
+        adapter = LangGraphCheckpointerAdapter(mock_lg)
+        result = adapter.get("thread-1")
+
+        assert result is None
+        mock_lg.get.assert_called_once()
