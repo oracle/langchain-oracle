@@ -52,6 +52,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import uuid
 from typing import (
@@ -75,6 +76,11 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as tool_decorator
 
+from langchain_oci.agents.oci_agent.checkpoint import (
+    BaseCheckpointer,
+    Checkpoint,
+    wrap_checkpointer,
+)
 from langchain_oci.agents.oci_agent.compression import (
     CompressionConfig,
     CompressionStrategy,
@@ -113,12 +119,6 @@ from langchain_oci.agents.oci_agent.state import (
 from langchain_oci.agents.oci_agent.termination import (
     TerminationReason,
     check_termination,
-)
-from langchain_oci.agents.oci_agent.checkpoint import (
-    BaseCheckpointer,
-    Checkpoint,
-    MemoryCheckpointer,
-    wrap_checkpointer,
 )
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_oci.common.auth import OCIAuthType
@@ -285,7 +285,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Args:
             input_data: User query string or dict with messages.
             message_history: Optional conversation history as list of
-                BaseMessage objects or {"role": "user"|"assistant", "content": "..."} dicts.
+                BaseMessage objects or dicts with "role" and "content" keys.
 
         Returns:
             Initial AgentState.
@@ -379,6 +379,75 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
 
         try:
             result = tool.invoke(arguments)
+            duration_ms = (time.perf_counter() - start_time) * 1000
+
+            return ToolExecution(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments=arguments,
+                result=str(result),
+                success=True,
+                duration_ms=duration_ms,
+            )
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            return ToolExecution(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments=arguments,
+                result="",
+                success=False,
+                error=str(e),
+                duration_ms=duration_ms,
+            )
+
+    async def _aexecute_tool(
+        self,
+        tool_name: str,
+        tool_call_id: str,
+        arguments: dict[str, Any],
+    ) -> ToolExecution:
+        """Execute a single tool call asynchronously.
+
+        Checks if the tool has an `ainvoke` method and uses it for native
+        async execution. Falls back to running sync `invoke` in an executor.
+
+        Args:
+            tool_name: Name of the tool to execute.
+            tool_call_id: Unique identifier for this call.
+            arguments: Arguments to pass to the tool.
+
+        Returns:
+            ToolExecution record.
+        """
+        start_time = time.perf_counter()
+
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            return ToolExecution(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments=arguments,
+                result="",
+                success=False,
+                error=f"Unknown tool: {tool_name}",
+                duration_ms=0.0,
+            )
+
+        try:
+            # Check if tool has native async support
+            if hasattr(tool, "ainvoke") and inspect.iscoroutinefunction(
+                getattr(tool, "ainvoke", None)
+            ):
+                # Use native async
+                result = await tool.ainvoke(arguments)
+            else:
+                # Fall back to executor-wrapped sync
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None, lambda: tool.invoke(arguments)
+                )
+
             duration_ms = (time.perf_counter() - start_time) * 1000
 
             return ToolExecution(
@@ -893,10 +962,11 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         message_history: list[Union[dict, BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> AgentResult:
-        """Async version of invoke.
+        """Async version of invoke with native async tool execution.
 
-        Runs the agent asynchronously. Currently wraps the sync version
-        in an executor for compatibility with async code.
+        Runs the agent asynchronously using native async tool execution
+        when tools support `ainvoke`. LLM calls use executor since
+        OCI SDK doesn't have native async.
 
         Args:
             input_data: User query string or dict with messages.
@@ -907,15 +977,144 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Returns:
             AgentResult with final answer and execution details.
         """
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.invoke(
-                input_data,
-                config,
-                message_history=message_history,
-                thread_id=thread_id,
-            ),
+        loop = asyncio.get_running_loop()
+
+        # Restore from checkpoint if available
+        restored_messages: list[BaseMessage] = []
+
+        if thread_id and self._checkpointer:
+            checkpoint = self._checkpointer.get(thread_id)
+            if checkpoint:
+                restored_messages = checkpoint.get_messages()
+
+        # Initialize state
+        if restored_messages and not message_history:
+            history = []
+            for msg in restored_messages:
+                if isinstance(msg, HumanMessage):
+                    history.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    history.append({"role": "assistant", "content": msg.content})
+            state = self._init_state(input_data, history)
+        else:
+            state = self._init_state(input_data, message_history)
+
+        termination_reason = None
+
+        while True:
+            # Check termination before iteration
+            reason = check_termination(
+                state,
+                max_iterations=self.max_iterations,
+                confidence_threshold=self.confidence_threshold,
+                terminal_tools=self.terminal_tools,
+                loop_threshold=self.loop_threshold,
+                check_confidence=self.enable_reflexion,
+            )
+            if reason:
+                termination_reason = reason
+                break
+
+            # Apply message compression if enabled
+            if self.enable_compression:
+                compression_result = compress_messages(
+                    state.messages, self._compression_config
+                )
+                if compression_result.dropped_count > 0:
+                    state = state.model_copy(
+                        update={"messages": compression_result.messages}
+                    )
+
+            # Call the model (LLM via executor since OCI SDK is sync)
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._llm_with_tools.invoke(list(state.messages), config),
+            )
+            state = state.with_message(response)
+
+            # Get tool calls from response
+            tool_calls = getattr(response, "tool_calls", []) or []
+
+            # Check no_tools termination
+            if not tool_calls:
+                termination_reason = TerminationReason.NO_TOOLS
+                break
+
+            # Execute tools with native async support
+            tool_executions: list[ToolExecution] = []
+            last_tool_calls: list[str] = []
+
+            for tool_call in tool_calls:
+                tool_name = tool_call.get("name", "")
+                tool_call_id = tool_call.get("id", str(uuid.uuid4()))
+                arguments = tool_call.get("args", {})
+
+                # Use async tool execution
+                execution = await self._aexecute_tool(
+                    tool_name, tool_call_id, arguments
+                )
+                tool_executions.append(execution)
+                last_tool_calls.append(tool_name)
+
+                # Record tool in history
+                state = state.with_tool_call(tool_name)
+
+                # Add tool result as message
+                content = (
+                    execution.result
+                    if execution.success
+                    else f"Error: {execution.error}"
+                )
+                tool_message = ToolMessage(
+                    content=content,
+                    tool_call_id=tool_call_id,
+                )
+                state = state.with_message(tool_message)
+
+            # Check terminal tool
+            reason = check_termination(
+                state,
+                max_iterations=self.max_iterations,
+                confidence_threshold=self.confidence_threshold,
+                terminal_tools=self.terminal_tools,
+                last_tool_calls=last_tool_calls,
+                loop_threshold=self.loop_threshold,
+                check_confidence=False,
+            )
+            if reason:
+                termination_reason = reason
+                break
+
+            # Reflexion
+            reflection_assessment = "on_track"
+            if self.enable_reflexion:
+                reflection = self._reflector.reflect(state, tool_executions)
+                state = state.adjust_confidence(reflection.confidence_delta)
+                reflection_assessment = reflection.assessment
+
+                if reflection.assessment == AssessmentCategory.LOOP_DETECTED:
+                    termination_reason = TerminationReason.TOOL_LOOP
+                    break
+
+                if state.confidence >= self.confidence_threshold:
+                    termination_reason = TerminationReason.CONFIDENCE_MET
+                    break
+
+            # Record reasoning step
+            step = ReasoningStep(
+                iteration=state.iteration,
+                thought=str(response.content) if response.content else "",
+                tool_executions=tuple(tool_executions),
+                confidence=state.confidence,
+                assessment=reflection_assessment,
+            )
+            state = state.with_reasoning_step(step)
+            state = state.increment_iteration()
+
+        return AgentResult.from_state(
+            state,
+            final_answer=self._get_final_answer(state),
+            termination_reason=termination_reason or "unknown",
         )
 
     async def astream(
@@ -926,10 +1125,11 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         message_history: list[Union[dict, BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        """Async version of stream.
+        """Async version of stream with native async tool execution.
 
-        Yields events asynchronously. Currently wraps the sync version
-        for compatibility with async code.
+        Yields events asynchronously. Uses native async tool execution
+        when tools support `ainvoke`, otherwise falls back to executor.
+        LLM calls use executor since OCI SDK doesn't have native async.
 
         Args:
             input_data: User query string or dict with messages.
@@ -940,22 +1140,277 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Yields:
             AgentEvent instances asynchronously.
         """
-        # Run sync stream in executor and yield events
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        def get_events():
-            return list(
-                self.stream(
-                    input_data,
-                    config,
-                    message_history=message_history,
-                    thread_id=thread_id,
+        # Restore from checkpoint if available
+        restored_messages: list[BaseMessage] = []
+        parent_checkpoint_id: str | None = None
+
+        if thread_id and self._checkpointer:
+            checkpoint = self._checkpointer.get(thread_id)
+            if checkpoint:
+                restored_messages = checkpoint.get_messages()
+                parent_checkpoint_id = checkpoint.id
+
+        # Initialize state, incorporating restored messages
+        if restored_messages and not message_history:
+            history = []
+            for msg in restored_messages:
+                if isinstance(msg, HumanMessage):
+                    history.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    history.append({"role": "assistant", "content": msg.content})
+            state = self._init_state(input_data, history)
+        else:
+            state = self._init_state(input_data, message_history)
+
+        termination_reason = None
+        total_tool_calls = 0
+
+        while True:
+            # Trigger iteration start hook
+            self._hooks.trigger_iteration_start(
+                IterationContext(
+                    iteration=state.iteration,
+                    confidence=state.confidence,
+                    tool_count=total_tool_calls,
                 )
             )
 
-        events = await loop.run_in_executor(None, get_events)
-        for event in events:
-            yield event
+            # Check termination before iteration
+            reason = check_termination(
+                state,
+                max_iterations=self.max_iterations,
+                confidence_threshold=self.confidence_threshold,
+                terminal_tools=self.terminal_tools,
+                loop_threshold=self.loop_threshold,
+                check_confidence=self.enable_reflexion,
+            )
+            if reason:
+                termination_reason = reason
+                break
+
+            # Apply message compression if enabled
+            if self.enable_compression:
+                compression_result = compress_messages(
+                    state.messages, self._compression_config
+                )
+                if compression_result.dropped_count > 0:
+                    state = state.model_copy(
+                        update={"messages": compression_result.messages}
+                    )
+
+            # Call the model (LLM via executor since OCI SDK is sync)
+            response = await loop.run_in_executor(
+                None,
+                lambda: self._llm_with_tools.invoke(list(state.messages), config),
+            )
+            state = state.with_message(response)
+
+            # Get tool calls from response
+            tool_calls = getattr(response, "tool_calls", []) or []
+
+            # Detect confidence signals in response
+            if self.enable_confidence_signals and response.content:
+                new_signals = detect_confidence_signals(
+                    str(response.content), state.iteration
+                )
+                self._confidence_signals.extend(new_signals)
+
+                accumulated = compute_accumulated_confidence(self._confidence_signals)
+                if should_early_exit(
+                    accumulated,
+                    state.iteration,
+                    min_iterations=self.min_iterations_for_early_exit,
+                ):
+                    state = state.with_confidence(accumulated)
+                    termination_reason = TerminationReason.CONFIDENCE_MET
+                    yield ThinkEvent(
+                        iteration=state.iteration,
+                        thought=str(response.content) if response.content else "",
+                        tool_calls_planned=len(tool_calls),
+                    )
+                    break
+
+            # Emit think event
+            yield ThinkEvent(
+                iteration=state.iteration,
+                thought=str(response.content) if response.content else "",
+                tool_calls_planned=len(tool_calls),
+            )
+
+            # Check no_tools termination
+            if not tool_calls:
+                termination_reason = TerminationReason.NO_TOOLS
+                break
+
+            # Execute tools with native async support
+            tool_executions: list[ToolExecution] = []
+            last_tool_calls: list[str] = []
+
+            for tool_call in tool_calls:
+                tool_name = tool_call.get("name", "")
+                tool_call_id = tool_call.get("id", str(uuid.uuid4()))
+                arguments = tool_call.get("args", {})
+
+                # Trigger tool start hook
+                hook_ctx = ToolHookContext(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=arguments,
+                    iteration=state.iteration,
+                )
+                self._hooks.trigger_tool_start(hook_ctx)
+
+                # Emit tool start event
+                yield ToolStartEvent(
+                    iteration=state.iteration,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=arguments,
+                )
+
+                # Use async tool execution
+                execution = await self._aexecute_tool(
+                    tool_name, tool_call_id, arguments
+                )
+                tool_executions.append(execution)
+                last_tool_calls.append(tool_name)
+                total_tool_calls += 1
+
+                # Trigger tool end hook
+                result_ctx = ToolResultContext(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=arguments,
+                    result=execution.result,
+                    success=execution.success,
+                    error=execution.error,
+                    duration_ms=execution.duration_ms,
+                    iteration=state.iteration,
+                )
+                self._hooks.trigger_tool_end(result_ctx)
+
+                # Emit tool complete event
+                yield ToolCompleteEvent(
+                    iteration=state.iteration,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    result=execution.result,
+                    success=execution.success,
+                    error=execution.error,
+                    duration_ms=execution.duration_ms,
+                )
+
+                # Record tool in history
+                state = state.with_tool_call(tool_name)
+
+                # Add tool result as message
+                content = (
+                    execution.result
+                    if execution.success
+                    else f"Error: {execution.error}"
+                )
+                tool_message = ToolMessage(
+                    content=content,
+                    tool_call_id=tool_call_id,
+                )
+                state = state.with_message(tool_message)
+
+            # Check terminal tool
+            reason = check_termination(
+                state,
+                max_iterations=self.max_iterations,
+                confidence_threshold=self.confidence_threshold,
+                terminal_tools=self.terminal_tools,
+                last_tool_calls=last_tool_calls,
+                loop_threshold=self.loop_threshold,
+                check_confidence=False,
+            )
+            if reason:
+                termination_reason = reason
+                break
+
+            # Reflexion
+            reflection_assessment = "on_track"
+            confidence_delta = 0.0
+
+            if self.enable_reflexion:
+                reflection = self._reflector.reflect(state, tool_executions)
+                state = state.adjust_confidence(reflection.confidence_delta)
+                reflection_assessment = reflection.assessment
+                confidence_delta = reflection.confidence_delta
+
+                is_loop = reflection.assessment == AssessmentCategory.LOOP_DETECTED
+                yield ReflectEvent(
+                    iteration=state.iteration,
+                    confidence=state.confidence,
+                    confidence_delta=confidence_delta,
+                    assessment=reflection_assessment,
+                    loop_detected=is_loop,
+                    guidance=reflection.guidance,
+                )
+
+                if reflection.assessment == AssessmentCategory.LOOP_DETECTED:
+                    termination_reason = TerminationReason.TOOL_LOOP
+                    break
+
+                if state.confidence >= self.confidence_threshold:
+                    termination_reason = TerminationReason.CONFIDENCE_MET
+                    break
+
+            # Record reasoning step
+            step = ReasoningStep(
+                iteration=state.iteration,
+                thought=str(response.content) if response.content else "",
+                tool_executions=tuple(tool_executions),
+                confidence=state.confidence,
+                assessment=reflection_assessment,
+            )
+            state = state.with_reasoning_step(step)
+            state = state.increment_iteration()
+
+            # Trigger iteration end hook
+            self._hooks.trigger_iteration_end(
+                IterationContext(
+                    iteration=state.iteration,
+                    confidence=state.confidence,
+                    tool_count=total_tool_calls,
+                )
+            )
+
+        # Get final answer
+        final_answer = self._get_final_answer(state)
+
+        # Save checkpoint if checkpointer is configured
+        if thread_id and self._checkpointer:
+            checkpoint = Checkpoint.create(
+                thread_id=thread_id,
+                iteration=state.iteration,
+                messages=list(state.messages),
+                metadata={
+                    "termination_reason": termination_reason or "unknown",
+                    "total_tool_calls": total_tool_calls,
+                    "confidence": state.confidence,
+                },
+                parent_id=parent_checkpoint_id,
+            )
+            self._checkpointer.put(checkpoint)
+
+        # Trigger terminate hook
+        self._hooks.trigger_terminate(
+            termination_reason or "unknown",
+            final_answer,
+        )
+
+        # Emit terminate event
+        yield TerminateEvent(
+            reason=termination_reason or "unknown",
+            final_answer=final_answer,
+            total_iterations=state.iteration,
+            total_tool_calls=total_tool_calls,
+            confidence=state.confidence,
+        )
 
     # =========================================================================
     # Batch Method (Runnable interface)
