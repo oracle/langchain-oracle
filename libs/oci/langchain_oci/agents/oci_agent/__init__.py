@@ -40,6 +40,12 @@ Example:
 """
 
 from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+from langchain_oci.agents.oci_agent.checkpoint import (
+    BaseCheckpointer,
+    Checkpoint,
+    FileCheckpointer,
+    MemoryCheckpointer,
+)
 from langchain_oci.agents.oci_agent.compression import (
     CompressionConfig,
     CompressionResult,
@@ -133,4 +139,9 @@ __all__ = [
     "TerminationReason",
     "check_termination",
     "get_termination_description",
+    # Checkpointing
+    "BaseCheckpointer",
+    "Checkpoint",
+    "MemoryCheckpointer",
+    "FileCheckpointer",
 ]

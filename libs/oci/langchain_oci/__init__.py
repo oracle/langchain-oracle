@@ -6,10 +6,14 @@ from langchain_oci.agents.oci_agent import (
     AgentHooks,
     AgentResult,
     AgentState,
+    BaseCheckpointer,
+    Checkpoint,
     CompressionConfig,
     CompressionStrategy,
     ConfidenceSignal,
+    FileCheckpointer,
     IterationContext,
+    MemoryCheckpointer,
     OCIGenAIAgent,
     ReasoningStep,
     ReflectEvent,
@@ -91,6 +95,11 @@ __all__ = [
     # Confidence Signals
     "ConfidenceSignal",
     "SignalType",
+    # Checkpointing
+    "BaseCheckpointer",
+    "Checkpoint",
+    "MemoryCheckpointer",
+    "FileCheckpointer",
     # Vision / image utilities
     "load_image",
     "encode_image",
