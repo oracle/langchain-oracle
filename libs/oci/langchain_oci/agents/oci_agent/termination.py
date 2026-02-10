@@ -15,7 +15,7 @@ Implements 5 termination conditions that determine when the agent should stop:
 from __future__ import annotations
 
 from collections import Counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from langchain_oci.agents.oci_agent.state import AgentState
@@ -34,7 +34,7 @@ class TerminationReason:
 def check_max_iterations(
     state: AgentState,
     max_iterations: int,
-) -> str | None:
+) -> Optional[str]:
     """Check if max iterations reached.
 
     Args:
@@ -52,7 +52,7 @@ def check_max_iterations(
 def check_confidence_threshold(
     state: AgentState,
     confidence_threshold: float,
-) -> str | None:
+) -> Optional[str]:
     """Check if confidence threshold met.
 
     Args:
@@ -68,9 +68,9 @@ def check_confidence_threshold(
 
 
 def check_terminal_tool(
-    last_tool_calls: list[str],
+    last_tool_calls: List[str],
     terminal_tools: set[str],
-) -> str | None:
+) -> Optional[str]:
     """Check if a terminal tool was called.
 
     Terminal tools signal explicit completion (e.g., "done", "submit", "finish").
@@ -91,7 +91,7 @@ def check_terminal_tool(
 def check_tool_loop(
     state: AgentState,
     loop_threshold: int = 3,
-) -> str | None:
+) -> Optional[str]:
     """Check if agent is stuck in a tool loop.
 
     Detects patterns like:
@@ -119,11 +119,7 @@ def check_tool_loop(
     # Check for alternating pattern (A->B->A->B)
     if loop_threshold >= 4 and len(state.tool_history) >= 4:
         recent = state.tool_history[-4:]
-        if (
-            recent[0] == recent[2]
-            and recent[1] == recent[3]
-            and recent[0] != recent[1]
-        ):
+        if recent[0] == recent[2] and recent[1] == recent[3] and recent[0] != recent[1]:
             return TerminationReason.TOOL_LOOP
 
     return None
@@ -131,7 +127,7 @@ def check_tool_loop(
 
 def check_no_tools(
     tool_calls_in_response: int,
-) -> str | None:
+) -> Optional[str]:
     """Check if model produced no tool calls.
 
     When the model responds without calling any tools, it typically
@@ -154,11 +150,11 @@ def check_termination(
     max_iterations: int,
     confidence_threshold: float,
     terminal_tools: set[str],
-    last_tool_calls: list[str] | None = None,
-    tool_calls_in_response: int | None = None,
+    last_tool_calls: Optional[List[str]] = None,
+    tool_calls_in_response: Optional[int] = None,
     loop_threshold: int = 3,
     check_confidence: bool = True,
-) -> str | None:
+) -> Optional[str]:
     """Check all termination conditions.
 
     Checks are performed in priority order:

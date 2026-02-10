@@ -19,7 +19,6 @@ from langchain_core.tools import tool
 
 from langchain_oci import OCIGenAIAgent, TerminateEvent, ThinkEvent, ToolCompleteEvent
 
-
 # Simulated database
 ORDERS = {
     "ORD-001": {"status": "shipped", "eta": "Feb 12", "item": "Laptop"},
@@ -182,7 +181,9 @@ If you cannot help, escalate to human support.""",
 
         for event in agent.stream(inquiry):
             if isinstance(event, ThinkEvent) and event.tool_calls_planned > 0:
-                print(f"[Agent thinking, planning {event.tool_calls_planned} action(s)]")
+                print(
+                    f"[Agent thinking, planning {event.tool_calls_planned} action(s)]"
+                )
             elif isinstance(event, ToolCompleteEvent):
                 print(f"[{event.tool_name}] {event.result}")
             elif isinstance(event, TerminateEvent):

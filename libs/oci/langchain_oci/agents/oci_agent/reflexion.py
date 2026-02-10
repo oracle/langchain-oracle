@@ -10,7 +10,7 @@ tool results, detecting loops, and building confidence over iterations.
 from __future__ import annotations
 
 from collections import Counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,15 +50,15 @@ class ReflectionResult(BaseModel):
         default=AssessmentCategory.ON_TRACK,
         description="Category of agent's current progress",
     )
-    guidance: str | None = Field(
+    guidance: Optional[str] = Field(
         default=None,
         description="Suggestions for the next iteration",
     )
-    loop_pattern: str | None = Field(
+    loop_pattern: Optional[str] = Field(
         default=None,
         description="Detected loop pattern if assessment is loop_detected",
     )
-    findings_summary: str | None = Field(
+    findings_summary: Optional[str] = Field(
         default=None,
         description="Summary of new information discovered",
     )
@@ -104,7 +104,7 @@ class Reflector:
     def reflect(
         self,
         state: AgentState,
-        iteration_executions: list[ToolExecution] | None = None,
+        iteration_executions: Optional[List[ToolExecution]] = None,
     ) -> ReflectionResult:
         """Evaluate agent progress and produce reflection result.
 
@@ -150,7 +150,7 @@ class Reflector:
             findings_summary=findings,
         )
 
-    def _detect_loop(self, state: AgentState) -> ReflectionResult | None:
+    def _detect_loop(self, state: AgentState) -> Optional[ReflectionResult]:
         """Detect if the agent is stuck in a tool loop.
 
         Returns:
@@ -159,7 +159,7 @@ class Reflector:
         if len(state.tool_history) < self.loop_threshold:
             return None
 
-        recent_tools = state.tool_history[-self.loop_threshold:]
+        recent_tools = state.tool_history[-self.loop_threshold :]
         tool_counts = Counter(recent_tools)
 
         # Check for single-tool loop (same tool called repeatedly)
@@ -167,8 +167,7 @@ class Reflector:
         if most_common and most_common[0][1] == self.loop_threshold:
             tool_name = most_common[0][0]
             pattern = (
-                f"Tool '{tool_name}' called "
-                f"{self.loop_threshold} times consecutively"
+                f"Tool '{tool_name}' called {self.loop_threshold} times consecutively"
             )
             return ReflectionResult(
                 confidence_delta=-0.3,
@@ -202,8 +201,8 @@ class Reflector:
 
     def _analyze_executions(
         self,
-        executions: list[ToolExecution],
-    ) -> tuple[int, int, list[str]]:
+        executions: List[ToolExecution],
+    ) -> Tuple[int, int, List[str]]:
         """Analyze tool executions to count successes, errors, and gather content.
 
         Returns:
@@ -211,7 +210,7 @@ class Reflector:
         """
         success_count = 0
         error_count = 0
-        results_content: list[str] = []
+        results_content: List[str] = []
 
         for execution in executions:
             if execution.success:
@@ -259,8 +258,8 @@ class Reflector:
         confidence_delta: float,
         success_count: int,
         error_count: int,
-        results_content: list[str],
-    ) -> tuple[str, str | None, str | None]:
+        results_content: List[str],
+    ) -> Tuple[str, Optional[str], Optional[str]]:
         """Determine assessment category and generate guidance.
 
         Returns:
@@ -299,7 +298,7 @@ class Reflector:
             None,
         )
 
-    def _has_new_findings(self, results_content: list[str]) -> bool:
+    def _has_new_findings(self, results_content: List[str]) -> bool:
         """Determine if results contain substantial new findings."""
         if not results_content:
             return False
@@ -309,7 +308,7 @@ class Reflector:
         # Heuristic: significant findings have meaningful content
         return len(total_content) > 100
 
-    def _summarize_findings(self, results_content: list[str]) -> str:
+    def _summarize_findings(self, results_content: List[str]) -> str:
         """Create a brief summary of findings."""
         if not results_content:
             return ""
@@ -347,7 +346,7 @@ class Reflector:
 
 def assess_confidence(
     state: AgentState,
-    tool_executions: list[ToolExecution],
+    tool_executions: List[ToolExecution],
     success_weight: float = 0.15,
     error_penalty: float = 0.2,
     diminishing_returns: bool = True,
@@ -397,7 +396,7 @@ def detect_loop(
 
 def assess_progress(
     state: AgentState,
-    tool_executions: list[ToolExecution] | None = None,
+    tool_executions: Optional[List[ToolExecution]] = None,
 ) -> str:
     """Return progress assessment category.
 

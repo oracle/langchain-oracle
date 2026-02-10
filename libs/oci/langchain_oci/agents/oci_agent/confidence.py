@@ -10,7 +10,7 @@ allowing the agent to exit early and save tokens/time.
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 from pydantic import BaseModel, ConfigDict
 
@@ -48,7 +48,7 @@ class ConfidenceSignal(BaseModel):
 
 
 # Heuristic patterns with their types and weights
-CONFIDENCE_PATTERNS: dict[str, tuple[SignalType, float]] = {
+CONFIDENCE_PATTERNS: Dict[str, Tuple[SignalType, float]] = {
     # Explicit confidence markers (weight: 0.15-0.20)
     "confident that": (SignalType.EXPLICIT_CONFIDENCE, 0.20),
     "i am confident": (SignalType.EXPLICIT_CONFIDENCE, 0.20),
@@ -92,7 +92,7 @@ DEFAULT_BASE_CONFIDENCE = 0.5
 def detect_confidence_signals(
     content: str,
     iteration: int,
-) -> list[ConfidenceSignal]:
+) -> List[ConfidenceSignal]:
     """Detect confidence markers in LLM response.
 
     Args:
@@ -102,7 +102,7 @@ def detect_confidence_signals(
     Returns:
         List of detected confidence signals.
     """
-    signals: list[ConfidenceSignal] = []
+    signals: List[ConfidenceSignal] = []
     content_lower = content.lower()
 
     for pattern, (signal_type, weight) in CONFIDENCE_PATTERNS.items():
@@ -120,7 +120,7 @@ def detect_confidence_signals(
 
 
 def compute_accumulated_confidence(
-    signals: list[ConfidenceSignal],
+    signals: List[ConfidenceSignal],
     base_confidence: float = DEFAULT_BASE_CONFIDENCE,
 ) -> float:
     """Compute accumulated confidence from signals.
@@ -137,7 +137,7 @@ def compute_accumulated_confidence(
     if not signals:
         return base_confidence
 
-    by_type: dict[SignalType, list[ConfidenceSignal]] = {}
+    by_type: Dict[SignalType, List[ConfidenceSignal]] = {}
     for sig in signals:
         by_type.setdefault(sig.signal_type, []).append(sig)
 

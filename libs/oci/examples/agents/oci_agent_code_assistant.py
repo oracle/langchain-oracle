@@ -14,7 +14,6 @@ Shows streaming events for real-time feedback.
 # ruff: noqa: T201
 
 import os
-import re
 
 from langchain_core.tools import tool
 
@@ -26,7 +25,6 @@ from langchain_oci import (
     ToolCompleteEvent,
     ToolStartEvent,
 )
-
 
 # Simulated documentation database
 DOCS = {
@@ -64,7 +62,7 @@ Python Type Hints:
 }
 
 CODE_PATTERNS = {
-    "singleton": '''
+    "singleton": """
 class Singleton:
     _instance = None
 
@@ -72,8 +70,8 @@ class Singleton:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-''',
-    "factory": '''
+""",
+    "factory": """
 class AnimalFactory:
     @staticmethod
     def create(animal_type: str) -> Animal:
@@ -82,8 +80,8 @@ class AnimalFactory:
         elif animal_type == "cat":
             return Cat()
         raise ValueError(f"Unknown: {animal_type}")
-''',
-    "context_manager": '''
+""",
+    "context_manager": """
 from contextlib import contextmanager
 
 @contextmanager
@@ -93,7 +91,7 @@ def managed_resource():
         yield resource
     finally:
         release_resource(resource)
-''',
+""",
 }
 
 
@@ -222,10 +220,12 @@ Always provide practical, working examples when possible.""",
                 if event.tool_calls_planned > 0:
                     print(f"🤔 Planning {event.tool_calls_planned} lookup(s)...")
             elif isinstance(event, ToolStartEvent):
-                print(f"🔧 {event.tool_name}({list(event.arguments.values())[0] if event.arguments else ''})")
+                print(
+                    f"🔧 {event.tool_name}({list(event.arguments.values())[0] if event.arguments else ''})"
+                )
             elif isinstance(event, ToolCompleteEvent):
                 # Show first 100 chars of result
-                preview = event.result[:100].replace('\n', ' ')
+                preview = event.result[:100].replace("\n", " ")
                 print(f"   → {preview}...")
             elif isinstance(event, ReflectEvent):
                 print(f"📊 Confidence: {event.confidence:.0%}")

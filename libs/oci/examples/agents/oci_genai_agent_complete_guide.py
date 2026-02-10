@@ -24,24 +24,20 @@ Usage:
 """
 
 import os
-from typing import Any
 
-from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
 from langchain_oci import (
+    AgentHooks,
+    IterationContext,
     OCIGenAIAgent,
-    AgentResult,
-    ThinkEvent,
-    ToolStartEvent,
-    ToolCompleteEvent,
     ReflectEvent,
     TerminateEvent,
-    AgentHooks,
+    ThinkEvent,
+    ToolCompleteEvent,
     ToolHookContext,
     ToolResultContext,
-    IterationContext,
-    create_logging_hooks,
+    ToolStartEvent,
     create_metrics_hooks,
 )
 
@@ -60,6 +56,7 @@ SERVICE_ENDPOINT = f"https://inference.generativeai.{REGION}.oci.oraclecloud.com
 # =============================================================================
 # TOOLS
 # =============================================================================
+
 
 @tool
 def calculate(expression: str) -> str:
@@ -142,6 +139,7 @@ def submit_answer(answer: str) -> str:
 # EXAMPLES
 # =============================================================================
 
+
 def example_1_basic_invocation():
     """Basic agent invocation."""
     print("\n" + "=" * 70)
@@ -161,7 +159,7 @@ def example_1_basic_invocation():
     # Simple invoke
     result = agent.invoke("What is 15 * 8?")
 
-    print(f"Query: What is 15 * 8?")
+    print("Query: What is 15 * 8?")
     print(f"Answer: {result.final_answer}")
     print(f"Termination: {result.termination_reason}")
     print(f"Iterations: {result.total_iterations}")
@@ -189,14 +187,20 @@ def example_2_streaming_events():
 
     for event in agent.stream("What's the weather in Chicago?"):
         if isinstance(event, ThinkEvent):
-            print(f"  [THINK] Iteration {event.iteration}: Planning {event.tool_calls_planned} tool(s)")
+            print(
+                f"  [THINK] Iteration {event.iteration}: Planning {event.tool_calls_planned} tool(s)"
+            )
         elif isinstance(event, ToolStartEvent):
             print(f"  [TOOL START] {event.tool_name}({event.arguments})")
         elif isinstance(event, ToolCompleteEvent):
             status = "✓" if event.success else "✗"
-            print(f"  [TOOL END] {status} {event.tool_name} -> {event.result[:50]}... ({event.duration_ms:.1f}ms)")
+            print(
+                f"  [TOOL END] {status} {event.tool_name} -> {event.result[:50]}... ({event.duration_ms:.1f}ms)"
+            )
         elif isinstance(event, ReflectEvent):
-            print(f"  [REFLECT] Confidence: {event.confidence:.2f}, Assessment: {event.assessment}")
+            print(
+                f"  [REFLECT] Confidence: {event.confidence:.2f}, Assessment: {event.assessment}"
+            )
         elif isinstance(event, TerminateEvent):
             print(f"  [TERMINATE] Reason: {event.reason}")
             print(f"\nFinal Answer: {event.final_answer}")
@@ -215,11 +219,13 @@ def example_3_hooks_system():
         print(f"  -> Starting: {ctx.tool_name}")
 
     def on_tool_end(ctx: ToolResultContext):
-        tool_log.append({
-            "tool": ctx.tool_name,
-            "duration_ms": ctx.duration_ms,
-            "success": ctx.success,
-        })
+        tool_log.append(
+            {
+                "tool": ctx.tool_name,
+                "duration_ms": ctx.duration_ms,
+                "success": ctx.success,
+            }
+        )
         status = "SUCCESS" if ctx.success else "FAILED"
         print(f"  <- Completed: {ctx.tool_name} [{status}] in {ctx.duration_ms:.1f}ms")
 
@@ -277,9 +283,9 @@ def example_4_metrics_collection():
 
     result = agent.invoke("What's the weather in Paris and calculate 100 / 4?")
 
-    print(f"Query: What's the weather in Paris and calculate 100 / 4?")
+    print("Query: What's the weather in Paris and calculate 100 / 4?")
     print(f"Answer: {result.final_answer}")
-    print(f"\nCollected Metrics:")
+    print("\nCollected Metrics:")
     print(f"  - Total tool calls: {metrics['total_tool_calls']}")
     print(f"  - Tool durations: {[f'{d:.1f}ms' for d in metrics['tool_durations_ms']]}")
     print(f"  - Tool errors: {metrics['tool_errors']}")
@@ -362,10 +368,7 @@ def example_6_message_compression():
     print(f"Strategy: {agent._compression_config.strategy.value}")
 
     # Simulate long history
-    history = [
-        {"role": "user", "content": f"Message {i}"}
-        for i in range(15)
-    ]
+    history = [{"role": "user", "content": f"Message {i}"} for i in range(15)]
 
     print(f"\nInput history: {len(history)} messages")
     result = agent.invoke("What number am I on?", message_history=history)
@@ -401,7 +404,7 @@ def example_7_confidence_signals():
 
     result = agent.invoke("What is the capital of France?")
 
-    print(f"\nQuery: What is the capital of France?")
+    print("\nQuery: What is the capital of France?")
     print(f"Answer: {result.final_answer}")
     print(f"Final confidence: {result.confidence:.2f}")
     print(f"Termination: {result.termination_reason}")
@@ -465,8 +468,10 @@ def example_9_reflexion():
 
     print("\nReasoning Steps:")
     for step in result.reasoning_steps:
-        print(f"  Iteration {step.iteration}: confidence={step.confidence:.2f}, "
-              f"tools={len(step.tool_executions)}, assessment={step.assessment}")
+        print(
+            f"  Iteration {step.iteration}: confidence={step.confidence:.2f}, "
+            f"tools={len(step.tool_executions)}, assessment={step.assessment}"
+        )
 
 
 def example_10_lcel_chain():
@@ -475,7 +480,7 @@ def example_10_lcel_chain():
     print("EXAMPLE 10: LCEL Chain Composition")
     print("=" * 70)
 
-    from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+    from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 
     agent = OCIGenAIAgent(
         model_id=MODEL_ID,
@@ -507,7 +512,7 @@ def example_11_langgraph_node():
     print("=" * 70)
 
     try:
-        from langgraph.graph import StateGraph, START, END
+        from langgraph.graph import END, START, StateGraph
     except ImportError:
         print("LangGraph not installed. Skipping this example.")
         print("Install with: pip install langgraph")
@@ -584,7 +589,7 @@ def example_12_all_features():
         history.append({"role": "user", "content": q})
         history.append({"role": "assistant", "content": result.final_answer})
 
-    print(f"\n--- Session Metrics ---")
+    print("\n--- Session Metrics ---")
     print(f"Total tool calls: {metrics['total_tool_calls']}")
     print(f"Tool errors: {metrics['tool_errors']}")
     print(f"History size: {len(history)} messages")
@@ -594,12 +599,13 @@ def example_12_all_features():
 # MAIN
 # =============================================================================
 
+
 def main():
     """Run all examples."""
     print("=" * 70)
     print("OCIGenAIAgent Complete Guide")
     print("=" * 70)
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Model: {MODEL_ID}")
     print(f"  Region: {REGION}")
     print(f"  Auth: {AUTH_TYPE} ({AUTH_PROFILE})")

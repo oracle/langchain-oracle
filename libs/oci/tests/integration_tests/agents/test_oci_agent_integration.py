@@ -987,7 +987,9 @@ class TestOCIGenAIAgentNewFeatures:
         result = agent.invoke("What is 7 * 8?")
 
         # Verify hooks were triggered
-        assert len(hook_calls["iteration_starts"]) >= 1, "Should trigger iteration start"
+        assert len(hook_calls["iteration_starts"]) >= 1, (
+            "Should trigger iteration start"
+        )
         assert len(hook_calls["iteration_ends"]) >= 1, "Should trigger iteration end"
         assert len(hook_calls["terminates"]) == 1, "Should trigger terminate once"
 
@@ -1215,8 +1217,12 @@ class TestOCIGenAIAgentNewFeatures:
 
         # Second turn with history (convert messages to dicts)
         history = [
-            {"role": "user" if isinstance(m, HumanMessage) else "assistant", "content": m.content}
-            for m in result1.messages if hasattr(m, 'content') and isinstance(m.content, str)
+            {
+                "role": "user" if isinstance(m, HumanMessage) else "assistant",
+                "content": m.content,
+            }
+            for m in result1.messages
+            if hasattr(m, "content") and isinstance(m.content, str)
         ]
         result2 = agent.invoke("Now double that result", message_history=history)
 
@@ -1250,9 +1256,14 @@ class TestOCIGenAIAgentNewFeatures:
         def msgs_to_history(messages):
             """Convert Message objects to history dicts."""
             return [
-                {"role": "user" if isinstance(m, HumanMessage) else "assistant",
-                 "content": m.content if isinstance(m.content, str) else str(m.content)}
-                for m in messages if hasattr(m, 'content')
+                {
+                    "role": "user" if isinstance(m, HumanMessage) else "assistant",
+                    "content": m.content
+                    if isinstance(m.content, str)
+                    else str(m.content),
+                }
+                for m in messages
+                if hasattr(m, "content")
             ]
 
         # Turn 1

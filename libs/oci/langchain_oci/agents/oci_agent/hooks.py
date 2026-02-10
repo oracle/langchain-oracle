@@ -8,12 +8,12 @@ Provides pre/post callbacks for tool execution, iteration, and termination.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
-    from langchain_oci.agents.oci_agent.state import AgentState, ToolExecution
+    pass
 
 
 class ToolHookContext(BaseModel):
@@ -30,7 +30,7 @@ class ToolHookContext(BaseModel):
 
     tool_name: str
     tool_call_id: str
-    arguments: dict[str, Any]
+    arguments: Dict[str, Any]
     iteration: int
 
 
@@ -52,10 +52,10 @@ class ToolResultContext(BaseModel):
 
     tool_name: str
     tool_call_id: str
-    arguments: dict[str, Any]
+    arguments: Dict[str, Any]
     result: str
     success: bool
-    error: str | None
+    error: Optional[str]
     duration_ms: float
     iteration: int
 
@@ -100,11 +100,11 @@ class AgentHooks(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    on_tool_start: list[PreToolHook] | None = None
-    on_tool_end: list[PostToolHook] | None = None
-    on_iteration_start: list[PreIterationHook] | None = None
-    on_iteration_end: list[PostIterationHook] | None = None
-    on_terminate: list[OnTerminateHook] | None = None
+    on_tool_start: Optional[List[PreToolHook]] = None
+    on_tool_end: Optional[List[PostToolHook]] = None
+    on_iteration_start: Optional[List[PreIterationHook]] = None
+    on_iteration_end: Optional[List[PostIterationHook]] = None
+    on_terminate: Optional[List[OnTerminateHook]] = None
 
     def trigger_tool_start(self, context: ToolHookContext) -> None:
         """Trigger all on_tool_start hooks."""
@@ -190,14 +190,14 @@ def create_logging_hooks() -> AgentHooks:
     )
 
 
-def create_metrics_hooks() -> tuple[AgentHooks, dict[str, Any]]:
+def create_metrics_hooks() -> Tuple[AgentHooks, Dict[str, Any]]:
     """Create hooks that collect metrics.
 
     Returns:
         Tuple of (AgentHooks, metrics_dict).
         The metrics_dict is updated in-place by the hooks.
     """
-    metrics: dict[str, Any] = {
+    metrics: Dict[str, Any] = {
         "total_tool_calls": 0,
         "tool_durations_ms": [],
         "tool_errors": 0,

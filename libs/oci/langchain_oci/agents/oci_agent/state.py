@@ -9,7 +9,7 @@ agent state throughout the agentic loop.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,10 +32,10 @@ class ToolExecution(BaseModel):
 
     tool_name: str
     tool_call_id: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: Dict[str, Any] = Field(default_factory=dict)
     result: str = ""
     success: bool = True
-    error: str | None = None
+    error: Optional[str] = None
     duration_ms: float = 0.0
 
 
@@ -58,7 +58,7 @@ class ReasoningStep(BaseModel):
 
     iteration: int
     thought: str = ""
-    tool_executions: tuple[ToolExecution, ...] = ()
+    tool_executions: Tuple[ToolExecution, ...] = ()
     confidence: float = 0.0
     assessment: str = "on_track"
 
@@ -82,12 +82,12 @@ class AgentState(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    messages: tuple[BaseMessage, ...] = ()
-    reasoning_steps: tuple[ReasoningStep, ...] = ()
+    messages: Tuple[BaseMessage, ...] = ()
+    reasoning_steps: Tuple[ReasoningStep, ...] = ()
     iteration: int = 0
     confidence: float = 0.0
-    tool_history: tuple[str, ...] = ()
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    tool_history: Tuple[str, ...] = ()
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     def with_message(self, message: BaseMessage) -> AgentState:
         """Return new state with message appended.
@@ -102,7 +102,7 @@ class AgentState(BaseModel):
             update={"messages": (*self.messages, message)},
         )
 
-    def with_messages(self, messages: list[BaseMessage]) -> AgentState:
+    def with_messages(self, messages: List[BaseMessage]) -> AgentState:
         """Return new state with multiple messages appended.
 
         Args:
@@ -213,10 +213,10 @@ class AgentResult(BaseModel):
         confidence: Final confidence score.
     """
 
-    messages: list[BaseMessage]
+    messages: List[BaseMessage]
     final_answer: str
     termination_reason: str
-    reasoning_steps: list[ReasoningStep]
+    reasoning_steps: List[ReasoningStep]
     total_iterations: int
     total_tool_calls: int
     confidence: float = 0.0

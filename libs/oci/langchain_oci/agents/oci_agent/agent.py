@@ -60,7 +60,10 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Dict,
     Iterator,
+    List,
+    Optional,
     Sequence,
     Union,
 )
@@ -154,16 +157,16 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         tools: Sequence[Union[BaseTool, Callable[..., Any]]],
         *,
         # OCI auth parameters
-        compartment_id: str | None = None,
-        service_endpoint: str | None = None,
+        compartment_id: Optional[str] = None,
+        service_endpoint: Optional[str] = None,
         auth_type: Union[str, OCIAuthType] = OCIAuthType.API_KEY,
         auth_profile: str = "DEFAULT",
         auth_file_location: str = "~/.oci/config",
         # Agent configuration
-        system_prompt: str | None = None,
+        system_prompt: Optional[str] = None,
         max_iterations: int = 10,
         confidence_threshold: float = 0.8,
-        terminal_tools: list[str] | None = None,
+        terminal_tools: Optional[List[str]] = None,
         enable_reflexion: bool = True,
         loop_threshold: int = 3,
         # New features
@@ -171,11 +174,11 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         min_iterations_for_early_exit: int = 2,
         enable_compression: bool = True,
         max_messages: int = 20,
-        hooks: AgentHooks | None = None,
-        checkpointer: BaseCheckpointer | None = None,
+        hooks: Optional[AgentHooks] = None,
+        checkpointer: Optional[BaseCheckpointer] = None,
         # Model parameters
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> None:
         """Initialize OCIGenAIAgent.
 
@@ -223,10 +226,10 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         )
         self._hooks = hooks or AgentHooks()
         self._checkpointer = wrap_checkpointer(checkpointer) if checkpointer else None
-        self._confidence_signals: list[ConfidenceSignal] = []
+        self._confidence_signals: List[ConfidenceSignal] = []
 
         # Build model kwargs
-        model_kwargs: dict[str, Any] = {}
+        model_kwargs: Dict[str, Any] = {}
         if temperature is not None:
             model_kwargs["temperature"] = temperature
         if max_tokens is not None:
@@ -255,7 +258,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     def _convert_tools(
         self,
         tools: Sequence[Union[BaseTool, Callable[..., Any]]],
-    ) -> dict[str, BaseTool]:
+    ) -> Dict[str, BaseTool]:
         """Convert tools to BaseTool instances.
 
         Args:
@@ -264,7 +267,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Returns:
             Dictionary mapping tool names to BaseTool instances.
         """
-        result: dict[str, BaseTool] = {}
+        result: Dict[str, BaseTool] = {}
         for t in tools:
             if isinstance(t, BaseTool):
                 result[t.name] = t
@@ -279,7 +282,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     def _init_state(
         self,
         input_data: Union[str, dict],
-        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
+        message_history: Optional[Sequence[Union[Dict[str, Any], BaseMessage]]] = None,
     ) -> AgentState:
         """Initialize agent state from input.
 
@@ -291,7 +294,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Returns:
             Initial AgentState.
         """
-        messages: list[BaseMessage] = []
+        messages: List[BaseMessage] = []
 
         # Add system prompt if configured
         if self.system_prompt:
@@ -352,7 +355,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         self,
         tool_name: str,
         tool_call_id: str,
-        arguments: dict[str, Any],
+        arguments: Dict[str, Any],
     ) -> ToolExecution:
         """Execute a single tool call.
 
@@ -406,7 +409,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         self,
         tool_name: str,
         tool_call_id: str,
-        arguments: dict[str, Any],
+        arguments: Dict[str, Any],
     ) -> ToolExecution:
         """Execute a single tool call asynchronously.
 
@@ -501,10 +504,10 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     def invoke(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
-        config: RunnableConfig | None = None,
+        config: Optional[RunnableConfig] = None,
         *,
-        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
-        thread_id: str | None = None,
+        message_history: Optional[Sequence[Union[Dict[str, Any], BaseMessage]]] = None,
+        thread_id: Optional[str] = None,
     ) -> AgentResult:
         """Run agent to completion.
 
@@ -572,8 +575,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                 break
 
             # Execute tools
-            tool_executions: list[ToolExecution] = []
-            last_tool_calls: list[str] = []
+            tool_executions: List[ToolExecution] = []
+            last_tool_calls: List[str] = []
 
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name", "")
@@ -648,10 +651,10 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     def stream(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
-        config: RunnableConfig | None = None,
+        config: Optional[RunnableConfig] = None,
         *,
-        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
-        thread_id: str | None = None,
+        message_history: Optional[Sequence[Union[Dict[str, Any], BaseMessage]]] = None,
+        thread_id: Optional[str] = None,
     ) -> Iterator[AgentEvent]:
         """Stream agent events during execution.
 
@@ -670,8 +673,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             AgentEvent instances (ThinkEvent, ToolStartEvent, etc.).
         """
         # Restore from checkpoint if available
-        restored_messages: list[BaseMessage] = []
-        parent_checkpoint_id: str | None = None
+        restored_messages: List[BaseMessage] = []
+        parent_checkpoint_id: Optional[str] = None
 
         if thread_id and self._checkpointer:
             checkpoint = self._checkpointer.get(thread_id)
@@ -771,8 +774,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                 break
 
             # Execute tools
-            tool_executions: list[ToolExecution] = []
-            last_tool_calls: list[str] = []
+            tool_executions: List[ToolExecution] = []
+            last_tool_calls: List[str] = []
 
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name", "")
@@ -954,10 +957,10 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     async def ainvoke(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
-        config: RunnableConfig | None = None,
+        config: Optional[RunnableConfig] = None,
         *,
-        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
-        thread_id: str | None = None,
+        message_history: Optional[Sequence[Union[Dict[str, Any], BaseMessage]]] = None,
+        thread_id: Optional[str] = None,
     ) -> AgentResult:
         """Async version of invoke with native async tool execution.
 
@@ -977,7 +980,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         loop = asyncio.get_running_loop()
 
         # Restore from checkpoint if available
-        restored_messages: list[BaseMessage] = []
+        restored_messages: List[BaseMessage] = []
 
         if thread_id and self._checkpointer:
             checkpoint = self._checkpointer.get(thread_id)
@@ -1038,8 +1041,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                 break
 
             # Execute tools with native async support
-            tool_executions: list[ToolExecution] = []
-            last_tool_calls: list[str] = []
+            tool_executions: List[ToolExecution] = []
+            last_tool_calls: List[str] = []
 
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name", "")
@@ -1117,10 +1120,10 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     async def astream(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
-        config: RunnableConfig | None = None,
+        config: Optional[RunnableConfig] = None,
         *,
-        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
-        thread_id: str | None = None,
+        message_history: Optional[Sequence[Union[Dict[str, Any], BaseMessage]]] = None,
+        thread_id: Optional[str] = None,
     ) -> AsyncIterator[AgentEvent]:
         """Async version of stream with native async tool execution.
 
@@ -1140,8 +1143,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         loop = asyncio.get_running_loop()
 
         # Restore from checkpoint if available
-        restored_messages: list[BaseMessage] = []
-        parent_checkpoint_id: str | None = None
+        restored_messages: List[BaseMessage] = []
+        parent_checkpoint_id: Optional[str] = None
 
         if thread_id and self._checkpointer:
             checkpoint = self._checkpointer.get(thread_id)
@@ -1242,8 +1245,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                 break
 
             # Execute tools with native async support
-            tool_executions: list[ToolExecution] = []
-            last_tool_calls: list[str] = []
+            tool_executions: List[ToolExecution] = []
+            last_tool_calls: List[str] = []
 
             for tool_call in tool_calls:
                 tool_name = tool_call.get("name", "")
@@ -1415,12 +1418,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
 
     def batch(
         self,
-        inputs: Sequence[Union[str, dict[str, Any]]],
-        config: RunnableConfig | Sequence[RunnableConfig] | None = None,
+        inputs: Sequence[Union[str, Dict[str, Any]]],
+        config: Union[RunnableConfig, Sequence[RunnableConfig], None] = None,
         *,
         return_exceptions: bool = False,
         **kwargs: Any,
-    ) -> list[AgentResult]:
+    ) -> List[AgentResult]:
         """Process multiple inputs in batch.
 
         Runs the agent on each input sequentially.
@@ -1434,12 +1437,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Returns:
             List of AgentResult instances.
         """
-        results: list[AgentResult] = []
-        configs: list[RunnableConfig | None]
+        results: List[AgentResult] = []
+        configs: List[Optional[RunnableConfig]]
         if isinstance(config, (list, tuple)):
             configs = list(config)
         else:
-            single_config: RunnableConfig | None = config  # type: ignore[assignment]
+            single_config: Optional[RunnableConfig] = config  # type: ignore[assignment]
             configs = [single_config] * len(inputs)
 
         for i, (inp, cfg) in enumerate(zip(inputs, configs)):
@@ -1465,12 +1468,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
 
     async def abatch(
         self,
-        inputs: Sequence[Union[str, dict[str, Any]]],
-        config: RunnableConfig | Sequence[RunnableConfig] | None = None,
+        inputs: Sequence[Union[str, Dict[str, Any]]],
+        config: Union[RunnableConfig, Sequence[RunnableConfig], None] = None,
         *,
         return_exceptions: bool = False,
         **kwargs: Any,
-    ) -> list[AgentResult]:
+    ) -> List[AgentResult]:
         """Async batch processing.
 
         Runs multiple inputs concurrently using asyncio.gather.
@@ -1484,14 +1487,14 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Returns:
             List of AgentResult instances.
         """
-        configs: list[RunnableConfig | None]
+        configs: List[Optional[RunnableConfig]]
         if isinstance(config, (list, tuple)):
             configs = list(config)
         else:
-            single_config: RunnableConfig | None = config  # type: ignore[assignment]
+            single_config: Optional[RunnableConfig] = config  # type: ignore[assignment]
             configs = [single_config] * len(inputs)
 
-        async def run_one(inp: Union[str, dict], cfg: RunnableConfig | None):
+        async def run_one(inp: Union[str, dict], cfg: Optional[RunnableConfig]):
             try:
                 return await self.ainvoke(inp, cfg, **kwargs)
             except Exception as e:
