@@ -49,7 +49,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from langchain_core.messages import (
     AIMessage,
@@ -76,9 +76,9 @@ class Checkpoint:
     id: str
     thread_id: str
     iteration: int
-    messages: tuple[dict[str, Any], ...]
-    metadata: dict[str, Any] = field(default_factory=dict)
-    parent_id: str | None = None
+    messages: Tuple[Dict[str, Any], ...]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    parent_id: Optional[str] = None
 
     @classmethod
     def create(
@@ -86,8 +86,8 @@ class Checkpoint:
         thread_id: str,
         iteration: int,
         messages: Sequence[BaseMessage],
-        metadata: dict[str, Any] | None = None,
-        parent_id: str | None = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        parent_id: Optional[str] = None,
     ) -> Checkpoint:
         """Create a new checkpoint from current state.
 
@@ -122,7 +122,7 @@ class Checkpoint:
             parent_id=parent_id,
         )
 
-    def get_messages(self) -> list[BaseMessage]:
+    def get_messages(self) -> List[BaseMessage]:
         """Deserialize and return messages.
 
         Returns:
@@ -130,7 +130,7 @@ class Checkpoint:
         """
         return [_deserialize_message(m) for m in self.messages]
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert checkpoint to dictionary for serialization.
 
         Returns:
@@ -146,7 +146,7 @@ class Checkpoint:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Checkpoint:
+    def from_dict(cls, data: Dict[str, Any]) -> Checkpoint:
         """Create checkpoint from dictionary.
 
         Args:
@@ -165,7 +165,7 @@ class Checkpoint:
         )
 
 
-def _serialize_message(msg: BaseMessage) -> dict[str, Any]:
+def _serialize_message(msg: BaseMessage) -> Dict[str, Any]:
     """Serialize a message to a dictionary.
 
     Args:
@@ -174,7 +174,7 @@ def _serialize_message(msg: BaseMessage) -> dict[str, Any]:
     Returns:
         Dictionary representation.
     """
-    base: dict[str, Any] = {
+    base: Dict[str, Any] = {
         "type": msg.__class__.__name__,
         "content": msg.content,
     }
@@ -193,7 +193,7 @@ def _serialize_message(msg: BaseMessage) -> dict[str, Any]:
     return base
 
 
-def _deserialize_message(data: dict[str, Any]) -> BaseMessage:
+def _deserialize_message(data: Dict[str, Any]) -> BaseMessage:
     """Deserialize a message from a dictionary.
 
     Args:
@@ -235,7 +235,7 @@ class BaseCheckpointer(ABC):
     """
 
     @abstractmethod
-    def get(self, thread_id: str) -> Checkpoint | None:
+    def get(self, thread_id: str) -> Optional[Checkpoint]:
         """Get the latest checkpoint for a thread.
 
         Args:
@@ -247,7 +247,7 @@ class BaseCheckpointer(ABC):
         pass
 
     @abstractmethod
-    def get_by_id(self, checkpoint_id: str) -> Checkpoint | None:
+    def get_by_id(self, checkpoint_id: str) -> Optional[Checkpoint]:
         """Get a specific checkpoint by ID.
 
         Args:
@@ -309,15 +309,15 @@ class MemoryCheckpointer(BaseCheckpointer):
 
     def __init__(self) -> None:
         """Initialize empty storage."""
-        self._storage: dict[str, list[Checkpoint]] = {}
-        self._by_id: dict[str, Checkpoint] = {}
+        self._storage: Dict[str, List[Checkpoint]] = {}
+        self._by_id: Dict[str, Checkpoint] = {}
 
-    def get(self, thread_id: str) -> Checkpoint | None:
+    def get(self, thread_id: str) -> Optional[Checkpoint]:
         """Get the latest checkpoint for a thread."""
         checkpoints = self._storage.get(thread_id, [])
         return checkpoints[-1] if checkpoints else None
 
-    def get_by_id(self, checkpoint_id: str) -> Checkpoint | None:
+    def get_by_id(self, checkpoint_id: str) -> Optional[Checkpoint]:
         """Get a specific checkpoint by ID."""
         return self._by_id.get(checkpoint_id)
 
@@ -373,7 +373,7 @@ class FileCheckpointer(BaseCheckpointer):
             path: Path to JSON file for storage.
         """
         self._path = path
-        self._storage: dict[str, list[dict[str, Any]]] = {}
+        self._storage: Dict[str, List[Dict[str, Any]]] = {}
         self._load()
 
     def _load(self) -> None:
@@ -391,14 +391,14 @@ class FileCheckpointer(BaseCheckpointer):
         with open(self._path, "w") as f:
             json.dump(self._storage, f, indent=2)
 
-    def get(self, thread_id: str) -> Checkpoint | None:
+    def get(self, thread_id: str) -> Optional[Checkpoint]:
         """Get the latest checkpoint for a thread."""
         checkpoints = self._storage.get(thread_id, [])
         if checkpoints:
             return Checkpoint.from_dict(checkpoints[-1])
         return None
 
-    def get_by_id(self, checkpoint_id: str) -> Checkpoint | None:
+    def get_by_id(self, checkpoint_id: str) -> Optional[Checkpoint]:
         """Get a specific checkpoint by ID."""
         for thread_checkpoints in self._storage.values():
             for ckpt_data in thread_checkpoints:
@@ -452,11 +452,11 @@ class LangGraphCheckpointerAdapter(BaseCheckpointer):
         """
         self._lg_checkpointer = langgraph_checkpointer
 
-    def _make_config(self, thread_id: str) -> dict[str, Any]:
+    def _make_config(self, thread_id: str) -> Dict[str, Any]:
         """Create RunnableConfig for LangGraph."""
         return {"configurable": {"thread_id": thread_id}}
 
-    def get(self, thread_id: str) -> Checkpoint | None:
+    def get(self, thread_id: str) -> Optional[Checkpoint]:
         """Get the latest checkpoint for a thread."""
         config = self._make_config(thread_id)
         try:
@@ -481,7 +481,7 @@ class LangGraphCheckpointerAdapter(BaseCheckpointer):
         except Exception:
             return None
 
-    def get_by_id(self, checkpoint_id: str) -> Checkpoint | None:
+    def get_by_id(self, checkpoint_id: str) -> Optional[Checkpoint]:
         """Get a specific checkpoint by ID (not fully supported)."""
         # LangGraph doesn't support direct ID lookup easily
         return None

@@ -91,6 +91,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "examples/**/*.py" = ["T201", "E501"]  # Allow print and longer lines in examples
+"tests/**/*.py" = ["E501"]  # Allow longer lines in tests
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]

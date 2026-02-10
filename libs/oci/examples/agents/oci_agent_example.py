@@ -139,6 +139,7 @@ def streaming_usage():
             print(f"\n[Terminated] Reason: {event.reason}")
             print(f"Final Answer: {event.final_answer}")
 
+
 def with_custom_termination():
     """OCIGenAIAgent with custom termination tools."""
     print("\n" + "=" * 60)

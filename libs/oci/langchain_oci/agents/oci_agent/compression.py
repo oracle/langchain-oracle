@@ -10,7 +10,7 @@ preserving message integrity (AI + Tool message pairs stay together).
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,7 +57,7 @@ class CompressionResult(BaseModel):
 
 
 def compress_messages(
-    messages: tuple[BaseMessage, ...],
+    messages: Tuple[BaseMessage, ...],
     config: CompressionConfig,
 ) -> CompressionResult:
     """Compress message history based on strategy.
@@ -85,7 +85,7 @@ def compress_messages(
 
 
 def _fixed_window_compress(
-    messages: tuple[BaseMessage, ...],
+    messages: Tuple[BaseMessage, ...],
     config: CompressionConfig,
 ) -> CompressionResult:
     """Keep system messages + most recent N messages."""
@@ -107,7 +107,7 @@ def _fixed_window_compress(
 
 
 def _smart_trim_compress(
-    messages: tuple[BaseMessage, ...],
+    messages: Tuple[BaseMessage, ...],
     config: CompressionConfig,
 ) -> CompressionResult:
     """Trim while preserving AI+Tool message pairs.

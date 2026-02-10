@@ -15,13 +15,19 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_oci import OCIGenAIAgent, ThinkEvent, ToolStartEvent, ToolCompleteEvent, TerminateEvent
 
+from langchain_oci import (
+    OCIGenAIAgent,
+    TerminateEvent,
+    ThinkEvent,
+    ToolCompleteEvent,
+    ToolStartEvent,
+)
 
 # Configuration
 COMPARTMENT_ID = os.environ.get(
     "OCI_COMPARTMENT_ID",
-    "ocid1.tenancy.oc1..aaaaaaaah7ixt2oanvvualoahejm63r66c3pse5u4nd4gzviax7eeeqhrysq"
+    "ocid1.tenancy.oc1..aaaaaaaah7ixt2oanvvualoahejm63r66c3pse5u4nd4gzviax7eeeqhrysq",
 )
 AUTH_TYPE = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
 AUTH_PROFILE = os.environ.get("OCI_AUTH_PROFILE", "API_KEY_AUTH")
@@ -58,7 +64,7 @@ async def test_mcp_tools():
         print(f"   - {tool.name}: {tool.description[:50]}...")
 
     # Create agent with MCP tools
-    print(f"\n2. Creating OCIGenAIAgent with MCP tools")
+    print("\n2. Creating OCIGenAIAgent with MCP tools")
     print(f"   Model: {MODEL_ID}")
 
     agent = OCIGenAIAgent(

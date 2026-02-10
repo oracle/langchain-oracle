@@ -18,7 +18,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any, Literal, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,7 +58,7 @@ class ToolStartEvent(BaseModel):
     iteration: int
     tool_name: str
     tool_call_id: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCompleteEvent(BaseModel):
@@ -83,7 +83,7 @@ class ToolCompleteEvent(BaseModel):
     tool_call_id: str
     result: str = ""
     success: bool = True
-    error: str | None = None
+    error: Optional[str] = None
     duration_ms: float = 0.0
 
 
@@ -108,7 +108,7 @@ class ReflectEvent(BaseModel):
     confidence_delta: float = 0.0
     assessment: str = "on_track"
     loop_detected: bool = False
-    guidance: str | None = None
+    guidance: Optional[str] = None
 
 
 class TerminateEvent(BaseModel):

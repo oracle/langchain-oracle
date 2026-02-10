@@ -11,7 +11,6 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from langchain_oci.agents.oci_agent.events import (
-    AgentEvent,
     ReflectEvent,
     TerminateEvent,
     ThinkEvent,
@@ -20,7 +19,6 @@ from langchain_oci.agents.oci_agent.events import (
 )
 from langchain_oci.agents.oci_agent.reflexion import (
     AssessmentCategory,
-    ReflectionResult,
     Reflector,
     assess_confidence,
     assess_progress,
@@ -336,8 +334,7 @@ class TestTermination:
         """Test confidence threshold check."""
         state = AgentState(confidence=0.8)
         assert (
-            check_confidence_threshold(state, 0.8)
-            == TerminationReason.CONFIDENCE_MET
+            check_confidence_threshold(state, 0.8) == TerminationReason.CONFIDENCE_MET
         )
         assert check_confidence_threshold(state, 0.9) is None
 
@@ -390,8 +387,12 @@ class TestTermination:
 
     def test_get_termination_description(self):
         """Test termination descriptions."""
-        assert "Maximum" in get_termination_description(TerminationReason.MAX_ITERATIONS)
-        assert "Confidence" in get_termination_description(TerminationReason.CONFIDENCE_MET)
+        assert "Maximum" in get_termination_description(
+            TerminationReason.MAX_ITERATIONS
+        )
+        assert "Confidence" in get_termination_description(
+            TerminationReason.CONFIDENCE_MET
+        )
 
 
 class TestReflexion:
@@ -843,7 +844,9 @@ class TestConfidenceSignals:
             detect_confidence_signals,
         )
 
-        signals = detect_confidence_signals("I have successfully completed the task.", 3)
+        signals = detect_confidence_signals(
+            "I have successfully completed the task.", 3
+        )
         assert any(s.signal_type == SignalType.TASK_COMPLETE for s in signals)
 
     def test_detect_multiple_signals(self):
@@ -1214,9 +1217,7 @@ class TestHooks:
 
         # Should not raise
         hooks.trigger_tool_start(
-            ToolHookContext(
-                tool_name="t", tool_call_id="tc", arguments={}, iteration=1
-            )
+            ToolHookContext(tool_name="t", tool_call_id="tc", arguments={}, iteration=1)
         )
         hooks.trigger_tool_end(
             ToolResultContext(
@@ -1255,7 +1256,6 @@ class TestHooks:
     def test_create_metrics_hooks(self):
         """Test create_metrics_hooks returns hooks and metrics dict."""
         from langchain_oci.agents.oci_agent.hooks import (
-            ToolResultContext,
             create_metrics_hooks,
         )
 
@@ -1358,9 +1358,7 @@ class TestCheckpoint:
             AIMessage(content="Hi"),
             ToolMessage(content="result", tool_call_id="tc_1"),
         ]
-        checkpoint = Checkpoint.create(
-            thread_id="t1", iteration=1, messages=messages
-        )
+        checkpoint = Checkpoint.create(thread_id="t1", iteration=1, messages=messages)
 
         restored = checkpoint.get_messages()
         assert len(restored) == 3
@@ -1374,9 +1372,7 @@ class TestCheckpoint:
         from langchain_oci.agents.oci_agent.checkpoint import Checkpoint
 
         messages = [HumanMessage(content="Test")]
-        original = Checkpoint.create(
-            thread_id="t1", iteration=1, messages=messages
-        )
+        original = Checkpoint.create(thread_id="t1", iteration=1, messages=messages)
 
         data = original.to_dict()
         restored = Checkpoint.from_dict(data)
@@ -1390,9 +1386,7 @@ class TestCheckpoint:
         """Test that checkpoint is immutable."""
         from langchain_oci.agents.oci_agent.checkpoint import Checkpoint
 
-        checkpoint = Checkpoint.create(
-            thread_id="t1", iteration=1, messages=[]
-        )
+        checkpoint = Checkpoint.create(thread_id="t1", iteration=1, messages=[])
 
         with pytest.raises(Exception):  # frozen dataclass
             checkpoint.thread_id = "new"
@@ -1490,9 +1484,7 @@ class TestMemoryCheckpointer:
         )
 
         checkpointer = MemoryCheckpointer()
-        checkpoint = Checkpoint.create(
-            thread_id="t1", iteration=1, messages=[]
-        )
+        checkpoint = Checkpoint.create(thread_id="t1", iteration=1, messages=[])
         checkpointer.put(checkpoint)
 
         retrieved = checkpointer.get_by_id(checkpoint.id)
@@ -1656,14 +1648,16 @@ class TestAgentLangGraphNode:
             agent.enable_reflexion = True
 
             # Mock invoke
-            agent.invoke = MagicMock(return_value=AgentResult(
-                messages=[],
-                final_answer="test answer",
-                termination_reason="no_tools",
-                reasoning_steps=[],
-                total_iterations=1,
-                total_tool_calls=0,
-            ))
+            agent.invoke = MagicMock(
+                return_value=AgentResult(
+                    messages=[],
+                    final_answer="test answer",
+                    termination_reason="no_tools",
+                    reasoning_steps=[],
+                    total_iterations=1,
+                    total_tool_calls=0,
+                )
+            )
 
             node_fn = agent.as_node()
             assert callable(node_fn)
@@ -1687,8 +1681,9 @@ class TestAsyncToolExecution:
     @pytest.mark.asyncio
     async def test_aexecute_tool_with_sync_tool(self):
         """Test async tool execution falls back to sync for non-async tools."""
-        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
         from langchain_core.tools import tool
+
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
 
         @tool
         def sync_tool(x: str) -> str:
@@ -1701,9 +1696,7 @@ class TestAsyncToolExecution:
             agent._tools = {"sync_tool": sync_tool}
 
             # Execute tool async
-            execution = await agent._aexecute_tool(
-                "sync_tool", "tc_123", {"x": "test"}
-            )
+            execution = await agent._aexecute_tool("sync_tool", "tc_123", {"x": "test"})
 
             assert execution.success is True
             assert execution.result == "result: test"
@@ -1714,8 +1707,9 @@ class TestAsyncToolExecution:
     @pytest.mark.asyncio
     async def test_aexecute_tool_with_async_tool(self):
         """Test async tool execution uses native ainvoke when available."""
-        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
         import asyncio
+
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
 
         # Create a mock tool with ainvoke
         async_tool = MagicMock()
@@ -1771,9 +1765,7 @@ class TestAsyncToolExecution:
             agent = OCIGenAIAgent.__new__(OCIGenAIAgent)
             agent._tools = {"error_tool": error_tool}
 
-            execution = await agent._aexecute_tool(
-                "error_tool", "tc_error", {}
-            )
+            execution = await agent._aexecute_tool("error_tool", "tc_error", {})
 
             assert execution.success is False
             assert "Tool failed" in execution.error

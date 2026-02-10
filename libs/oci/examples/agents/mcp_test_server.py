@@ -69,15 +69,44 @@ def search_database(query: str, limit: int = 5) -> list:
     """
     # Mock database
     records = [
-        {"id": 1, "name": "Oracle Cloud", "type": "cloud", "desc": "Enterprise cloud platform"},
-        {"id": 2, "name": "MySQL", "type": "database", "desc": "Popular open-source database"},
-        {"id": 3, "name": "Java", "type": "language", "desc": "Enterprise programming language"},
-        {"id": 4, "name": "Python", "type": "language", "desc": "Versatile scripting language"},
-        {"id": 5, "name": "Kubernetes", "type": "orchestration", "desc": "Container orchestration"},
+        {
+            "id": 1,
+            "name": "Oracle Cloud",
+            "type": "cloud",
+            "desc": "Enterprise cloud platform",
+        },
+        {
+            "id": 2,
+            "name": "MySQL",
+            "type": "database",
+            "desc": "Popular open-source database",
+        },
+        {
+            "id": 3,
+            "name": "Java",
+            "type": "language",
+            "desc": "Enterprise programming language",
+        },
+        {
+            "id": 4,
+            "name": "Python",
+            "type": "language",
+            "desc": "Versatile scripting language",
+        },
+        {
+            "id": 5,
+            "name": "Kubernetes",
+            "type": "orchestration",
+            "desc": "Container orchestration",
+        },
     ]
 
     query_lower = query.lower()
-    matches = [r for r in records if query_lower in r["name"].lower() or query_lower in r["desc"].lower()]
+    matches = [
+        r
+        for r in records
+        if query_lower in r["name"].lower() or query_lower in r["desc"].lower()
+    ]
     return matches[:limit]
 
 

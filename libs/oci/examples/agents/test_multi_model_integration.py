@@ -22,12 +22,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from langchain_core.tools import tool
 
-from langchain_oci import OCIGenAIAgent, TerminateEvent, ToolCompleteEvent
-
+from langchain_oci import OCIGenAIAgent, TerminateEvent
 
 # =============================================================================
 # Test Tools
 # =============================================================================
+
 
 @tool
 def calculate(expression: str) -> str:
@@ -40,6 +40,7 @@ def calculate(expression: str) -> str:
         The calculated result
     """
     import math
+
     allowed = {k: v for k, v in math.__dict__.items() if not k.startswith("_")}
     allowed.update({"abs": abs, "round": round, "min": min, "max": max})
     try:
@@ -94,8 +95,12 @@ async def async_search(query: str) -> str:
 
 # Compartments for different regions/tenancies
 # Chicago uses the tenancy OCID from API_KEY_AUTH profile
-CHICAGO_COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaah7ixt2oanvvualoahejm63r66c3pse5u4nd4gzviax7eeeqhrysq"
-FRANKFURT_COMPARTMENT = "ocid1.tenancy.oc1..aaaaaaaa5hwtrus75rauufcfvtnjnz3mc4xm2bzibbigva2bw4ne7ezkvzha"
+CHICAGO_COMPARTMENT = (
+    "ocid1.tenancy.oc1..aaaaaaaah7ixt2oanvvualoahejm63r66c3pse5u4nd4gzviax7eeeqhrysq"
+)
+FRANKFURT_COMPARTMENT = (
+    "ocid1.tenancy.oc1..aaaaaaaa5hwtrus75rauufcfvtnjnz3mc4xm2bzibbigva2bw4ne7ezkvzha"
+)
 
 # Override via environment variables
 AUTH_PROFILE = os.environ.get("OCI_AUTH_PROFILE", "API_KEY_AUTH")
@@ -144,20 +149,21 @@ MODELS = {
 # Test Functions
 # =============================================================================
 
+
 def test_sync_invoke(model_name: str, config: dict) -> bool:
     """Test synchronous invoke with tool calling."""
-    print(f"\n  [sync invoke] ", end="", flush=True)
+    print("\n  [sync invoke] ", end="", flush=True)
     try:
         agent = OCIGenAIAgent(
-            tools=[calculate, get_weather],
-            max_iterations=3,
-            **config
+            tools=[calculate, get_weather], max_iterations=3, **config
         )
         result = agent.invoke("What is 15 * 8?")
 
         # Check for correct answer OR that agent completed without error
         if "120" in result.final_answer or result.termination_reason in (
-            "no_tools", "max_iterations", "confidence_met"
+            "no_tools",
+            "max_iterations",
+            "confidence_met",
         ):
             print("PASS")
             return True
@@ -171,12 +177,10 @@ def test_sync_invoke(model_name: str, config: dict) -> bool:
 
 def test_sync_stream(model_name: str, config: dict) -> bool:
     """Test synchronous streaming."""
-    print(f"  [sync stream] ", end="", flush=True)
+    print("  [sync stream] ", end="", flush=True)
     try:
         agent = OCIGenAIAgent(
-            tools=[calculate, get_weather],
-            max_iterations=3,
-            **config
+            tools=[calculate, get_weather], max_iterations=3, **config
         )
 
         events = list(agent.stream("What's the weather in Paris?"))
@@ -197,18 +201,18 @@ def test_sync_stream(model_name: str, config: dict) -> bool:
 
 async def test_async_invoke(model_name: str, config: dict) -> bool:
     """Test async invoke."""
-    print(f"  [async invoke] ", end="", flush=True)
+    print("  [async invoke] ", end="", flush=True)
     try:
         agent = OCIGenAIAgent(
-            tools=[calculate, get_weather],
-            max_iterations=3,
-            **config
+            tools=[calculate, get_weather], max_iterations=3, **config
         )
         result = await agent.ainvoke("Calculate 25 + 37")
 
         # Check for correct answer OR that agent completed without error
         if "62" in result.final_answer or result.termination_reason in (
-            "no_tools", "max_iterations", "confidence_met"
+            "no_tools",
+            "max_iterations",
+            "confidence_met",
         ):
             print("PASS")
             return True
@@ -222,12 +226,10 @@ async def test_async_invoke(model_name: str, config: dict) -> bool:
 
 async def test_async_stream(model_name: str, config: dict) -> bool:
     """Test async streaming."""
-    print(f"  [async stream] ", end="", flush=True)
+    print("  [async stream] ", end="", flush=True)
     try:
         agent = OCIGenAIAgent(
-            tools=[calculate, get_weather],
-            max_iterations=3,
-            **config
+            tools=[calculate, get_weather], max_iterations=3, **config
         )
 
         events = []
@@ -250,16 +252,15 @@ async def test_async_stream(model_name: str, config: dict) -> bool:
 
 async def test_async_tool(model_name: str, config: dict) -> bool:
     """Test async tool execution (native ainvoke)."""
-    print(f"  [async tool] ", end="", flush=True)
+    print("  [async tool] ", end="", flush=True)
     try:
-        agent = OCIGenAIAgent(
-            tools=[async_search],
-            max_iterations=3,
-            **config
-        )
+        agent = OCIGenAIAgent(tools=[async_search], max_iterations=3, **config)
         result = await agent.ainvoke("Search for Python tutorials")
 
-        if "search" in result.final_answer.lower() or "found" in result.final_answer.lower():
+        if (
+            "search" in result.final_answer.lower()
+            or "found" in result.final_answer.lower()
+        ):
             print("PASS")
             return True
         else:
@@ -273,17 +274,15 @@ async def test_async_tool(model_name: str, config: dict) -> bool:
 
 def test_batch(model_name: str, config: dict) -> bool:
     """Test batch processing."""
-    print(f"  [batch] ", end="", flush=True)
+    print("  [batch] ", end="", flush=True)
     try:
-        agent = OCIGenAIAgent(
-            tools=[calculate],
-            max_iterations=3,
-            **config
+        agent = OCIGenAIAgent(tools=[calculate], max_iterations=3, **config)
+        results = agent.batch(
+            [
+                "What is 5 + 5?",
+                "What is 10 * 2?",
+            ]
         )
-        results = agent.batch([
-            "What is 5 + 5?",
-            "What is 10 * 2?",
-        ])
 
         if len(results) == 2:
             print("PASS")
@@ -355,7 +354,7 @@ async def main():
         total_failed += failed
 
         status = "PASS" if failed == 0 else "FAIL"
-        print(f"  {model_name}: {status} ({passed}/{passed+failed} tests)")
+        print(f"  {model_name}: {status} ({passed}/{passed + failed} tests)")
 
     print("-" * 50)
     print(f"  Total: {total_passed} passed, {total_failed} failed")

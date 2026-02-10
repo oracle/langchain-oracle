@@ -28,24 +28,25 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from langchain_core.tools import tool
+
 from langchain_oci import (
-    OCIGenAIAgent,
     AgentHooks,
-    ToolHookContext,
-    ToolResultContext,
     IterationContext,
-    ThinkEvent,
-    ToolStartEvent,
-    ToolCompleteEvent,
+    OCIGenAIAgent,
     ReflectEvent,
     TerminateEvent,
+    ThinkEvent,
+    ToolCompleteEvent,
+    ToolHookContext,
+    ToolResultContext,
+    ToolStartEvent,
     create_metrics_hooks,
 )
-
 
 # =============================================================================
 # Define Tools for the Agent
 # =============================================================================
+
 
 @tool
 def calculate(expression: str) -> str:
@@ -60,10 +61,7 @@ def calculate(expression: str) -> str:
     import math
 
     # Safe evaluation with math functions
-    allowed_names = {
-        k: v for k, v in math.__dict__.items()
-        if not k.startswith("_")
-    }
+    allowed_names = {k: v for k, v in math.__dict__.items() if not k.startswith("_")}
     allowed_names.update({"abs": abs, "round": round, "min": min, "max": max})
 
     try:
@@ -85,11 +83,36 @@ def get_stock_quote(symbol: str) -> dict:
     """
     # Simulated stock data
     quotes = {
-        "ORCL": {"price": 178.50, "change": 2.34, "change_pct": 1.33, "volume": "12.5M"},
-        "GOOG": {"price": 175.20, "change": -1.15, "change_pct": -0.65, "volume": "8.2M"},
-        "AAPL": {"price": 225.80, "change": 0.50, "change_pct": 0.22, "volume": "45.1M"},
-        "MSFT": {"price": 448.90, "change": 3.20, "change_pct": 0.72, "volume": "18.7M"},
-        "NVDA": {"price": 142.30, "change": 5.40, "change_pct": 3.94, "volume": "52.3M"},
+        "ORCL": {
+            "price": 178.50,
+            "change": 2.34,
+            "change_pct": 1.33,
+            "volume": "12.5M",
+        },
+        "GOOG": {
+            "price": 175.20,
+            "change": -1.15,
+            "change_pct": -0.65,
+            "volume": "8.2M",
+        },
+        "AAPL": {
+            "price": 225.80,
+            "change": 0.50,
+            "change_pct": 0.22,
+            "volume": "45.1M",
+        },
+        "MSFT": {
+            "price": 448.90,
+            "change": 3.20,
+            "change_pct": 0.72,
+            "volume": "18.7M",
+        },
+        "NVDA": {
+            "price": 142.30,
+            "change": 5.40,
+            "change_pct": 3.94,
+            "volume": "52.3M",
+        },
     }
 
     symbol = symbol.upper()
@@ -119,16 +142,36 @@ def search_knowledge_base(query: str, category: str = "all") -> list:
     """
     # Simulated knowledge base
     kb = [
-        {"id": 1, "category": "products", "title": "Oracle Cloud Infrastructure Overview",
-         "summary": "OCI provides enterprise-grade cloud services including compute, storage, and AI."},
-        {"id": 2, "category": "products", "title": "OCI Generative AI Service",
-         "summary": "Access foundation models from Meta, Cohere, OpenAI, and Google on OCI."},
-        {"id": 3, "category": "support", "title": "Getting Started with OCI",
-         "summary": "Step-by-step guide to creating your first OCI resources."},
-        {"id": 4, "category": "docs", "title": "LangChain OCI Integration",
-         "summary": "Use LangChain with OCI for building AI applications."},
-        {"id": 5, "category": "docs", "title": "OCIGenAIAgent Documentation",
-         "summary": "Full reference for the OCIGenAIAgent class and features."},
+        {
+            "id": 1,
+            "category": "products",
+            "title": "Oracle Cloud Infrastructure Overview",
+            "summary": "OCI provides enterprise-grade cloud services including compute, storage, and AI.",
+        },
+        {
+            "id": 2,
+            "category": "products",
+            "title": "OCI Generative AI Service",
+            "summary": "Access foundation models from Meta, Cohere, OpenAI, and Google on OCI.",
+        },
+        {
+            "id": 3,
+            "category": "support",
+            "title": "Getting Started with OCI",
+            "summary": "Step-by-step guide to creating your first OCI resources.",
+        },
+        {
+            "id": 4,
+            "category": "docs",
+            "title": "LangChain OCI Integration",
+            "summary": "Use LangChain with OCI for building AI applications.",
+        },
+        {
+            "id": 5,
+            "category": "docs",
+            "title": "OCIGenAIAgent Documentation",
+            "summary": "Full reference for the OCIGenAIAgent class and features.",
+        },
     ]
 
     query_lower = query.lower()
@@ -136,7 +179,10 @@ def search_knowledge_base(query: str, category: str = "all") -> list:
     for article in kb:
         if category != "all" and article["category"] != category:
             continue
-        if query_lower in article["title"].lower() or query_lower in article["summary"].lower():
+        if (
+            query_lower in article["title"].lower()
+            or query_lower in article["summary"].lower()
+        ):
             results.append(article)
 
     return results if results else [{"message": f"No results found for '{query}'"}]
@@ -162,13 +208,14 @@ def create_reminder(title: str, due_date: str, priority: str = "medium") -> dict
             "due_date": due_date,
             "priority": priority,
             "created_at": datetime.now().isoformat(),
-        }
+        },
     }
 
 
 # =============================================================================
 # Demo Functions
 # =============================================================================
+
 
 def demo_basic_invocation(agent):
     """Demo 1: Basic tool calling with GPT 5.2."""
@@ -182,7 +229,9 @@ def demo_basic_invocation(agent):
     result = agent.invoke(query)
 
     print(f"Answer: {result.final_answer}")
-    print(f"\nStats: {result.total_iterations} iterations, {result.total_tool_calls} tool calls")
+    print(
+        f"\nStats: {result.total_iterations} iterations, {result.total_tool_calls} tool calls"
+    )
 
 
 def demo_streaming_events(agent):
@@ -203,7 +252,9 @@ def demo_streaming_events(agent):
             print(f"🔧 [Tool] Calling {event.tool_name}...")
         elif isinstance(event, ToolCompleteEvent):
             status = "✅" if event.success else "❌"
-            print(f"{status} [Result] {event.tool_name} completed in {event.duration_ms:.0f}ms")
+            print(
+                f"{status} [Result] {event.tool_name} completed in {event.duration_ms:.0f}ms"
+            )
         elif isinstance(event, ReflectEvent):
             print(f"🔍 [Reflect] Confidence: {event.confidence:.2f}")
         elif isinstance(event, TerminateEvent):
@@ -230,7 +281,9 @@ def demo_with_hooks(agent_config):
         print(f"  📍 Hook: Tool '{ctx.tool_name}' {status} in {ctx.duration_ms:.0f}ms")
 
     def on_iteration(ctx: IterationContext):
-        print(f"  📍 Hook: Iteration {ctx.iteration} complete, confidence: {ctx.confidence:.2f}")
+        print(
+            f"  📍 Hook: Iteration {ctx.iteration} complete, confidence: {ctx.confidence:.2f}"
+        )
 
     def on_terminate(reason: str, answer: str):
         print(f"  📍 Hook: Agent terminated - {reason}")
@@ -279,8 +332,10 @@ def demo_metrics_collection(agent_config):
     print(f"  • Tool errors: {metrics['tool_errors']}")
     print(f"  • Last termination: {metrics['termination_reason']}")
 
-    if metrics['tool_durations_ms']:
-        avg_duration = sum(metrics['tool_durations_ms']) / len(metrics['tool_durations_ms'])
+    if metrics["tool_durations_ms"]:
+        avg_duration = sum(metrics["tool_durations_ms"]) / len(
+            metrics["tool_durations_ms"]
+        )
         print(f"  • Avg tool duration: {avg_duration:.1f}ms")
 
 
@@ -352,6 +407,7 @@ def demo_checkpointing(agent_config):
 # Main
 # =============================================================================
 
+
 def main():
     """Run all demos."""
     print("=" * 70)
@@ -362,7 +418,7 @@ def main():
     # Configuration
     compartment_id = os.environ.get(
         "OCI_COMPARTMENT_ID",
-        "ocid1.tenancy.oc1..aaaaaaaa5hwtrus75rauufcfvtnjnz3mc4xm2bzibbigva2bw4ne7ezkvzha"
+        "ocid1.tenancy.oc1..aaaaaaaa5hwtrus75rauufcfvtnjnz3mc4xm2bzibbigva2bw4ne7ezkvzha",
     )
 
     agent_config = {
@@ -378,7 +434,7 @@ def main():
 
     print(f"\nModel: {agent_config['model_id']}")
     print(f"Tools: {[t.name for t in agent_config['tools']]}")
-    print(f"Region: eu-frankfurt-1")
+    print("Region: eu-frankfurt-1")
 
     # Create main agent
     agent = OCIGenAIAgent(**agent_config)

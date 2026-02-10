@@ -14,12 +14,10 @@ Shows multi-tool execution and reasoning steps inspection.
 # ruff: noqa: T201
 
 import os
-from typing import Any
 
 from langchain_core.tools import tool
 
 from langchain_oci import OCIGenAIAgent
-
 
 # Simulated sales data
 SALES_DATA = {
@@ -56,7 +54,7 @@ def query_monthly_sales(month: str) -> str:
         f"Sales for {month}: "
         f"Revenue: ${data['revenue']:,}, "
         f"Orders: {data['orders']}, "
-        f"Returns: {data['returns']} ({data['returns']/data['orders']*100:.1f}% return rate)"
+        f"Returns: {data['returns']} ({data['returns'] / data['orders'] * 100:.1f}% return rate)"
     )
 
 
@@ -190,15 +188,15 @@ and providing insights. Always support your conclusions with data.""",
 
     result = agent.invoke(query)
 
-    print(f"\n📊 Analysis Complete")
+    print("\n📊 Analysis Complete")
     print(f"{'─' * 70}")
     print(f"Answer: {result.final_answer}")
-    print(f"\n📈 Execution Summary:")
+    print("\n📈 Execution Summary:")
     print(f"   Iterations: {result.total_iterations}")
     print(f"   Tool Calls: {result.total_tool_calls}")
     print(f"   Confidence: {result.confidence:.2f}")
 
-    print(f"\n🔍 Reasoning Steps:")
+    print("\n🔍 Reasoning Steps:")
     for i, step in enumerate(result.reasoning_steps):
         print(f"\n   Step {i + 1}:")
         for exec in step.tool_executions:

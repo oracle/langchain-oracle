@@ -26,10 +26,10 @@ from langchain_oci.agents.oci_agent.hooks import (
     create_metrics_hooks,
 )
 
-
 # =============================================================================
 # Test Tools
 # =============================================================================
+
 
 @tool
 def calculate(expression: str) -> str:
@@ -183,8 +183,8 @@ def test_metrics_hooks():
     print(f"  - Tool calls: {metrics['total_tool_calls']}")
     print(f"  - Tool errors: {metrics['tool_errors']}")
     print(f"  - Termination: {metrics['termination_reason']}")
-    if metrics['tool_durations_ms']:
-        avg = sum(metrics['tool_durations_ms']) / len(metrics['tool_durations_ms'])
+    if metrics["tool_durations_ms"]:
+        avg = sum(metrics["tool_durations_ms"]) / len(metrics["tool_durations_ms"])
         print(f"  - Avg tool duration: {avg:.1f}ms")
     return True
 
@@ -325,7 +325,7 @@ def test_all_features():
     )
 
     print(f"\nAnswer: {result.final_answer}")
-    print(f"\nFeature Results:")
+    print("\nFeature Results:")
     print(f"  - Hooks: {metrics['total_tool_calls']} tool calls tracked")
     print(f"  - Compression: {len(result.messages)} messages in result")
     print(f"  - Confidence: {result.confidence:.2f}")
@@ -338,7 +338,7 @@ def main():
     print("=" * 60)
     print("OCIGenAIAgent New Features Integration Tests")
     print("=" * 60)
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Model: {MODEL_ID}")
     print(f"  Region: {REGION}")
     print(f"  Auth: {AUTH_TYPE} ({AUTH_PROFILE})")
