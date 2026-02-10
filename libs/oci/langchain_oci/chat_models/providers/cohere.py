@@ -211,11 +211,6 @@ class CohereProvider(Provider):
         if hasattr(chat_resp, "usage") and chat_resp.usage:
             generation_info["total_tokens"] = chat_resp.usage.total_tokens
 
-        # Include tool calls if available
-        if self.chat_tool_calls(response):
-            generation_info["tool_calls"] = self.format_response_tool_calls(
-                self.chat_tool_calls(response)
-            )
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
