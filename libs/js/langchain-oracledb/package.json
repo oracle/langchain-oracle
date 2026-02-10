@@ -1,5 +1,5 @@
 {
-  "name": "@langchain/oracledb",
+  "name": "@oracle/langchain-oracledb",
   "version": "0.1.0",
   "description": "Oracle Database integration for LangChain.js",
   "type": "module",
@@ -15,14 +15,15 @@
   },
   "homepage": "https://github.com/oracle/langchain-oracle/tree/main/libs/js/oracledb/langchain-oracledb",
   "scripts": {
-    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:scripts",
+    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:types:cjs && pnpm build:scripts",
     "build:esm": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist/ && rm -rf dist/tests dist/**/tests",
     "build:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist-cjs/ -p tsconfig.cjs.json && node scripts/move-cjs-to-dist.js && rm -rf dist-cjs",
+    "build:types:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.types.cjs.json && node scripts/rename-cjs-dts.js",
     "build:watch": "node scripts/create-entrypoints.js && tsc --outDir dist/ --watch",
     "build:scripts": "node scripts/create-entrypoints.js && node scripts/check-tree-shaking.js",
     "lint": "NODE_OPTIONS=--max-old-space-size=4096 eslint src && dpdm --exit-code circular:1 --no-warning --no-tree src/*.ts src/**/*.ts",
     "lint:fix": "pnpm lint --fix",
-    "clean": "rm -rf dist/ && NODE_OPTIONS=--max-old-space-size=4096 node scripts/create-entrypoints.js pre",
+    "clean": "rm -rf dist/ dist-types-cjs && NODE_OPTIONS=--max-old-space-size=4096 node scripts/create-entrypoints.js pre",
     "prepack": "pnpm build",
     "release": "release-it --only-version --config .release-it.json",
     "test": "vitest run",
@@ -38,12 +39,12 @@
   "license": "MIT",
   "dependencies": {
     "htmlparser2": "^10.0.0",
-    "oracledb": "^6.10.0",
     "uuid": "^10.0.0"
   },
   "peerDependencies": {
     "@langchain/core": "^1.0.0",
-    "@langchain/textsplitters": "^1.0.0"
+    "@langchain/textsplitters": "^1.0.0",
+    "oracledb": "^6.10.0"
   },
   "devDependencies": {
     "@langchain/core": "^1.0.0",
@@ -82,6 +83,7 @@
     "dist/",
     "index.cjs",
     "index.js",
-    "index.d.ts"
+    "index.d.ts",
+    "index.d.cts"
   ]
 }
