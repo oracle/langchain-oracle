@@ -1,6 +1,29 @@
 # Copyright (c) 2025 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
+from langchain_oci.agents.oci_agent import (
+    AgentEvent,
+    AgentHooks,
+    AgentResult,
+    AgentState,
+    CompressionConfig,
+    CompressionStrategy,
+    ConfidenceSignal,
+    IterationContext,
+    OCIGenAIAgent,
+    ReasoningStep,
+    ReflectEvent,
+    SignalType,
+    TerminateEvent,
+    ThinkEvent,
+    ToolCompleteEvent,
+    ToolExecution,
+    ToolHookContext,
+    ToolResultContext,
+    ToolStartEvent,
+    create_logging_hooks,
+    create_metrics_hooks,
+)
 from langchain_oci.agents.react import create_oci_agent
 from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeployment,
@@ -42,8 +65,33 @@ __all__ = [
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
     "ChatOCIOpenAI",
+    # Agents
     "create_oci_agent",
-    # Vision utilities
+    "OCIGenAIAgent",
+    "AgentState",
+    "AgentResult",
+    "ReasoningStep",
+    "ToolExecution",
+    "AgentEvent",
+    "ThinkEvent",
+    "ToolStartEvent",
+    "ToolCompleteEvent",
+    "ReflectEvent",
+    "TerminateEvent",
+    # Hooks
+    "AgentHooks",
+    "ToolHookContext",
+    "ToolResultContext",
+    "IterationContext",
+    "create_logging_hooks",
+    "create_metrics_hooks",
+    # Compression
+    "CompressionConfig",
+    "CompressionStrategy",
+    # Confidence Signals
+    "ConfidenceSignal",
+    "SignalType",
+    # Vision / image utilities
     "load_image",
     "encode_image",
     "is_vision_model",
