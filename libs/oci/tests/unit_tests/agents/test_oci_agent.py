@@ -1583,3 +1583,93 @@ class TestLangGraphCheckpointerAdapter:
 
         assert result is None
         mock_lg.get.assert_called_once()
+
+
+# =============================================================================
+# Agent Method Tests (async, batch, LangGraph node)
+# =============================================================================
+
+
+class TestAgentAsyncMethods:
+    """Tests for async agent methods."""
+
+    def test_ainvoke_exists(self):
+        """Test ainvoke method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "ainvoke")
+        assert callable(getattr(OCIGenAIAgent, "ainvoke"))
+
+    def test_astream_exists(self):
+        """Test astream method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "astream")
+        assert callable(getattr(OCIGenAIAgent, "astream"))
+
+    def test_abatch_exists(self):
+        """Test abatch method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "abatch")
+        assert callable(getattr(OCIGenAIAgent, "abatch"))
+
+
+class TestAgentBatchMethod:
+    """Tests for batch method."""
+
+    def test_batch_exists(self):
+        """Test batch method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "batch")
+        assert callable(getattr(OCIGenAIAgent, "batch"))
+
+
+class TestAgentLangGraphNode:
+    """Tests for LangGraph node compatibility."""
+
+    def test_as_node_exists(self):
+        """Test as_node method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "as_node")
+        assert callable(getattr(OCIGenAIAgent, "as_node"))
+
+    def test_call_exists(self):
+        """Test __call__ method exists on agent."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        assert hasattr(OCIGenAIAgent, "__call__")
+        assert callable(getattr(OCIGenAIAgent, "__call__"))
+
+    def test_as_node_returns_callable(self):
+        """Test as_node returns a callable."""
+        from langchain_oci.agents.oci_agent.agent import OCIGenAIAgent
+
+        # Create mock agent
+        with patch.object(OCIGenAIAgent, "__init__", lambda x: None):
+            agent = OCIGenAIAgent.__new__(OCIGenAIAgent)
+            agent._tools = {}
+            agent.model_id = "test"
+            agent.max_iterations = 5
+            agent.enable_reflexion = True
+
+            # Mock invoke
+            agent.invoke = MagicMock(return_value=AgentResult(
+                messages=[],
+                final_answer="test answer",
+                termination_reason="no_tools",
+                reasoning_steps=[],
+                total_iterations=1,
+                total_tool_calls=0,
+            ))
+
+            node_fn = agent.as_node()
+            assert callable(node_fn)
+
+            # Test node function returns dict
+            result = node_fn({"input": "test"})
+            assert isinstance(result, dict)
+            assert "final_answer" in result
+            assert "messages" in result
