@@ -51,11 +51,13 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import (
     TYPE_CHECKING,
     Any,
+    AsyncIterator,
     Callable,
     Iterator,
     Sequence,
@@ -878,3 +880,241 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             f"max_iterations={self.max_iterations}, "
             f"enable_reflexion={self.enable_reflexion})"
         )
+
+    # =========================================================================
+    # Async Methods (Runnable interface)
+    # =========================================================================
+
+    async def ainvoke(
+        self,
+        input_data: Union[str, dict],
+        config: RunnableConfig | None = None,
+        *,
+        message_history: list[Union[dict, BaseMessage]] | None = None,
+        thread_id: str | None = None,
+    ) -> AgentResult:
+        """Async version of invoke.
+
+        Runs the agent asynchronously. Currently wraps the sync version
+        in an executor for compatibility with async code.
+
+        Args:
+            input_data: User query string or dict with messages.
+            config: Optional runnable configuration.
+            message_history: Optional conversation history.
+            thread_id: Optional thread identifier for checkpointing.
+
+        Returns:
+            AgentResult with final answer and execution details.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.invoke(
+                input_data,
+                config,
+                message_history=message_history,
+                thread_id=thread_id,
+            ),
+        )
+
+    async def astream(
+        self,
+        input_data: Union[str, dict],
+        config: RunnableConfig | None = None,
+        *,
+        message_history: list[Union[dict, BaseMessage]] | None = None,
+        thread_id: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Async version of stream.
+
+        Yields events asynchronously. Currently wraps the sync version
+        for compatibility with async code.
+
+        Args:
+            input_data: User query string or dict with messages.
+            config: Optional runnable configuration.
+            message_history: Optional conversation history.
+            thread_id: Optional thread identifier for checkpointing.
+
+        Yields:
+            AgentEvent instances asynchronously.
+        """
+        # Run sync stream in executor and yield events
+        loop = asyncio.get_event_loop()
+
+        def get_events():
+            return list(
+                self.stream(
+                    input_data,
+                    config,
+                    message_history=message_history,
+                    thread_id=thread_id,
+                )
+            )
+
+        events = await loop.run_in_executor(None, get_events)
+        for event in events:
+            yield event
+
+    # =========================================================================
+    # Batch Method (Runnable interface)
+    # =========================================================================
+
+    def batch(
+        self,
+        inputs: list[Union[str, dict]],
+        config: RunnableConfig | list[RunnableConfig] | None = None,
+        *,
+        return_exceptions: bool = False,
+        **kwargs: Any,
+    ) -> list[AgentResult]:
+        """Process multiple inputs in batch.
+
+        Runs the agent on each input sequentially.
+
+        Args:
+            inputs: List of input queries.
+            config: Optional configuration (single or per-input).
+            return_exceptions: If True, return exceptions instead of raising.
+            **kwargs: Additional arguments passed to invoke.
+
+        Returns:
+            List of AgentResult instances.
+        """
+        results: list[AgentResult] = []
+        configs = config if isinstance(config, list) else [config] * len(inputs)
+
+        for i, (inp, cfg) in enumerate(zip(inputs, configs)):
+            try:
+                result = self.invoke(inp, cfg, **kwargs)
+                results.append(result)
+            except Exception as e:
+                if return_exceptions:
+                    # Create an error result
+                    results.append(
+                        AgentResult(
+                            messages=[],
+                            final_answer=f"Error: {e}",
+                            termination_reason="error",
+                            reasoning_steps=[],
+                            total_iterations=0,
+                            total_tool_calls=0,
+                        )
+                    )
+                else:
+                    raise
+        return results
+
+    async def abatch(
+        self,
+        inputs: list[Union[str, dict]],
+        config: RunnableConfig | list[RunnableConfig] | None = None,
+        *,
+        return_exceptions: bool = False,
+        **kwargs: Any,
+    ) -> list[AgentResult]:
+        """Async batch processing.
+
+        Runs multiple inputs concurrently using asyncio.gather.
+
+        Args:
+            inputs: List of input queries.
+            config: Optional configuration (single or per-input).
+            return_exceptions: If True, return exceptions instead of raising.
+            **kwargs: Additional arguments passed to ainvoke.
+
+        Returns:
+            List of AgentResult instances.
+        """
+        configs = config if isinstance(config, list) else [config] * len(inputs)
+
+        async def run_one(inp: Union[str, dict], cfg: RunnableConfig | None):
+            try:
+                return await self.ainvoke(inp, cfg, **kwargs)
+            except Exception as e:
+                if return_exceptions:
+                    return AgentResult(
+                        messages=[],
+                        final_answer=f"Error: {e}",
+                        termination_reason="error",
+                        reasoning_steps=[],
+                        total_iterations=0,
+                        total_tool_calls=0,
+                    )
+                raise
+
+        tasks = [run_one(inp, cfg) for inp, cfg in zip(inputs, configs)]
+        return await asyncio.gather(*tasks)
+
+    # =========================================================================
+    # LangGraph Node Compatibility
+    # =========================================================================
+
+    def as_node(self) -> Callable[[dict], dict]:
+        """Return a function suitable for use as a LangGraph node.
+
+        LangGraph nodes expect dict -> dict signatures. This method
+        returns a wrapper that converts the AgentResult to a dict.
+
+        Example:
+            from langgraph.graph import StateGraph, START, END
+
+            agent = OCIGenAIAgent(...)
+
+            graph = StateGraph(dict)
+            graph.add_node("agent", agent.as_node())
+            graph.add_edge(START, "agent")
+            graph.add_edge("agent", END)
+
+            compiled = graph.compile()
+            result = compiled.invoke({"messages": [...]})
+
+        Returns:
+            A function that takes a dict and returns a dict.
+        """
+
+        def node_fn(state: dict) -> dict:
+            """LangGraph-compatible node function."""
+            # Extract messages from state
+            messages = state.get("messages", [])
+
+            # Convert to input format
+            if messages:
+                input_data = {"messages": messages}
+            else:
+                input_data = state.get("input", state.get("query", ""))
+
+            # Get thread_id if present
+            thread_id = state.get("thread_id") or state.get(
+                "configurable", {}
+            ).get("thread_id")
+
+            # Run agent
+            result = self.invoke(input_data, thread_id=thread_id)
+
+            # Return as dict for LangGraph
+            return {
+                "messages": list(result.messages),
+                "final_answer": result.final_answer,
+                "termination_reason": result.termination_reason,
+                "total_iterations": result.total_iterations,
+                "total_tool_calls": result.total_tool_calls,
+            }
+
+        return node_fn
+
+    def __call__(self, state: dict) -> dict:
+        """Make agent callable as a LangGraph node directly.
+
+        This allows using the agent directly as a node without as_node():
+
+            graph.add_node("agent", agent)  # Works directly!
+
+        Args:
+            state: LangGraph state dict.
+
+        Returns:
+            Updated state dict with agent results.
+        """
+        return self.as_node()(state)
