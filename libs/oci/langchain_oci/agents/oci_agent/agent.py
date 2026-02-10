@@ -216,7 +216,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         self.min_iterations_for_early_exit = min_iterations_for_early_exit
         self.enable_compression = enable_compression
         self._compression_config = CompressionConfig(
-            strategy=CompressionStrategy.SMART_TRIM if enable_compression
+            strategy=CompressionStrategy.SMART_TRIM
+            if enable_compression
             else CompressionStrategy.NONE,
             max_messages=max_messages,
         )
@@ -278,7 +279,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     def _init_state(
         self,
         input_data: Union[str, dict],
-        message_history: list[Union[dict, BaseMessage]] | None = None,
+        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
     ) -> AgentState:
         """Initialize agent state from input.
 
@@ -497,12 +498,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         """Output type for LangGraph compatibility."""
         return AgentResult
 
-    def invoke(
+    def invoke(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
         config: RunnableConfig | None = None,
         *,
-        message_history: list[Union[dict, BaseMessage]] | None = None,
+        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> AgentResult:
         """Run agent to completion.
@@ -627,9 +628,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                     break
 
             # Record reasoning step
-            assessment = (
-                reflection.assessment if self.enable_reflexion else "on_track"
-            )
+            assessment = reflection.assessment if self.enable_reflexion else "on_track"
             step = ReasoningStep(
                 iteration=state.iteration,
                 thought=str(response.content) if response.content else "",
@@ -646,12 +645,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             termination_reason=termination_reason or "unknown",
         )
 
-    def stream(
+    def stream(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
         config: RunnableConfig | None = None,
         *,
-        message_history: list[Union[dict, BaseMessage]] | None = None,
+        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> Iterator[AgentEvent]:
         """Stream agent events during execution.
@@ -866,9 +865,7 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                 confidence_delta = reflection.confidence_delta
 
                 # Emit reflect event
-                is_loop = (
-                    reflection.assessment == AssessmentCategory.LOOP_DETECTED
-                )
+                is_loop = reflection.assessment == AssessmentCategory.LOOP_DETECTED
                 yield ReflectEvent(
                     iteration=state.iteration,
                     confidence=state.confidence,
@@ -954,12 +951,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
     # Async Methods (Runnable interface)
     # =========================================================================
 
-    async def ainvoke(
+    async def ainvoke(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
         config: RunnableConfig | None = None,
         *,
-        message_history: list[Union[dict, BaseMessage]] | None = None,
+        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> AgentResult:
         """Async version of invoke with native async tool execution.
@@ -1117,12 +1114,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             termination_reason=termination_reason or "unknown",
         )
 
-    async def astream(
+    async def astream(  # type: ignore[override]
         self,
         input_data: Union[str, dict],
         config: RunnableConfig | None = None,
         *,
-        message_history: list[Union[dict, BaseMessage]] | None = None,
+        message_history: Sequence[Union[dict[str, Any], BaseMessage]] | None = None,
         thread_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Async version of stream with native async tool execution.
@@ -1418,8 +1415,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
 
     def batch(
         self,
-        inputs: list[Union[str, dict]],
-        config: RunnableConfig | list[RunnableConfig] | None = None,
+        inputs: Sequence[Union[str, dict[str, Any]]],
+        config: RunnableConfig | Sequence[RunnableConfig] | None = None,
         *,
         return_exceptions: bool = False,
         **kwargs: Any,
@@ -1438,7 +1435,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
             List of AgentResult instances.
         """
         results: list[AgentResult] = []
-        configs = config if isinstance(config, list) else [config] * len(inputs)
+        configs: list[RunnableConfig | None]
+        if isinstance(config, (list, tuple)):
+            configs = list(config)
+        else:
+            single_config: RunnableConfig | None = config  # type: ignore[assignment]
+            configs = [single_config] * len(inputs)
 
         for i, (inp, cfg) in enumerate(zip(inputs, configs)):
             try:
@@ -1463,8 +1465,8 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
 
     async def abatch(
         self,
-        inputs: list[Union[str, dict]],
-        config: RunnableConfig | list[RunnableConfig] | None = None,
+        inputs: Sequence[Union[str, dict[str, Any]]],
+        config: RunnableConfig | Sequence[RunnableConfig] | None = None,
         *,
         return_exceptions: bool = False,
         **kwargs: Any,
@@ -1482,7 +1484,12 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
         Returns:
             List of AgentResult instances.
         """
-        configs = config if isinstance(config, list) else [config] * len(inputs)
+        configs: list[RunnableConfig | None]
+        if isinstance(config, (list, tuple)):
+            configs = list(config)
+        else:
+            single_config: RunnableConfig | None = config  # type: ignore[assignment]
+            configs = [single_config] * len(inputs)
 
         async def run_one(inp: Union[str, dict], cfg: RunnableConfig | None):
             try:
@@ -1541,9 +1548,9 @@ class OCIGenAIAgent(Runnable[dict, AgentResult]):
                 input_data = state.get("input", state.get("query", ""))
 
             # Get thread_id if present
-            thread_id = state.get("thread_id") or state.get(
-                "configurable", {}
-            ).get("thread_id")
+            thread_id = state.get("thread_id") or state.get("configurable", {}).get(
+                "thread_id"
+            )
 
             # Run agent
             result = self.invoke(input_data, thread_id=thread_id)
