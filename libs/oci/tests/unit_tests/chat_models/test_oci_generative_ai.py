@@ -504,6 +504,245 @@ def test_meta_tool_calling(monkeypatch: MonkeyPatch) -> None:
 
 
 @pytest.mark.requires("oci")
+def test_gemini_multipart_content_concatenation(monkeypatch: MonkeyPatch) -> None:
+    """Test that Gemini responses with multiple content parts are fully concatenated.
+
+    Reproduces the truncation bug reported by Luigi Saetta: Gemini returns text
+    split across multiple content parts in a single response. Previously only
+    content[0] was used, dropping the rest of the output.
+
+    See: https://github.com/oracle/langchain-oracle/pull/116
+    """
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="google.gemini-2.5-pro", client=oci_gen_ai_client)
+
+    # Simulate Gemini returning text in 3 content parts (as observed in OCR scenarios)
+    part1 = "L001: The quick brown fox jumps over the lazy dog.\n"
+    part2 = "L002: The quick brown fox jumps over the lazy dog.\n"
+    part3 = "L003: The quick brown fox jumps over the lazy dog.\n"
+
+    def mocked_response(*args, **kwargs):
+        return MockResponseDict(
+            {
+                "status": 200,
+                "data": MockResponseDict(
+                    {
+                        "chat_response": MockResponseDict(
+                            {
+                                "choices": [
+                                    MockResponseDict(
+                                        {
+                                            "message": MockResponseDict(
+                                                {
+                                                    "role": "ASSISTANT",
+                                                    "content": [
+                                                        MockResponseDict(
+                                                            {
+                                                                "text": part1,
+                                                                "type": "TEXT",
+                                                            }  # noqa: E501
+                                                        ),
+                                                        MockResponseDict(
+                                                            {
+                                                                "text": part2,
+                                                                "type": "TEXT",
+                                                            }  # noqa: E501
+                                                        ),
+                                                        MockResponseDict(
+                                                            {
+                                                                "text": part3,
+                                                                "type": "TEXT",
+                                                            }  # noqa: E501
+                                                        ),
+                                                    ],
+                                                    "tool_calls": [],
+                                                }
+                                            ),
+                                            "finish_reason": "stop",
+                                        }
+                                    )
+                                ],
+                                "time_created": "2026-01-30T10:00:00.000000+00:00",
+                                "usage": MockResponseDict(
+                                    {
+                                        "prompt_tokens": 100,
+                                        "completion_tokens": 60,
+                                        "total_tokens": 160,
+                                    }
+                                ),
+                            }
+                        ),
+                        "model_id": "google.gemini-2.5-pro",
+                        "model_version": "1.0.0",
+                    }
+                ),
+                "request_id": "test_multipart",
+                "headers": MockResponseDict({"content-length": "500"}),
+            }
+        )
+
+    monkeypatch.setattr(llm.client, "chat", mocked_response)
+
+    messages = [HumanMessage(content="Extract text from this page.")]
+    response = llm.invoke(messages)
+
+    # All 3 parts must be concatenated — previously only part1 was returned
+    assert response.content == part1 + part2 + part3
+
+
+@pytest.mark.requires("oci")
+def test_gemini_multipart_stream_concatenation(monkeypatch: MonkeyPatch) -> None:
+    """Test that streaming Gemini responses with multiple content parts per event
+    are fully concatenated (not just content[0])."""
+    import json
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="google.gemini-2.5-pro", client=oci_gen_ai_client)
+
+    # Single stream event with multiple text parts
+    mock_stream_events = [
+        MagicMock(
+            data=json.dumps(
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "ASSISTANT",
+                        "content": [
+                            {"type": "TEXT", "text": "First part. "},
+                            {"type": "TEXT", "text": "Second part. "},
+                            {"type": "TEXT", "text": "Third part."},
+                        ],
+                    },
+                }
+            )
+        ),
+        MagicMock(data=json.dumps({"finishReason": "stop"})),
+    ]
+    mock_stream_response = MagicMock()
+    mock_stream_response.data.events.return_value = mock_stream_events
+    monkeypatch.setattr(
+        llm.client, "chat", lambda *args, **kwargs: mock_stream_response
+    )
+
+    chunks = list(llm.stream([HumanMessage(content="Extract text.")]))
+    full_text = "".join(c.content for c in chunks if isinstance(c.content, str))
+
+    assert full_text == "First part. Second part. Third part."
+
+
+@pytest.mark.requires("oci")
+def test_gemini_max_output_tokens_normalization(monkeypatch: MonkeyPatch) -> None:
+    """Test that max_output_tokens is normalized to max_tokens for Gemini models.
+
+    Luigi's workaround in his multimodal-extraction repo uses max_output_tokens
+    (the Gemini SDK parameter name). Our fix normalizes it to max_tokens (OCI API
+    parameter name) so both work correctly.
+    """
+    import warnings
+
+    oci_gen_ai_client = MagicMock()
+
+    # Case 1: max_output_tokens only → should be mapped to max_tokens
+    llm = ChatOCIGenAI(
+        model_id="google.gemini-2.5-pro",
+        client=oci_gen_ai_client,
+        model_kwargs={"temperature": 0, "max_output_tokens": 8000},
+    )
+
+    captured_request = {}
+
+    def mocked_response(*args, **kwargs):
+        captured_request["request"] = args[0]
+        return MockResponseDict(
+            {
+                "status": 200,
+                "data": MockResponseDict(
+                    {
+                        "chat_response": MockResponseDict(
+                            {
+                                "choices": [
+                                    MockResponseDict(
+                                        {
+                                            "message": MockResponseDict(
+                                                {
+                                                    "role": "ASSISTANT",
+                                                    "content": [
+                                                        MockResponseDict(
+                                                            {
+                                                                "text": "ok",
+                                                                "type": "TEXT",
+                                                            }  # noqa: E501
+                                                        )
+                                                    ],
+                                                    "tool_calls": [],
+                                                }
+                                            ),
+                                            "finish_reason": "stop",
+                                        }
+                                    )
+                                ],
+                                "time_created": "2026-01-30T10:00:00.000000+00:00",
+                                "usage": MockResponseDict(
+                                    {
+                                        "prompt_tokens": 10,
+                                        "completion_tokens": 1,
+                                        "total_tokens": 11,
+                                    }
+                                ),
+                            }
+                        ),
+                        "model_id": "google.gemini-2.5-pro",
+                        "model_version": "1.0.0",
+                    }
+                ),
+                "request_id": "test_normalization",
+                "headers": MockResponseDict({"content-length": "100"}),
+            }
+        )
+
+    monkeypatch.setattr(llm.client, "chat", mocked_response)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        llm.invoke([HumanMessage(content="test")])
+        # Should emit a UserWarning about the mapping
+        mapping_warnings = [x for x in w if "max_output_tokens" in str(x.message)]
+        assert len(mapping_warnings) == 1
+        assert "Mapped" in str(mapping_warnings[0].message)
+
+    # Case 2: both max_tokens and max_output_tokens → should prefer max_tokens
+    llm2 = ChatOCIGenAI(
+        model_id="google.gemini-2.5-pro",
+        client=oci_gen_ai_client,
+        model_kwargs={
+            "temperature": 0,
+            "max_tokens": 4000,
+            "max_output_tokens": 8000,
+        },
+    )
+    monkeypatch.setattr(llm2.client, "chat", mocked_response)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        llm2.invoke([HumanMessage(content="test")])
+        both_warnings = [x for x in w if "max_output_tokens" in str(x.message)]
+        assert len(both_warnings) == 1
+        assert "ignoring" in str(both_warnings[0].message).lower()
+
+    # Case 3: non-Gemini model with max_output_tokens → no mapping occurs,
+    # so the unknown kwarg reaches the OCI SDK and raises TypeError
+    llm3 = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        client=oci_gen_ai_client,
+        model_kwargs={"temperature": 0, "max_output_tokens": 8000},
+    )
+    monkeypatch.setattr(llm3.client, "chat", mocked_response)
+
+    with pytest.raises(TypeError, match="max_output_tokens"):
+        llm3.invoke([HumanMessage(content="test")])
+
+
+@pytest.mark.requires("oci")
 def test_cohere_tool_choice_validation(monkeypatch: MonkeyPatch) -> None:
     """Test that tool choice is not supported for Cohere models."""
     oci_gen_ai_client = MagicMock()

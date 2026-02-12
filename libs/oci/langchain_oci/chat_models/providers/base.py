@@ -15,6 +15,20 @@ from pydantic import BaseModel
 class Provider(ABC):
     """Abstract base class for OCI Generative AI providers."""
 
+    @abstractmethod
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters for this provider.
+
+        Subclasses should implement provider-specific parameter transformations.
+
+        Args:
+            params: Dictionary of parameters to normalize
+
+        Returns:
+            Normalized parameters dictionary
+        """
+        ...
+
     @property
     @abstractmethod
     def stop_sequence_key(self) -> str:

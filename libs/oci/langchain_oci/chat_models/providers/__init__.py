@@ -5,11 +5,16 @@
 
 from langchain_oci.chat_models.providers.base import Provider
 from langchain_oci.chat_models.providers.cohere import CohereProvider
-from langchain_oci.chat_models.providers.generic import GenericProvider, MetaProvider
+from langchain_oci.chat_models.providers.generic import (
+    GeminiProvider,
+    GenericProvider,
+    MetaProvider,
+)
 
 __all__ = [
     "Provider",
     "CohereProvider",
+    "GeminiProvider",
     "GenericProvider",
     "MetaProvider",
 ]

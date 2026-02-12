@@ -76,6 +76,10 @@ class CohereProvider(Provider):
         self.oci_image_url_v2 = None
         self.chat_api_format_v2 = None
 
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters. Returns params unchanged for Cohere."""
+        return params
+
     def _load_v2_classes(self) -> None:
         """Lazy load Cohere V2 API classes for vision support.
 
