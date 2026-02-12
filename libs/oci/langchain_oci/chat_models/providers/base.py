@@ -15,6 +15,31 @@ from pydantic import BaseModel
 class Provider(ABC):
     """Abstract base class for OCI Generative AI providers."""
 
+    # Parameter transformations: maps LangChain param names to provider-specific names
+    # e.g., {"max_tokens": "max_completion_tokens"} for OpenAI
+    param_transforms: Dict[str, str] = {}
+
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters for this provider.
+
+        Applies parameter name transformations defined in param_transforms.
+        Subclasses can override for more complex transformations.
+
+        Args:
+            params: Dictionary of parameters to normalize
+
+        Returns:
+            Normalized parameters dictionary
+        """
+        if not self.param_transforms:
+            return params
+
+        result = params.copy()
+        for old_key, new_key in self.param_transforms.items():
+            if old_key in result:
+                result[new_key] = result.pop(old_key)
+        return result
+
     @property
     @abstractmethod
     def stop_sequence_key(self) -> str:

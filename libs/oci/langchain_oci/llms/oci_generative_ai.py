@@ -64,6 +64,8 @@ class OCIGenAIBase(BaseModel, ABC):
     """Base class for OCI GenAI models"""
 
     client: Any = Field(default=None, exclude=True)  #: :meta private:
+    oci_signer: Any = Field(default=None, exclude=True)  #: :meta private:
+    oci_config: Any = Field(default=None, exclude=True)  #: :meta private:
 
     auth_type: Optional[str] = "API_KEY"
     """Authentication type, could be
@@ -132,6 +134,10 @@ class OCIGenAIBase(BaseModel, ABC):
                 auth_file_location=values["auth_file_location"],
                 auth_profile=values["auth_profile"],
             )
+
+            # Store signer and config for async requests
+            values["oci_signer"] = client_kwargs.get("signer")
+            values["oci_config"] = client_kwargs.get("config")
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
                 **client_kwargs

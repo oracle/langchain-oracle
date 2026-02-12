@@ -48,10 +48,13 @@ from langchain_openai import ChatOpenAI
 from openai import DefaultHttpxClient
 from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
+from langchain_oci.chat_models.async_mixin import ChatOCIGenAIAsyncMixin
 from langchain_oci.chat_models.providers import (
     CohereProvider,
     GenericProvider,
+    GoogleProvider,
     MetaProvider,
+    OpenAIProvider,
     Provider,
 )
 from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, OCIUtils
@@ -84,7 +87,7 @@ def _build_headers(
     return headers
 
 
-class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
+class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
     """ChatOCIGenAI chat model integration.
 
     Setup:
@@ -170,7 +173,9 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         """Mapping from provider name to provider instance."""
         return {
             "cohere": CohereProvider(),
+            "google": GoogleProvider(),
             "meta": MetaProvider(),
+            "openai": OpenAIProvider(),
             "generic": GenericProvider(),
         }
 
@@ -217,22 +222,10 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
-        # Warn if using max_tokens with OpenAI models
-        if (
-            self.model_id
-            and self.model_id.startswith("openai.")
-            and "max_tokens" in _model_kwargs
-        ):
-            import warnings
-
-            warnings.warn(
-                "OpenAI models require 'max_completion_tokens' "
-                "instead of 'max_tokens'.",
-                UserWarning,
-                stacklevel=2,
-            )
-
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
+
+        # Apply provider-specific parameter transformations
+        chat_params = self._provider.normalize_params(chat_params)
 
         if not self.model_id:
             raise ValueError("Model ID is required for chat.")

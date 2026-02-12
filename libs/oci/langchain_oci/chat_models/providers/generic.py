@@ -191,12 +191,19 @@ class GenericProvider(Provider):
 
         formatted_tool_calls: List[Dict] = []
         for tool_call in tool_calls:
+            # Parse arguments with error handling for malformed JSON from LLM
+            try:
+                arguments = json.loads(tool_call.arguments)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return raw string as arguments
+                # This allows downstream code to handle the error gracefully
+                arguments = {"_raw_arguments": tool_call.arguments}
             formatted_tool_calls.append(
                 {
                     "id": tool_call.id,
                     "function": {
                         "name": tool_call.name,
-                        "arguments": json.loads(tool_call.arguments),
+                        "arguments": arguments,
                     },
                     "type": "function",
                 }
@@ -549,5 +556,21 @@ class GenericProvider(Provider):
 
 class MetaProvider(GenericProvider):
     """Provider for Meta models. This provider is for backward compatibility."""
+
+    pass
+
+
+class OpenAIProvider(GenericProvider):
+    """Provider for OpenAI models (GPT-4, GPT-5, o1, o3, etc.).
+
+    Handles OpenAI-specific parameter requirements:
+    - max_tokens → max_completion_tokens
+    """
+
+    param_transforms = {"max_tokens": "max_completion_tokens"}
+
+
+class GoogleProvider(GenericProvider):
+    """Provider for Google models (Gemini)."""
 
     pass
