@@ -111,6 +111,11 @@ class OCIGenAIBase(BaseModel, ABC):
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
 
+    tool_result_guidance: bool = False
+    """When True, injects a system message after tool results to guide
+    models (especially Meta Llama) to incorporate tool results into
+    their response as natural language instead of raw JSON."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )

@@ -1159,6 +1159,125 @@ def test_tool_choice_none_after_tool_results() -> None:
 
 
 # =============================================================================
+# Tool Result Guidance Tests
+# =============================================================================
+
+
+@pytest.mark.requires("oci")
+def test_tool_result_guidance_injects_system_message() -> None:
+    """Test tool_result_guidance injects a system message when tool results exist.
+
+    When tool_result_guidance=True and ToolMessages are present, a guidance
+    system message should be appended to help models incorporate tool results.
+    """
+    from langchain_core.messages import ToolMessage
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        client=oci_gen_ai_client,
+        tool_result_guidance=True,
+    )
+
+    def get_weather(city: str) -> str:
+        """Get weather for a city.
+
+        Args:
+            city: The city to get weather for
+        """
+        return f"Weather in {city}"
+
+    llm_with_tools = llm.bind_tools([get_weather])
+
+    # Messages with a tool result
+    messages = [
+        HumanMessage(content="What's the weather?"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_1", "name": "get_weather", "args": {"city": "SF"}}
+            ],
+        ),
+        ToolMessage(content="Sunny, 72F", tool_call_id="call_1"),
+    ]
+
+    request = llm._prepare_request(
+        messages,
+        stop=None,
+        stream=False,
+        **llm_with_tools.kwargs,  # type: ignore[attr-defined]
+    )
+
+    # Verify a system message was injected (last message before result dict)
+    oci_messages = request.chat_request.messages
+    # Find system messages that contain guidance text
+    guidance_msgs = [
+        msg
+        for msg in oci_messages
+        if hasattr(msg, "content")
+        and any(
+            hasattr(c, "text") and "tool results" in c.text
+            for c in (msg.content if isinstance(msg.content, list) else [msg.content])
+        )
+    ]
+    assert len(guidance_msgs) >= 1, "Should have injected a guidance system message"
+
+
+@pytest.mark.requires("oci")
+def test_tool_result_guidance_disabled_by_default() -> None:
+    """Test that no guidance message is injected when tool_result_guidance=False."""
+    from langchain_core.messages import ToolMessage
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        client=oci_gen_ai_client,
+        # tool_result_guidance defaults to False
+    )
+
+    def get_weather(city: str) -> str:
+        """Get weather for a city.
+
+        Args:
+            city: The city to get weather for
+        """
+        return f"Weather in {city}"
+
+    llm_with_tools = llm.bind_tools([get_weather])
+
+    messages = [
+        HumanMessage(content="What's the weather?"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"id": "call_1", "name": "get_weather", "args": {"city": "SF"}}
+            ],
+        ),
+        ToolMessage(content="Sunny, 72F", tool_call_id="call_1"),
+    ]
+
+    request = llm._prepare_request(
+        messages,
+        stop=None,
+        stream=False,
+        **llm_with_tools.kwargs,  # type: ignore[attr-defined]
+    )
+
+    # Verify NO guidance message was injected
+    oci_messages = request.chat_request.messages
+    guidance_msgs = [
+        msg
+        for msg in oci_messages
+        if hasattr(msg, "content")
+        and any(
+            hasattr(c, "text") and "tool results" in c.text
+            for c in (msg.content if isinstance(msg.content, list) else [msg.content])
+        )
+    ]
+    assert len(guidance_msgs) == 0, "Should NOT inject guidance when disabled"
+
+
+# =============================================================================
 # Reasoning Content Extraction Tests
 # =============================================================================
 

@@ -734,3 +734,72 @@ def test_gemini_result_correctness(gemini_llm):
     assert any(w in content_lower for w in ["50", "overcast"]), (
         f"Should mention London weather: {final.content}"
     )
+
+
+# --------------- Tool result guidance tests ---------------
+
+
+@pytest.mark.requires("oci")
+def test_meta_llama_tool_result_guidance():
+    """Test that tool_result_guidance helps Llama incorporate tool results.
+
+    Reproduces Issue #28: without tool_result_guidance, Llama outputs raw JSON
+    tool call syntax instead of natural language when using an agent.
+    With tool_result_guidance=True, a system message guides the model to
+    respond with natural language incorporating the tool results.
+    """
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+    if not compartment_id:
+        pytest.skip("OCI_COMPARTMENT_ID not set")
+
+    endpoint = os.environ.get("OCI_GENAI_SERVICE_ENDPOINT")
+    if not endpoint:
+        region = os.getenv("OCI_REGION", "us-chicago-1")
+        endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+
+    chat = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        service_endpoint=endpoint,
+        compartment_id=compartment_id,
+        model_kwargs={"temperature": 0.0, "max_tokens": 500},
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+        auth_file_location=os.path.expanduser("~/.oci/config"),
+        tool_result_guidance=True,
+    )
+
+    def _get_weather(city: str) -> str:
+        """Get weather for a given city."""
+        return f"It's always sunny in {city}!"
+
+    from typing import Any
+
+    from langchain.agents import create_agent
+
+    agent: Any = create_agent(
+        model=chat,
+        tools=[_get_weather],
+        system_prompt="You are a helpful assistant",
+    )
+
+    messages = [
+        SystemMessage(content="You are an AI assistant."),
+        HumanMessage(content="What is the weather in SF?"),
+    ]
+
+    response = agent.invoke({"messages": messages})
+    final_message = response["messages"][-1]
+
+    # Verify the model produced a final response
+    assert final_message.content, "Should have generated a response"
+
+    # Verify response is natural language, not raw JSON tool call syntax
+    content = final_message.content
+    # Check for raw JSON tool call syntax anywhere in response
+    assert '{"name"' not in content, (
+        f"Response contains raw JSON tool call syntax: {content[:200]}"
+    )
+    # Check for known Llama failure pattern where it re-explains tool calls
+    assert "incorrect assumption" not in content.lower(), (
+        f"Model failed to incorporate tool results: {content[:200]}"
+    )

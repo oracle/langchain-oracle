@@ -207,6 +207,7 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         oci_params = self._provider.messages_to_oci_params(
             messages,
             max_sequential_tool_calls=self.max_sequential_tool_calls,
+            tool_result_guidance=self.tool_result_guidance,
             model_id=self.model_id,
             **kwargs,
         )
