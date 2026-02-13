@@ -1,11 +1,22 @@
 # Copyright (c) 2025 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Vision utilities for ChatOCIGenAI.
+"""Vision and image utilities for OCI Generative AI.
 
-This module provides helper functions for working with vision-capable models
-in OCI Generative AI. It supports loading images from files and encoding
-them as content blocks.
+This module provides helper functions for working with images across
+OCI Generative AI — both vision-capable chat models and multimodal
+embedding models. It is the single source of truth for image encoding
+and model registries.
+
+Core functions:
+- ``to_data_uri`` — Convert any image input to a data URI string.
+- ``load_image`` — Load a file as a content block for chat models.
+- ``encode_image`` — Encode bytes as a content block for chat models.
+- ``is_vision_model`` — Check if a model supports vision inputs.
+
+Model registries:
+- ``VISION_MODELS`` — Chat models that accept image inputs.
+- ``IMAGE_EMBEDDING_MODELS`` — Embedding models that support images.
 
 Example:
     >>> from langchain_oci import ChatOCIGenAI, load_image
@@ -26,7 +37,11 @@ import mimetypes
 from pathlib import Path
 from typing import List, Union
 
-# Vision-capable models available in OCI Generative AI
+# =============================================================================
+# Model registries
+# =============================================================================
+
+# Vision-capable chat models available in OCI Generative AI
 VISION_MODELS: List[str] = [
     # Meta Llama models
     "meta.llama-3.2-90b-vision-instruct",
@@ -46,6 +61,66 @@ VISION_MODELS: List[str] = [
     # Cohere models
     "cohere.command-a-vision",
 ]
+
+# Embedding models that support image input via input_type="IMAGE".
+# These models embed text and images into the same vector space.
+IMAGE_EMBEDDING_MODELS: List[str] = [
+    "cohere.embed-v4.0",
+    "cohere.embed-multilingual-image-v3.0",
+]
+
+# =============================================================================
+# Core image encoding
+# =============================================================================
+
+
+def to_data_uri(
+    image: Union[str, bytes, Path],
+    mime_type: str = "image/png",
+) -> str:
+    """Convert an image input to a ``data:`` URI string.
+
+    This is the core encoding function used by ``load_image``,
+    ``encode_image``, and ``OCIGenAIEmbeddings.embed_image``.
+
+    Accepts:
+    - **Raw bytes** — base64-encodes with the given *mime_type*.
+    - **A data URI string** (``data:image/...;base64,...``) — returned as-is.
+    - **A file path** (str or Path) — reads the file, auto-detects MIME type.
+
+    Args:
+        image: File path, raw bytes, or data URI string.
+        mime_type: MIME type when *image* is raw bytes.
+            Ignored for file paths (auto-detected) and data URIs.
+
+    Returns:
+        A ``data:mime;base64,...`` string.
+
+    Example:
+        >>> uri = to_data_uri(b"\\x89PNG...", mime_type="image/png")
+        >>> uri = to_data_uri("photo.jpg")
+        >>> uri = to_data_uri("data:image/png;base64,iVBOR...")  # passthrough
+    """
+    if isinstance(image, bytes):
+        encoded = base64.standard_b64encode(image).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded}"
+
+    image_str = str(image)
+
+    if image_str.startswith("data:"):
+        return image_str
+
+    # File path
+    path = Path(image_str)
+    detected_mime = mimetypes.guess_type(str(path))[0] or "image/png"
+    with open(path, "rb") as f:
+        encoded = base64.standard_b64encode(f.read()).decode("utf-8")
+    return f"data:{detected_mime};base64,{encoded}"
+
+
+# =============================================================================
+# Content block helpers (for chat model HumanMessage content)
+# =============================================================================
 
 
 def load_image(file_path: Union[str, Path]) -> dict:
@@ -76,13 +151,7 @@ def load_image(file_path: Union[str, Path]) -> dict:
         ... )
         >>> response = llm.invoke([message])
     """
-    path = Path(file_path)
-    mime_type = mimetypes.guess_type(str(path))[0] or "image/png"
-
-    with open(path, "rb") as f:
-        data = base64.standard_b64encode(f.read()).decode("utf-8")
-
-    data_url = f"data:{mime_type};base64,{data}"
+    data_url = to_data_uri(file_path)
     return {"type": "image_url", "image_url": {"url": data_url}}
 
 
@@ -112,9 +181,13 @@ def encode_image(image_bytes: bytes, mime_type: str = "image/png") -> dict:
         ...     ]
         ... )
     """
-    data = base64.standard_b64encode(image_bytes).decode("utf-8")
-    data_url = f"data:{mime_type};base64,{data}"
+    data_url = to_data_uri(image_bytes, mime_type=mime_type)
     return {"type": "image_url", "image_url": {"url": data_url}}
+
+
+# =============================================================================
+# Model detection
+# =============================================================================
 
 
 def is_vision_model(model_id: str) -> bool:

@@ -95,6 +95,34 @@ embeddings = OCIGenAIEmbeddings()
 embeddings.embed_query("What is the meaning of life?")
 ```
 
+### 3b. Use Image Embeddings (Multimodal)
+`OCIGenAIEmbeddings` supports image embeddings with multimodal models like `cohere.embed-v4.0`.
+
+```python
+from langchain_oci import OCIGenAIEmbeddings
+
+embeddings = OCIGenAIEmbeddings(
+    model_id="cohere.embed-v4.0",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..xxxxx",
+)
+
+# Embed a single image (from file path, bytes, or data URI)
+image_vector = embeddings.embed_image("path/to/image.png")
+
+# Embed multiple images in a batch
+image_vectors = embeddings.embed_image_batch([
+    "path/to/image1.png",
+    "path/to/image2.jpg",
+    b"\x89PNG...",  # raw bytes
+])
+
+# Image and text embeddings share the same vector space for cross-modal retrieval
+text_vector = embeddings.embed_query("a photo of a cat")
+```
+
+<sub>**Note:** Image embeddings require a multimodal model. Use `IMAGE_EMBEDDING_MODELS` to check supported models.</sub>
+
 ### 4. Use Structured Output
 `ChatOCIGenAI` supports structured output.
 

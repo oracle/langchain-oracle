@@ -487,7 +487,14 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
         if stop is not None:
             content = enforce_stop_tokens(content, stop)
 
+        raw_tool_calls = self._provider.chat_tool_calls(response)
+
         generation_info = self._provider.chat_generation_info(response)
+
+        if raw_tool_calls:
+            generation_info["tool_calls"] = self._provider.format_response_tool_calls(
+                raw_tool_calls
+            )
 
         llm_output = {
             "model_id": response.data.model_id,
@@ -496,10 +503,10 @@ class ChatOCIGenAI(BaseChatModel, OCIGenAIBase):
             "content-length": response.headers["content-length"],
         }
         tool_calls = []
-        if "tool_calls" in generation_info:
+        if raw_tool_calls:
             tool_calls = [
                 OCIUtils.convert_oci_tool_call_to_langchain(tool_call)
-                for tool_call in self._provider.chat_tool_calls(response)
+                for tool_call in raw_tool_calls
             ]
 
         # Create usage_metadata if usage information is available
