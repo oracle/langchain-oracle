@@ -875,7 +875,7 @@ def _get_similarity_search_query(
         where_clause = _generate_where_clause(filter, bind_variables)
 
     query = f"""
-    SELECT 
+    SELECT /*+ VECTOR_INDEX_TRANSFORM({table_name}) */ 
         text,
         metadata,
         vector_distance(embedding, :embedding,
