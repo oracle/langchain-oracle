@@ -125,6 +125,7 @@ class TestCreateOCIReactAgent:
                         compartment_id="explicit-compartment",
                         auth_profile="CUSTOM",
                         max_sequential_tool_calls=10,
+                        tool_result_guidance=True,
                         temperature=0.5,
                     )
 
@@ -132,6 +133,7 @@ class TestCreateOCIReactAgent:
                     assert call_kwargs["compartment_id"] == "explicit-compartment"
                     assert call_kwargs["auth_profile"] == "CUSTOM"
                     assert call_kwargs["max_sequential_tool_calls"] == 10
+                    assert call_kwargs["tool_result_guidance"] is True
                     assert call_kwargs["model_kwargs"]["temperature"] == 0.5
 
     def test_auth_type_as_enum(self) -> None:

@@ -309,6 +309,31 @@ class GenericProvider(Provider):
                 oci_message = self.oci_chat_message[role](content=content)
             oci_messages.append(oci_message)
 
+        # BUGFIX (Issue #28): When tool results are present, inject a system
+        # message to guide models (especially Meta Llama) to incorporate tool
+        # results into their response. This prevents the model from outputting 
+        # raw JSON tool-call syntax instead of a natural language answer.
+        has_tool_results = any(isinstance(msg, ToolMessage) for msg in messages)
+        if (
+            has_tool_results
+            and "tools" in kwargs
+            and kwargs.get("tool_result_guidance")
+        ):
+            guidance = self.oci_chat_message["SYSTEM"](
+                content=[
+                    self.oci_chat_message_text_content(
+                        text=(
+                            "You have received tool results above. Respond to "
+                            "the user with a helpful, natural language answer "
+                            "that incorporates the tool results. Do not output "
+                            "raw JSON or tool call syntax. If you need "
+                            "additional information, you may call another tool."
+                        )
+                    )
+                ]
+            )
+            oci_messages.append(guidance)
+
         result = {
             "messages": oci_messages,
             "api_format": self.chat_api_format,
