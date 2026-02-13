@@ -311,7 +311,7 @@ class GenericProvider(Provider):
 
         # BUGFIX (Issue #28): When tool results are present, inject a system
         # message to guide models (especially Meta Llama) to incorporate tool
-        # results into their response. This prevents the model from outputting 
+        # results into their response. This prevents the model from outputting
         # raw JSON tool-call syntax instead of a natural language answer.
         has_tool_results = any(isinstance(msg, ToolMessage) for msg in messages)
         if (
