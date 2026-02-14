@@ -3,7 +3,12 @@
 
 """Generic provider implementation for OCI Generative AI.
 
-Supports Meta Llama, xAI Grok, OpenAI, and Mistral models.
+Supports Meta Llama, xAI Grok, OpenAI, Mistral, and Google Gemini models.
+
+This module provides:
+- GenericProvider: Base provider for generic API (Meta, xAI, Mistral, OpenAI)
+- MetaProvider: For Meta Llama models (extends GenericProvider)
+- GeminiProvider: For Google Gemini models (handles max_output_tokens mapping)
 """
 
 import json
@@ -80,6 +85,13 @@ class GenericProvider(Provider):
 
     stop_sequence_key: str = "stop"
 
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters. Returns params unchanged by default.
+
+        Subclasses can override for provider-specific transformations.
+        """
+        return params
+
     @property
     def supports_parallel_tool_calls(self) -> bool:
         """GenericProvider models support parallel tool calling."""
@@ -125,15 +137,17 @@ class GenericProvider(Provider):
         if not choices:
             return ""
         msg = getattr(choices[0], "message", None)
-        content = msg.content[0] if msg and msg.content else None
-        return getattr(content, "text", "") or ""
+        if not msg or not msg.content:
+            return ""
+        # Concatenate all text content parts to avoid dropping later chunks.
+        return "".join(part.text for part in msg.content if getattr(part, "text", None))
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
         content = event_data.get("message", {}).get("content", None)
         if not content:
             return ""
-        return content[0].get("text", "")
+        return "".join(part.get("text", "") for part in content if part.get("text"))
 
     def is_chat_stream_end(self, event_data: Dict) -> bool:
         """Determine if Meta chat stream event indicates the end."""
@@ -576,3 +590,40 @@ class MetaProvider(GenericProvider):
     """Provider for Meta models. This provider is for backward compatibility."""
 
     pass
+
+
+class GeminiProvider(GenericProvider):
+    """Provider for Google Gemini models.
+
+    Handles Gemini-specific parameter requirements:
+    - max_output_tokens → max_tokens (Gemini SDK uses max_output_tokens,
+      but OCI API expects max_tokens)
+    """
+
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize Gemini parameters with warnings for mapped keys."""
+        import warnings
+
+        result = params.copy()
+
+        if "max_output_tokens" in result:
+            if "max_tokens" not in result:
+                result["max_tokens"] = result.pop("max_output_tokens")
+                warnings.warn(
+                    "Gemini models on OCI use `max_tokens`. "
+                    "Mapped `max_output_tokens` -> `max_tokens`.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+            else:
+                # Both provided - prefer max_tokens
+                result.pop("max_output_tokens")
+                warnings.warn(
+                    "Both `max_tokens` and `max_output_tokens` were provided "
+                    "for a Gemini model. Using `max_tokens` and ignoring "
+                    "`max_output_tokens`.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+
+        return result

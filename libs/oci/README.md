@@ -39,7 +39,7 @@ llm = ChatOCIGenAI(
     model_id="MY_MODEL_ID",  # Pre-hosted model ID
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
     compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
-    model_kwargs={"max_tokens": 1024}, # Use max_completion_tokens instead of max_tokens for OpenAI models
+    model_kwargs={"max_tokens": 1024},  # Use max_completion_tokens for OpenAI models
     auth_profile="MY_AUTH_PROFILE",
     is_stream=True,
     auth_type="SECURITY_TOKEN"
@@ -58,7 +58,7 @@ from langchain_oci import ChatOCIGenAI
 # Using an imported model on Dedicated AI Cluster
 llm = ChatOCIGenAI(
     model_id="ocid1.generativeaiendpoint.oc1.us-chicago-1.xxxxx",  # Endpoint OCID from your DAC
-    provider="generic",  # Provider type: "generic" (most models) or "cohere"
+    provider="generic",  # Provider type: "cohere", "google", "meta", or "generic"
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
     compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
     auth_type="SECURITY_TOKEN",  # Authentication type
@@ -71,7 +71,12 @@ response = llm.invoke("Hello, what is your name?")
 
 **Additional Arguments for Imported Models:**
 - `model_id`: Use the **endpoint OCID** (starts with `ocid1.generativeaiendpoint`)
-- `provider`: Use `"generic"` for most models (Llama, Gemini, Grok, etc.) or `"cohere"` for Cohere models. Default to "generic" if not specified.
+- `provider`: Provider type for your model. Available providers:
+  - `"cohere"`: For Cohere models (CohereProvider)
+  - `"google"`: For Google Gemini models (GeminiProvider) - automatically handles `max_output_tokens` to `max_tokens` parameter mapping
+  - `"meta"`: For Meta Llama models (MetaProvider)
+  - `"generic"`: Default for other models including OpenAI (GenericProvider)
+  If not specified, the provider is auto-detected from the model_id prefix.
 - `service_endpoint`: Use regional API endpoint (not the internal cluster URL)
 
 
@@ -126,7 +131,7 @@ text_vector = embeddings.embed_query("a photo of a cat")
 ### 4. Use Structured Output
 `ChatOCIGenAI` supports structured output.
 
-<sub>**Note:** The default method is `function_calling`. If default method returns `None` (e.g. for Gemini models), try `json_schema` or `json_mode`.</sub>
+<sub>**Note:** The default method is `function_calling`. If default method returns `None` (e.g., for Google Gemini models using GeminiProvider), try `json_schema` or `json_mode`.</sub>
 
 ```python
 from langchain_oci import ChatOCIGenAI
