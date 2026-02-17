@@ -17,7 +17,7 @@ You can do so by adding an appropriate field to your project's `package.json` li
   "name": "your-project",
   "version": "0.1.0",
   "dependencies": {
-    "@oracle/langchain-oracledb": "^0.1.0",
+    "@oracle/langchain-oracledb": "^0.1.1",
     "@langchain/core": "^1.0.0"
   },
   "resolutions": {
