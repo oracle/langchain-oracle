@@ -4,14 +4,20 @@
 """Integration tests for multimodal content support (PDF, video, audio).
 
 These tests require real OCI credentials and access to OCI Generative AI.
-Multimodal content (documents, video, audio) is primarily supported by
-Google Gemini models on OCI.
+Multimodal content (documents, video, audio) requires multimodal-capable models.
+
+Currently supported models:
+- Google Gemini (full multimodal: images, PDF, video, audio)
+- Meta Llama Vision (images only)
+- Cohere Vision (images only)
+- xAI Grok (images only)
 
 Usage:
     export OCI_COMPARTMENT_ID="ocid1.compartment..."
     export OCI_CONFIG_PROFILE="DEFAULT"
     export OCI_AUTH_TYPE="API_KEY"
     export OCI_REGION="us-chicago-1"
+    export OCI_MODEL_ID="google.gemini-2.5-flash"  # or any multimodal model
     export OCI_RUN_MULTIMODAL_INTEGRATION=1
 
     pytest tests/integration_tests/chat_models/test_multimodal_integration.py -v
@@ -49,9 +55,13 @@ def _get_config() -> Dict[str, Any]:
 
 
 def _get_llm() -> ChatOCIGenAI:
-    """Create a ChatOCIGenAI instance with environment configuration."""
+    """Create a ChatOCIGenAI instance with environment configuration.
+
+    Uses OCI_MODEL_ID env var, defaulting to google.gemini-2.5-flash.
+    Override with any multimodal-capable model for testing.
+    """
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash")
+    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
 
     return ChatOCIGenAI(
         model_id=model_id,
@@ -191,11 +201,11 @@ def _create_simple_audio() -> str:
 
 
 class TestPDFDocumentSupport:
-    """Integration tests for PDF document support with Gemini models."""
+    """Integration tests for PDF document support with multimodal models."""
 
     @pytest.mark.requires("oci")
     def test_pdf_document_analysis(self) -> None:
-        """Test analyzing a PDF document with Gemini."""
+        """Test analyzing a PDF document with a multimodal model."""
         if os.environ.get("OCI_RUN_MULTIMODAL_INTEGRATION") != "1":
             pytest.skip("Set OCI_RUN_MULTIMODAL_INTEGRATION=1 to run this test")
 
@@ -224,7 +234,7 @@ class TestPDFDocumentSupport:
     @pytest.mark.requires("oci")
     @pytest.mark.asyncio
     async def test_pdf_document_analysis_async(self) -> None:
-        """Test analyzing a PDF document with Gemini using async."""
+        """Test analyzing a PDF document asynchronously."""
         if os.environ.get("OCI_RUN_MULTIMODAL_INTEGRATION") != "1":
             pytest.skip("Set OCI_RUN_MULTIMODAL_INTEGRATION=1 to run this test")
 
@@ -275,7 +285,7 @@ class TestPDFDocumentSupport:
 
 
 class TestVideoSupport:
-    """Integration tests for video support with Gemini models."""
+    """Integration tests for video support with multimodal models."""
 
     @pytest.mark.requires("oci")
     def test_video_content_processing(self) -> None:
@@ -313,7 +323,7 @@ class TestVideoSupport:
 
 
 class TestAudioSupport:
-    """Integration tests for audio support with Gemini models."""
+    """Integration tests for audio support with multimodal models."""
 
     @pytest.mark.requires("oci")
     def test_audio_content_processing(self) -> None:

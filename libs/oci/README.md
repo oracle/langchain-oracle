@@ -80,6 +80,112 @@ response = llm.invoke("Hello, what is your name?")
 - `service_endpoint`: Use regional API endpoint (not the internal cluster URL)
 
 
+### 1c. Multimodal Content (Vision, PDF, Video, Audio)
+
+`ChatOCIGenAI` supports multimodal content types including images, PDFs, video, and audio. Support varies by model:
+
+| Model Family | Images | PDF | Video | Audio |
+|--------------|--------|-----|-------|-------|
+| **Google Gemini** | ✓ | ✓ | ✓ | ✓ |
+| **Meta Llama Vision** | ✓ | - | - | - |
+| **Cohere Vision** | ✓ | - | - | - |
+| **xAI Grok** | ✓ | - | - | - |
+
+#### Image Analysis
+
+```python
+import base64
+from langchain_core.messages import HumanMessage
+from langchain_oci import ChatOCIGenAI
+
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.2-90b-vision-instruct",  # Any vision model
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="MY_COMPARTMENT_ID",
+)
+
+with open("image.png", "rb") as f:
+    image_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+message = HumanMessage(content=[
+    {"type": "text", "text": "Describe this image"},
+    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+])
+response = llm.invoke([message])
+```
+
+#### PDF Document Analysis
+
+```python
+import base64
+from langchain_core.messages import HumanMessage
+from langchain_oci import ChatOCIGenAI
+
+llm = ChatOCIGenAI(
+    model_id="google.gemini-2.5-flash",  # Gemini supports PDF
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="MY_COMPARTMENT_ID",
+)
+
+with open("document.pdf", "rb") as f:
+    pdf_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+message = HumanMessage(content=[
+    {"type": "text", "text": "Summarize this PDF document"},
+    {"type": "document_url", "document_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}},
+])
+response = llm.invoke([message])
+```
+
+#### Video Analysis
+
+```python
+import base64
+from langchain_core.messages import HumanMessage
+from langchain_oci import ChatOCIGenAI
+
+llm = ChatOCIGenAI(
+    model_id="google.gemini-2.5-flash",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="MY_COMPARTMENT_ID",
+)
+
+with open("video.mp4", "rb") as f:
+    video_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+message = HumanMessage(content=[
+    {"type": "text", "text": "What happens in this video?"},
+    {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
+])
+response = llm.invoke([message])
+```
+
+#### Audio Analysis
+
+```python
+import base64
+from langchain_core.messages import HumanMessage
+from langchain_oci import ChatOCIGenAI
+
+llm = ChatOCIGenAI(
+    model_id="google.gemini-2.5-flash",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="MY_COMPARTMENT_ID",
+)
+
+with open("audio.wav", "rb") as f:
+    audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+message = HumanMessage(content=[
+    {"type": "text", "text": "Transcribe this audio"},
+    {"type": "audio_url", "audio_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
+])
+response = llm.invoke([message])
+```
+
+<sub>**Note:** Document, video, and audio content requires a multimodal-capable model. Check your model's documentation for supported content types.</sub>
+
+
 ### 2. Use a Completion Model
 `OCIGenAI` class exposes LLMs from OCI Generative AI.
 

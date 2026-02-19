@@ -12,10 +12,13 @@ This module provides:
 
 Multimodal Content Support:
 - Text: Standard text content
-- Images: Base64 or URL-based images
-- Documents: PDF and other document formats (Gemini)
-- Video: MP4 and other video formats (Gemini)
-- Audio: Audio file formats (Gemini)
+- Images: Base64 or URL-based images (Meta Llama Vision, Gemini, Cohere, xAI)
+- Documents: PDF and other document formats (multimodal-capable models)
+- Video: MP4 and other video formats (multimodal-capable models)
+- Audio: Audio file formats (multimodal-capable models)
+
+Note: Document, video, and audio content require multimodal-capable models.
+Currently, Google Gemini models have the broadest multimodal support on OCI.
 """
 
 import json
@@ -122,15 +125,15 @@ class GenericProvider(Provider):
         self.oci_chat_message_image_content = models.ImageContent
         self.oci_chat_message_image_url = models.ImageUrl
 
-        # Content models - Document (PDF, etc.) - Gemini multimodal
+        # Content models - Document (PDF, etc.) - for multimodal-capable models
         self.oci_chat_message_document_content = models.DocumentContent
         self.oci_chat_message_document_url = models.DocumentUrl
 
-        # Content models - Video - Gemini multimodal
+        # Content models - Video - for multimodal-capable models
         self.oci_chat_message_video_content = models.VideoContent
         self.oci_chat_message_video_url = models.VideoUrl
 
-        # Content models - Audio - Gemini multimodal
+        # Content models - Audio - for multimodal-capable models
         self.oci_chat_message_audio_content = models.AudioContent
         self.oci_chat_message_audio_url = models.AudioUrl
 
@@ -397,10 +400,13 @@ class GenericProvider(Provider):
 
         Supports multimodal content types:
         - text: Plain text content
-        - image_url: Images (base64 or URL)
-        - document_url / document / file: PDFs and documents (Gemini)
-        - video_url / video: Video files (Gemini)
-        - audio_url / audio: Audio files (Gemini)
+        - image_url: Images (base64 or URL) - supported by vision models
+        - document_url / document / file: PDFs and documents
+        - video_url / video: Video files
+        - audio_url / audio: Audio files
+
+        Note: Document, video, and audio content require multimodal-capable models.
+        Check your model's documentation for supported content types.
 
         Args:
             content: Message content as string or list of content items.
@@ -422,7 +428,7 @@ class GenericProvider(Provider):
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
             ]
 
-            # PDF document (Gemini)
+            # PDF document (requires multimodal-capable model)
             content = [
                 {"type": "text", "text": "Summarize this PDF"},
                 {"type": "document_url", "document_url": {
@@ -430,7 +436,7 @@ class GenericProvider(Provider):
                 }}
             ]
 
-            # Video (Gemini)
+            # Video (requires multimodal-capable model)
             content = [
                 {"type": "text", "text": "Describe this video"},
                 {"type": "video_url", "video_url": {
@@ -438,7 +444,7 @@ class GenericProvider(Provider):
                 }}
             ]
 
-            # Audio (Gemini)
+            # Audio (requires multimodal-capable model)
             content = [
                 {"type": "text", "text": "Transcribe this audio"},
                 {"type": "audio_url", "audio_url": {
@@ -478,7 +484,7 @@ class GenericProvider(Provider):
                         )
                     )
 
-                # Document content (PDF, etc.) - for Gemini models
+                # Document content (PDF, etc.) - requires multimodal-capable model
                 elif content_type in ("document_url", "document", "file"):
                     doc_data = (
                         item.get("document_url")
@@ -499,7 +505,7 @@ class GenericProvider(Provider):
                         )
                     )
 
-                # Video content - for Gemini models
+                # Video content - requires multimodal-capable model
                 elif content_type in ("video_url", "video"):
                     video_data = item.get("video_url") or item.get("video") or item
                     url = (
@@ -517,7 +523,7 @@ class GenericProvider(Provider):
                         )
                     )
 
-                # Audio content - for Gemini models
+                # Audio content - requires multimodal-capable model
                 elif content_type in ("audio_url", "audio"):
                     audio_data = item.get("audio_url") or item.get("audio") or item
                     url = (
