@@ -2,6 +2,17 @@
 
 We welcome your contributions! There are multiple ways to contribute.
 
+## Table of Contents
+
+- [Opening Issues](#opening-issues)
+- [Contributing Code](#contributing-code)
+- [Development Setup](#development-setup)
+- [Architecture Overview](#architecture-overview)
+- [Adding a New Provider](#adding-a-new-provider)
+- [Testing](#testing)
+- [Pull Request Process](#pull-request-process)
+- [Code of Conduct](#code-of-conduct)
+
 ## Opening issues
 
 For bugs or enhancement requests, please file a GitHub issue unless it's
@@ -31,6 +42,213 @@ git commit --signoff
 Only pull requests from committers that can be verified as having signed the OCA
 can be accepted.
 
+## Development Setup
+
+### Prerequisites
+
+- Python 3.9+
+- [Poetry](https://python-poetry.org/) for dependency management
+- OCI CLI configured (`~/.oci/config`)
+- Access to OCI Generative AI service (for integration tests)
+
+### Clone and Install
+
+```bash
+# Clone the repository
+git clone https://github.com/oracle/langchain-oracle.git
+cd langchain-oracle
+
+# Install langchain-oci with development dependencies
+cd libs/oci
+poetry install --with dev,test
+
+# Or install langchain-oracledb
+cd libs/oracledb
+poetry install --with dev,test
+```
+
+### Running Tests
+
+```bash
+# Unit tests only (no OCI credentials needed)
+poetry run pytest tests/unit
+
+# Integration tests (requires OCI credentials)
+export COMPARTMENT_ID="ocid1.compartment.oc1..xxx"
+export SERVICE_ENDPOINT="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+poetry run pytest tests/integration
+
+# All tests
+poetry run pytest
+
+# With coverage
+poetry run pytest --cov=langchain_oci --cov-report=html
+```
+
+### Code Quality
+
+```bash
+# Format code
+poetry run black .
+poetry run isort .
+
+# Lint
+poetry run ruff check .
+
+# Type check
+poetry run mypy langchain_oci
+
+# All checks
+make lint  # If Makefile is available
+```
+
+---
+
+## Architecture Overview
+
+### langchain-oci Structure
+
+```
+libs/oci/langchain_oci/
+├── __init__.py              # Public exports
+├── chat_models/
+│   ├── oci_generative_ai.py # ChatOCIGenAI, ChatOCIOpenAI
+│   ├── oci_data_science.py  # ChatOCIModelDeployment variants
+│   └── providers/
+│       ├── base.py          # Provider base class
+│       ├── cohere.py        # CohereProvider
+│       └── generic.py       # GenericProvider, MetaProvider, GeminiProvider
+├── embeddings/
+│   ├── oci_generative_ai.py # OCIGenAIEmbeddings
+│   └── image.py             # Image embedding utilities
+├── agents/
+│   └── react.py             # create_oci_agent()
+├── llms/
+│   └── oci_generative_ai.py # Legacy OCIGenAI
+├── utils/
+│   └── vision.py            # Vision utilities
+└── common/
+    ├── auth.py              # Authentication
+    └── utils.py             # Shared utilities
+```
+
+### Provider Pattern
+
+Providers abstract model-specific behaviors:
+
+```
+ChatOCIGenAI
+    │
+    ├── model_id="meta.llama-*" → MetaProvider
+    ├── model_id="cohere.*"     → CohereProvider
+    ├── model_id="google.*"     → GeminiProvider
+    └── model_id="xai.*"        → GenericProvider
+```
+
+Each provider handles:
+- Message format conversion
+- Tool calling format
+- Response parsing
+- Streaming events
+
+---
+
+## Adding a New Provider
+
+### Step 1: Create Provider Class
+
+```python
+# libs/oci/langchain_oci/chat_models/providers/my_provider.py
+
+from langchain_oci.chat_models.providers.base import Provider
+
+class MyProvider(Provider):
+    """Provider for MyModel."""
+
+    stop_sequence_key: str = "stop"
+
+    def __init__(self) -> None:
+        from oci.generative_ai_inference import models
+        # Initialize OCI model classes
+        self.oci_chat_request = models.GenericChatRequest
+        # ... other initializations
+
+    def messages_to_oci_params(self, messages, **kwargs):
+        """Convert LangChain messages to OCI format."""
+        # Implementation
+
+    def chat_response_to_text(self, response):
+        """Extract text from response."""
+        # Implementation
+
+    def convert_to_oci_tool(self, tool):
+        """Convert tool to OCI format."""
+        # Implementation
+```
+
+### Step 2: Register Provider
+
+In `oci_generative_ai.py`, add detection:
+
+```python
+def _get_provider(self) -> Provider:
+    if self.model_id.startswith("mymodel."):
+        return MyProvider()
+    # ... existing logic
+```
+
+### Step 3: Add Tests
+
+```python
+# tests/unit/test_my_provider.py
+
+def test_my_provider_message_conversion():
+    provider = MyProvider()
+    messages = [HumanMessage(content="Hello")]
+    params = provider.messages_to_oci_params(messages)
+    assert "messages" in params
+```
+
+### Step 4: Update Documentation
+
+- Add to `docs/MODELS.md`
+- Add to feature matrix in README
+- Create tutorial examples if significant
+
+---
+
+## Testing
+
+### Test Categories
+
+| Type | Location | Requires OCI |
+|------|----------|--------------|
+| Unit | `tests/unit/` | No |
+| Integration | `tests/integration/` | Yes |
+
+### Writing Tests
+
+```python
+# Unit test example
+def test_vision_model_detection():
+    from langchain_oci import is_vision_model
+    assert is_vision_model("meta.llama-3.2-90b-vision-instruct")
+    assert not is_vision_model("meta.llama-3.3-70b-instruct")
+
+# Integration test example (requires OCI)
+@pytest.mark.integration
+def test_chat_invoke():
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        service_endpoint=os.environ["SERVICE_ENDPOINT"],
+        compartment_id=os.environ["COMPARTMENT_ID"],
+    )
+    response = llm.invoke("Hello")
+    assert response.content
+```
+
+---
+
 ## Pull request process
 
 1. Ensure there is an issue created to track and discuss the fix or enhancement
@@ -41,6 +259,7 @@ can be accepted.
 1. Ensure that any documentation is updated with the changes that are required
    by your change.
 1. Ensure that any samples are updated if the base image has been changed.
+1. **Run tests and linting** before submitting.
 1. Submit the pull request. *Do not leave the pull request blank*. Explain exactly
    what your changes are meant to do and provide simple steps on how to validate.
    your changes. Ensure that you reference the issue you created as well.
