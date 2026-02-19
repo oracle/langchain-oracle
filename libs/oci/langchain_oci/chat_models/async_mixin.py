@@ -7,6 +7,8 @@ This module provides async support for ChatOCIGenAI through a mixin class,
 keeping the main module clean and focused.
 """
 
+import json
+import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
@@ -294,29 +296,51 @@ class ChatOCIGenAIAsyncMixin:
 
         return {k: v for k, v in info.items() if v is not None}
 
+    def _safe_parse_json_args(self, raw_args: Any) -> Dict[str, Any]:
+        """Parse JSON arguments with fallback for malformed JSON.
+
+        Handles both string JSON and dict arguments, with graceful fallback
+        for malformed JSON from LLMs.
+
+        Args:
+            raw_args: Either a JSON string or dict of arguments.
+
+        Returns:
+            Parsed arguments dict, or {"_raw_arguments": ...} on parse failure.
+        """
+        if isinstance(raw_args, dict):
+            return raw_args
+        if isinstance(raw_args, str):
+            try:
+                parsed = json.loads(raw_args)
+                # Handle double-encoded JSON (some models do this)
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                return parsed
+            except json.JSONDecodeError:
+                return {"_raw_arguments": raw_args}
+        return {}
+
     def _format_tool_calls_from_dict(
         self, tool_calls: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Format tool calls from async response dicts to LangChain format."""
-        import json
+        """Format tool calls from async response dicts to LangChain format.
 
+        Used for additional_kwargs metadata - empty string IDs are acceptable here
+        since this is just for response metadata, not for tool execution matching.
+        """
         formatted = []
         for tc in tool_calls:
-            # Handle both 'arguments' (Generic/Meta) and 'parameters' (Cohere) formats
+            # Handle both 'arguments' (Generic/Meta) and 'parameters' (Cohere)
             if "arguments" in tc:
-                # Arguments is a JSON string in Generic format
-                args = tc.get("arguments", "{}")
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {"_raw_arguments": args}
+                raw_args = tc.get("arguments")
             else:
-                # Cohere uses 'parameters' as a dict
-                args = tc.get("parameters", {})
+                raw_args = tc.get("parameters", {})
+            args = self._safe_parse_json_args(raw_args)
 
             formatted.append(
                 {
+                    # Empty string ID is acceptable for metadata (additional_kwargs)
                     "id": tc.get("id", ""),
                     "function": {
                         "name": tc.get("name", ""),
@@ -330,13 +354,17 @@ class ChatOCIGenAIAsyncMixin:
     def _convert_dict_tool_calls_to_langchain(
         self, tool_calls: List[Dict[str, Any]]
     ) -> List[ToolCall]:
-        """Convert dict tool calls from async response to LangChain ToolCall format."""
-        import uuid
+        """Convert dict tool calls from async response to LangChain ToolCall format.
 
+        Used for creating ToolCall objects that LangChain uses to match tool results
+        back to tool calls. A valid ID is required or the agent loop breaks.
+        """
         return [
             ToolCall(
                 name=tc.get("name", ""),
                 args=self._parse_tool_args(tc),
+                # UUID fallback required: LangChain uses ID to match tool results
+                # back to calls. Missing/empty ID breaks the agent tool loop.
                 id=tc.get("id") or uuid.uuid4().hex,
             )
             for tc in tool_calls
@@ -344,24 +372,12 @@ class ChatOCIGenAIAsyncMixin:
 
     def _parse_tool_args(self, tc: Dict[str, Any]) -> Dict[str, Any]:
         """Parse tool call arguments from dict, handling JSON strings."""
-        import json
-
-        # Cohere uses 'parameters' as a dict
-        if "arguments" not in tc:
-            return tc.get("parameters", {})
-
-        args = tc.get("arguments", "{}")
-        if not isinstance(args, str):
-            return args
-
-        try:
-            parsed = json.loads(args)
-            # Handle double-encoded JSON
-            if isinstance(parsed, str):
-                parsed = json.loads(parsed)
-            return parsed
-        except json.JSONDecodeError:
-            return {"_raw_arguments": args}
+        # Handle both 'arguments' (Generic/Meta) and 'parameters' (Cohere)
+        if "arguments" in tc:
+            raw_args = tc.get("arguments")
+        else:
+            raw_args = tc.get("parameters", {})
+        return self._safe_parse_json_args(raw_args)
 
     def _extract_tool_calls(self, response_data: Dict[str, Any]) -> List[Any]:
         """Extract tool calls from async response data."""
