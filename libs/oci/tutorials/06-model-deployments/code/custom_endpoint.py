@@ -115,7 +115,9 @@ def demo_custom_deployment():
     print("=" * 50)
 
     # Replace with your endpoint
-    endpoint = "https://modeldeployment.us-ashburn-1.oci.customer-oci.com/<ocid>/predict"
+    endpoint = (
+        "https://modeldeployment.us-ashburn-1.oci.customer-oci.com/<ocid>/predict"
+    )
 
     chat = CustomFormatDeployment(
         endpoint=endpoint,

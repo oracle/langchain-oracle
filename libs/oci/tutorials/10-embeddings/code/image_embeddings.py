@@ -36,6 +36,7 @@ def main():
 
     # Check if images exist (demo mode)
     import os
+
     images_exist = all(os.path.exists(p) for p in image_paths)
 
     if not images_exist:

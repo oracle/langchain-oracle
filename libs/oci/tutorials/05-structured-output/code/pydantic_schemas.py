@@ -15,6 +15,7 @@ SERVICE_ENDPOINT = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.
 # Simple schema
 class Contact(BaseModel):
     """A contact with name and email."""
+
     name: str = Field(description="The person's full name")
     email: str = Field(description="The email address")
     phone: Optional[str] = Field(default=None, description="Phone number if available")
@@ -23,6 +24,7 @@ class Contact(BaseModel):
 # Nested schema
 class Address(BaseModel):
     """A physical address."""
+
     street: str = Field(description="Street address")
     city: str = Field(description="City name")
     state: str = Field(description="State or province")
@@ -31,6 +33,7 @@ class Address(BaseModel):
 
 class Company(BaseModel):
     """A company with address."""
+
     name: str = Field(description="Company name")
     industry: str = Field(description="Industry sector")
     headquarters: Address = Field(description="Main office location")
@@ -46,6 +49,7 @@ class Sentiment(str, Enum):
 
 class ReviewAnalysis(BaseModel):
     """Analysis of a product review."""
+
     summary: str = Field(description="Brief summary")
     sentiment: Sentiment = Field(description="Overall sentiment")
     keywords: List[str] = Field(description="Key topics")

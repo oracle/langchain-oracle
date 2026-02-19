@@ -62,9 +62,9 @@ def main():
     )
 
     # Run the agent
-    result = agent.invoke({
-        "messages": [HumanMessage(content="What's the weather and time in Tokyo?")]
-    })
+    result = agent.invoke(
+        {"messages": [HumanMessage(content="What's the weather and time in Tokyo?")]}
+    )
 
     # Print all messages to see the agent's reasoning
     print("Agent Execution Trace:")

@@ -18,8 +18,8 @@ def example_api_key():
         model_id=MODEL_ID,
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
-        auth_type="API_KEY",       # Optional, this is the default
-        auth_profile="DEFAULT",     # Optional, uses DEFAULT profile
+        auth_type="API_KEY",  # Optional, this is the default
+        auth_profile="DEFAULT",  # Optional, uses DEFAULT profile
     )
     return llm.invoke("Hello!")
 

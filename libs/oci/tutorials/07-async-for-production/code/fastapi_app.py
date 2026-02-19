@@ -109,4 +109,5 @@ async def chat_batch(request: BatchRequest):
 # Example usage when running directly
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

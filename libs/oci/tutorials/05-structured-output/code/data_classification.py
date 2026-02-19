@@ -73,14 +73,12 @@ def main():
         Estimated time to resolution: 4 hours.
         Contact the SRE team for updates.
         """,
-
         """
         Q4 2025 Financial Report
         Revenue increased by 15% compared to Q3. Operating expenses
         remained stable. Net profit margin improved to 12%.
         Recommend continued investment in R&D and marketing.
         """,
-
         """
         Employee Handbook Update
         Section 5.3 regarding remote work policy has been updated.

@@ -15,7 +15,7 @@ llm = ChatOCIGenAI(
     model_kwargs={
         "temperature": 0.7,
         "max_tokens": 500,
-    }
+    },
 )
 
 # Simple invocation

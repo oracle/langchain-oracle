@@ -65,9 +65,13 @@ def main():
     # User requests an action
     print("User: Send an email to john@example.com about the meeting tomorrow")
     result = agent.invoke(
-        {"messages": [HumanMessage(
-            content="Send an email to john@example.com saying 'Meeting at 10am'"
-        )]},
+        {
+            "messages": [
+                HumanMessage(
+                    content="Send an email to john@example.com saying 'Meeting at 10am'"
+                )
+            ]
+        },
         config=config,
     )
 

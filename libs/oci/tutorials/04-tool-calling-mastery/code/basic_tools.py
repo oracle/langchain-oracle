@@ -68,12 +68,12 @@ def main():
         print(f"Arguments: {tool_call['args']}")
 
         # Execute the tool
-        result = get_weather.invoke(tool_call['args'])
+        result = get_weather.invoke(tool_call["args"])
         print(f"Tool result: {result}")
 
         # Send result back to model
         messages.append(response)
-        messages.append(ToolMessage(content=result, tool_call_id=tool_call['id']))
+        messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
 
         final_response = llm_with_tools.invoke(messages)
         print(f"Final answer: {final_response.content}")
@@ -89,11 +89,11 @@ def main():
         print(f"Tool requested: {tool_call['name']}")
         print(f"Arguments: {tool_call['args']}")
 
-        result = calculate.invoke(tool_call['args'])
+        result = calculate.invoke(tool_call["args"])
         print(f"Tool result: {result}")
 
         messages.append(response)
-        messages.append(ToolMessage(content=result, tool_call_id=tool_call['id']))
+        messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
 
         final_response = llm_with_tools.invoke(messages)
         print(f"Final answer: {final_response.content}")

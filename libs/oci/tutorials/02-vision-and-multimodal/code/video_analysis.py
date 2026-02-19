@@ -20,7 +20,7 @@ def analyze_video(video_path: str, prompt: str):
         compartment_id=COMPARTMENT_ID,
         model_kwargs={
             "max_tokens": 2000,  # Videos may need longer responses
-        }
+        },
     )
 
     # Load and encode video
@@ -41,11 +41,7 @@ def analyze_video(video_path: str, prompt: str):
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
-            {
-                "type": "media",
-                "data": video_data,
-                "mime_type": mime_type
-            },
+            {"type": "media", "data": video_data, "mime_type": mime_type},
         ]
     )
 
@@ -58,7 +54,7 @@ def describe_video(video_path: str):
     return analyze_video(
         video_path,
         "Describe what's happening in this video. "
-        "Include: actions, people/objects, setting, and timeline of events."
+        "Include: actions, people/objects, setting, and timeline of events.",
     )
 
 
@@ -68,7 +64,7 @@ def extract_key_moments(video_path: str):
         video_path,
         "Identify and describe the key moments in this video. "
         "For each moment, provide: timestamp (if visible), what happens, "
-        "and why it's significant."
+        "and why it's significant.",
     )
 
 
@@ -77,7 +73,7 @@ def check_for_safety_issues(video_path: str):
     return analyze_video(
         video_path,
         "Analyze this video for any safety hazards or compliance issues. "
-        "List any concerns found with descriptions."
+        "List any concerns found with descriptions.",
     )
 
 

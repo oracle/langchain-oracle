@@ -29,11 +29,7 @@ def analyze_pdf(pdf_path: str, prompt: str):
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
-            {
-                "type": "media",
-                "data": pdf_data,
-                "mime_type": "application/pdf"
-            },
+            {"type": "media", "data": pdf_data, "mime_type": "application/pdf"},
         ]
     )
 
@@ -55,7 +51,7 @@ def extract_key_data(pdf_path: str):
         "1. All dates mentioned "
         "2. All monetary amounts "
         "3. Names of parties involved "
-        "Format as a structured list."
+        "Format as a structured list.",
     )
 
 

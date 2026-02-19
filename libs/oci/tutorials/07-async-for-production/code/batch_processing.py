@@ -29,9 +29,7 @@ async def process_with_rate_limit(
                 return (index, f"Error: {e}")
 
     # Create tasks for all prompts
-    tasks = [
-        limited_invoke(p, i) for i, p in enumerate(prompts)
-    ]
+    tasks = [limited_invoke(p, i) for i, p in enumerate(prompts)]
 
     # Process all with limited concurrency
     completed = await asyncio.gather(*tasks)
@@ -53,8 +51,16 @@ async def main():
     prompts = [
         f"In one sentence, what is {topic}?"
         for topic in [
-            "Python", "JavaScript", "Rust", "Go", "TypeScript",
-            "Java", "C++", "Swift", "Kotlin", "Ruby"
+            "Python",
+            "JavaScript",
+            "Rust",
+            "Go",
+            "TypeScript",
+            "Java",
+            "C++",
+            "Swift",
+            "Kotlin",
+            "Ruby",
         ]
     ]
 

@@ -47,9 +47,9 @@ def execute_tools(tool_calls: list, tools_dict: dict) -> list:
     """Execute multiple tool calls and return ToolMessages."""
     results = []
     for tc in tool_calls:
-        tool_func = tools_dict[tc['name']]
-        result = tool_func.invoke(tc['args'])
-        results.append(ToolMessage(content=result, tool_call_id=tc['id']))
+        tool_func = tools_dict[tc["name"]]
+        result = tool_func.invoke(tc["args"])
+        results.append(ToolMessage(content=result, tool_call_id=tc["id"]))
     return results
 
 
@@ -75,9 +75,11 @@ def main():
     print("Query: Tell me about weather, time, and population of both cities")
     print("-" * 60)
 
-    messages = [HumanMessage(
-        content="Tell me the weather, time, and population of Chicago and New York."
-    )]
+    messages = [
+        HumanMessage(
+            content="Tell me the weather, time, and population of Chicago and New York."
+        )
+    ]
 
     response = llm_with_tools.invoke(messages)
 

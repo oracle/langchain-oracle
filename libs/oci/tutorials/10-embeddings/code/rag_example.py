@@ -24,8 +24,7 @@ def retrieve_context(
 
     # Calculate similarities
     similarities = [
-        (i, cosine_similarity(query_vector, dv))
-        for i, dv in enumerate(doc_vectors)
+        (i, cosine_similarity(query_vector, dv)) for i, dv in enumerate(doc_vectors)
     ]
 
     # Sort by similarity (descending)

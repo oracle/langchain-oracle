@@ -62,10 +62,10 @@ def run_workflow(
         # Execute tools
         messages.append(response)
         for tc in response.tool_calls:
-            tool_func = tools_dict[tc['name']]
-            result = tool_func.invoke(tc['args'])
+            tool_func = tools_dict[tc["name"]]
+            result = tool_func.invoke(tc["args"])
             print(f"  {tc['name']} -> {result[:60]}...")
-            messages.append(ToolMessage(content=result, tool_call_id=tc['id']))
+            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
     return "Max iterations reached"
 
@@ -77,7 +77,7 @@ def main():
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
         max_sequential_tool_calls=10,  # Allow multi-step workflows
-        tool_result_guidance=True,     # Help model use results
+        tool_result_guidance=True,  # Help model use results
     )
 
     tools = [search_articles, get_article_content, summarize_text, save_research_note]
@@ -89,10 +89,12 @@ def main():
     print("Request: Research AI in healthcare, summarize findings, and save notes")
     print("=" * 60)
 
-    messages = [HumanMessage(
-        content="Research AI in healthcare. Get the first article, "
-        "summarize it, and save a note with the key findings."
-    )]
+    messages = [
+        HumanMessage(
+            content="Research AI in healthcare. Get the first article, "
+            "summarize it, and save a note with the key findings."
+        )
+    ]
 
     final_answer = run_workflow(llm_with_tools, messages, tools_dict)
 
