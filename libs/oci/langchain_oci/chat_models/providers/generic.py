@@ -486,9 +486,7 @@ class GenericProvider(Provider):
                         or item.get("file")
                         or item
                     )
-                    url = (
-                        doc_data.get("url") if isinstance(doc_data, dict) else None
-                    )
+                    url = doc_data.get("url") if isinstance(doc_data, dict) else None
                     if not url:
                         raise ValueError(
                             "Document content must have a 'url' field. "
@@ -503,9 +501,7 @@ class GenericProvider(Provider):
 
                 # Video content - for Gemini models
                 elif content_type in ("video_url", "video"):
-                    video_data = (
-                        item.get("video_url") or item.get("video") or item
-                    )
+                    video_data = item.get("video_url") or item.get("video") or item
                     url = (
                         video_data.get("url") if isinstance(video_data, dict) else None
                     )
@@ -523,9 +519,7 @@ class GenericProvider(Provider):
 
                 # Audio content - for Gemini models
                 elif content_type in ("audio_url", "audio"):
-                    audio_data = (
-                        item.get("audio_url") or item.get("audio") or item
-                    )
+                    audio_data = item.get("audio_url") or item.get("audio") or item
                     url = (
                         audio_data.get("url") if isinstance(audio_data, dict) else None
                     )
