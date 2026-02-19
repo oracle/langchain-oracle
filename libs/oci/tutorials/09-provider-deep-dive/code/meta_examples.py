@@ -1,7 +1,7 @@
 # Tutorial 09: Meta Llama Provider Examples
 # Demonstrates Meta-specific features: vision, parallel tools, guidance
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
 from langchain_oci import ChatOCIGenAI, load_image
@@ -104,7 +104,8 @@ def parallel_tool_calls():
     )
 
     print("Query: What's the weather and time in New York and London?")
-    response = llm_with_tools.invoke("What's the weather and time in New York and London?")
+    query = "What's the weather and time in New York and London?"
+    response = llm_with_tools.invoke(query)
 
     print(f"\nTool calls made: {len(response.tool_calls)}")
     for tc in response.tool_calls:
@@ -119,19 +120,17 @@ def tool_result_guidance():
     print("\nTool Result Guidance")
     print("=" * 50)
 
-    llm = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
-        service_endpoint=SERVICE_ENDPOINT,
-        compartment_id=COMPARTMENT_ID,
-    )
-
-    # Without guidance, model might output raw JSON
-    # With guidance, model synthesizes natural response
-    llm_with_tools = llm.bind_tools(
-        [get_weather],
-        tool_result_guidance=True,  # Helps model use results naturally
-        max_sequential_tool_calls=5,  # Prevents infinite loops
-    )
+    # Example configuration with tool_result_guidance:
+    # llm = ChatOCIGenAI(
+    #     model_id="meta.llama-3.3-70b-instruct",
+    #     service_endpoint=SERVICE_ENDPOINT,
+    #     compartment_id=COMPARTMENT_ID,
+    # )
+    # llm_with_tools = llm.bind_tools(
+    #     [get_weather],
+    #     tool_result_guidance=True,
+    #     max_sequential_tool_calls=5,
+    # )
 
     print("With tool_result_guidance=True:")
     print("- Model receives instruction to synthesize tool results")
@@ -144,11 +143,12 @@ def multi_image_comparison():
     print("\nMulti-Image Comparison")
     print("=" * 50)
 
-    llm = ChatOCIGenAI(
-        model_id="meta.llama-3.2-90b-vision-instruct",
-        service_endpoint=SERVICE_ENDPOINT,
-        compartment_id=COMPARTMENT_ID,
-    )
+    # Example configuration:
+    # llm = ChatOCIGenAI(
+    #     model_id="meta.llama-3.2-90b-vision-instruct",
+    #     service_endpoint=SERVICE_ENDPOINT,
+    #     compartment_id=COMPARTMENT_ID,
+    # )
 
     print("Pattern for comparing multiple images:")
     print("""

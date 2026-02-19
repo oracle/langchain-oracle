@@ -127,7 +127,7 @@ def demo_custom_deployment():
         },
     )
 
-    print(f"Custom deployment configured:")
+    print("Custom deployment configured:")
     print(f"  - Endpoint: {endpoint}")
     print(f"  - Model: {chat.model}")
     print(f"  - Custom param: {chat.custom_param}")

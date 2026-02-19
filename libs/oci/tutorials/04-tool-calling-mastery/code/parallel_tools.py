@@ -72,11 +72,11 @@ def main():
     )
 
     # Query that requires multiple tools
-    print("Query: Tell me about the weather, time, and population of Chicago and New York")
+    print("Query: Tell me about weather, time, and population of both cities")
     print("-" * 60)
 
     messages = [HumanMessage(
-        content="Tell me the weather, current time, and population of Chicago and New York."
+        content="Tell me the weather, time, and population of Chicago and New York."
     )]
 
     response = llm_with_tools.invoke(messages)

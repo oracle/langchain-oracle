@@ -29,9 +29,12 @@ def get_recommendation(category: str) -> str:
         category: The category to get a recommendation for (food, music, movies)
     """
     recommendations = {
-        "food": "Based on your preferences, I recommend trying the new Italian restaurant downtown.",
-        "music": "You might enjoy the latest album by The Weeknd based on your taste.",
-        "movies": "I recommend watching 'Oppenheimer' - it matches your interest in drama.",
+        "food": (
+            "Based on your preferences, I recommend trying the new "
+            "Italian restaurant downtown."
+        ),
+        "music": "You might enjoy the latest album by The Weeknd.",
+        "movies": "I recommend watching 'Oppenheimer' - great drama.",
     }
     return recommendations.get(category, f"No recommendations available for {category}")
 
@@ -58,7 +61,7 @@ def main():
     # First message - set a preference
     print("Turn 1: Setting preference")
     result1 = agent.invoke(
-        {"messages": [HumanMessage(content="I love Italian food and classic rock music.")]},
+        {"messages": [HumanMessage(content="I love Italian food and rock.")]},
         config=config,
     )
     print(f"Agent: {result1['messages'][-1].content}\n")

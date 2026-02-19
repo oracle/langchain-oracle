@@ -42,7 +42,9 @@ def save_research_note(note: str) -> str:
     return f"Note saved successfully: '{note[:50]}...'"
 
 
-def run_workflow(llm_with_tools, messages: list, tools_dict: dict, max_iterations: int = 10):
+def run_workflow(
+    llm_with_tools, messages: list, tools_dict: dict, max_iterations: int = 10
+):
     """Run a multi-step tool workflow until completion."""
 
     for iteration in range(max_iterations):
@@ -88,8 +90,8 @@ def main():
     print("=" * 60)
 
     messages = [HumanMessage(
-        content="Research AI in healthcare. Get the content of the first article you find, "
-                "summarize it, and save a research note with the key findings."
+        content="Research AI in healthcare. Get the first article, "
+        "summarize it, and save a note with the key findings."
     )]
 
     final_answer = run_workflow(llm_with_tools, messages, tools_dict)

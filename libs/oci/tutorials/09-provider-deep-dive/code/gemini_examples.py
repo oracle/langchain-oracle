@@ -23,7 +23,7 @@ def basic_gemini_chat():
         compartment_id=COMPARTMENT_ID,
     )
 
-    response = llm.invoke("Explain the concept of machine learning in simple terms.")
+    response = llm.invoke("Explain machine learning in simple terms.")
     print(response.content)
 
 
@@ -47,7 +47,7 @@ def pdf_processing():
 
         message = HumanMessage(
             content=[
-                {"type": "text", "text": "Summarize the key points from this document."},
+                {"type": "text", "text": "Summarize key points from this document."},
                 {"type": "media", "data": pdf_data, "mime_type": "application/pdf"},
             ]
         )
@@ -101,7 +101,7 @@ def video_analysis():
         print("To test video analysis:")
         print(f"1. Place a video file at: {video_path}")
         print("2. Run this example again")
-        print("\nSupported formats: MP4, MPEG, MOV, AVI, FLV, MPG, WEBM, WMV, 3GPP")
+        print("\nFormats: MP4, MPEG, MOV, AVI, FLV, MPG, WEBM, WMV, 3GPP")
 
 
 def audio_transcription():
@@ -123,7 +123,7 @@ def audio_transcription():
 
         message = HumanMessage(
             content=[
-                {"type": "text", "text": "Transcribe this audio and summarize the content."},
+                {"type": "text", "text": "Transcribe and summarize this audio."},
                 {"type": "media", "data": audio_data, "mime_type": "audio/mp3"},
             ]
         )
@@ -143,16 +143,16 @@ def gemini_parameters():
     print("=" * 50)
 
     # Note: OCI uses max_tokens, not max_output_tokens
-    # The provider will automatically map with a warning
-    llm = ChatOCIGenAI(
-        model_id="google.gemini-2.0-flash",
-        service_endpoint=SERVICE_ENDPOINT,
-        compartment_id=COMPARTMENT_ID,
-        model_kwargs={
-            "max_tokens": 1024,  # Use max_tokens for OCI
-            "temperature": 0.7,
-        },
-    )
+    # Example configuration:
+    # llm = ChatOCIGenAI(
+    #     model_id="google.gemini-2.0-flash",
+    #     service_endpoint=SERVICE_ENDPOINT,
+    #     compartment_id=COMPARTMENT_ID,
+    #     model_kwargs={
+    #         "max_tokens": 1024,  # Use max_tokens for OCI
+    #         "temperature": 0.7,
+    #     },
+    # )
 
     print("Key differences from native Gemini SDK:")
     print("- Use 'max_tokens' instead of 'max_output_tokens'")

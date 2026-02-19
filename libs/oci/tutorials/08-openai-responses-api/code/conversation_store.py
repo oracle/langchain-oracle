@@ -38,8 +38,8 @@ def persistent_memory_demo():
     client = setup_client_with_store()
 
     # First message - introduce yourself
-    print("User: My name is Alice and I work as a data scientist.")
-    response1 = client.invoke("My name is Alice and I work as a data scientist.")
+    print("User: My name is Alice and I'm a data scientist.")
+    response1 = client.invoke("My name is Alice and I'm a data scientist.")
     print(f"Assistant: {response1.content}")
 
     # Second message - model should remember
@@ -48,8 +48,8 @@ def persistent_memory_demo():
     print(f"Assistant: {response2.content}")
 
     # Third message - continue context
-    print("\nUser: What programming languages should I learn for my job?")
-    response3 = client.invoke("What programming languages should I learn for my job?")
+    print("\nUser: What programming languages should I learn?")
+    response3 = client.invoke("What programming languages should I learn?")
     print(f"Assistant: {response3.content}")
 
 

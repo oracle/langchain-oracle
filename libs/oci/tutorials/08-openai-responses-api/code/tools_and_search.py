@@ -34,8 +34,8 @@ def setup_client():
 class GetWeather(BaseModel):
     """Get the current weather for a location."""
 
-    location: str = Field(..., description="The city and state, e.g. San Francisco, CA")
-    unit: str = Field(default="fahrenheit", description="Temperature unit: celsius or fahrenheit")
+    location: str = Field(..., description="City and state, e.g. San Francisco, CA")
+    unit: str = Field(default="fahrenheit", description="Unit: celsius or fahrenheit")
 
 
 class SearchDatabase(BaseModel):
@@ -60,7 +60,7 @@ def function_calling_demo():
     response = llm_with_tools.invoke("What is the weather like in San Francisco?")
 
     print(f"Response content: {response.content}")
-    print(f"\nTool calls:")
+    print("\nTool calls:")
     for tool_call in response.tool_calls:
         print(f"  - Function: {tool_call['name']}")
         print(f"    Arguments: {tool_call['args']}")

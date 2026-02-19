@@ -18,7 +18,6 @@ async def process_with_rate_limit(
 ) -> List[str]:
     """Process prompts with concurrency limit."""
     semaphore = asyncio.Semaphore(max_concurrent)
-    results = []
 
     async def limited_invoke(prompt: str, index: int):
         async with semaphore:
@@ -30,7 +29,9 @@ async def process_with_rate_limit(
                 return (index, f"Error: {e}")
 
     # Create tasks for all prompts
-    tasks = [limited_invoke(p, i) for i, p in enumerate(prompts)]
+    tasks = [
+        limited_invoke(p, i) for i, p in enumerate(prompts)
+    ]
 
     # Process all with limited concurrency
     completed = await asyncio.gather(*tasks)

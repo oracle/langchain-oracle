@@ -55,7 +55,10 @@ def compare_images(image_path_1: str, image_path_2: str):
 
     message = HumanMessage(
         content=[
-            {"type": "text", "text": "Compare these two images. What are the key differences?"},
+            {
+                "type": "text",
+                "text": "Compare these two images. What are the key differences?",
+            },
             load_image(image_path_1),
             load_image(image_path_2),
         ]

@@ -96,7 +96,8 @@ def beam_search_generation():
         max_tokens=100,
     )
 
-    response = chat.invoke("Translate to French: The quick brown fox jumps over the lazy dog.")
+    prompt = "Translate to French: The quick brown fox jumps over the lazy dog."
+    response = chat.invoke(prompt)
     print(f"Translation: {response.content}")
 
 

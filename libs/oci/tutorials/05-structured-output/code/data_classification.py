@@ -30,8 +30,9 @@ class UrgencyLevel(str, Enum):
 
 class DocumentClassification(BaseModel):
     """Classification result for a document."""
+
     category: DocumentCategory = Field(description="Primary document category")
-    subcategory: str = Field(description="Specific subcategory within the main category")
+    subcategory: str = Field(description="Specific subcategory within main category")
     urgency: UrgencyLevel = Field(description="How urgent is this document")
     confidence: float = Field(ge=0, le=1, description="Classification confidence 0-1")
     key_topics: List[str] = Field(description="Main topics covered in the document")

@@ -16,12 +16,17 @@ def cosine_similarity(a: list, b: list) -> float:
     return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
 
 
-def retrieve_context(query: str, documents: list, doc_vectors: list, embeddings, top_k: int = 2) -> list:
+def retrieve_context(
+    query: str, documents: list, doc_vectors: list, embeddings, top_k: int = 2
+) -> list:
     """Retrieve most relevant documents for a query."""
     query_vector = embeddings.embed_query(query)
 
     # Calculate similarities
-    similarities = [(i, cosine_similarity(query_vector, dv)) for i, dv in enumerate(doc_vectors)]
+    similarities = [
+        (i, cosine_similarity(query_vector, dv))
+        for i, dv in enumerate(doc_vectors)
+    ]
 
     # Sort by similarity (descending)
     similarities.sort(key=lambda x: x[1], reverse=True)
@@ -47,14 +52,14 @@ def main():
 
     # Knowledge base (in production, this would be much larger)
     knowledge_base = [
-        "Oracle Cloud Infrastructure (OCI) provides enterprise cloud services including compute, storage, and networking.",
-        "OCI Generative AI service offers access to large language models from multiple providers including Meta, Cohere, and Google.",
-        "LangChain is an open-source framework for building applications with large language models.",
-        "The langchain-oci package provides LangChain integrations for OCI Generative AI services.",
-        "RAG (Retrieval Augmented Generation) combines retrieval systems with LLMs to provide accurate, grounded responses.",
-        "Vector embeddings represent text as numerical vectors, enabling semantic similarity search.",
-        "OCI offers dedicated AI clusters (DAC) for running custom model endpoints.",
-        "The ChatOCIGenAI class is the main interface for chat models in langchain-oci.",
+        "OCI provides enterprise cloud services including compute and storage.",
+        "OCI GenAI offers access to LLMs from Meta, Cohere, and Google.",
+        "LangChain is a framework for building apps with LLMs.",
+        "The langchain-oci package integrates OCI GenAI with LangChain.",
+        "RAG combines retrieval with LLMs for accurate, grounded responses.",
+        "Vector embeddings enable semantic similarity search.",
+        "OCI offers dedicated AI clusters (DAC) for custom endpoints.",
+        "ChatOCIGenAI is the main interface for chat models.",
     ]
 
     print("RAG Example: Retrieval Augmented Generation")

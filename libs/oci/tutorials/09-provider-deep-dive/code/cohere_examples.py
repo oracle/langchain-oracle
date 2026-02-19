@@ -21,7 +21,7 @@ def basic_cohere_chat():
         compartment_id=COMPARTMENT_ID,
     )
 
-    response = llm.invoke("Explain the difference between machine learning and deep learning.")
+    response = llm.invoke("Explain the difference between ML and deep learning.")
     print(response.content)
 
 
@@ -51,7 +51,7 @@ from multiple providers including Meta, Cohere, and Google.
 Document 3: The langchain-oci package enables Python developers to use OCI
 Generative AI services with the LangChain framework."""
         ),
-        HumanMessage(content="When was OCI launched and what AI capabilities does it offer?"),
+        HumanMessage(content="When was OCI launched and what AI does it offer?"),
     ]
 
     response = llm.invoke(messages)
@@ -81,7 +81,7 @@ def cohere_tool_calling():
     )
 
     # Note: Cohere doesn't support tool_choice or parallel_tool_calls
-    llm_with_tools = llm.bind_tools([search_database])
+    _ = llm.bind_tools([search_database])  # Example binding
 
     print("Cohere tool calling limitations:")
     print("- No tool_choice parameter support")
@@ -130,11 +130,12 @@ def cohere_response_metadata():
     print("\nCohere Response Metadata")
     print("=" * 50)
 
-    llm = ChatOCIGenAI(
-        model_id="cohere.command-r-plus",
-        service_endpoint=SERVICE_ENDPOINT,
-        compartment_id=COMPARTMENT_ID,
-    )
+    # Example configuration for accessing metadata:
+    # llm = ChatOCIGenAI(
+    #     model_id="cohere.command-r-plus",
+    #     service_endpoint=SERVICE_ENDPOINT,
+    #     compartment_id=COMPARTMENT_ID,
+    # )
 
     print("Available in response.response_metadata:")
     print("- citations: Document citations (when RAG context provided)")

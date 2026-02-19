@@ -30,7 +30,8 @@ def get_weather(city: str) -> str:
 # Tool with Pydantic schema for complex parameters
 class CalculatorInput(BaseModel):
     """Input for the calculator tool."""
-    expression: str = Field(description="Mathematical expression to evaluate (e.g., '2 + 2')")
+
+    expression: str = Field(description="Math expression to evaluate (e.g., '2 + 2')")
 
 
 @tool(args_schema=CalculatorInput)

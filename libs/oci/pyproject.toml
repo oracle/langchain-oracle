@@ -89,6 +89,9 @@ ignore = [
   "COM812",  # Messes with the formatter
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tutorials/**/*.py" = ["T201"]  # Allow print in tutorial examples
+
 [tool.mypy]
 plugins = ["pydantic.mypy"]
 check_untyped_defs = true
