@@ -1,0 +1,106 @@
+# Tutorial 10: RAG (Retrieval Augmented Generation) Example
+# Demonstrates using embeddings for context retrieval
+
+import numpy as np
+
+from langchain_oci import ChatOCIGenAI, OCIGenAIEmbeddings
+
+COMPARTMENT_ID = "ocid1.compartment.oc1..your-compartment-id"
+SERVICE_ENDPOINT = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+
+
+def cosine_similarity(a: list, b: list) -> float:
+    """Calculate cosine similarity between two vectors."""
+    a_arr = np.array(a)
+    b_arr = np.array(b)
+    return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
+
+
+def retrieve_context(query: str, documents: list, doc_vectors: list, embeddings, top_k: int = 2) -> list:
+    """Retrieve most relevant documents for a query."""
+    query_vector = embeddings.embed_query(query)
+
+    # Calculate similarities
+    similarities = [(i, cosine_similarity(query_vector, dv)) for i, dv in enumerate(doc_vectors)]
+
+    # Sort by similarity (descending)
+    similarities.sort(key=lambda x: x[1], reverse=True)
+
+    # Return top-k documents
+    return [documents[i] for i, _ in similarities[:top_k]]
+
+
+def main():
+    # Create embeddings client
+    embeddings = OCIGenAIEmbeddings(
+        model_id="cohere.embed-english-v3.0",
+        service_endpoint=SERVICE_ENDPOINT,
+        compartment_id=COMPARTMENT_ID,
+    )
+
+    # Create LLM
+    llm = ChatOCIGenAI(
+        model_id="meta.llama-3.3-70b-instruct",
+        service_endpoint=SERVICE_ENDPOINT,
+        compartment_id=COMPARTMENT_ID,
+    )
+
+    # Knowledge base (in production, this would be much larger)
+    knowledge_base = [
+        "Oracle Cloud Infrastructure (OCI) provides enterprise cloud services including compute, storage, and networking.",
+        "OCI Generative AI service offers access to large language models from multiple providers including Meta, Cohere, and Google.",
+        "LangChain is an open-source framework for building applications with large language models.",
+        "The langchain-oci package provides LangChain integrations for OCI Generative AI services.",
+        "RAG (Retrieval Augmented Generation) combines retrieval systems with LLMs to provide accurate, grounded responses.",
+        "Vector embeddings represent text as numerical vectors, enabling semantic similarity search.",
+        "OCI offers dedicated AI clusters (DAC) for running custom model endpoints.",
+        "The ChatOCIGenAI class is the main interface for chat models in langchain-oci.",
+    ]
+
+    print("RAG Example: Retrieval Augmented Generation")
+    print("=" * 50)
+
+    # Index documents
+    print("\nIndexing knowledge base...")
+    doc_vectors = embeddings.embed_documents(knowledge_base)
+    print(f"Indexed {len(doc_vectors)} documents")
+
+    # Example questions
+    questions = [
+        "What is OCI Generative AI?",
+        "How do I use LangChain with Oracle Cloud?",
+        "What is RAG and how does it work?",
+    ]
+
+    for question in questions:
+        print(f"\n{'=' * 50}")
+        print(f"Question: {question}")
+        print("-" * 50)
+
+        # Retrieve relevant context
+        context_docs = retrieve_context(
+            question, knowledge_base, doc_vectors, embeddings, top_k=2
+        )
+
+        print("Retrieved context:")
+        for i, doc in enumerate(context_docs, 1):
+            print(f"  {i}. {doc[:80]}...")
+
+        # Generate answer with context
+        context = "\n".join(context_docs)
+        prompt = f"""Use the following context to answer the question.
+Be concise and only use information from the context.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+
+        response = llm.invoke(prompt)
+        print(f"\nAnswer: {response.content}")
+
+
+if __name__ == "__main__":
+    main()

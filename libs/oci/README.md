@@ -1,407 +1,612 @@
 # langchain-oci
 
-This package contains the LangChain integrations with oci.
+[![PyPI version](https://img.shields.io/pypi/v/langchain-oci)](https://pypi.org/project/langchain-oci/)
+[![Python versions](https://img.shields.io/pypi/pyversions/langchain-oci)](https://pypi.org/project/langchain-oci/)
+[![License](https://img.shields.io/badge/License-UPL%201.0-green)](https://opensource.org/licenses/UPL)
+
+LangChain integrations for Oracle Cloud Infrastructure (OCI) Generative AI.
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Authentication](#authentication)
+- [Chat Models](#chat-models)
+- [Vision & Multimodal](#vision--multimodal)
+- [Embeddings](#embeddings)
+- [Async Support](#async-support)
+- [Tool Calling](#tool-calling)
+- [Structured Output](#structured-output)
+- [AI Agents](#ai-agents)
+- [OpenAI Responses API](#openai-responses-api)
+- [OCI Data Science Deployments](#oci-data-science-deployments)
+- [Provider Reference](#provider-reference)
+- [Tutorials](#tutorials)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Installation
 
 ```bash
-pip install -U langchain-oci
+pip install langchain-oci oci
 ```
-All integrations in this package assume that you have the credentials setup to connect with oci services.
 
 ---
 
 ## Quick Start
 
-This repository includes two main integration categories:
+```python
+from langchain_oci import ChatOCIGenAI
 
-- [OCI Generative AI](#oci-generative-ai-examples)
-- [OCI Data Science (Model Deployment)](#oci-data-science-model-deployment-examples)
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.3-70b-instruct",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..your-compartment-id",
+)
 
+response = llm.invoke("What is the capital of France?")
+print(response.content)
+```
 
 ---
 
-## OCI Generative AI Examples
+## Authentication
 
-OCI Generative AI supports two types of models:
-- **On-Demand Models**: Pre-hosted foundation models.
-- **DAC Models**: Models hosted on Dedicated AI Clusters (DAC), including custom models imported from Hugging Face or Object Storage
+Four authentication methods are supported:
 
-### 1a. Use a Chat Model (On-Demand)
+### API Key (Default)
 
-`ChatOCIGenAI` class exposes chat models from OCI Generative AI.
+Uses credentials from `~/.oci/config`:
 
 ```python
-from langchain_oci import ChatOCIGenAI
-
-# Using a pre-hosted on-demand model
 llm = ChatOCIGenAI(
-    model_id="MY_MODEL_ID",  # Pre-hosted model ID
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
-    compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
-    model_kwargs={"max_tokens": 1024},  # Use max_completion_tokens for OpenAI models
-    auth_profile="MY_AUTH_PROFILE",
-    is_stream=True,
-    auth_type="SECURITY_TOKEN"
+    model_id="meta.llama-3.3-70b-instruct",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..xxx",
+    auth_type="API_KEY",        # Default
+    auth_profile="DEFAULT",      # Profile name in ~/.oci/config
 )
-
-response = llm.invoke("Sing a ballad of LangChain.")
 ```
 
-### 1b. Use a Chat Model (Imported Model on DAC)
+### Security Token (Session-Based)
 
-For models you've imported and deployed on a Dedicated AI Cluster:
+```bash
+oci session authenticate --profile-name MY_PROFILE
+```
+
+```python
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.3-70b-instruct",
+    auth_type="SECURITY_TOKEN",
+    auth_profile="MY_PROFILE",
+    ...
+)
+```
+
+### Instance Principal
+
+For applications running on OCI compute instances:
+
+```python
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.3-70b-instruct",
+    auth_type="INSTANCE_PRINCIPAL",
+    ...
+)
+```
+
+### Resource Principal
+
+For OCI Functions and other resources:
+
+```python
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.3-70b-instruct",
+    auth_type="RESOURCE_PRINCIPAL",
+    ...
+)
+```
+
+---
+
+## Chat Models
+
+### On-Demand Models
 
 ```python
 from langchain_oci import ChatOCIGenAI
 
-# Using an imported model on Dedicated AI Cluster
 llm = ChatOCIGenAI(
-    model_id="ocid1.generativeaiendpoint.oc1.us-chicago-1.xxxxx",  # Endpoint OCID from your DAC
-    provider="generic",  # Provider type: "cohere", "google", "meta", or "generic"
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",  # Regional endpoint
-    compartment_id="ocid1.compartment.oc1..xxxxx",  # Your compartment OCID
-    auth_type="SECURITY_TOKEN",  # Authentication type
-    auth_profile="MY_AUTH_PROFILE",
+    model_id="meta.llama-3.3-70b-instruct",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..xxx",
     model_kwargs={"temperature": 0.7, "max_tokens": 500},
 )
-
-response = llm.invoke("Hello, what is your name?")
 ```
 
-**Additional Arguments for Imported Models:**
-- `model_id`: Use the **endpoint OCID** (starts with `ocid1.generativeaiendpoint`)
-- `provider`: Provider type for your model. Available providers:
-  - `"cohere"`: For Cohere models (CohereProvider)
-  - `"google"`: For Google Gemini models (GeminiProvider) - automatically handles `max_output_tokens` to `max_tokens` parameter mapping
-  - `"meta"`: For Meta Llama models (MetaProvider)
-  - `"generic"`: Default for other models including OpenAI (GenericProvider)
-  If not specified, the provider is auto-detected from the model_id prefix.
-- `service_endpoint`: Use regional API endpoint (not the internal cluster URL)
+### DAC/Imported Models
 
+For models deployed on Dedicated AI Clusters:
 
-### 1c. Multimodal Content (Vision, PDF, Video, Audio)
+```python
+llm = ChatOCIGenAI(
+    model_id="ocid1.generativeaiendpoint.oc1.us-chicago-1.xxxxx",  # Endpoint OCID
+    provider="meta",  # "cohere", "google", "meta", "generic"
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..xxx",
+)
+```
 
-`ChatOCIGenAI` supports multimodal content types including images, PDFs, video, and audio. Support varies by model:
+### Provider Matrix
 
-| Model Family | Images | PDF | Video | Audio |
-|--------------|--------|-----|-------|-------|
-| **Google Gemini** | ✓ | ✓ | ✓ | ✓ |
-| **Meta Llama Vision** | ✓ | - | - | - |
-| **Cohere Vision** | ✓ | - | - | - |
-| **OpenAI GPT-5.x** | ✓ | - | - | - |
+| Provider | Models | Features |
+|----------|--------|----------|
+| **Meta** | Llama 3.2, 3.3, 4 | Vision, parallel tools |
+| **Google** | Gemini 2.0/2.5 Flash | Multimodal (PDF, video, audio) |
+| **xAI** | Grok 4 | Vision, reasoning |
+| **Cohere** | Command R+, Command A | RAG, vision (V2) |
+| **OpenAI** | GPT-4, o1 | Reasoning |
+| **Mistral** | Mistral models | Fast inference |
 
-<sub>**Note:** Other models may have limited or no multimodal support. Check your model's documentation.</sub>
+---
 
-#### Image Analysis
+## Vision & Multimodal
+
+### Vision-Capable Models
+
+```python
+from langchain_oci.utils.vision import VISION_MODELS
+
+# 13+ vision-capable models
+print(VISION_MODELS)
+# ['meta.llama-3.2-90b-vision-instruct', 'google.gemini-2.5-flash', 'xai.grok-4', ...]
+```
+
+### Image Analysis
+
+```python
+from langchain_core.messages import HumanMessage
+from langchain_oci import ChatOCIGenAI, load_image
+
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.2-90b-vision-instruct",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..xxx",
+)
+
+message = HumanMessage(
+    content=[
+        {"type": "text", "text": "Describe this image"},
+        load_image("./photo.jpg"),
+    ]
+)
+
+response = llm.invoke([message])
+```
+
+### Utility Functions
+
+| Function | Description |
+|----------|-------------|
+| `load_image(path)` | Load image file as content block |
+| `encode_image(bytes, mime_type)` | Encode bytes as content block |
+| `to_data_uri(image)` | Convert to data URI string |
+| `is_vision_model(model_id)` | Check if model supports vision |
+
+### Gemini Multimodal
+
+Gemini models support PDF, video, and audio:
 
 ```python
 import base64
 from langchain_core.messages import HumanMessage
 from langchain_oci import ChatOCIGenAI
 
-llm = ChatOCIGenAI(
-    model_id="meta.llama-3.2-90b-vision-instruct",  # Any vision model
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-    compartment_id="MY_COMPARTMENT_ID",
-)
+llm = ChatOCIGenAI(model_id="google.gemini-2.0-flash", ...)
 
-with open("image.png", "rb") as f:
-    image_b64 = base64.b64encode(f.read()).decode("utf-8")
+# PDF
+with open("doc.pdf", "rb") as f:
+    pdf_data = base64.b64encode(f.read()).decode()
 
 message = HumanMessage(content=[
-    {"type": "text", "text": "Describe this image"},
-    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+    {"type": "text", "text": "Summarize this PDF"},
+    {"type": "media", "data": pdf_data, "mime_type": "application/pdf"}
 ])
-response = llm.invoke([message])
 ```
 
-#### PDF Document Analysis
+---
 
-```python
-import base64
-from langchain_core.messages import HumanMessage
-from langchain_oci import ChatOCIGenAI
+## Embeddings
 
-llm = ChatOCIGenAI(
-    model_id="google.gemini-2.5-flash",  # Gemini supports PDF
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-    compartment_id="MY_COMPARTMENT_ID",
-)
-
-with open("document.pdf", "rb") as f:
-    pdf_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-message = HumanMessage(content=[
-    {"type": "text", "text": "Summarize this PDF document"},
-    {"type": "document_url", "document_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}},
-])
-response = llm.invoke([message])
-```
-
-#### Video Analysis
-
-```python
-import base64
-from langchain_core.messages import HumanMessage
-from langchain_oci import ChatOCIGenAI
-
-llm = ChatOCIGenAI(
-    model_id="google.gemini-2.5-flash",
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-    compartment_id="MY_COMPARTMENT_ID",
-)
-
-with open("video.mp4", "rb") as f:
-    video_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-message = HumanMessage(content=[
-    {"type": "text", "text": "What happens in this video?"},
-    {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
-])
-response = llm.invoke([message])
-```
-
-#### Audio Analysis
-
-```python
-import base64
-from langchain_core.messages import HumanMessage
-from langchain_oci import ChatOCIGenAI
-
-llm = ChatOCIGenAI(
-    model_id="google.gemini-2.5-flash",
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-    compartment_id="MY_COMPARTMENT_ID",
-)
-
-with open("audio.wav", "rb") as f:
-    audio_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-message = HumanMessage(content=[
-    {"type": "text", "text": "Transcribe this audio"},
-    {"type": "audio_url", "audio_url": {"url": f"data:audio/wav;base64,{audio_b64}"}},
-])
-response = llm.invoke([message])
-```
-
-<sub>**Note:** Document, video, and audio content requires a multimodal-capable model. Check your model's documentation for supported content types.</sub>
-
-
-### 2. Use a Completion Model
-`OCIGenAI` class exposes LLMs from OCI Generative AI.
-
-```python
-from langchain_oci import OCIGenAI
-
-llm = OCIGenAI()
-llm.invoke("The meaning of life is")
-```
-
-### 3. Use an Embedding Model
-`OCIGenAIEmbeddings` class exposes embeddings from OCI Generative AI.
-
-```python
-from langchain_oci import OCIGenAIEmbeddings
-
-embeddings = OCIGenAIEmbeddings()
-embeddings.embed_query("What is the meaning of life?")
-```
-
-### 3b. Use Image Embeddings (Multimodal)
-`OCIGenAIEmbeddings` supports image embeddings with multimodal models like `cohere.embed-v4.0`.
+### Text Embeddings
 
 ```python
 from langchain_oci import OCIGenAIEmbeddings
 
 embeddings = OCIGenAIEmbeddings(
-    model_id="cohere.embed-v4.0",
+    model_id="cohere.embed-english-v3.0",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-    compartment_id="ocid1.compartment.oc1..xxxxx",
+    compartment_id="ocid1.compartment.oc1..xxx",
 )
 
-# Embed a single image (from file path, bytes, or data URI)
-image_vector = embeddings.embed_image("path/to/image.png")
+# Single query
+vector = embeddings.embed_query("What is machine learning?")
 
-# Embed multiple images in a batch
-image_vectors = embeddings.embed_image_batch([
-    "path/to/image1.png",
-    "path/to/image2.jpg",
-    b"\x89PNG...",  # raw bytes
-])
-
-# Image and text embeddings share the same vector space for cross-modal retrieval
-text_vector = embeddings.embed_query("a photo of a cat")
+# Multiple documents
+vectors = embeddings.embed_documents(["Doc 1", "Doc 2"])
 ```
 
-<sub>**Note:** Image embeddings require a multimodal model. Use `IMAGE_EMBEDDING_MODELS` to check supported models.</sub>
-
-### 4. Use Structured Output
-`ChatOCIGenAI` supports structured output.
-
-<sub>**Note:** The default method is `function_calling`. If default method returns `None` (e.g., for Google Gemini models using GeminiProvider), try `json_schema` or `json_mode`.</sub>
+### Image Embeddings
 
 ```python
-from langchain_oci import ChatOCIGenAI
-from pydantic import BaseModel
-
-class Joke(BaseModel):
-    setup: str
-    punchline: str
-
-llm = ChatOCIGenAI()
-structured_llm = llm.with_structured_output(Joke)
-structured_llm.invoke("Tell me a joke about programming")
-```
-
-### 5. Use OpenAI Responses API
-`ChatOCIOpenAI` supports OpenAI Responses API.
-
-```python
-from oci_openai import (
-    OciSessionAuth,
+embeddings = OCIGenAIEmbeddings(
+    model_id="cohere.embed-v4.0",  # Multimodal model
+    ...
 )
-from langchain_oci import ChatOCIOpenAI
-client = ChatOCIOpenAI(
-        auth=OciSessionAuth(profile_name="MY_PROFILE_NAME"),
-        compartment_id="MY_COMPARTMENT_ID",
-        region="us-chicago-1",
-        model="openai.gpt-4.1",
-        conversation_store_id="MY_CONVERSATION_STORE_ID"
-    )
-messages = [
-        (
-            "system",
-            "You are a helpful translator. Translate the user sentence to French.",
-        ),
-        ("human", "I love programming."),
-    ]
-response = client.invoke(messages)
-```
-NOTE: By default `store` argument is set to `True` which requires passing `conversation_store_id`. You can set `store` to `False` and not pass `conversation_store_id`.
-```python
-from oci_openai import (
-    OciSessionAuth,
-)
-from langchain_oci import ChatOCIOpenAI
-client = ChatOCIOpenAI(
-        auth=OciSessionAuth(profile_name="MY_PROFILE_NAME"),
-        compartment_id="MY_COMPARTMENT_ID",
-        region="us-chicago-1",
-        model="openai.gpt-4.1",
-        store=False
-    )
-messages = [
-        (
-            "system",
-            "You are a helpful translator. Translate the user sentence to French.",
-        ),
-        ("human", "I love programming."),
-    ]
-response = client.invoke(messages)
+
+# Single image
+vector = embeddings.embed_image("./photo.jpg")
+
+# Batch
+vectors = embeddings.embed_image_batch(["img1.jpg", "img2.jpg"])
 ```
 
-### 6. Use Parallel Tool Calling (Meta/Llama 4+ models only)
-Enable parallel tool calling to execute multiple tools simultaneously, improving performance for multi-tool workflows.
+### Embedding Models
+
+| Model | Type | Dimensions |
+|-------|------|------------|
+| `cohere.embed-english-v3.0` | Text | 1024 |
+| `cohere.embed-multilingual-v3.0` | Text | 1024 |
+| `cohere.embed-v4.0` | Text + Image | 256-1536 |
+
+---
+
+## Async Support
+
+All chat models support async operations via LangChain's base classes:
 
 ```python
+import asyncio
 from langchain_oci import ChatOCIGenAI
 
-llm = ChatOCIGenAI(
-    model_id="meta.llama-4-maverick-17b-128e-instruct-fp8",
-    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-    compartment_id="MY_COMPARTMENT_ID",
-)
+llm = ChatOCIGenAI(...)
 
-# Enable parallel tool calling in bind_tools
+async def main():
+    # Single async request
+    response = await llm.ainvoke("Hello!")
+
+    # Async streaming
+    async for chunk in llm.astream("Tell me a story"):
+        print(chunk.content, end="")
+
+    # Concurrent requests
+    results = await asyncio.gather(
+        llm.ainvoke("Question 1"),
+        llm.ainvoke("Question 2"),
+        llm.ainvoke("Question 3"),
+    )
+
+asyncio.run(main())
+```
+
+---
+
+## Tool Calling
+
+### Basic Tools
+
+```python
+from langchain_core.tools import tool
+from langchain_oci import ChatOCIGenAI
+
+@tool
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f"Weather in {city}: 72F, sunny"
+
+llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", ...)
+llm_with_tools = llm.bind_tools([get_weather])
+
+response = llm_with_tools.invoke("What's the weather in Chicago?")
+```
+
+### Parallel Tool Calls (Llama 4+)
+
+```python
 llm_with_tools = llm.bind_tools(
-    [get_weather, calculate_tip, get_population],
-    parallel_tool_calls=True  # Tools can execute simultaneously
+    [get_weather, get_time],
+    parallel_tool_calls=True,  # Enable parallel execution
 )
 ```
 
-<sub>**Note:** Parallel tool calling is only supported for Llama 4+ models. Llama 3.x (including 3.3) and Cohere models will raise an error if this parameter is used.</sub>
+### Tool Configuration
 
+| Parameter | Description |
+|-----------|-------------|
+| `parallel_tool_calls` | Enable parallel tool execution (Llama 4+) |
+| `max_sequential_tool_calls` | Limit consecutive tool calls (default: 8) |
+| `tool_result_guidance` | Guide model to use tool results naturally |
+| `tool_choice` | "auto", "required", "none", or tool name |
 
-## OCI Data Science Model Deployment Examples
+---
 
-### 1. Use a Chat Model
-
-You may instantiate the OCI Data Science model with the generic `ChatOCIModelDeployment` or framework specific class like `ChatOCIModelDeploymentVLLM`.
+## Structured Output
 
 ```python
-from langchain_oci.chat_models import ChatOCIModelDeployment, ChatOCIModelDeploymentVLLM
+from pydantic import BaseModel
+from langchain_oci import ChatOCIGenAI
 
-# Create an instance of OCI Model Deployment Endpoint
-# Replace the endpoint uri with your own
+class Contact(BaseModel):
+    name: str
+    email: str
+
+llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", ...)
+structured_llm = llm.with_structured_output(Contact)
+
+result = structured_llm.invoke("Extract: John Doe john@example.com")
+print(result.name)   # "John Doe"
+print(result.email)  # "john@example.com"
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `function_calling` | Default, most reliable |
+| `json_mode` | Simple schemas |
+| `json_schema` | Native OCI support |
+
+---
+
+## AI Agents
+
+### create_oci_agent()
+
+```python
+from langchain_core.tools import tool
+from langchain_oci import create_oci_agent
+
+@tool
+def search(query: str) -> str:
+    """Search for information."""
+    return f"Results for: {query}"
+
+agent = create_oci_agent(
+    model_id="meta.llama-4-scout-17b-16e-instruct",
+    tools=[search],
+    compartment_id="ocid1.compartment.oc1..xxx",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    system_prompt="You are a helpful assistant.",
+)
+
+from langchain_core.messages import HumanMessage
+result = agent.invoke({
+    "messages": [HumanMessage(content="Search for Python tutorials")]
+})
+```
+
+### With Checkpointing
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+agent = create_oci_agent(
+    model_id="meta.llama-4-scout-17b-16e-instruct",
+    tools=[search],
+    checkpointer=MemorySaver(),
+    ...
+)
+
+# Conversations persist by thread_id
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Hello")]},
+    config={"configurable": {"thread_id": "user_123"}},
+)
+```
+
+### Human-in-the-Loop
+
+```python
+agent = create_oci_agent(
+    model_id="meta.llama-4-scout-17b-16e-instruct",
+    tools=[dangerous_action],
+    checkpointer=MemorySaver(),
+    interrupt_before=["tools"],  # Pause before tool execution
+)
+```
+
+---
+
+## OpenAI Responses API
+
+```python
+from oci_openai import OciSessionAuth
+from langchain_oci import ChatOCIOpenAI
+
+client = ChatOCIOpenAI(
+    auth=OciSessionAuth(profile_name="MY_PROFILE"),
+    compartment_id="ocid1.compartment.oc1..xxx",
+    region="us-chicago-1",
+    model="openai.gpt-4.1",
+    conversation_store_id="ocid1.conversationstore...",  # Required if store=True
+)
+
+response = client.invoke([
+    ("system", "You are a helpful assistant."),
+    ("human", "Hello!"),
+])
+```
+
+---
+
+## OCI Data Science Deployments
+
+### ChatOCIModelDeployment
+
+```python
+from langchain_oci.chat_models import ChatOCIModelDeployment
+
 endpoint = "https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict"
-
-messages = [
-    (
-        "system",
-        "You are a helpful assistant that translates English to French. Translate the user sentence.",
-    ),
-    ("human", "I love programming."),
-]
 
 chat = ChatOCIModelDeployment(
     endpoint=endpoint,
     streaming=True,
-    max_retries=1,
-    model_kwargs={
-        "temperature": 0.2,
-        "max_tokens": 512,
-    },  # other model params...
-    default_headers={
-        "route": "/v1/chat/completions",
-        # other request headers ...
-    },
+    model_kwargs={"temperature": 0.2, "max_tokens": 512},
 )
-chat.invoke(messages)
 
-chat_vllm = ChatOCIModelDeploymentVLLM(endpoint=endpoint)
-chat_vllm.invoke(messages)
+response = chat.invoke("Hello!")
 ```
 
-### 2. Use a Completion Model
-You may instantiate the OCI Data Science model with `OCIModelDeploymentLLM` or `OCIModelDeploymentVLLM`.
+### vLLM/TGI Deployments
 
 ```python
-from langchain_oci.llms import OCIModelDeploymentLLM, OCIModelDeploymentVLLM
+from langchain_oci.chat_models import ChatOCIModelDeploymentVLLM
 
-# Create an instance of OCI Model Deployment Endpoint
-# Replace the endpoint uri and model name with your own
-endpoint = "https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict"
-
-llm = OCIModelDeploymentLLM(
-    endpoint=endpoint,
-    model="odsc-llm",
-)
-llm.invoke("Who is the first president of United States?")
-
-vllm = OCIModelDeploymentVLLM(
-    endpoint=endpoint,
-)
-vllm.invoke("Who is the first president of United States?")
+chat = ChatOCIModelDeploymentVLLM(endpoint=endpoint)
+response = chat.invoke("Hello!")
 ```
 
-### 3. Use an Embedding Model
-You may instantiate the OCI Data Science model with the `OCIModelDeploymentEndpointEmbeddings`.
+---
+
+## Provider Reference
+
+### Meta Llama
 
 ```python
-from langchain_oci.embeddings import OCIModelDeploymentEndpointEmbeddings
+# Vision models
+"meta.llama-3.2-90b-vision-instruct"
+"meta.llama-3.2-11b-vision-instruct"
 
-# Create an instance of OCI Model Deployment Endpoint
-# Replace the endpoint uri with your own
-endpoint = "https://modeldeployment.<region>.oci.customer-oci.com/<ocid>/predict"
+# Text models
+"meta.llama-3.3-70b-instruct"
 
-embeddings = OCIModelDeploymentEndpointEmbeddings(
-    endpoint=endpoint,
-)
-
-query = "Hello World!"
-embeddings.embed_query(query)
-
-documents = ["This is a sample document", "and here is another one"]
-embeddings.embed_documents(documents)
+# Llama 4 (parallel tools)
+"meta.llama-4-scout-17b-16e-instruct"
+"meta.llama-4-maverick-17b-128e-instruct-fp8"
 ```
+
+### Google Gemini
+
+```python
+"google.gemini-2.0-flash"       # Fast, multimodal
+"google.gemini-2.5-flash"       # Latest
+"google.gemini-2.5-pro"         # Most capable
+```
+
+### xAI Grok
+
+```python
+"xai.grok-4"                    # Vision + reasoning
+"xai.grok-4-fast-reasoning"     # Optimized reasoning
+```
+
+### Cohere
+
+```python
+"cohere.command-r-plus"         # Powerful reasoning
+"cohere.command-a-03-2025"      # Latest
+"cohere.command-a-vision"       # Vision support (V2 API)
+```
+
+---
+
+## Tutorials
+
+Comprehensive tutorials covering all features:
+
+| Tutorial | Description |
+|----------|-------------|
+| [01. Getting Started](./tutorials/01-getting-started/) | Authentication, basic chat |
+| [02. Vision & Multimodal](./tutorials/02-vision-and-multimodal/) | Images, PDFs, video, audio |
+| [03. Building AI Agents](./tutorials/03-building-ai-agents/) | create_oci_agent, checkpointing |
+| [04. Tool Calling Mastery](./tutorials/04-tool-calling-mastery/) | Parallel tools, workflows |
+| [05. Structured Output](./tutorials/05-structured-output/) | Pydantic, JSON modes |
+| [07. Async for Production](./tutorials/07-async-for-production/) | ainvoke, astream, FastAPI |
+| [10. Embeddings](./tutorials/10-embeddings/) | Text & image embeddings, RAG |
+
+See [tutorials/README.md](./tutorials/README.md) for the full learning path.
+
+---
+
+## Troubleshooting
+
+### Authentication Errors
+
+```
+AuthenticationError: Could not authenticate
+```
+- Verify `~/.oci/config` exists and is valid
+- Check profile name matches `auth_profile`
+- For session auth: `oci session authenticate --profile-name MY_PROFILE`
+
+### Model Not Found
+
+```
+NotAuthorizedOrNotFound: model_id
+```
+- Verify model ID spelling
+- Check model is available in your region
+- Ensure compartment has GenAI access
+
+### Tool Calling Issues
+
+```
+Model keeps calling the same tool
+```
+- Enable `tool_result_guidance=True`
+- Set `max_sequential_tool_calls` limit
+- Check tool returns informative results
+
+### Vision Not Working
+
+```
+Content type not supported
+```
+- Verify using a vision-capable model (`is_vision_model()`)
+- Check image format (PNG, JPEG, GIF, WebP)
+- Reduce image size if too large
+
+---
+
+## API Reference
+
+### Chat Models
+
+| Class | Description |
+|-------|-------------|
+| `ChatOCIGenAI` | Main chat model for OCI GenAI |
+| `ChatOCIOpenAI` | OpenAI Responses API compatibility |
+| `ChatOCIModelDeployment` | Custom OCI Data Science deployments |
+
+### Embeddings
+
+| Class | Description |
+|-------|-------------|
+| `OCIGenAIEmbeddings` | Text and image embeddings |
+| `OCIModelDeploymentEndpointEmbeddings` | Custom deployment embeddings |
+
+### Agents
+
+| Function | Description |
+|----------|-------------|
+| `create_oci_agent()` | Create ReAct agent with tools |
+
+### Utilities
+
+| Function | Description |
+|----------|-------------|
+| `load_image()` | Load image for vision models |
+| `encode_image()` | Encode bytes for vision models |
+| `to_data_uri()` | Convert to data URI |
+| `is_vision_model()` | Check vision support |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](../../CONTRIBUTING.md) for development setup and guidelines.
+
+## License
+
+This project is licensed under the [Universal Permissive License (UPL) 1.0](https://opensource.org/licenses/UPL).
