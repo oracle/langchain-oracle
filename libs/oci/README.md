@@ -522,7 +522,10 @@ Comprehensive tutorials covering all features:
 | [03. Building AI Agents](./tutorials/03-building-ai-agents/) | create_oci_agent, checkpointing |
 | [04. Tool Calling Mastery](./tutorials/04-tool-calling-mastery/) | Parallel tools, workflows |
 | [05. Structured Output](./tutorials/05-structured-output/) | Pydantic, JSON modes |
+| [06. Model Deployments](./tutorials/06-model-deployments/) | vLLM, TGI, custom endpoints |
 | [07. Async for Production](./tutorials/07-async-for-production/) | ainvoke, astream, FastAPI |
+| [08. OpenAI Responses API](./tutorials/08-openai-responses-api/) | ChatOCIOpenAI, conversation stores |
+| [09. Provider Deep Dive](./tutorials/09-provider-deep-dive/) | Provider-specific features |
 | [10. Embeddings](./tutorials/10-embeddings/) | Text & image embeddings, RAG |
 
 See [tutorials/README.md](./tutorials/README.md) for the full learning path.
@@ -578,6 +581,8 @@ Content type not supported
 | `ChatOCIGenAI` | Main chat model for OCI GenAI |
 | `ChatOCIOpenAI` | OpenAI Responses API compatibility |
 | `ChatOCIModelDeployment` | Custom OCI Data Science deployments |
+| `ChatOCIModelDeploymentVLLM` | vLLM-specific deployment handler |
+| `ChatOCIModelDeploymentTGI` | TGI-specific deployment handler |
 
 ### Embeddings
 
