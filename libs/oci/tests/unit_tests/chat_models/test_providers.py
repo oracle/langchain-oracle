@@ -4,6 +4,7 @@
 """Unit tests for OCI Generative AI providers."""
 
 import warnings
+from typing import Any, Dict, List
 
 from langchain_oci.chat_models.providers import (
     CohereProvider,
@@ -159,3 +160,213 @@ class TestGenericProvider:
         params = {"max_tokens": 100, "temperature": 0.5}
         result = provider.normalize_params(params)
         assert result == params
+
+
+class TestGenericProviderMultimodalContent:
+    """Tests for GenericProvider multimodal content processing."""
+
+    def test_process_text_content_string(self) -> None:
+        """Test processing plain string content."""
+        provider = GenericProvider()
+        result = provider._process_message_content("Hello, world!")
+
+        assert len(result) == 1
+        assert result[0].text == "Hello, world!"
+
+    def test_process_text_content_dict(self) -> None:
+        """Test processing text content as dict."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [{"type": "text", "text": "Hello, world!"}]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 1
+        assert result[0].text == "Hello, world!"
+
+    def test_process_image_content(self) -> None:
+        """Test processing image content."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {"type": "text", "text": "What's in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc123"}},
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 2
+        assert result[0].text == "What's in this image?"
+        assert result[1].image_url.url == "data:image/png;base64,abc123"
+
+    def test_process_document_content(self) -> None:
+        """Test processing document (PDF) content."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {"type": "text", "text": "Summarize this PDF"},
+            {
+                "type": "document_url",
+                "document_url": {"url": "data:application/pdf;base64,JVBERi0xLjQ="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 2
+        assert result[0].text == "Summarize this PDF"
+        assert result[1].document_url.url == "data:application/pdf;base64,JVBERi0xLjQ="
+
+    def test_process_document_content_alternative_type(self) -> None:
+        """Test processing document content with 'document' type."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {
+                "type": "document",
+                "document": {"url": "data:application/pdf;base64,JVBERi0xLjQ="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 1
+        assert result[0].document_url.url == "data:application/pdf;base64,JVBERi0xLjQ="
+
+    def test_process_document_content_file_type(self) -> None:
+        """Test processing document content with 'file' type."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {
+                "type": "file",
+                "file": {"url": "data:application/pdf;base64,JVBERi0xLjQ="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 1
+        assert result[0].document_url.url == "data:application/pdf;base64,JVBERi0xLjQ="
+
+    def test_process_video_content(self) -> None:
+        """Test processing video content."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {"type": "text", "text": "Describe this video"},
+            {
+                "type": "video_url",
+                "video_url": {"url": "data:video/mp4;base64,AAAAIGZ0eXA="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 2
+        assert result[0].text == "Describe this video"
+        assert result[1].video_url.url == "data:video/mp4;base64,AAAAIGZ0eXA="
+
+    def test_process_video_content_alternative_type(self) -> None:
+        """Test processing video content with 'video' type."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {
+                "type": "video",
+                "video": {"url": "data:video/mp4;base64,AAAAIGZ0eXA="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 1
+        assert result[1 - 1].video_url.url == "data:video/mp4;base64,AAAAIGZ0eXA="
+
+    def test_process_audio_content(self) -> None:
+        """Test processing audio content."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {"type": "text", "text": "Transcribe this audio"},
+            {
+                "type": "audio_url",
+                "audio_url": {"url": "data:audio/wav;base64,UklGRg=="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 2
+        assert result[0].text == "Transcribe this audio"
+        assert result[1].audio_url.url == "data:audio/wav;base64,UklGRg=="
+
+    def test_process_audio_content_alternative_type(self) -> None:
+        """Test processing audio content with 'audio' type."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {
+                "type": "audio",
+                "audio": {"url": "data:audio/mp3;base64,//uQxAAA="},
+            },
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 1
+        assert result[0].audio_url.url == "data:audio/mp3;base64,//uQxAAA="
+
+    def test_process_mixed_multimodal_content(self) -> None:
+        """Test processing mixed multimodal content (text, image, document)."""
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [
+            {"type": "text", "text": "Analyze these files:"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            {
+                "type": "document_url",
+                "document_url": {"url": "data:application/pdf;base64,def"},
+            },
+            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,ghi"}},
+        ]
+        result = provider._process_message_content(content)  # type: ignore[arg-type]  # type: ignore[arg-type]
+
+        assert len(result) == 4
+        assert result[0].text == "Analyze these files:"
+        assert result[1].image_url.url == "data:image/png;base64,abc"
+        assert result[2].document_url.url == "data:application/pdf;base64,def"
+        assert result[3].video_url.url == "data:video/mp4;base64,ghi"
+
+    def test_process_document_content_missing_url_raises(self) -> None:
+        """Test that missing URL in document content raises ValueError."""
+        import pytest
+
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [{"type": "document_url", "document_url": {}}]
+
+        with pytest.raises(ValueError, match="must have a 'url' field"):
+            provider._process_message_content(content)  # type: ignore[arg-type]
+
+    def test_process_video_content_missing_url_raises(self) -> None:
+        """Test that missing URL in video content raises ValueError."""
+        import pytest
+
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [{"type": "video_url", "video_url": {}}]
+
+        with pytest.raises(ValueError, match="must have a 'url' field"):
+            provider._process_message_content(content)  # type: ignore[arg-type]
+
+    def test_process_audio_content_missing_url_raises(self) -> None:
+        """Test that missing URL in audio content raises ValueError."""
+        import pytest
+
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [{"type": "audio_url", "audio_url": {}}]
+
+        with pytest.raises(ValueError, match="must have a 'url' field"):
+            provider._process_message_content(content)  # type: ignore[arg-type]
+
+    def test_process_unsupported_content_type_raises(self) -> None:
+        """Test that unsupported content type raises ValueError."""
+        import pytest
+
+        provider = GenericProvider()
+        content: List[Dict[str, Any]] = [{"type": "unknown_type", "data": "test"}]
+
+        with pytest.raises(ValueError, match="Unsupported content type"):
+            provider._process_message_content(content)  # type: ignore[arg-type]
+
+    def test_multimodal_models_initialized(self) -> None:
+        """Test that multimodal content models are properly initialized."""
+        provider = GenericProvider()
+
+        # Verify all multimodal models are available
+        assert hasattr(provider, "oci_chat_message_document_content")
+        assert hasattr(provider, "oci_chat_message_document_url")
+        assert hasattr(provider, "oci_chat_message_video_content")
+        assert hasattr(provider, "oci_chat_message_video_url")
+        assert hasattr(provider, "oci_chat_message_audio_content")
+        assert hasattr(provider, "oci_chat_message_audio_url")
