@@ -90,6 +90,7 @@ response = llm.invoke("Hello, what is your name?")
 | **Meta Llama Vision** | ✓ | - | - | - |
 | **Cohere Vision** | ✓ | - | - | - |
 | **xAI Grok** | ✓ | - | - | - |
+| **OpenAI** | - | - | - | - |
 
 #### Image Analysis
 
