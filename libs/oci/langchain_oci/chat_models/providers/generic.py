@@ -153,7 +153,8 @@ class GenericProvider(Provider):
             return ""
         if isinstance(content, list):
             return "".join(
-                c.get("text", "") for c in content
+                c.get("text", "")
+                for c in content
                 if isinstance(c, dict) and c.get("type") == "TEXT"
             )
         return str(content)

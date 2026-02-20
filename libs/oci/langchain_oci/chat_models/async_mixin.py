@@ -257,7 +257,8 @@ class ChatOCIGenAIAsyncMixin:
                 content = choices[0].get("message", {}).get("content", [])
                 if isinstance(content, list):
                     return "".join(
-                        c.get("text", "") for c in content
+                        c.get("text", "")
+                        for c in content
                         if isinstance(c, dict) and c.get("type") == "TEXT"
                     )
                 return str(content) if content else ""
@@ -267,7 +268,8 @@ class ChatOCIGenAIAsyncMixin:
             content = chat_response.get("message", {}).get("content", [])
             if isinstance(content, list):
                 return "".join(
-                    c.get("text", "") for c in content
+                    c.get("text", "")
+                    for c in content
                     if isinstance(c, dict) and c.get("type") == "TEXT"
                 )
 

@@ -180,7 +180,8 @@ class CohereProvider(Provider):
         content = message.get("content", [])
         if isinstance(content, list):
             texts = [
-                c.get("text", "") for c in content
+                c.get("text", "")
+                for c in content
                 if isinstance(c, dict) and c.get("type") == "TEXT"
             ]
             return "".join(texts)
