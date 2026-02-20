@@ -37,7 +37,15 @@ class Provider(ABC):
 
     @abstractmethod
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract chat text from a provider's response."""
+        """Extract chat text from a provider's response (SDK object)."""
+        ...
+
+    @abstractmethod
+    def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
+        """Extract chat text from a provider's response (JSON dict).
+
+        Used by async path which works with raw JSON instead of SDK objects.
+        """
         ...
 
     @abstractmethod

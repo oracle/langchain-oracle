@@ -142,6 +142,22 @@ class GenericProvider(Provider):
         # Concatenate all text content parts to avoid dropping later chunks.
         return "".join(part.text for part in msg.content if getattr(part, "text", None))
 
+    def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
+        """Extract text from chat response dict (async path)."""
+        chat_response = response_data.get("chatResponse", {})
+        choices = chat_response.get("choices", [])
+        if not choices:
+            return ""
+        content = choices[0].get("message", {}).get("content", [])
+        if not content:
+            return ""
+        if isinstance(content, list):
+            return "".join(
+                c.get("text", "") for c in content
+                if isinstance(c, dict) and c.get("type") == "TEXT"
+            )
+        return str(content)
+
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
         content = event_data.get("message", {}).get("content", None)

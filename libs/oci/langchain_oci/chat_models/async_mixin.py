@@ -239,40 +239,37 @@ class ChatOCIGenAIAsyncMixin:
                 )
 
     def _extract_content_from_response(self, response_data: Dict[str, Any]) -> str:
-        """Extract text content from async response data."""
+        """Extract text content from async response data.
+
+        Handles multiple response formats inline for robustness - the response
+        format isn't always tied to the provider (e.g., during testing).
+        """
         chat_response = response_data.get("chatResponse", {})
 
-        # Try different response formats
-        # Cohere V1
+        # Cohere V1: text at top level
         if "text" in chat_response:
             return chat_response.get("text", "")
 
-        # Generic/Meta format
+        # Generic/Meta: choices[].message.content[]
         if "choices" in chat_response:
             choices = chat_response.get("choices", [])
             if choices:
-                message = choices[0].get("message", {})
-                content = message.get("content", [])
+                content = choices[0].get("message", {}).get("content", [])
                 if isinstance(content, list):
-                    texts = [
-                        c.get("text", "")
-                        for c in content
+                    return "".join(
+                        c.get("text", "") for c in content
                         if isinstance(c, dict) and c.get("type") == "TEXT"
-                    ]
-                    return "".join(texts)
+                    )
                 return str(content) if content else ""
 
-        # Cohere V2
+        # Cohere V2: message.content[]
         if "message" in chat_response:
-            message = chat_response.get("message", {})
-            content = message.get("content", [])
+            content = chat_response.get("message", {}).get("content", [])
             if isinstance(content, list):
-                texts = [
-                    c.get("text", "")
-                    for c in content
+                return "".join(
+                    c.get("text", "") for c in content
                     if isinstance(c, dict) and c.get("type") == "TEXT"
-                ]
-                return "".join(texts)
+                )
 
         return ""
 
