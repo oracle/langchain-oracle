@@ -226,7 +226,7 @@ from langchain_core.messages import HumanMessage
 from langchain_oci import ChatOCIGenAI
 
 llm = ChatOCIGenAI(
-    model_id="google.gemini-2.0-flash",
+    model_id="google.gemini-2.5-flash",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxx",
 )
@@ -278,7 +278,7 @@ from langchain_core.messages import HumanMessage
 from langchain_oci import ChatOCIGenAI
 
 llm = ChatOCIGenAI(
-    model_id="google.gemini-2.0-flash",
+    model_id="google.gemini-2.5-flash",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxx",
 )
@@ -330,7 +330,7 @@ from langchain_core.messages import HumanMessage
 from langchain_oci import ChatOCIGenAI
 
 llm = ChatOCIGenAI(
-    model_id="google.gemini-2.0-flash",
+    model_id="google.gemini-2.5-flash",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxx",
 )
@@ -376,7 +376,7 @@ Best for: Multimodal (PDF, video, audio), complex reasoning
 
 ```python
 llm = ChatOCIGenAI(
-    model_id="google.gemini-2.0-flash",
+    model_id="google.gemini-2.5-flash",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxx",
 )

@@ -59,7 +59,7 @@ def test_gemini_basic_invoke() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
 
     llm = ChatOCIGenAI(
         model_id=model_id,
@@ -83,7 +83,7 @@ def test_gemini_max_output_tokens_mapping() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -116,7 +116,7 @@ def test_gemini_both_tokens_params() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -153,7 +153,7 @@ def test_gemini_streaming() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
 
     llm = ChatOCIGenAI(
         model_id=model_id,
@@ -182,7 +182,7 @@ def test_gemini_streaming_with_max_output_tokens() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")

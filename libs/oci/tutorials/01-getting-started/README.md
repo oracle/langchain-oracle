@@ -178,7 +178,7 @@ llm = ChatOCIGenAI(
 "cohere.command-a-03-2025"              # Latest, with vision
 
 # Google Gemini models
-"google.gemini-2.0-flash"               # Fast, multimodal
+"google.gemini-2.5-flash"               # Fast, multimodal
 
 # xAI Grok models
 "xai.grok-4"                            # Reasoning and vision

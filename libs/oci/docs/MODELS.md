@@ -26,7 +26,7 @@ Complete reference of models available in OCI Generative AI.
 
 | Model ID | Type | Features | Context |
 |----------|------|----------|---------|
-| `google.gemini-2.0-flash` | Multimodal | PDF, video, audio, image | 1M |
+| `google.gemini-2.5-flash` | Multimodal | PDF, video, audio, image | 1M |
 | `google.gemini-2.5-flash` | Multimodal | PDF, video, audio, image | 1M |
 | `google.gemini-2.5-pro` | Multimodal | Most capable | 1M |
 
@@ -159,13 +159,13 @@ Check [OCI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-
 |----------|-------------------|
 | General chat | `meta.llama-3.3-70b-instruct` |
 | Image analysis | `meta.llama-3.2-90b-vision-instruct` |
-| PDF/document processing | `google.gemini-2.0-flash` |
-| Video understanding | `google.gemini-2.0-flash` |
-| Audio transcription | `google.gemini-2.0-flash` |
+| PDF/document processing | `google.gemini-2.5-flash` |
+| Video understanding | `google.gemini-2.5-flash` |
+| Audio transcription | `google.gemini-2.5-flash` |
 | Tool-heavy workflows | `meta.llama-4-scout-17b-16e-instruct` |
 | RAG with citations | `cohere.command-r-plus` |
 | Complex reasoning | `xai.grok-4-fast-reasoning` |
-| Fast responses | `google.gemini-2.0-flash` |
+| Fast responses | `google.gemini-2.5-flash` |
 | Embeddings (text) | `cohere.embed-english-v3.0` |
 | Embeddings (multimodal) | `cohere.embed-v4.0` |
 
@@ -173,7 +173,7 @@ Check [OCI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-
 
 | Priority | Model |
 |----------|-------|
-| Lowest latency | `google.gemini-2.0-flash` |
-| Highest throughput | `google.gemini-2.0-flash` |
+| Lowest latency | `google.gemini-2.5-flash` |
+| Highest throughput | `google.gemini-2.5-flash` |
 | Best quality | `meta.llama-3.3-70b-instruct`, `cohere.command-r-plus` |
 | Best for tools | `meta.llama-4-scout-17b-16e-instruct` |

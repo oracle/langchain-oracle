@@ -16,7 +16,7 @@ def analyze_pdf(pdf_path: str, prompt: str):
     """Analyze a PDF document with Gemini."""
     # Create Gemini model
     llm = ChatOCIGenAI(
-        model_id="google.gemini-2.0-flash",
+        model_id="google.gemini-2.5-flash",
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
     )

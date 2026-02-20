@@ -18,7 +18,7 @@ def basic_gemini_chat():
     print("=" * 50)
 
     llm = ChatOCIGenAI(
-        model_id="google.gemini-2.0-flash",
+        model_id="google.gemini-2.5-flash",
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
     )
@@ -33,7 +33,7 @@ def pdf_processing():
     print("=" * 50)
 
     llm = ChatOCIGenAI(
-        model_id="google.gemini-2.0-flash",
+        model_id="google.gemini-2.5-flash",
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
     )
@@ -77,7 +77,7 @@ def video_analysis():
     print("=" * 50)
 
     llm = ChatOCIGenAI(
-        model_id="google.gemini-2.0-flash",
+        model_id="google.gemini-2.5-flash",
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
     )
@@ -110,7 +110,7 @@ def audio_transcription():
     print("=" * 50)
 
     llm = ChatOCIGenAI(
-        model_id="google.gemini-2.0-flash",
+        model_id="google.gemini-2.5-flash",
         service_endpoint=SERVICE_ENDPOINT,
         compartment_id=COMPARTMENT_ID,
     )
@@ -145,7 +145,7 @@ def gemini_parameters():
     # Note: OCI uses max_tokens, not max_output_tokens
     # Example configuration:
     # llm = ChatOCIGenAI(
-    #     model_id="google.gemini-2.0-flash",
+    #     model_id="google.gemini-2.5-flash",
     #     service_endpoint=SERVICE_ENDPOINT,
     #     compartment_id=COMPARTMENT_ID,
     #     model_kwargs={

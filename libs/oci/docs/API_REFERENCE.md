@@ -278,7 +278,7 @@ List of vision-capable model IDs.
 from langchain_oci import VISION_MODELS
 
 print(VISION_MODELS)
-# ['meta.llama-3.2-90b-vision-instruct', 'google.gemini-2.0-flash', ...]
+# ['meta.llama-3.2-90b-vision-instruct', 'google.gemini-2.5-flash', ...]
 ```
 
 ### IMAGE_EMBEDDING_MODELS

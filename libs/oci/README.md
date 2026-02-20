@@ -203,7 +203,7 @@ import base64
 from langchain_core.messages import HumanMessage
 from langchain_oci import ChatOCIGenAI
 
-llm = ChatOCIGenAI(model_id="google.gemini-2.0-flash", ...)
+llm = ChatOCIGenAI(model_id="google.gemini-2.5-flash", ...)
 
 # PDF
 with open("doc.pdf", "rb") as f:
@@ -489,7 +489,7 @@ response = chat.invoke("Hello!")
 ### Google Gemini
 
 ```python
-"google.gemini-2.0-flash"       # Fast, multimodal
+"google.gemini-2.5-flash"       # Fast, multimodal
 "google.gemini-2.5-flash"       # Latest
 "google.gemini-2.5-pro"         # Most capable
 ```

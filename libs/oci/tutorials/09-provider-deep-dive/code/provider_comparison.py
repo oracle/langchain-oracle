@@ -60,13 +60,13 @@ def provider_selection_guide():
     Use this decision tree to pick the right model:
 
     1. Do you need to process PDFs, videos, or audio?
-       YES → google.gemini-2.0-flash or google.gemini-2.5-flash
+       YES → google.gemini-2.5-flash or google.gemini-2.5-flash
 
     2. Do you need parallel tool calling (multiple tools at once)?
        YES → meta.llama-4-scout-17b-16e-instruct
 
     3. Do you need vision (image understanding)?
-       - Fast inference → google.gemini-2.0-flash
+       - Fast inference → google.gemini-2.5-flash
        - High quality → meta.llama-3.2-90b-vision-instruct
        - Reasoning → xai.grok-4
 
@@ -81,7 +81,7 @@ def provider_selection_guide():
        → cohere.command-r-plus (excellent reasoning)
 
     7. Need speed and low latency?
-       → google.gemini-2.0-flash (fastest)
+       → google.gemini-2.5-flash (fastest)
        → meta.llama-4-scout-17b-16e-instruct (fast + tools)
     """
     print(guide)
@@ -97,7 +97,7 @@ def create_task_specific_llm(task: str) -> ChatOCIGenAI:
             "description": "Image analysis and understanding",
         },
         "multimodal": {
-            "model_id": "google.gemini-2.0-flash",
+            "model_id": "google.gemini-2.5-flash",
             "description": "PDF, video, audio, and image processing",
         },
         "rag": {
@@ -117,7 +117,7 @@ def create_task_specific_llm(task: str) -> ChatOCIGenAI:
             "description": "General-purpose assistant",
         },
         "fast": {
-            "model_id": "google.gemini-2.0-flash",
+            "model_id": "google.gemini-2.5-flash",
             "description": "Low-latency responses",
         },
     }
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     # Check specific models
     models_to_check = [
         "meta.llama-3.3-70b-instruct",
-        "google.gemini-2.0-flash",
+        "google.gemini-2.5-flash",
         "cohere.command-r-plus",
         "xai.grok-4",
     ]

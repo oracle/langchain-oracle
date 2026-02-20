@@ -83,7 +83,7 @@ llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", ...)
 llm = ChatOCIGenAI(model_id="cohere.command-r-plus", ...)
 
 # Auto-detects GeminiProvider
-llm = ChatOCIGenAI(model_id="google.gemini-2.0-flash", ...)
+llm = ChatOCIGenAI(model_id="google.gemini-2.5-flash", ...)
 ```
 
 ### Manual Override
@@ -212,7 +212,7 @@ Gemini offers advanced multimodal capabilities.
 
 | Model | Features |
 |-------|----------|
-| `google.gemini-2.0-flash` | Fast, multimodal |
+| `google.gemini-2.5-flash` | Fast, multimodal |
 | `google.gemini-2.5-flash` | Latest, multimodal |
 | `google.gemini-2.5-pro` | Most capable |
 
@@ -222,7 +222,7 @@ Gemini offers advanced multimodal capabilities.
 from langchain_oci import ChatOCIGenAI
 
 llm = ChatOCIGenAI(
-    model_id="google.gemini-2.0-flash",
+    model_id="google.gemini-2.5-flash",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxx",
 )
@@ -238,7 +238,7 @@ import base64
 from langchain_core.messages import HumanMessage
 from langchain_oci import ChatOCIGenAI
 
-llm = ChatOCIGenAI(model_id="google.gemini-2.0-flash", ...)
+llm = ChatOCIGenAI(model_id="google.gemini-2.5-flash", ...)
 
 # Load PDF
 with open("document.pdf", "rb") as f:
@@ -299,7 +299,7 @@ response = llm.invoke([message])
 
 ```python
 llm = ChatOCIGenAI(
-    model_id="google.gemini-2.0-flash",
+    model_id="google.gemini-2.5-flash",
     model_kwargs={
         "max_tokens": 1024,  # Note: max_tokens, not max_output_tokens
         "temperature": 0.7,
@@ -508,7 +508,7 @@ print(response.content)
 if need_vision and not need_pdf:
     model = "meta.llama-3.2-90b-vision-instruct"
 elif need_multimodal:  # PDF, video, audio
-    model = "google.gemini-2.0-flash"
+    model = "google.gemini-2.5-flash"
 
 # For tool-heavy workflows → Llama 4 (parallel tools)
 if many_tools and need_parallel:
@@ -535,7 +535,7 @@ def get_llm_for_task(task_type: str) -> ChatOCIGenAI:
             "model_id": "meta.llama-3.2-90b-vision-instruct",
         },
         "multimodal": {
-            "model_id": "google.gemini-2.0-flash",
+            "model_id": "google.gemini-2.5-flash",
         },
         "rag": {
             "model_id": "cohere.command-r-plus",
