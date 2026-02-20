@@ -9,6 +9,16 @@ This module provides:
 - GenericProvider: Base provider for generic API (Meta, xAI, Mistral, OpenAI)
 - MetaProvider: For Meta Llama models (extends GenericProvider)
 - GeminiProvider: For Google Gemini models (handles max_output_tokens mapping)
+
+Multimodal Content Support:
+- Text: Standard text content
+- Images: Base64 or URL-based images (Meta Llama Vision, Gemini, Cohere, xAI)
+- Documents: PDF and other document formats (multimodal-capable models)
+- Video: MP4 and other video formats (multimodal-capable models)
+- Audio: Audio file formats (multimodal-capable models)
+
+Note: Document, video, and audio content require multimodal-capable models.
+Currently, Google Gemini models have the broadest multimodal support on OCI.
 """
 
 import json
@@ -109,11 +119,23 @@ class GenericProvider(Provider):
             "TOOL": models.ToolMessage,
         }
 
-        # Content models
+        # Content models - Text and Image
         self.oci_chat_message_content = models.ChatContent
         self.oci_chat_message_text_content = models.TextContent
         self.oci_chat_message_image_content = models.ImageContent
         self.oci_chat_message_image_url = models.ImageUrl
+
+        # Content models - Document (PDF, etc.) - for multimodal-capable models
+        self.oci_chat_message_document_content = models.DocumentContent
+        self.oci_chat_message_document_url = models.DocumentUrl
+
+        # Content models - Video - for multimodal-capable models
+        self.oci_chat_message_video_content = models.VideoContent
+        self.oci_chat_message_video_url = models.VideoUrl
+
+        # Content models - Audio - for multimodal-capable models
+        self.oci_chat_message_audio_content = models.AudioContent
+        self.oci_chat_message_audio_url = models.AudioUrl
 
         # Tool-related models
         self.oci_function_definition = models.FunctionDefinition
@@ -376,20 +398,66 @@ class GenericProvider(Provider):
     ) -> List[Any]:
         """Process message content into OCI chat content format.
 
+        Supports multimodal content types:
+        - text: Plain text content
+        - image_url: Images (base64 or URL) - supported by vision models
+        - document_url / document / file: PDFs and documents
+        - video_url / video: Video files
+        - audio_url / audio: Audio files
+
+        Note: Document, video, and audio content require multimodal-capable models.
+        Check your model's documentation for supported content types.
+
         Args:
-            content: Message content as string or list
+            content: Message content as string or list of content items.
+                Each item can be a string or dict with 'type' key.
 
         Returns:
             List of OCI chat content objects
 
         Raises:
             ValueError: If content format is invalid
+
+        Examples:
+            # Text only
+            content = "Hello, world!"
+
+            # Image with text
+            content = [
+                {"type": "text", "text": "What's in this image?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+            ]
+
+            # PDF document (requires multimodal-capable model)
+            content = [
+                {"type": "text", "text": "Summarize this PDF"},
+                {"type": "document_url", "document_url": {
+                    "url": "data:application/pdf;base64,..."
+                }}
+            ]
+
+            # Video (requires multimodal-capable model)
+            content = [
+                {"type": "text", "text": "Describe this video"},
+                {"type": "video_url", "video_url": {
+                    "url": "data:video/mp4;base64,..."
+                }}
+            ]
+
+            # Audio (requires multimodal-capable model)
+            content = [
+                {"type": "text", "text": "Transcribe this audio"},
+                {"type": "audio_url", "audio_url": {
+                    "url": "data:audio/wav;base64,..."
+                }}
+            ]
         """
         if isinstance(content, str):
             return [self.oci_chat_message_text_content(text=content)]
 
         if not isinstance(content, list):
             raise ValueError("Message content must be a string or a list of items.")
+
         processed_content = []
         for item in content:
             if isinstance(item, str):
@@ -397,7 +465,17 @@ class GenericProvider(Provider):
             elif isinstance(item, dict):
                 if "type" not in item:
                     raise ValueError("Dict content item must have a 'type' key.")
-                if item["type"] == "image_url":
+
+                content_type = item["type"]
+
+                # Text content
+                if content_type == "text":
+                    processed_content.append(
+                        self.oci_chat_message_text_content(text=item["text"])
+                    )
+
+                # Image content
+                elif content_type == "image_url":
                     processed_content.append(
                         self.oci_chat_message_image_content(
                             image_url=self.oci_chat_message_image_url(
@@ -405,12 +483,70 @@ class GenericProvider(Provider):
                             )
                         )
                     )
-                elif item["type"] == "text":
-                    processed_content.append(
-                        self.oci_chat_message_text_content(text=item["text"])
+
+                # Document content (PDF, etc.) - requires multimodal-capable model
+                elif content_type in ("document_url", "document", "file"):
+                    doc_data = (
+                        item.get("document_url")
+                        or item.get("document")
+                        or item.get("file")
+                        or item
                     )
+                    url = doc_data.get("url") if isinstance(doc_data, dict) else None
+                    if not url:
+                        raise ValueError(
+                            "Document content must have a 'url' field. "
+                            "Expected: {'type': 'document_url', "
+                            "'document_url': {'url': 'data:application/pdf;...'}}"
+                        )
+                    processed_content.append(
+                        self.oci_chat_message_document_content(
+                            document_url=self.oci_chat_message_document_url(url=url)
+                        )
+                    )
+
+                # Video content - requires multimodal-capable model
+                elif content_type in ("video_url", "video"):
+                    video_data = item.get("video_url") or item.get("video") or item
+                    url = (
+                        video_data.get("url") if isinstance(video_data, dict) else None
+                    )
+                    if not url:
+                        raise ValueError(
+                            "Video content must have a 'url' field. "
+                            "Expected: {'type': 'video_url', "
+                            "'video_url': {'url': 'data:video/mp4;base64,...'}}"
+                        )
+                    processed_content.append(
+                        self.oci_chat_message_video_content(
+                            video_url=self.oci_chat_message_video_url(url=url)
+                        )
+                    )
+
+                # Audio content - requires multimodal-capable model
+                elif content_type in ("audio_url", "audio"):
+                    audio_data = item.get("audio_url") or item.get("audio") or item
+                    url = (
+                        audio_data.get("url") if isinstance(audio_data, dict) else None
+                    )
+                    if not url:
+                        raise ValueError(
+                            "Audio content must have a 'url' field. "
+                            "Expected: {'type': 'audio_url', "
+                            "'audio_url': {'url': 'data:audio/wav;base64,...'}}"
+                        )
+                    processed_content.append(
+                        self.oci_chat_message_audio_content(
+                            audio_url=self.oci_chat_message_audio_url(url=url)
+                        )
+                    )
+
                 else:
-                    raise ValueError(f"Unsupported content type: {item['type']}")
+                    raise ValueError(
+                        f"Unsupported content type: {content_type}. "
+                        f"Supported types: text, image_url, document_url, "
+                        f"video_url, audio_url"
+                    )
             else:
                 raise ValueError(
                     f"Content items must be str or dict, got: {type(item)}"
