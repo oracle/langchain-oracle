@@ -8,10 +8,12 @@ enabling true async/await support without thread pool wrappers.
 """
 
 import json
+import ssl
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Optional
 
 import aiohttp
+import certifi
 import requests
 
 # OCI GenAI API version - must match oci.generative_ai_inference SDK version
@@ -135,7 +137,11 @@ class OCIAsyncClient:
             aiohttp.ClientResponse object.
         """
         client_timeout = aiohttp.ClientTimeout(total=timeout)
-        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        async with aiohttp.ClientSession(
+            timeout=client_timeout, connector=connector
+        ) as session:
             async with session.request(
                 method,
                 url,
