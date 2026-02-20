@@ -90,10 +90,8 @@ response = llm.invoke("Hello, what is your name?")
 | **Meta Llama Vision** | ✓ | - | - | - |
 | **Cohere Vision** | ✓ | - | - | - |
 | **OpenAI GPT-5.x** | ✓ | - | - | - |
-| **OpenAI OSS** | - | - | - | - |
-| **xAI Grok** | - | - | - | - |
 
-<sub>**Tested:** Gemini (PDF ✓, Audio ✓), Cohere (Images ✓), OpenAI GPT-5.x (Images ✓), xAI Grok (all ✗). Meta Llama Vision per OCI documentation.</sub>
+<sub>**Note:** Other models may have limited or no multimodal support. Check your model's documentation.</sub>
 
 #### Image Analysis
 
