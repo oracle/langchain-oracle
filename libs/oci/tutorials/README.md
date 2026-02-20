@@ -35,12 +35,12 @@ Welcome to the langchain-oci tutorials! These tutorials will take you from begin
                            │
                       ADVANCED
                            │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                  ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ 06. Model    │  │ 07. Async &  │  │ 08. OpenAI   │
-│ Deployments  │  │ Production   │  │ Responses    │
-└──────────────┘  └──────────────┘  └──────────────┘
+              ┌────────────┴────────────┐
+              ▼                          ▼
+    ┌──────────────┐          ┌──────────────┐
+    │ 06. Model    │          │ 07. Async &  │
+    │ Deployments  │          │ Production   │
+    └──────────────┘          └──────────────┘
                            │
                     SPECIALIZED
                            │
@@ -63,7 +63,6 @@ Welcome to the langchain-oci tutorials! These tutorials will take you from begin
 | 05 | [Structured Output](./05-structured-output/) | Intermediate | Pydantic schemas, JSON modes |
 | 06 | [Model Deployments](./06-model-deployments/) | Advanced | vLLM, TGI, custom endpoints |
 | 07 | [Async for Production](./07-async-for-production/) | Advanced | ainvoke, astream, FastAPI |
-| 08 | [OpenAI Responses API](./08-openai-responses-api/) | Advanced | ChatOCIOpenAI, conversation store |
 | 09 | [Provider Deep Dive](./09-provider-deep-dive/) | Specialized | Meta, Gemini, Cohere, xAI |
 | 10 | [Embeddings](./10-embeddings/) | Specialized | Text & image embeddings, RAG |
 
@@ -95,7 +94,6 @@ Then continue with [Tutorial 01: Getting Started](./01-getting-started/).
 | Feature | Tutorial(s) |
 |---------|-------------|
 | `ChatOCIGenAI` | 01, 02, 03, 04, 05, 07 |
-| `ChatOCIOpenAI` | 08 |
 | `ChatOCIModelDeployment` | 06, 07 |
 | `OCIGenAIEmbeddings` | 10 |
 | `create_oci_agent()` | 03 |
