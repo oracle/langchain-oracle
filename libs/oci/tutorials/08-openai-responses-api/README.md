@@ -13,12 +13,15 @@ Use OpenAI-compatible models through OCI with conversation persistence and advan
 ## Prerequisites
 
 - Completed [Tutorial 01: Getting Started](../01-getting-started/)
-- Access to OCI Generative AI with OpenAI-compatible models
+- Access to OCI Generative AI with **OpenAI Responses API enabled**
+- OpenAI-compatible models available (e.g., `openai.gpt-4.1`)
 - Additional packages installed
 
 ```bash
 pip install oci-openai langchain-openai langchain-oci
 ```
+
+> **Note:** The OpenAI Responses API is a specific OCI feature that may not be available in all tenancies or regions. If you receive a 404 error, contact your OCI administrator to enable the Responses API, or use `ChatOCIGenAI` with standard models instead.
 
 ## Concepts Covered
 
@@ -455,3 +458,12 @@ Model 'openai.gpt-4.1' not found
 - Check model is available in your region
 - Verify compartment has GenAI access
 - Use `oci generative-ai model list` to see available models
+
+### 404 Not Found on /responses
+
+```
+openai.NotFoundError: Error code: 404
+```
+- The OpenAI Responses API may not be enabled in your tenancy
+- Contact your OCI administrator to enable the Responses API
+- Alternative: Use `ChatOCIGenAI` with standard models like `meta.llama-3.3-70b-instruct`
