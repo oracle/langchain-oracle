@@ -14,7 +14,8 @@ from typing import Any, AsyncGenerator, AsyncIterator, Dict, Optional
 import aiohttp
 import requests
 
-# OCI GenAI API version
+# OCI GenAI API version - must match oci.generative_ai_inference SDK version
+# See: oci/generative_ai_inference/generative_ai_inference_client.py line 112
 OCI_GENAI_API_VERSION = "20231130"
 
 
