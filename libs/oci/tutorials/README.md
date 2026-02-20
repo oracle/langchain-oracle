@@ -35,12 +35,11 @@ Welcome to the langchain-oci tutorials! These tutorials will take you from begin
                            │
                       ADVANCED
                            │
-              ┌────────────┴────────────┐
-              ▼                          ▼
-    ┌──────────────┐          ┌──────────────┐
-    │ 06. Model    │          │ 07. Async &  │
-    │ Deployments  │          │ Production   │
-    └──────────────┘          └──────────────┘
+                           ▼
+                 ┌──────────────┐
+                 │ 07. Async &  │
+                 │ Production   │
+                 └──────────────┘
                            │
                     SPECIALIZED
                            │
@@ -61,7 +60,6 @@ Welcome to the langchain-oci tutorials! These tutorials will take you from begin
 | 03 | [Building AI Agents](./03-building-ai-agents/) | Beginner | ReAct agents, tools, memory |
 | 04 | [Tool Calling Mastery](./04-tool-calling-mastery/) | Intermediate | bind_tools, parallel calls, workflows |
 | 05 | [Structured Output](./05-structured-output/) | Intermediate | Pydantic schemas, JSON modes |
-| 06 | [Model Deployments](./06-model-deployments/) | Advanced | vLLM, TGI, custom endpoints |
 | 07 | [Async for Production](./07-async-for-production/) | Advanced | ainvoke, astream, FastAPI |
 | 09 | [Provider Deep Dive](./09-provider-deep-dive/) | Specialized | Meta, Gemini, Cohere, xAI |
 | 10 | [Embeddings](./10-embeddings/) | Specialized | Text & image embeddings, RAG |
@@ -94,7 +92,6 @@ Then continue with [Tutorial 01: Getting Started](./01-getting-started/).
 | Feature | Tutorial(s) |
 |---------|-------------|
 | `ChatOCIGenAI` | 01, 02, 03, 04, 05, 07 |
-| `ChatOCIModelDeployment` | 06, 07 |
 | `OCIGenAIEmbeddings` | 10 |
 | `create_oci_agent()` | 03 |
 | Vision (13 models) | 02 |
