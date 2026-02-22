@@ -255,7 +255,8 @@ class TestChatOCIGenAIAsyncClose:
 
         # Create async client
         client = llm._get_async_client()
-        assert llm._async_client is not None
+        assert client is not None
+        assert llm._async_client is client
 
         # Close should clean up
         await llm.aclose()
