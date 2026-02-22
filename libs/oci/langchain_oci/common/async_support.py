@@ -41,6 +41,9 @@ class OCIAsyncClient:
 
     This client handles OCI request signing and async HTTP requests
     using aiohttp, enabling true async support for LLM operations.
+
+    The client reuses aiohttp.ClientSession for connection pooling and
+    performance. Call close() or use as async context manager to cleanup.
     """
 
     def __init__(
@@ -59,6 +62,7 @@ class OCIAsyncClient:
         self.service_endpoint = service_endpoint.rstrip("/")
         self.signer = signer
         self.config = config or {}
+        self._session: Optional[aiohttp.ClientSession] = None
         self._ensure_signer()
 
     def _ensure_signer(self) -> None:
@@ -66,20 +70,32 @@ class OCIAsyncClient:
         if self.signer is not None:
             return
 
-        # For API_KEY auth, create signer from config
+        # For API_KEY auth, create signer from config using SDK's from_config
         if self.config:
             try:
-                import oci
+                from oci.signer import Signer
 
-                self.signer = oci.signer.Signer(
-                    tenancy=self.config.get("tenancy"),
-                    user=self.config.get("user"),
-                    fingerprint=self.config.get("fingerprint"),
-                    private_key_file_location=self.config.get("key_file"),
-                    pass_phrase=self.config.get("pass_phrase"),
-                )
+                self.signer = Signer.from_config(self.config)
             except Exception as e:
                 raise ValueError(f"Failed to create OCI signer from config: {e}") from e
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create a reusable aiohttp ClientSession.
+
+        Reusing sessions improves performance via connection pooling
+        and avoids repeated SSL handshake overhead.
+        """
+        if self._session is None or self._session.closed:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            self._session = aiohttp.ClientSession(connector=connector)
+        return self._session
+
+    async def close(self) -> None:
+        """Close the HTTP session and release resources."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _sign_headers(
         self,
@@ -136,19 +152,16 @@ class OCIAsyncClient:
         Yields:
             aiohttp.ClientResponse object.
         """
+        session = await self._get_session()
         client_timeout = aiohttp.ClientTimeout(total=timeout)
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        async with aiohttp.ClientSession(
-            timeout=client_timeout, connector=connector
-        ) as session:
-            async with session.request(
-                method,
-                url,
-                headers=headers,
-                json=json_body,
-            ) as response:
-                yield response
+        async with session.request(
+            method,
+            url,
+            headers=headers,
+            json=json_body,
+            timeout=client_timeout,
+        ) as response:
+            yield response
 
     async def _parse_sse_async(
         self,
@@ -161,6 +174,12 @@ class OCIAsyncClient:
 
         Yields:
             Parsed JSON objects from SSE data lines.
+
+        Note:
+            Newlines within LLM response content don't affect parsing because:
+            1. SSE uses double newline (\\n\\n) as event delimiter, not single \\n
+            2. We only process lines starting with "data:" prefix
+            3. Content is JSON-encoded, so literal newlines become escaped \\n
         """
         async for line in content:
             line = line.strip()

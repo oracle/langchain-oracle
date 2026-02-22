@@ -62,7 +62,7 @@ class TestOCIAsyncClient:
     def test_init_creates_signer_from_config(self):
         """Test that signer is created from config when not provided."""
         with patch("oci.signer.Signer") as mock_signer_class:
-            mock_signer_class.return_value = MagicMock()
+            mock_signer_class.from_config.return_value = MagicMock()
             config = {
                 "tenancy": "test-tenancy",
                 "user": "test-user",
@@ -74,7 +74,7 @@ class TestOCIAsyncClient:
                 signer=None,
                 config=config,
             )
-            mock_signer_class.assert_called_once()
+            mock_signer_class.from_config.assert_called_once_with(config)
 
     def test_sign_headers(self, mock_signer):
         """Test request signing."""
@@ -195,6 +195,71 @@ class TestChatOCIGenAIAsyncMixin:
 
             assert len(result.generations) == 1
             assert "Streamed!" in result.generations[0].message.content
+
+
+class TestAsyncClientSessionManagement:
+    """Tests for OCIAsyncClient session management."""
+
+    @pytest.mark.asyncio
+    async def test_session_reuse(self, mock_signer):
+        """Test that ClientSession is reused across requests."""
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+        session1 = await client._get_session()
+        session2 = await client._get_session()
+        assert session1 is session2
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_close_releases_session(self, mock_signer):
+        """Test that close() releases the session."""
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+        session = await client._get_session()
+        assert not session.closed
+        await client.close()
+        assert client._session is None
+
+    @pytest.mark.asyncio
+    async def test_get_session_after_close_creates_new(self, mock_signer):
+        """Test that _get_session creates new session after close."""
+        client = OCIAsyncClient(
+            service_endpoint="https://test.endpoint.com",
+            signer=mock_signer,
+        )
+        session1 = await client._get_session()
+        await client.close()
+        session2 = await client._get_session()
+        assert session1 is not session2
+        await client.close()
+
+
+class TestChatOCIGenAIAsyncClose:
+    """Tests for ChatOCIGenAI async close functionality."""
+
+    @pytest.mark.asyncio
+    async def test_aclose_cleans_up_client(self, mock_oci_client, mock_signer):
+        """Test that aclose() cleans up the async client."""
+        llm = ChatOCIGenAI(
+            model_id="meta.llama-3-70b-instruct",
+            compartment_id="test-compartment",
+            service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+            client=mock_oci_client,
+        )
+        llm.oci_signer = mock_signer
+        llm.oci_config = {}
+
+        # Create async client
+        client = llm._get_async_client()
+        assert llm._async_client is not None
+
+        # Close should clean up
+        await llm.aclose()
+        assert llm._async_client is None
 
 
 class TestAsyncResponseParsing:

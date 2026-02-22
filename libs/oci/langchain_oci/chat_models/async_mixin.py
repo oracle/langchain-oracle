@@ -40,6 +40,16 @@ class ChatOCIGenAIAsyncMixin:
             )
         return self._async_client
 
+    async def aclose(self) -> None:
+        """Close the async HTTP client and release resources.
+
+        Call this when done with async operations to clean up connections.
+        If not called, connections will be cleaned up on garbage collection.
+        """
+        if self._async_client is not None:
+            await self._async_client.close()
+            self._async_client = None
+
     def _prepare_async_request(
         self,
         messages: List[BaseMessage],
