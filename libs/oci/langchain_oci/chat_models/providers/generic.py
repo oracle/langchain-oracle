@@ -164,6 +164,23 @@ class GenericProvider(Provider):
         # Concatenate all text content parts to avoid dropping later chunks.
         return "".join(part.text for part in msg.content if getattr(part, "text", None))
 
+    def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
+        """Extract text from chat response dict (async path)."""
+        chat_response = response_data.get("chatResponse", {})
+        choices = chat_response.get("choices", [])
+        if not choices:
+            return ""
+        content = choices[0].get("message", {}).get("content", [])
+        if not content:
+            return ""
+        if isinstance(content, list):
+            return "".join(
+                c.get("text", "")
+                for c in content
+                if isinstance(c, dict) and c.get("type") == "TEXT"
+            )
+        return str(content)
+
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
         content = event_data.get("message", {}).get("content", None)
@@ -227,12 +244,19 @@ class GenericProvider(Provider):
 
         formatted_tool_calls: List[Dict] = []
         for tool_call in tool_calls:
+            # Parse arguments with error handling for malformed JSON from LLM
+            try:
+                arguments = json.loads(tool_call.arguments)
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return raw string as arguments
+                # This allows downstream code to handle the error gracefully
+                arguments = {"_raw_arguments": tool_call.arguments}
             formatted_tool_calls.append(
                 {
                     "id": tool_call.id,
                     "function": {
                         "name": tool_call.name,
-                        "arguments": json.loads(tool_call.arguments),
+                        "arguments": arguments,
                     },
                     "type": "function",
                 }

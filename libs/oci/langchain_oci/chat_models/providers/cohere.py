@@ -169,6 +169,24 @@ class CohereProvider(Provider):
                 return "".join(texts)
         return ""
 
+    def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
+        """Extract text from Cohere chat response dict (async path, V1 or V2)."""
+        chat_response = response_data.get("chatResponse", {})
+        # V1 API: text at top level
+        if "text" in chat_response:
+            return chat_response.get("text", "")
+        # V2 API: text in message.content[].text
+        message = chat_response.get("message", {})
+        content = message.get("content", [])
+        if isinstance(content, list):
+            texts = [
+                c.get("text", "")
+                for c in content
+                if isinstance(c, dict) and c.get("type") == "TEXT"
+            ]
+            return "".join(texts)
+        return ""
+
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from a Cohere chat stream event (V1 or V2)."""
         # Return empty string if finish reason or tool calls are present
