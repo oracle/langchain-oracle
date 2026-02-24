@@ -87,55 +87,6 @@ All notable changes to langchain-oci are documented here.
 
 ---
 
-## Migration Guide
-
-### From 0.1.x to 0.2.x
-
-#### Vision Support
-
-```python
-# Old: No vision support
-# New: Use load_image()
-from langchain_oci import ChatOCIGenAI, load_image
-from langchain_core.messages import HumanMessage
-
-llm = ChatOCIGenAI(model_id="meta.llama-3.2-90b-vision-instruct", ...)
-
-message = HumanMessage(content=[
-    {"type": "text", "text": "Describe this image."},
-    load_image("photo.jpg"),
-])
-response = llm.invoke([message])
-```
-
-#### Agents
-
-```python
-# Old: Manual agent setup
-# New: Use create_oci_agent()
-from langchain_oci import create_oci_agent
-
-agent = create_oci_agent(
-    model_id="meta.llama-4-scout-17b-16e-instruct",
-    tools=[my_tool],
-    compartment_id="...",
-    service_endpoint="...",
-)
-```
-
-#### Parallel Tools
-
-```python
-# Old: Sequential tool calls only
-# New: Enable parallel calls (Llama 4+)
-llm_with_tools = llm.bind_tools(
-    [tool1, tool2],
-    parallel_tool_calls=True,
-)
-```
-
----
-
 ## Deprecations
 
 None currently planned.

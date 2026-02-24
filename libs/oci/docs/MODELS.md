@@ -1,6 +1,8 @@
 # Model Reference
 
-Complete reference of models available in OCI Generative AI.
+> **Note:** OCI Generative AI models are updated frequently. For the most current and comprehensive model list, refer to the [OCI Generative AI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm).
+>
+> This document provides examples and guidance for using models with langchain-oci.
 
 ## Chat Models
 

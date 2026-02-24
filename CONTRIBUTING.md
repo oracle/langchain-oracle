@@ -8,7 +8,6 @@ We welcome your contributions! There are multiple ways to contribute.
 - [Contributing Code](#contributing-code)
 - [Development Setup](#development-setup)
 - [Architecture Overview](#architecture-overview)
-- [Adding a New Provider](#adding-a-new-provider)
 - [Testing](#testing)
 - [Pull Request Process](#pull-request-process)
 - [Code of Conduct](#code-of-conduct)
@@ -87,19 +86,17 @@ poetry run pytest --cov=langchain_oci --cov-report=html
 
 ### Code Quality
 
+Use the Makefile targets for consistent code quality checks:
+
 ```bash
 # Format code
-poetry run black .
-poetry run isort .
+make format
 
-# Lint
-poetry run ruff check .
+# Lint (runs ruff check, ruff format --diff, mypy)
+make lint
 
-# Type check
-poetry run mypy langchain_oci
-
-# All checks
-make lint  # If Makefile is available
+# Run all tests
+make test
 ```
 
 ---
@@ -152,68 +149,6 @@ Each provider handles:
 - Streaming events
 
 ---
-
-## Adding a New Provider
-
-### Step 1: Create Provider Class
-
-```python
-# libs/oci/langchain_oci/chat_models/providers/my_provider.py
-
-from langchain_oci.chat_models.providers.base import Provider
-
-class MyProvider(Provider):
-    """Provider for MyModel."""
-
-    stop_sequence_key: str = "stop"
-
-    def __init__(self) -> None:
-        from oci.generative_ai_inference import models
-        # Initialize OCI model classes
-        self.oci_chat_request = models.GenericChatRequest
-        # ... other initializations
-
-    def messages_to_oci_params(self, messages, **kwargs):
-        """Convert LangChain messages to OCI format."""
-        # Implementation
-
-    def chat_response_to_text(self, response):
-        """Extract text from response."""
-        # Implementation
-
-    def convert_to_oci_tool(self, tool):
-        """Convert tool to OCI format."""
-        # Implementation
-```
-
-### Step 2: Register Provider
-
-In `oci_generative_ai.py`, add detection:
-
-```python
-def _get_provider(self) -> Provider:
-    if self.model_id.startswith("mymodel."):
-        return MyProvider()
-    # ... existing logic
-```
-
-### Step 3: Add Tests
-
-```python
-# tests/unit/test_my_provider.py
-
-def test_my_provider_message_conversion():
-    provider = MyProvider()
-    messages = [HumanMessage(content="Hello")]
-    params = provider.messages_to_oci_params(messages)
-    assert "messages" in params
-```
-
-### Step 4: Update Documentation
-
-- Add to `docs/MODELS.md`
-- Add to feature matrix in README
-- Create tutorial examples if significant
 
 ---
 

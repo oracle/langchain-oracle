@@ -222,8 +222,7 @@ Load image file for vision models.
 from langchain_oci import load_image
 
 content_block = load_image(
-    path: str,                              # Path to image file
-    detail: str = "auto",                   # "auto", "low", "high"
+    file_path: str,                         # Path to image file
 )
 # Returns: Dict with type="image_url" and base64 data
 ```
@@ -236,10 +235,10 @@ Encode bytes as image content.
 from langchain_oci import encode_image
 
 content_block = encode_image(
-    data: bytes,                            # Raw image bytes
-    mime_type: str,                         # "image/jpeg", "image/png", etc.
-    detail: str = "auto",
+    image_bytes: bytes,                     # Raw image bytes
+    mime_type: str = "image/png",           # "image/jpeg", "image/png", etc.
 )
+# Returns: Dict with type="image_url" and base64 data
 ```
 
 ### to_data_uri
@@ -250,7 +249,8 @@ Convert image to data URI string.
 from langchain_oci import to_data_uri
 
 uri = to_data_uri(
-    path: str,                              # Path to image file
+    image: Union[str, bytes, Path],         # File path, bytes, or existing data URI
+    mime_type: str = "image/png",           # MIME type (used when image is bytes)
 )
 # Returns: "data:image/jpeg;base64,..."
 ```

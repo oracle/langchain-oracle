@@ -140,13 +140,15 @@ llm = ChatOCIGenAI(
 
 ### Provider Matrix
 
-| Provider | Models | Features |
-|----------|--------|----------|
+> **Note:** For the most current model list, see the [OCI Generative AI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm).
+
+| Provider | Example Models | Features |
+|----------|----------------|----------|
 | **Meta** | Llama 3.2, 3.3, 4 | Vision, parallel tools |
 | **Google** | Gemini 2.0/2.5 Flash | Multimodal (PDF, video, audio) |
 | **xAI** | Grok 4 | Vision, reasoning |
 | **Cohere** | Command R+, Command A | RAG, vision (V2) |
-| **OpenAI** | GPT-4, o1 | Reasoning |
+| **OpenAI** | GPT-4, o1 | Reasoning (via ChatOCIOpenAI) |
 | **Mistral** | Mistral models | Fast inference |
 
 ---

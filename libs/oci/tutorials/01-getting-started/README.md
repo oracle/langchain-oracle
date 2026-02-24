@@ -156,10 +156,12 @@ llm = ChatOCIGenAI(
 
 ## Part 4: Choosing a Provider & Model
 
-### Available Providers
+### Available Providers (Examples)
 
-| Provider | Models | Strengths |
-|----------|--------|-----------|
+> **Note:** This is not a comprehensive list. See the [OCI Generative AI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm) for all available models.
+
+| Provider | Example Models | Strengths |
+|----------|----------------|-----------|
 | **Meta** | Llama 3.2, 3.3, 4 | Excellent general-purpose, tool calling |
 | **Cohere** | Command R+, Command A | RAG, document processing |
 | **Google** | Gemini 2.0 Flash, 2.5 | Multimodal (PDF, video, audio) |
@@ -269,9 +271,11 @@ llm = ChatOCIGenAI(
 | Parameter | Range | Effect |
 |-----------|-------|--------|
 | `temperature` | 0.0 - 1.0 | Higher = more creative, lower = more focused |
-| `max_tokens` | 1 - 4096+ | Maximum tokens in the response |
+| `max_tokens` | Model-dependent | Maximum tokens in the response (varies by model) |
 | `top_p` | 0.0 - 1.0 | Nucleus sampling cutoff |
 | `top_k` | 1 - 500 | Number of top tokens to consider |
+
+> **Note:** Maximum token limits vary by model. Check the [OCI Generative AI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm) for specific model limits.
 
 ---
 

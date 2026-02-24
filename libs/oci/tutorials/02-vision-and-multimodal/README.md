@@ -35,7 +35,7 @@ Not all models can process images. Here are the vision-capable models available 
 ### Model Registry
 
 ```python
-from langchain_oci.utils.vision import VISION_MODELS
+from langchain_oci import VISION_MODELS
 
 print(VISION_MODELS)
 ```

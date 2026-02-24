@@ -13,42 +13,45 @@ Welcome to the langchain-oci tutorials! These tutorials will take you from begin
                     │     Started     │  First chat, provider intro
                     └────────┬────────┘
                              │
-              ┌──────────────┴──────────────┐
-              ▼                              ▼
-    ┌─────────────────┐            ┌─────────────────┐
-    │  02. Vision &   │            │  03. Building   │  create_oci_agent()
-    │   Multimodal    │            │    AI Agents    │  checkpointing
-    └────────┬────────┘            └────────┬────────┘
-             │                              │
-             └──────────────┬───────────────┘
+                             ▼
+                   ┌─────────────────┐
+                   │  02. Vision &   │  Images, PDFs, video, audio
+                   │   Multimodal    │
+                   └────────┬────────┘
                             │
                        INTERMEDIATE
                             │
               ┌─────────────┴─────────────┐
               ▼                            ▼
     ┌─────────────────┐          ┌─────────────────┐
-    │  04. Tool       │          │  05. Structured │
-    │     Calling     │          │     Output      │
+    │  03. Building   │          │  04. Tool       │
+    │    AI Agents    │          │     Calling     │
     └────────┬────────┘          └────────┬────────┘
              │                            │
              └─────────────┬──────────────┘
                            │
-                      ADVANCED
-                           │
                            ▼
+                 ┌─────────────────┐
+                 │  05. Structured │
+                 │     Output      │
+                 └────────┬────────┘
+                          │
+                      ADVANCED
+                          │
+                          ▼
                  ┌──────────────┐
                  │ 07. Async &  │
                  │ Production   │
                  └──────────────┘
-                           │
-                    SPECIALIZED
-                           │
-              ┌────────────┴────────────┐
-              ▼                          ▼
-    ┌─────────────────┐        ┌─────────────────┐
-    │ 09. Provider    │        │ 10. Embeddings  │
-    │    Deep Dive    │        │  Text & Image   │
-    └─────────────────┘        └─────────────────┘
+                          │
+                   SPECIALIZED
+                          │
+              ┌───────────┴───────────┐
+              ▼                        ▼
+    ┌─────────────────┐      ┌─────────────────┐
+    │ 09. Provider    │      │ 10. Embeddings  │
+    │    Deep Dive    │      │  Text & Image   │
+    └─────────────────┘      └─────────────────┘
 ```
 
 ## Tutorial Index
@@ -57,7 +60,7 @@ Welcome to the langchain-oci tutorials! These tutorials will take you from begin
 |---|----------|-------|-------------|
 | 01 | [Getting Started](./01-getting-started/) | Beginner | Authentication, ChatOCIGenAI, providers |
 | 02 | [Vision & Multimodal](./02-vision-and-multimodal/) | Beginner | Image analysis, PDF, video, audio |
-| 03 | [Building AI Agents](./03-building-ai-agents/) | Beginner | ReAct agents, tools, memory |
+| 03 | [Building AI Agents](./03-building-ai-agents/) | Intermediate | ReAct agents, tools, memory |
 | 04 | [Tool Calling Mastery](./04-tool-calling-mastery/) | Intermediate | bind_tools, parallel calls, workflows |
 | 05 | [Structured Output](./05-structured-output/) | Intermediate | Pydantic schemas, JSON modes |
 | 07 | [Async for Production](./07-async-for-production/) | Advanced | ainvoke, astream, FastAPI |

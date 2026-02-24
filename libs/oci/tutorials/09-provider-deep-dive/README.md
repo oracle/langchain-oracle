@@ -9,6 +9,7 @@ Understand the provider architecture and master provider-specific features.
 - Use Google Gemini multimodal capabilities
 - Work with Cohere Command models (RAG, V2 API)
 - Leverage xAI Grok reasoning features
+- Use OpenAI models via ChatOCIOpenAI
 - Handle provider-specific quirks
 
 ## Prerequisites
@@ -64,10 +65,11 @@ The provider system abstracts model-specific behaviors behind a common interface
 ```
 Provider (base)
 ├── GenericProvider (Meta, xAI, OpenAI, Mistral)
-│   ├── MetaProvider (Llama-specific)
 │   └── GeminiProvider (Gemini-specific)
 └── CohereProvider (Cohere-specific)
 ```
+
+> **Note:** `MetaProvider` is deprecated. Use `GenericProvider` (or let the library auto-detect) for Llama models.
 
 ### Auto-Detection
 
@@ -213,7 +215,6 @@ Gemini offers advanced multimodal capabilities.
 | Model | Features |
 |-------|----------|
 | `google.gemini-2.5-flash` | Fast, multimodal |
-| `google.gemini-2.5-flash` | Latest, multimodal |
 | `google.gemini-2.5-pro` | Most capable |
 
 ### Basic Usage
@@ -473,20 +474,69 @@ print(response.content)
 
 ---
 
-## Part 6: Provider Comparison
+## Part 6: OpenAI Models (via ChatOCIOpenAI)
+
+For OpenAI models deployed in OCI, use `ChatOCIOpenAI` instead of `ChatOCIGenAI`.
+
+### Available Models
+
+| Model | Features |
+|-------|----------|
+| `openai.gpt-4.1` | Tools, reasoning |
+| `openai.o1` | Advanced reasoning |
+
+### Basic Usage
+
+```python
+from langchain_oci import ChatOCIOpenAI
+from oci.auth.signers import get_resource_principals_signer
+
+# Using resource principal auth (OCI Functions, Jobs)
+signer = get_resource_principals_signer()
+
+llm = ChatOCIOpenAI(
+    auth=signer,
+    compartment_id="ocid1.compartment.oc1..xxx",
+    model="openai.gpt-4.1",
+    region="us-chicago-1",
+)
+
+response = llm.invoke("What are the benefits of cloud computing?")
+print(response.content)
+```
+
+### With Conversation Store
+
+OpenAI models support persistent conversation memory:
+
+```python
+llm = ChatOCIOpenAI(
+    auth=signer,
+    compartment_id="ocid1.compartment.oc1..xxx",
+    model="openai.gpt-4.1",
+    conversation_store_id="ocid1.generativeaiagentconversation.oc1..xxx",
+    region="us-chicago-1",
+)
+```
+
+> **Note:** `ChatOCIOpenAI` uses the OpenAI Responses API and has different initialization parameters than `ChatOCIGenAI`.
+
+---
+
+## Part 7: Provider Comparison
 
 ### Feature Matrix
 
-| Feature | Meta | Gemini | Cohere | xAI |
-|---------|------|--------|--------|-----|
-| Vision | ✅ Llama 3.2 | ✅ All | ✅ V2/DAC | ✅ |
-| PDF | ❌ | ✅ | ❌ | ❌ |
-| Video | ❌ | ✅ | ❌ | ❌ |
-| Audio | ❌ | ✅ | ❌ | ❌ |
-| Parallel Tools | ✅ Llama 4+ | ❌ | ❌ | ❌ |
-| Citations | ❌ | ❌ | ✅ | ❌ |
-| Reasoning | ❌ | ❌ | ❌ | ✅ |
-| tool_choice | ✅ | ✅ | ❌ | ✅ |
+| Feature | Meta | Gemini | Cohere | xAI | OpenAI |
+|---------|------|--------|--------|-----|--------|
+| Vision | ✅ Llama 3.2 | ✅ All | ✅ V2/DAC | ✅ | ❌ |
+| PDF | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Video | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Audio | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Parallel Tools | ✅ Llama 4+ | ❌ | ❌ | ❌ | ✅ |
+| Citations | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Reasoning | ❌ | ❌ | ❌ | ✅ | ✅ o1 |
+| tool_choice | ✅ | ✅ | ❌ | ✅ | ✅ |
 
 ### Performance Characteristics
 
@@ -496,10 +546,11 @@ print(response.content)
 | Gemini Flash | Very Low | Very High | Multimodal, speed |
 | Cohere Command | Medium | Medium | RAG, search |
 | xAI Grok | Medium | Medium | Reasoning tasks |
+| OpenAI GPT-4 | Medium | Medium | General tasks, tools |
 
 ---
 
-## Part 7: Best Practices
+## Part 8: Best Practices
 
 ### Choosing a Provider
 
