@@ -326,14 +326,6 @@ class TestAsyncResponseParsing:
 
     def test_extract_usage_metadata(self, llm):
         """Test usage metadata extraction."""
-        # Import UsageMetadata availability check
-        try:
-            from langchain_core.messages import UsageMetadata
-
-            has_usage_metadata = UsageMetadata is not None
-        except ImportError:
-            has_usage_metadata = False
-
         response_data = {
             "chatResponse": {
                 "usage": {
@@ -345,15 +337,11 @@ class TestAsyncResponseParsing:
         }
         usage = llm._extract_usage_metadata(response_data)
 
-        if not has_usage_metadata:
-            # UsageMetadata not available in older langchain-core versions
-            assert usage is None
-        else:
-            assert usage is not None
-            # UsageMetadata is a TypedDict, so access via dict keys
-            assert usage["input_tokens"] == 100
-            assert usage["output_tokens"] == 50
-            assert usage["total_tokens"] == 150
+        assert usage is not None
+        # UsageMetadata is a TypedDict, access via dict-style keys
+        assert usage["input_tokens"] == 100
+        assert usage["output_tokens"] == 50
+        assert usage["total_tokens"] == 150
 
 
 class TestAsyncSupportHelpers:

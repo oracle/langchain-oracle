@@ -16,6 +16,7 @@ import aiohttp
 import certifi
 import requests
 
+
 def _get_oci_genai_api_version() -> str:
     """Get OCI GenAI API version, attempting to detect from SDK.
 

@@ -44,8 +44,9 @@ class ChatOCIGenAIAsyncMixin:
             return self._async_client
 
         async with self._get_async_client_lock():
+            # Double-check: another coroutine may have initialized while we waited
             if self._async_client is not None:
-                return self._async_client
+                return self._async_client  # type: ignore[unreachable]
             # Get signer and config from the sync client's base_client
             base_client = self.client.base_client  # type: ignore[attr-defined]
             self._async_client = OCIAsyncClient(
