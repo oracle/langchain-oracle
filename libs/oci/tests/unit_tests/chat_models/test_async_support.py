@@ -35,15 +35,17 @@ def mock_signer():
 @pytest.fixture
 def llm(mock_oci_client, mock_signer):
     """Create a ChatOCIGenAI instance with mocked dependencies."""
+    # Set up base_client with signer (as accessed by async mixin)
+    mock_oci_client.base_client = MagicMock()
+    mock_oci_client.base_client.signer = mock_signer
+    mock_oci_client.base_client.config = {}
+
     llm = ChatOCIGenAI(
         model_id="meta.llama-3-70b-instruct",
         compartment_id="test-compartment",
         service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         client=mock_oci_client,
     )
-    # Manually set the signer for testing
-    llm.oci_signer = mock_signer
-    llm.oci_config = {}
     return llm
 
 
@@ -102,12 +104,13 @@ class TestChatOCIGenAIAsyncMixin:
         assert callable(llm._agenerate)
         assert callable(llm._astream)
 
-    def test_get_async_client(self, llm, mock_signer):
+    @pytest.mark.asyncio
+    async def test_get_async_client(self, llm, mock_signer):
         """Test async client creation."""
-        client = llm._get_async_client()
+        client = await llm._get_async_client()
         assert isinstance(client, OCIAsyncClient)
         # Should return same instance on second call
-        assert llm._get_async_client() is client
+        assert await llm._get_async_client() is client
 
     @pytest.mark.asyncio
     async def test_agenerate_non_streaming(self, llm):
@@ -244,17 +247,20 @@ class TestChatOCIGenAIAsyncClose:
     @pytest.mark.asyncio
     async def test_aclose_cleans_up_client(self, mock_oci_client, mock_signer):
         """Test that aclose() cleans up the async client."""
+        # Set up base_client with signer
+        mock_oci_client.base_client = MagicMock()
+        mock_oci_client.base_client.signer = mock_signer
+        mock_oci_client.base_client.config = {}
+
         llm = ChatOCIGenAI(
             model_id="meta.llama-3-70b-instruct",
             compartment_id="test-compartment",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             client=mock_oci_client,
         )
-        llm.oci_signer = mock_signer
-        llm.oci_config = {}
 
         # Create async client
-        client = llm._get_async_client()
+        client = await llm._get_async_client()
         assert client is not None
         assert llm._async_client is client
 
@@ -574,14 +580,17 @@ class TestAsyncGenerationEdgeCases:
     @pytest.fixture
     def llm_with_mock(self, mock_oci_client, mock_signer):
         """Create a ChatOCIGenAI instance with mocked dependencies."""
+        # Set up base_client with signer
+        mock_oci_client.base_client = MagicMock()
+        mock_oci_client.base_client.signer = mock_signer
+        mock_oci_client.base_client.config = {}
+
         llm = ChatOCIGenAI(
             model_id="meta.llama-3-70b-instruct",
             compartment_id="test-compartment",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             client=mock_oci_client,
         )
-        llm.oci_signer = mock_signer
-        llm.oci_config = {}
         return llm
 
     @pytest.mark.asyncio

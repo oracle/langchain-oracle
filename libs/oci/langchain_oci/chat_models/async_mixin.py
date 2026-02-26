@@ -7,6 +7,7 @@ This module provides async support for ChatOCIGenAI through a mixin class,
 keeping the main module clean and focused.
 """
 
+import asyncio
 import json
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -14,10 +15,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import agenerate_from_stream
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolCall
+from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 from langchain_oci.common.async_support import OCIAsyncClient
-from langchain_oci.common.utils import OCIUtils
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 
@@ -29,16 +30,30 @@ class ChatOCIGenAIAsyncMixin:
     """
 
     _async_client: Optional[OCIAsyncClient] = None
+    _async_client_lock: Optional[asyncio.Lock] = None
 
-    def _get_async_client(self) -> OCIAsyncClient:
-        """Get or create the async client."""
-        if self._async_client is None:
+    def _get_async_client_lock(self) -> asyncio.Lock:
+        """Get or create the lock for async client initialization."""
+        if self._async_client_lock is None:
+            self._async_client_lock = asyncio.Lock()
+        return self._async_client_lock
+
+    async def _get_async_client(self) -> OCIAsyncClient:
+        """Get or create the async client with thread-safe initialization."""
+        if self._async_client is not None:
+            return self._async_client
+
+        async with self._get_async_client_lock():
+            if self._async_client is not None:
+                return self._async_client
+            # Get signer and config from the sync client's base_client
+            base_client = self.client.base_client  # type: ignore[attr-defined]
             self._async_client = OCIAsyncClient(
                 service_endpoint=self.service_endpoint,  # type: ignore[attr-defined]
-                signer=self.oci_signer,  # type: ignore[attr-defined]
-                config=self.oci_config,  # type: ignore[attr-defined]
+                signer=base_client.signer,
+                config=getattr(base_client, "config", {}),
             )
-        return self._async_client
+            return self._async_client
 
     async def aclose(self) -> None:
         """Close the async HTTP client and release resources.
@@ -138,7 +153,7 @@ class ChatOCIGenAIAsyncMixin:
             )
             return await agenerate_from_stream(stream_iter)
 
-        client = self._get_async_client()
+        client = await self._get_async_client()
         request_data = self._prepare_async_request(
             messages, stop, stream=False, **kwargs
         )
@@ -210,7 +225,7 @@ class ChatOCIGenAIAsyncMixin:
         Yields:
             ChatGenerationChunk objects as they arrive.
         """
-        client = self._get_async_client()
+        client = await self._get_async_client()
         request_data = self._prepare_async_request(
             messages, stop, stream=True, **kwargs
         )
@@ -410,21 +425,21 @@ class ChatOCIGenAIAsyncMixin:
 
         return []
 
-    def _extract_usage_metadata(self, response_data: Dict[str, Any]) -> Optional[Any]:
-        """Extract usage metadata from async response data."""
+    def _extract_usage_metadata(
+        self, response_data: Dict[str, Any]
+    ) -> Optional[UsageMetadata]:
+        """Extract usage metadata from async response data.
+
+        Uses LangChain's UsageMetadata directly for consistency.
+        """
         chat_response = response_data.get("chatResponse", {})
         usage = chat_response.get("usage")
 
         if usage:
-            # Create a simple object that OCIUtils.create_usage_metadata can handle
-            class UsageData:
-                pass
-
-            usage_obj = UsageData()
-            usage_obj.prompt_tokens = usage.get("promptTokens", 0)  # type: ignore
-            usage_obj.completion_tokens = usage.get("completionTokens", 0)  # type: ignore
-            usage_obj.total_tokens = usage.get("totalTokens", 0)  # type: ignore
-
-            return OCIUtils.create_usage_metadata(usage_obj)
+            return UsageMetadata(
+                input_tokens=usage.get("promptTokens", 0),
+                output_tokens=usage.get("completionTokens", 0),
+                total_tokens=usage.get("totalTokens", 0),
+            )
 
         return None
