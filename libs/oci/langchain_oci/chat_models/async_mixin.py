@@ -7,9 +7,9 @@ This module provides async support for ChatOCIGenAI through a mixin class,
 keeping the main module clean and focused.
 """
 
-import asyncio
 import json
 import uuid
+from functools import cached_property
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
@@ -29,32 +29,19 @@ class ChatOCIGenAIAsyncMixin:
     HTTP requests instead of thread pool wrappers.
     """
 
-    _async_client: Optional[OCIAsyncClient] = None
-    _async_client_lock: Optional[asyncio.Lock] = None
+    @cached_property
+    def _async_client(self) -> OCIAsyncClient:
+        """Get the async client, creating it on first access.
 
-    def _get_async_client_lock(self) -> asyncio.Lock:
-        """Get or create the lock for async client initialization."""
-        if self._async_client_lock is None:
-            self._async_client_lock = asyncio.Lock()
-        return self._async_client_lock
-
-    async def _get_async_client(self) -> OCIAsyncClient:
-        """Get or create the async client with thread-safe initialization."""
-        if self._async_client is not None:
-            return self._async_client
-
-        async with self._get_async_client_lock():
-            # Double-check: another coroutine may have initialized while we waited
-            if self._async_client is not None:
-                return self._async_client  # type: ignore[unreachable]
-            # Get signer and config from the sync client's base_client
-            base_client = self.client.base_client  # type: ignore[attr-defined]
-            self._async_client = OCIAsyncClient(
-                service_endpoint=self.service_endpoint,  # type: ignore[attr-defined]
-                signer=base_client.signer,
-                config=getattr(base_client, "config", {}),
-            )
-            return self._async_client
+        Uses @cached_property for thread-safe lazy initialization, following
+        the pattern used by langchain-anthropic and langchain-aws.
+        """
+        base_client = self.client.base_client  # type: ignore[attr-defined]
+        return OCIAsyncClient(
+            service_endpoint=self.service_endpoint,  # type: ignore[attr-defined]
+            signer=base_client.signer,
+            config=getattr(base_client, "config", {}),
+        )
 
     async def aclose(self) -> None:
         """Close the async HTTP client and release resources.
@@ -62,9 +49,9 @@ class ChatOCIGenAIAsyncMixin:
         Call this when done with async operations to clean up connections.
         If not called, connections will be cleaned up on garbage collection.
         """
-        if self._async_client is not None:
+        if "_async_client" in self.__dict__:
             await self._async_client.close()
-            self._async_client = None
+            del self.__dict__["_async_client"]
 
     def _prepare_async_request(
         self,
@@ -115,7 +102,7 @@ class ChatOCIGenAIAsyncMixin:
             )
             return await agenerate_from_stream(stream_iter)
 
-        client = await self._get_async_client()
+        client = self._async_client
         request_data = self._prepare_async_request(
             messages, stop, stream=False, **kwargs
         )
@@ -187,7 +174,7 @@ class ChatOCIGenAIAsyncMixin:
         Yields:
             ChatGenerationChunk objects as they arrive.
         """
-        client = await self._get_async_client()
+        client = self._async_client
         request_data = self._prepare_async_request(
             messages, stop, stream=True, **kwargs
         )

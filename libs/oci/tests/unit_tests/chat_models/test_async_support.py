@@ -104,13 +104,12 @@ class TestChatOCIGenAIAsyncMixin:
         assert callable(llm._agenerate)
         assert callable(llm._astream)
 
-    @pytest.mark.asyncio
-    async def test_get_async_client(self, llm, mock_signer):
-        """Test async client creation."""
-        client = await llm._get_async_client()
+    def test_get_async_client(self, llm, mock_signer):
+        """Test async client creation via cached_property."""
+        client = llm._async_client
         assert isinstance(client, OCIAsyncClient)
-        # Should return same instance on second call
-        assert await llm._get_async_client() is client
+        # Should return same instance on second call (cached_property)
+        assert llm._async_client is client
 
     @pytest.mark.asyncio
     async def test_agenerate_non_streaming(self, llm):
@@ -259,14 +258,14 @@ class TestChatOCIGenAIAsyncClose:
             client=mock_oci_client,
         )
 
-        # Create async client
-        client = await llm._get_async_client()
+        # Create async client via cached_property
+        client = llm._async_client
         assert client is not None
-        assert llm._async_client is client
+        assert "_async_client" in llm.__dict__
 
-        # Close should clean up
+        # Close should clean up (removes from __dict__ to allow re-creation)
         await llm.aclose()
-        assert llm._async_client is None
+        assert "_async_client" not in llm.__dict__
 
 
 class TestAsyncResponseParsing:
