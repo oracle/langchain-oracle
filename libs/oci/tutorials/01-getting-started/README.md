@@ -167,6 +167,8 @@ llm = ChatOCIGenAI(
 | **Google** | Gemini 2.0 Flash, 2.5 | Multimodal (PDF, video, audio) |
 | **xAI** | Grok 4 | Fast reasoning, vision |
 
+> **OpenAI Models:** For OpenAI models (GPT-4.1, o1, etc.), use `ChatOCIOpenAI` instead of `ChatOCIGenAI`. See [Tutorial 08: OpenAI Responses API](../08-openai-responses-api/).
+
 ### Popular Model IDs
 
 ```python
