@@ -37,11 +37,14 @@ def analyze_video(video_path: str, prompt: str):
     else:
         mime_type = "video/mp4"  # Default
 
-    # Create message with video
+    # Create message with video using video_url format
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
-            {"type": "media", "data": video_data, "mime_type": mime_type},
+            {
+                "type": "video_url",
+                "video_url": {"url": f"data:{mime_type};base64,{video_data}"},
+            },
         ]
     )
 

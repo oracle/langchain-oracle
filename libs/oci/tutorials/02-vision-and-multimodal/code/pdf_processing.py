@@ -25,11 +25,14 @@ def analyze_pdf(pdf_path: str, prompt: str):
     with open(pdf_path, "rb") as f:
         pdf_data = base64.b64encode(f.read()).decode("utf-8")
 
-    # Create message with PDF
+    # Create message with PDF using document_url format
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
-            {"type": "media", "data": pdf_data, "mime_type": "application/pdf"},
+            {
+                "type": "document_url",
+                "document_url": {"url": f"data:application/pdf;base64,{pdf_data}"},
+            },
         ]
     )
 
