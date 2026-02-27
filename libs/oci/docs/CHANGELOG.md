@@ -38,11 +38,6 @@ All notable changes to langchain-oci are documented here.
 - `IMAGE_EMBEDDING_MODELS` registry
 - Support for `cohere.embed-v4.0` multimodal embeddings
 
-#### Async Support
-- Full async support via LangChain base classes
-- `ainvoke()`, `astream()`, `abatch()` methods
-- Async support for `ChatOCIModelDeployment`
-
 #### Providers
 - `GeminiProvider` with `max_output_tokens` → `max_tokens` mapping
 - Enhanced `CohereProvider` with V2 API support
@@ -82,7 +77,7 @@ All notable changes to langchain-oci are documented here.
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| 0.2.0 | 2025 | Vision, agents, parallel tools, async |
+| 0.2.0 | 2025 | Vision, agents, parallel tools, embeddings |
 | 0.1.0 | 2024 | Initial release |
 
 ---

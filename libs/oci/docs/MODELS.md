@@ -29,7 +29,7 @@
 | Model ID | Type | Features | Context |
 |----------|------|----------|---------|
 | `google.gemini-2.5-flash` | Multimodal | PDF, video, audio, image | 1M |
-| `google.gemini-2.5-flash` | Multimodal | PDF, video, audio, image | 1M |
+| `google.gemini-2.5-flash-lite` | Multimodal | Fast, cost-efficient | 1M |
 | `google.gemini-2.5-pro` | Multimodal | Most capable | 1M |
 
 **Key Features:**
@@ -122,20 +122,22 @@ vector = embeddings.embed_image("photo.jpg")
 
 ## Feature Matrix
 
-| Feature | Meta | Gemini | Cohere | xAI |
-|---------|------|--------|--------|-----|
-| Text Generation | ✅ | ✅ | ✅ | ✅ |
-| Vision (Images) | ✅ 3.2 | ✅ | ✅ DAC | ✅ |
-| PDF Processing | ❌ | ✅ | ❌ | ❌ |
-| Video Analysis | ❌ | ✅ | ❌ | ❌ |
-| Audio Analysis | ❌ | ✅ | ❌ | ❌ |
-| Tool Calling | ✅ | ✅ | ✅ | ✅ |
-| Parallel Tools | ✅ 4+ | ❌ | ❌ | ❌ |
-| `tool_choice` | ✅ | ✅ | ❌ | ✅ |
-| Citations | ❌ | ❌ | ✅ | ❌ |
-| Reasoning Content | ❌ | ❌ | ❌ | ✅ |
-| Streaming | ✅ | ✅ | ✅ | ✅ |
-| Async | ✅ | ✅ | ✅ | ✅ |
+> **Note:** This matrix shows tested capabilities as of documentation date. See [OCI docs](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm) for latest features.
+
+| Feature | Meta | Gemini | Cohere | xAI | OpenAI |
+|---------|------|--------|--------|-----|--------|
+| Text Generation | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Vision (Images) | ✅ 3.2 | ✅ | ✅ DAC | ✅ | ✅ |
+| PDF Processing | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Video Analysis | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Audio Analysis | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Tool Calling | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Parallel Tools | ✅ 4+ | ❌ | ❌ | ❌ | ✅ |
+| `tool_choice` | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Citations | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Reasoning Content | ❌ | ❌ | ❌ | ✅ | ✅ o1 |
+| Streaming | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Async | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 

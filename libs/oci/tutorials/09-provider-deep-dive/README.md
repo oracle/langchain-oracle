@@ -22,10 +22,11 @@ Understand the provider architecture and master provider-specific features.
 
 | Provider | Key Features |
 |----------|--------------|
-| `GenericProvider` | Base for Meta, xAI, OpenAI, Mistral |
+| `GenericProvider` | Base for Meta, xAI, Mistral |
 | `MetaProvider` | Llama 3.2/3.3/4, vision, parallel tools |
 | `GeminiProvider` | Multimodal (PDF, video, audio) |
 | `CohereProvider` | RAG, citations, V2 vision API |
+| `ChatOCIOpenAI` | OpenAI models (gpt-4.1, o1), conversation stores |
 
 ---
 
@@ -529,7 +530,7 @@ llm = ChatOCIOpenAI(
 
 | Feature | Meta | Gemini | Cohere | xAI | OpenAI |
 |---------|------|--------|--------|-----|--------|
-| Vision | ✅ Llama 3.2 | ✅ All | ✅ V2/DAC | ✅ | ❌ |
+| Vision | ✅ Llama 3.2 | ✅ All | ✅ V2/DAC | ✅ | ✅ GPT-4o |
 | PDF | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Video | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Audio | ❌ | ✅ | ❌ | ❌ | ❌ |

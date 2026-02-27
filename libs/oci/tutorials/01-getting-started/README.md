@@ -271,9 +271,9 @@ llm = ChatOCIGenAI(
 | Parameter | Range | Effect |
 |-----------|-------|--------|
 | `temperature` | 0.0 - 1.0 | Higher = more creative, lower = more focused |
-| `max_tokens` | Model-dependent | Maximum tokens in the response (varies by model) |
+| `max_tokens` | Model-dependent | Maximum tokens in the response (see [OCI docs](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm)) |
 | `top_p` | 0.0 - 1.0 | Nucleus sampling cutoff |
-| `top_k` | 1 - 500 | Number of top tokens to consider |
+| `top_k` | Model-dependent | Number of top tokens to consider (typically 1-500, varies by model) |
 
 > **Note:** Maximum token limits vary by model. Check the [OCI Generative AI documentation](https://docs.oracle.com/en-us/iaas/Content/generative-ai/pretrained-models.htm) for specific model limits.
 
