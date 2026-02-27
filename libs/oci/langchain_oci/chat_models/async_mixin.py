@@ -76,58 +76,19 @@ class ChatOCIGenAIAsyncMixin:
         """Prepare request data for async chat.
 
         Returns dict with compartment_id, chat_request_dict, serving_mode_dict.
+
+        Reuses _prepare_request from the main class and converts OCI model
+        objects to dicts for JSON serialization in async HTTP requests.
         """
-        from oci.generative_ai_inference import models
         from oci.util import to_dict
 
-        oci_params = self._provider.messages_to_oci_params(  # type: ignore[attr-defined]
-            messages,
-            max_sequential_tool_calls=self.max_sequential_tool_calls,  # type: ignore[attr-defined]
-            model_id=self.model_id,  # type: ignore[attr-defined]
-            **kwargs,
-        )
-
-        oci_params["is_stream"] = stream
-        _model_kwargs = self.model_kwargs or {}  # type: ignore[attr-defined]
-
-        if stop is not None:
-            _model_kwargs[self._provider.stop_sequence_key] = stop  # type: ignore[attr-defined]
-
-        chat_params = {**_model_kwargs, **kwargs, **oci_params}
-
-        if not self.model_id:  # type: ignore[attr-defined]
-            raise ValueError("Model ID is required for chat.")
-
-        # Apply provider-specific parameter transformations
-        chat_params = self._provider.normalize_params(chat_params)  # type: ignore[attr-defined]
-
-        # Build serving mode
-        from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
-
-        if self.model_id.startswith(CUSTOM_ENDPOINT_PREFIX):  # type: ignore[attr-defined]
-            serving_mode = models.DedicatedServingMode(endpoint_id=self.model_id)  # type: ignore[attr-defined]
-        else:
-            serving_mode = models.OnDemandServingMode(model_id=self.model_id)  # type: ignore[attr-defined]
-
-        # Check for V2 API
-        use_v2 = chat_params.pop("_use_v2_api", False)
-
-        if use_v2:
-            v2_request_class = getattr(self._provider, "oci_chat_request_v2", None)  # type: ignore[attr-defined]
-            if v2_request_class is None:
-                raise ValueError(
-                    "V2 API is not supported by the current provider. "
-                    "V2 API with multimodal support is only available for "
-                    "Cohere models."
-                )
-            chat_request = v2_request_class(**chat_params)
-        else:
-            chat_request = self._provider.oci_chat_request(**chat_params)  # type: ignore[attr-defined]
+        # Reuse the sync _prepare_request which returns a ChatDetails object
+        chat_details = self._prepare_request(messages, stop, stream, **kwargs)  # type: ignore[attr-defined]
 
         return {
-            "compartment_id": self.compartment_id,  # type: ignore[attr-defined]
-            "chat_request_dict": to_dict(chat_request),
-            "serving_mode_dict": to_dict(serving_mode),
+            "compartment_id": chat_details.compartment_id,
+            "chat_request_dict": to_dict(chat_details.chat_request),
+            "serving_mode_dict": to_dict(chat_details.serving_mode),
         }
 
     async def _agenerate(
