@@ -64,6 +64,8 @@ class OCIGenAIBase(BaseModel, ABC):
     """Base class for OCI GenAI models"""
 
     client: Any = Field(default=None, exclude=True)  #: :meta private:
+    oci_signer: Any = Field(default=None, exclude=True)  #: :meta private:
+    oci_config: Any = Field(default=None, exclude=True)  #: :meta private:
 
     auth_type: Optional[str] = "API_KEY"
     """Authentication type, could be
@@ -111,6 +113,11 @@ class OCIGenAIBase(BaseModel, ABC):
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
 
+    tool_result_guidance: bool = False
+    """When True, injects a system message after tool results to guide
+    models (especially Meta Llama) to incorporate tool results into
+    their response as natural language instead of raw JSON."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, protected_namespaces=()
     )
@@ -132,6 +139,10 @@ class OCIGenAIBase(BaseModel, ABC):
                 auth_file_location=values["auth_file_location"],
                 auth_profile=values["auth_profile"],
             )
+
+            # Store signer and config for async requests
+            values["oci_signer"] = client_kwargs.get("signer")
+            values["oci_config"] = client_kwargs.get("config")
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
                 **client_kwargs

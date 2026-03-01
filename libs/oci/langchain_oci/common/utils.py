@@ -49,14 +49,18 @@ class OCIUtils:
 
         if has_arguments:
             # Generic provider: arguments is a JSON string
-            parsed = json.loads(tool_call.arguments)
+            try:
+                parsed = json.loads(tool_call.arguments)
 
-            # If the parsed result is a string, it means the JSON was escaped
-            if isinstance(parsed, str):
-                try:
-                    parsed = json.loads(parsed)
-                except json.JSONDecodeError:
-                    pass
+                # If the parsed result is a string, it means the JSON was escaped
+                if isinstance(parsed, str):
+                    try:
+                        parsed = json.loads(parsed)
+                    except json.JSONDecodeError:
+                        pass
+            except json.JSONDecodeError:
+                # LLM returned malformed JSON - preserve raw string for debugging
+                parsed = {"_raw_arguments": tool_call.arguments}
         else:
             # Cohere provider: parameters is already a dict
             parsed = tool_call.parameters

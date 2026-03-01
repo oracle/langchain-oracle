@@ -15,6 +15,20 @@ from pydantic import BaseModel
 class Provider(ABC):
     """Abstract base class for OCI Generative AI providers."""
 
+    @abstractmethod
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters for this provider.
+
+        Subclasses should implement provider-specific parameter transformations.
+
+        Args:
+            params: Dictionary of parameters to normalize
+
+        Returns:
+            Normalized parameters dictionary
+        """
+        ...
+
     @property
     @abstractmethod
     def stop_sequence_key(self) -> str:
@@ -23,7 +37,15 @@ class Provider(ABC):
 
     @abstractmethod
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract chat text from a provider's response."""
+        """Extract chat text from a provider's response (SDK object)."""
+        ...
+
+    @abstractmethod
+    def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
+        """Extract chat text from a provider's response (JSON dict).
+
+        Used by async path which works with raw JSON instead of SDK objects.
+        """
         ...
 
     @abstractmethod

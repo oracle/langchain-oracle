@@ -25,6 +25,7 @@ def create_oci_agent(
     auth_profile: str = "DEFAULT",
     auth_file_location: str = "~/.oci/config",
     max_sequential_tool_calls: int = 8,
+    tool_result_guidance: bool = False,
     # Agent options
     system_prompt: Optional[str] = None,
     checkpointer: Optional[Any] = None,
@@ -59,6 +60,9 @@ def create_oci_agent(
         auth_file_location: Path to OCI config file. Default: "~/.oci/config".
         max_sequential_tool_calls: Max tool calls before forcing stop. Default: 8.
             Prevents infinite loops while allowing multi-step orchestration.
+        tool_result_guidance: When True, injects a system message after tool
+            results to guide models (especially Meta Llama) to respond with
+            natural language instead of raw JSON. Default: False.
         system_prompt: System message for the agent.
         checkpointer: LangGraph checkpointer for persistence. Enables resuming
             conversations and human-in-the-loop workflows.
@@ -184,6 +188,7 @@ def create_oci_agent(
         auth_file_location=auth_file_location,
         model_kwargs=llm_model_kwargs if llm_model_kwargs else None,
         max_sequential_tool_calls=max_sequential_tool_calls,
+        tool_result_guidance=tool_result_guidance,
     )
 
     # Build kwargs for create_agent

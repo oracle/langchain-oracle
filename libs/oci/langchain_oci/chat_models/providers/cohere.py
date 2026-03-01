@@ -76,6 +76,10 @@ class CohereProvider(Provider):
         self.oci_image_url_v2 = None
         self.chat_api_format_v2 = None
 
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize parameters. Returns params unchanged for Cohere."""
+        return params
+
     def _load_v2_classes(self) -> None:
         """Lazy load Cohere V2 API classes for vision support.
 
@@ -163,6 +167,24 @@ class CohereProvider(Provider):
                     if hasattr(block, "type") and block.type == "TEXT" and block.text
                 ]
                 return "".join(texts)
+        return ""
+
+    def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
+        """Extract text from Cohere chat response dict (async path, V1 or V2)."""
+        chat_response = response_data.get("chatResponse", {})
+        # V1 API: text at top level
+        if "text" in chat_response:
+            return chat_response.get("text", "")
+        # V2 API: text in message.content[].text
+        message = chat_response.get("message", {})
+        content = message.get("content", [])
+        if isinstance(content, list):
+            texts = [
+                c.get("text", "")
+                for c in content
+                if isinstance(c, dict) and c.get("type") == "TEXT"
+            ]
+            return "".join(texts)
         return ""
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
