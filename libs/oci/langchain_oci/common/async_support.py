@@ -16,9 +16,26 @@ import aiohttp
 import certifi
 import requests
 
-# OCI GenAI API version - must match oci.generative_ai_inference SDK version
-# See: oci/generative_ai_inference/generative_ai_inference_client.py line 112
-OCI_GENAI_API_VERSION = "20231130"
+
+def _get_oci_genai_api_version() -> str:
+    """Get OCI GenAI API version, attempting to detect from SDK.
+
+    Falls back to known version if detection fails.
+    """
+    try:
+        from oci.generative_ai_inference import GenerativeAiInferenceClient
+
+        # Try to get version from client class if available
+        if hasattr(GenerativeAiInferenceClient, "API_VERSION"):
+            return GenerativeAiInferenceClient.API_VERSION
+    except ImportError:
+        pass
+    # Fallback to known version
+    # See: oci/generative_ai_inference/generative_ai_inference_client.py
+    return "20231130"
+
+
+OCI_GENAI_API_VERSION = _get_oci_genai_api_version()
 
 
 def _snake_to_camel(name: str) -> str:
@@ -96,6 +113,14 @@ class OCIAsyncClient:
         if self._session is not None and not self._session.closed:
             await self._session.close()
             self._session = None
+
+    async def __aenter__(self) -> "OCIAsyncClient":
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit async context manager, closing the session."""
+        await self.close()
 
     def _sign_headers(
         self,
