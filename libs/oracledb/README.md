@@ -49,6 +49,8 @@ Use Oracle Vector Database with `OracleVS`. More information can be found in [Or
 ```python
 from langchain_oracledb.vectorstores import OracleVS
 from langchain_oracledb.vectorstores.oraclevs import create_index
+from langchain_oracledb.document_loaders.oracleai import OracleTextSplitter
+from langchain_core.documents import Document
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores.utils import DistanceStrategy
@@ -67,12 +69,29 @@ metadata = [
 
 vector_store.add_texts(texts, metadata)
 
+# for large documents, chunk before ingesting so each chunk is stored in its own row
+splitter = OracleTextSplitter(conn=conn, params={"split": "sentence", "max": 20})
+documents = [
+    Document(
+        page_content=(
+            "A tablespace can be online (accessible) or offline (not accessible). "
+            "The SYSTEM tablespace cannot be taken offline."
+        ),
+        metadata={"id": "200", "link": "Large Document Example"},
+    )
+]
+vector_store.add_documents(
+    documents,
+    text_splitter=splitter,
+    ids=["200"],  # becomes 200#chunk-0, 200#chunk-1, ...
+)
+
 create_index(
     conn, vector_store, params={"idx_name": "hnsw_oravs", "idx_type": "HNSW"}
 )
 
 # perform siliarity search
-vs.similarity_search("How does a database stores LOBs?", 1)
+vector_store.similarity_search("How does a database stores LOBs?", 1)
 
 ```
 

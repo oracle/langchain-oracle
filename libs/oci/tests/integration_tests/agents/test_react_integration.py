@@ -231,19 +231,19 @@ class TestOCIReactAgentIntegration:
         )
 
         thread_id = "test_thread_123"
-        config = {"configurable": {"thread_id": thread_id}}
+        config: dict = {"configurable": {"thread_id": thread_id}}
 
         # First message
         result1 = agent.invoke(
             {"messages": [HumanMessage(content="What's the weather in Chicago?")]},
-            config=config,
+            config=config,  # type: ignore[arg-type]
         )
         assert len(result1["messages"]) > 1
 
         # Second message in same thread should have context
         result2 = agent.invoke(
             {"messages": [HumanMessage(content="How about New York?")]},
-            config=config,
+            config=config,  # type: ignore[arg-type]
         )
         assert len(result2["messages"]) > len(result1["messages"]), (
             "Second invocation should include previous messages"

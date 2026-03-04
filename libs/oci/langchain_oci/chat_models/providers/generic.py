@@ -577,6 +577,32 @@ class GenericProvider(Provider):
                 )
         return processed_content
 
+    def _get_tool_parameters(self, tool: BaseTool) -> Dict[str, Any]:
+        """Extract parameters from a BaseTool, handling serialization errors.
+
+        Uses model_json_schema() when available to preserve json_schema_extra
+        constraints (enum, format, etc.) that convert_to_openai_function strips.
+
+        Falls back to convert_to_openai_function for tools with injected runtime
+        parameters (e.g., ToolRuntime with Callable types) that Pydantic cannot
+        serialize to JSON schema.
+
+        Args:
+            tool: The BaseTool to extract parameters from.
+
+        Returns:
+            Dict containing the tool parameters schema.
+        """
+        if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
+            try:
+                return tool.args_schema.model_json_schema()
+            except Exception:
+                # Fall back if schema generation fails (e.g., Callable types)
+                pass
+        # Use convert_to_openai_function which correctly excludes injected params
+        as_json_schema_function = convert_to_openai_function(tool)
+        return as_json_schema_function.get("parameters", {})
+
     def convert_to_oci_tool(
         self,
         tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
@@ -598,12 +624,7 @@ class GenericProvider(Provider):
         if isinstance(tool, BaseTool):
             # Use model_json_schema() if available to preserve json_schema_extra
             # constraints (enum, format, etc.) that convert_to_openai_function strips
-            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
-                schema = tool.args_schema.model_json_schema()
-                parameters = schema
-            else:
-                as_json_schema_function = convert_to_openai_function(tool)
-                parameters = as_json_schema_function.get("parameters", {})
+            parameters = self._get_tool_parameters(tool)
 
             # Resolve $ref/$defs and anyOf — OCI doesn't support them
             resolved_params = OCIUtils.resolve_schema_refs(parameters)
