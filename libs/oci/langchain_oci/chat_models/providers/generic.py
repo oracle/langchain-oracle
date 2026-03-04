@@ -276,13 +276,19 @@ class GenericProvider(Provider):
 
         formatted_tool_calls: List[Dict] = []
         for tool_call in tool_calls:
-            # empty string for fields not present in the tool call
+            # Use None for missing fields to ensure proper chunk merging.
+            # Empty strings can overwrite previously set values during
+            # streaming.
+            tool_id = tool_call.get("id")
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("arguments")
+
             formatted_tool_calls.append(
                 {
-                    "id": tool_call.get("id", ""),
+                    "id": tool_id if tool_id else None,
                     "function": {
-                        "name": tool_call.get("name", ""),
-                        "arguments": tool_call.get("arguments", ""),
+                        "name": tool_name if tool_name else None,
+                        "arguments": tool_args if tool_args else None,
                     },
                     "type": "function",
                 }
@@ -352,6 +358,11 @@ class GenericProvider(Provider):
                     content = [self.oci_chat_message_text_content(text=".")]
                 tool_calls = []
                 for tool_call in message.tool_calls:
+                    # Skip tool calls with empty/missing names or IDs to
+                    # prevent API errors. This can occur when streaming
+                    # chunks are improperly merged.
+                    if not tool_call.get("name") or not tool_call.get("id"):
+                        continue
                     tool_calls.append(
                         self.oci_tool_call(
                             id=tool_call["id"],
