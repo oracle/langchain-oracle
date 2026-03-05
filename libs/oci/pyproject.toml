@@ -20,6 +20,15 @@ dependencies = [
     "langgraph>=0.2.0,<2.0.0",
 ]
 
+[project.optional-dependencies]
+# Deep research agent with all datastores
+deep-research = [
+    # deepagents requires Python 3.11+; Python 3.14 not yet tested
+    "deepagents>=0.4.0; python_version >= '3.11' and python_version < '3.14'",
+    "langchain-oracledb>=1.2.0",
+    "opensearch-py>=2.4.0",
+]
+
 [project.urls]
 "Source Code" = "https://github.com/oracle/langchain-oracle/tree/main/libs/oci"
 Repository = "https://github.com/oracle/langchain-oracle"
@@ -110,6 +119,14 @@ module = [
     "langchain_openai.*",
     "oci_openai.*",
     "rich.*",
+    "deepagents.*",
+    "oracledb.*",
+    "opensearchpy.*",
+    "PIL.*",
+    "langchain_community.vectorstores.utils",
+    "langchain_oracledb.*",
+    "langchain_oci.tools",
+    "langchain_oci.tools.*",
 ]
 ignore_missing_imports = true
 
@@ -136,6 +153,7 @@ addopts = "--snapshot-warn-unused --strict-markers --strict-config --durations=5
 markers = [
   "requires: mark tests as requiring a specific library",
   "asyncio: mark tests as requiring asyncio",
+  "compile: mark tests as import/compile checks",
   "scheduled: mark tests to run in scheduled testing",
 ]
 asyncio_mode = "auto"
