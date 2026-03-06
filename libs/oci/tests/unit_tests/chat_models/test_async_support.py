@@ -49,6 +49,22 @@ def llm(mock_oci_client, mock_signer):
     return llm
 
 
+@pytest.fixture
+def llm_cohere(mock_oci_client, mock_signer):
+    """Create a Cohere ChatOCIGenAI instance with mocked dependencies."""
+    mock_oci_client.base_client = MagicMock()
+    mock_oci_client.base_client.signer = mock_signer
+    mock_oci_client.base_client.config = {}
+
+    llm = ChatOCIGenAI(
+        model_id="cohere.command-r-plus",
+        compartment_id="test-compartment",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        client=mock_oci_client,
+    )
+    return llm
+
+
 class TestOCIAsyncClient:
     """Tests for OCIAsyncClient."""
 
@@ -290,20 +306,20 @@ class TestAsyncResponseParsing:
         content = llm._extract_content_from_response(response_data)
         assert content == "Part 1Part 2"
 
-    def test_extract_content_cohere_v1_format(self, llm):
+    def test_extract_content_cohere_v1_format(self, llm_cohere):
         """Test content extraction from Cohere V1 format response."""
         response_data = {"chatResponse": {"text": "Cohere response"}}
-        content = llm._extract_content_from_response(response_data)
+        content = llm_cohere._extract_content_from_response(response_data)
         assert content == "Cohere response"
 
-    def test_extract_content_cohere_v2_format(self, llm):
+    def test_extract_content_cohere_v2_format(self, llm_cohere):
         """Test content extraction from Cohere V2 format response."""
         response_data = {
             "chatResponse": {
                 "message": {"content": [{"type": "TEXT", "text": "V2 response"}]}
             }
         }
-        content = llm._extract_content_from_response(response_data)
+        content = llm_cohere._extract_content_from_response(response_data)
         assert content == "V2 response"
 
     def test_extract_tool_calls_generic_format(self, llm):

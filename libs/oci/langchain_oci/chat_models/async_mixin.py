@@ -215,39 +215,10 @@ class ChatOCIGenAIAsyncMixin:
     def _extract_content_from_response(self, response_data: Dict[str, Any]) -> str:
         """Extract text content from async response data.
 
-        Handles multiple response formats inline for robustness - the response
-        format isn't always tied to the provider (e.g., during testing).
+        Delegate to provider-specific parser so async and sync paths share
+        the same parsing logic.
         """
-        chat_response = response_data.get("chatResponse", {})
-
-        # Cohere V1: text at top level
-        if "text" in chat_response:
-            return chat_response.get("text", "")
-
-        # Generic/Meta: choices[].message.content[]
-        if "choices" in chat_response:
-            choices = chat_response.get("choices", [])
-            if choices:
-                content = choices[0].get("message", {}).get("content", [])
-                if isinstance(content, list):
-                    return "".join(
-                        c.get("text", "")
-                        for c in content
-                        if isinstance(c, dict) and c.get("type") == "TEXT"
-                    )
-                return str(content) if content else ""
-
-        # Cohere V2: message.content[]
-        if "message" in chat_response:
-            content = chat_response.get("message", {}).get("content", [])
-            if isinstance(content, list):
-                return "".join(
-                    c.get("text", "")
-                    for c in content
-                    if isinstance(c, dict) and c.get("type") == "TEXT"
-                )
-
-        return ""
+        return self._provider.chat_response_to_text_from_dict(response_data)  # type: ignore[attr-defined]
 
     def _extract_generation_info(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract generation info from async response data."""
