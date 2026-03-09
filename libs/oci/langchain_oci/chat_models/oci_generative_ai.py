@@ -45,7 +45,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
-from openai import DefaultHttpxClient
+from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
 from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
 from langchain_oci.chat_models.async_mixin import ChatOCIGenAIAsyncMixin
@@ -733,6 +733,14 @@ class ChatOCIOpenAI(ChatOpenAI):
             model=model,
             api_key=SecretStr(API_KEY),
             http_client=DefaultHttpxClient(
+                auth=auth,
+                headers=_build_headers(
+                    compartment_id=compartment_id,
+                    conversation_store_id=conversation_store_id,
+                    **kwargs,
+                ),
+            ),
+            http_async_client=DefaultAsyncHttpxClient(
                 auth=auth,
                 headers=_build_headers(
                     compartment_id=compartment_id,
