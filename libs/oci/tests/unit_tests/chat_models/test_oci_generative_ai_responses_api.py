@@ -263,9 +263,10 @@ def test_client_configures_sync_and_async_http_clients(oci_openai_client):
     assert oci_openai_client.http_client.headers.get(CONVERSATION_STORE_ID_HEADER) == (
         CONVERSATION_STORE_ID
     )
-    assert oci_openai_client.http_async_client.headers.get(
-        CONVERSATION_STORE_ID_HEADER
-    ) == CONVERSATION_STORE_ID
+    assert (
+        oci_openai_client.http_async_client.headers.get(CONVERSATION_STORE_ID_HEADER)
+        == CONVERSATION_STORE_ID
+    )
 
     assert type(oci_openai_client.http_client.auth) is type(
         oci_openai_client.http_async_client.auth
