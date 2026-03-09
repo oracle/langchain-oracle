@@ -10,7 +10,8 @@ Prerequisites:
     export OCI_COMPARTMENT_ID=<your-compartment-id>
     export OCI_REGION=<region>  # optional, defaults to us-chicago-1
     export OCI_CONFIG_PROFILE=<profile>  # optional, defaults to DEFAULT
-    export OCI_AUTH_TYPE=<API_KEY|SECURITY_TOKEN>  # optional, defaults to SECURITY_TOKEN
+    export OCI_AUTH_TYPE=<API_KEY|SECURITY_TOKEN>  # optional, defaults to
+                                                   # SECURITY_TOKEN
     export OCI_OPENAI_MODEL_ID=<model-id>  # optional, defaults to openai.gpt-oss-20b
 
 Run:
