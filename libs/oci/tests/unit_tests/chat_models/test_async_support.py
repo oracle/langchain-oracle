@@ -322,6 +322,39 @@ class TestAsyncResponseParsing:
         content = llm_cohere._extract_content_from_response(response_data)
         assert content == "V2 response"
 
+    def test_extract_content_cohere_provider_with_generic_payload(
+        self, llm_cohere
+    ):
+        """Test Cohere provider does not parse Generic-format payloads."""
+        response_data = {
+            "chatResponse": {
+                "choices": [
+                    {
+                        "message": {
+                            "content": [{"type": "TEXT", "text": "Generic response"}]
+                        }
+                    }
+                ]
+            }
+        }
+        content = llm_cohere._extract_content_from_response(response_data)
+        assert content == ""
+
+    def test_extract_content_generic_provider_with_cohere_payload(
+        self, llm
+    ):
+        """Test Generic provider does not parse Cohere-format payloads."""
+        response_data = {
+            "chatResponse": {
+                "message": {"content": [{"type": "TEXT", "text": "V2 response"}]}
+            }
+        }
+        content = llm._extract_content_from_response(response_data)
+        assert content == ""
+        response_data = {"chatResponse": {"text": "Cohere response"}}
+        content = llm._extract_content_from_response(response_data)
+        assert content == ""
+
     def test_extract_tool_calls_generic_format(self, llm):
         """Test tool call extraction from Generic format."""
         response_data = {
