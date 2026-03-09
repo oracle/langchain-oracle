@@ -729,24 +729,26 @@ class ChatOCIOpenAI(ChatOpenAI):
                 "Please install: pip install oci-openai"
             ) from e
 
+        http_client = kwargs.pop("http_client", None)
+        http_async_client = kwargs.pop("http_async_client", None)
+        default_headers = _build_headers(
+            compartment_id=compartment_id,
+            conversation_store_id=conversation_store_id,
+            **kwargs,
+        )
+
         super().__init__(
             model=model,
             api_key=SecretStr(API_KEY),
-            http_client=DefaultHttpxClient(
+            http_client=http_client
+            or DefaultHttpxClient(
                 auth=auth,
-                headers=_build_headers(
-                    compartment_id=compartment_id,
-                    conversation_store_id=conversation_store_id,
-                    **kwargs,
-                ),
+                headers=default_headers,
             ),
-            http_async_client=DefaultAsyncHttpxClient(
+            http_async_client=http_async_client
+            or DefaultAsyncHttpxClient(
                 auth=auth,
-                headers=_build_headers(
-                    compartment_id=compartment_id,
-                    conversation_store_id=conversation_store_id,
-                    **kwargs,
-                ),
+                headers=default_headers,
             ),
             base_url=_resolve_base_url(
                 region=region, service_endpoint=service_endpoint, base_url=base_url
