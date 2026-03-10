@@ -335,7 +335,8 @@ class TestAsyncResponseParsing:
                 ]
             }
         }
-        content = llm_cohere._extract_content_from_response(response_data)
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            content = llm_cohere._extract_content_from_response(response_data)
         assert content == ""
 
     def test_extract_content_generic_provider_with_cohere_payload(self, llm):
@@ -345,10 +346,12 @@ class TestAsyncResponseParsing:
                 "message": {"content": [{"type": "TEXT", "text": "V2 response"}]}
             }
         }
-        content = llm._extract_content_from_response(response_data)
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            content = llm._extract_content_from_response(response_data)
         assert content == ""
         response_data = {"chatResponse": {"text": "Cohere response"}}
-        content = llm._extract_content_from_response(response_data)
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            content = llm._extract_content_from_response(response_data)
         assert content == ""
 
     def test_extract_tool_calls_generic_format(self, llm):

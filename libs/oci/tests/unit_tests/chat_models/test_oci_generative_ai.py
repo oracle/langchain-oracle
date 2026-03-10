@@ -1683,7 +1683,8 @@ class TestNullGuards:
 
         provider = GenericProvider()
         response = _make_empty_choices_response()
-        assert provider.chat_response_to_text(response) == ""
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            assert provider.chat_response_to_text(response) == ""
 
     def test_empty_choices_returns_no_tool_calls(self) -> None:
         """chat_tool_calls returns [] when choices is empty."""
@@ -1821,7 +1822,8 @@ def test_cohere_v2_response_empty_content(monkeypatch: MonkeyPatch) -> None:
             )
         }
     )
-    assert provider.chat_response_to_text(response_empty) == ""
+    with pytest.warns(UserWarning, match="selected provider matches"):
+        assert provider.chat_response_to_text(response_empty) == ""
 
     # V2 response with None content
     response_none = MockResponseDict(
@@ -1838,7 +1840,8 @@ def test_cohere_v2_response_empty_content(monkeypatch: MonkeyPatch) -> None:
             )
         }
     )
-    assert provider.chat_response_to_text(response_none) == ""
+    with pytest.warns(UserWarning, match="selected provider matches"):
+        assert provider.chat_response_to_text(response_none) == ""
 
 
 @pytest.mark.requires("oci")

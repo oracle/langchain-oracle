@@ -23,6 +23,7 @@ Currently, Google Gemini models have the broadest multimodal support on OCI.
 
 import json
 import uuid
+import warnings
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from langchain_core.messages import (
@@ -156,30 +157,51 @@ class GenericProvider(Provider):
         """Extract text from chat response, or '' if unavailable."""
         chat_resp = getattr(response.data, "chat_response", None)
         choices = getattr(chat_resp, "choices", None)
-        if not choices:
-            return ""
-        msg = getattr(choices[0], "message", None)
-        if not msg or not msg.content:
-            return ""
-        # Concatenate all text content parts to avoid dropping later chunks.
-        return "".join(part.text for part in msg.content if getattr(part, "text", None))
+        text = ""
+        if choices:
+            msg = getattr(choices[0], "message", None)
+            if msg and msg.content:
+                # Concatenate all text content parts to avoid dropping later chunks.
+                text = "".join(
+                    part.text for part in msg.content if getattr(part, "text", None)
+                )
+        if text == "":
+            warnings.warn(
+                "GenericProvider could not extract text and returned an empty "
+                "string. Ensure the selected provider matches the response "
+                "payload format, otherwise content extraction will return an "
+                "empty string.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return text
 
     def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
         """Extract text from chat response dict (async path)."""
         chat_response = response_data.get("chatResponse", {})
         choices = chat_response.get("choices", [])
-        if not choices:
-            return ""
-        content = choices[0].get("message", {}).get("content", [])
-        if not content:
-            return ""
-        if isinstance(content, list):
-            return "".join(
-                c.get("text", "")
-                for c in content
-                if isinstance(c, dict) and c.get("type") == "TEXT"
+        text = ""
+        if choices:
+            content = choices[0].get("message", {}).get("content", [])
+            if content:
+                if isinstance(content, list):
+                    text = "".join(
+                        c.get("text", "")
+                        for c in content
+                        if isinstance(c, dict) and c.get("type") == "TEXT"
+                    )
+                else:
+                    text = str(content)
+        if text == "":
+            warnings.warn(
+                "GenericProvider could not extract text and returned an empty "
+                "string. Ensure the selected provider matches the response "
+                "payload format, otherwise content extraction will return an "
+                "empty string.",
+                UserWarning,
+                stacklevel=2,
             )
-        return str(content)
+        return text
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
@@ -773,8 +795,6 @@ class GeminiProvider(GenericProvider):
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize Gemini parameters with warnings for mapped keys."""
-        import warnings
-
         result = params.copy()
 
         if "max_output_tokens" in result:
