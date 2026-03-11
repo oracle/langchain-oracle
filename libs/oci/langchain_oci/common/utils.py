@@ -83,6 +83,7 @@ class OCIUtils:
         OCI Generative AI doesn't support $ref and $defs, so we inline all references.
         """
         defs = schema.get("$defs", {})  # OCI Generative AI doesn't support $defs
+        resolving_stack: set[str] = set()
 
         def resolve(obj: Any) -> Any:
             if isinstance(obj, dict):
@@ -90,7 +91,13 @@ class OCIUtils:
                     ref = obj["$ref"]
                     if ref.startswith("#/$defs/"):
                         key = ref.split("/")[-1]
-                        return resolve(defs.get(key, obj))
+                        if key in resolving_stack:
+                            return {"type": "object"}
+                        resolving_stack.add(key)
+                        try:
+                            return resolve(defs.get(key, obj))
+                        finally:
+                            resolving_stack.discard(key)
                     return obj  # Cannot resolve $ref, return unchanged
                 return {k: resolve(v) for k, v in obj.items()}
             elif isinstance(obj, list):
@@ -126,6 +133,51 @@ class OCIUtils:
         elif isinstance(obj, list):
             return [OCIUtils.resolve_anyof(item) for item in obj]
         return obj
+
+    @staticmethod
+    def sanitize_schema(schema: Any) -> Any:
+        """Recursively sanitize a schema for OCI tool compatibility."""
+        if isinstance(schema, list):
+            return [OCIUtils.sanitize_schema(item) for item in schema]
+
+        if not isinstance(schema, dict):
+            return schema
+
+        sanitized: Dict[str, Any] = {}
+        for key, value in schema.items():
+            if key == "title":
+                continue
+            if key == "default" and value is None:
+                continue
+
+            if key == "type":
+                if value == "any":
+                    sanitized[key] = "object"
+                    continue
+                if isinstance(value, list):
+                    non_null_types = [item for item in value if item != "null"]
+                    sanitized[key] = non_null_types[0] if non_null_types else "string"
+                    continue
+
+            sanitized[key] = OCIUtils.sanitize_schema(value)
+
+        if sanitized.get("type") == "array" and "items" not in sanitized:
+            sanitized["items"] = {"type": "object"}
+
+        required = sanitized.get("required")
+        properties = sanitized.get("properties")
+        if "required" in sanitized:
+            if isinstance(required, list) and isinstance(properties, dict):
+                property_names = set(properties)
+                sanitized["required"] = [
+                    field
+                    for field in required
+                    if isinstance(field, str) and field in property_names
+                ]
+            elif not isinstance(required, list):
+                sanitized["required"] = []
+
+        return sanitized
 
     @staticmethod
     def create_usage_metadata(usage: Any) -> Optional[Any]:

@@ -619,6 +619,7 @@ class GenericProvider(Provider):
             # Resolve $ref/$defs and anyOf — OCI doesn't support them
             resolved_params = OCIUtils.resolve_schema_refs(parameters)
             resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            resolved_params = OCIUtils.sanitize_schema(resolved_params)
             properties = resolved_params.get("properties", {})
 
             return self.oci_function_definition(

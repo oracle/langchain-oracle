@@ -597,6 +597,7 @@ class CohereProvider(Provider):
                 # Resolve $ref/$defs and anyOf — OCI doesn't support them
                 schema = OCIUtils.resolve_schema_refs(schema)
                 schema = OCIUtils.resolve_anyof(schema)
+                schema = OCIUtils.sanitize_schema(schema)
                 properties = schema.get("properties", {})
             else:
                 properties = tool.args
