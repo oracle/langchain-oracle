@@ -13,6 +13,7 @@ See: https://github.com/oracle/langchain-oracle/issues/103
 
 from enum import Enum
 from typing import List, Optional
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.tools import BaseTool, tool
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models.providers.cohere import CohereProvider
 from langchain_oci.chat_models.providers.generic import GenericProvider
+from langchain_oci.common.utils import OCIUtils
 
 # ---------------------------------------------------------------------------
 # Test tool definitions
@@ -380,6 +382,89 @@ def test_14_const_extra():
     assert p["version"]["const"] == "v1"
 
 
+def test_sanitize_schema_prunes_missing_required_fields():
+    """Required fields missing from properties should be removed."""
+    schema = {
+        "type": "object",
+        "properties": {"present": {"type": "string"}},
+        "required": ["present", "missing"],
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert sanitized["required"] == ["present"]
+
+
+def test_sanitize_schema_removes_title_and_null_defaults_recursively():
+    """Schema metadata noise should be removed recursively."""
+    schema = {
+        "type": "object",
+        "title": "Root",
+        "properties": {
+            "name": {
+                "type": ["string", "null"],
+                "title": "Name",
+                "default": None,
+            },
+            "child": {
+                "type": "object",
+                "title": "Child",
+                "properties": {
+                    "age": {
+                        "type": ["integer", "null"],
+                        "title": "Age",
+                        "default": None,
+                    }
+                },
+            },
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert "title" not in str(sanitized)
+    assert "'default': None" not in str(sanitized)
+    assert sanitized["properties"]["name"]["type"] == "string"
+    assert sanitized["properties"]["child"]["properties"]["age"]["type"] == "integer"
+
+
+def test_sanitize_schema_adds_default_array_items():
+    """Arrays without items should get a default object items schema."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "tags": {"type": "array"},
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert sanitized["properties"]["tags"]["items"] == {"type": "object"}
+
+
+def test_resolve_schema_refs_handles_circular_refs():
+    """Circular refs should degrade to object instead of recursing forever."""
+    schema = {
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "child": {"$ref": "#/$defs/Node"},
+                },
+            }
+        },
+        "type": "object",
+        "properties": {
+            "node": {"$ref": "#/$defs/Node"},
+        },
+    }
+
+    resolved = OCIUtils.resolve_schema_refs(schema)
+
+    assert "$ref" not in str(resolved)
+    assert resolved["properties"]["node"]["properties"]["child"]["type"] == "object"
+
+
 # ---------------------------------------------------------------------------
 # Defensive checks
 # ---------------------------------------------------------------------------
@@ -422,6 +507,47 @@ def test_no_refs_anywhere():
         s = str(r.parameters)
         assert "$ref" not in s, f"{tool_obj.name} has $ref"
         assert "$defs" not in s, f"{tool_obj.name} has $defs"
+
+
+@pytest.mark.requires("oci")
+def test_converted_tool_schema_strips_title_and_null_defaults():
+    """Converted tool schemas should not retain title or default null metadata."""
+    r = _result(multi_optional_tool)
+    s = str(r.parameters)
+    assert "title" not in s
+    assert "'default': None" not in s
+
+
+@pytest.mark.requires("oci")
+def test_public_chat_model_tool_conversion_sanitizes_metadata():
+    """Public ChatOCIGenAI tool conversion should strip noisy schema metadata."""
+    from langchain_oci.chat_models import ChatOCIGenAI
+
+    class OptionalMetadataInput(BaseModel):
+        tags: List[str] = Field(
+            description="Tags",
+            json_schema_extra={"items": {"type": "string"}},
+        )
+        nickname: Optional[str] = Field(default=None, description="Optional nickname")
+
+    @tool(args_schema=OptionalMetadataInput)
+    def optional_metadata_tool(tags: List[str], nickname: Optional[str] = None) -> str:
+        """Return normalized metadata."""
+        return f"{tags}:{nickname}"
+
+    llm = ChatOCIGenAI(
+        model_id="google.gemini-2.5-flash",
+        client=MagicMock(),
+        model_kwargs={"temperature": 0, "max_tokens": 32},
+    )
+
+    oci_tool = llm._provider.convert_to_oci_tool(optional_metadata_tool)
+    params = oci_tool.parameters
+    schema_str = str(params)
+
+    assert "title" not in schema_str
+    assert "'default': None" not in schema_str
+    assert params["properties"]["tags"]["items"]["type"] == "string"
 
 
 @pytest.mark.requires("oci")
