@@ -67,19 +67,9 @@ CONVERSATION_STORE_ID_HEADER = "opc-conversation-store-id"
 OUTPUT_VERSION = "responses/v1"
 
 
-def _is_openai_gpt5_legacy_model(model_id: Optional[str]) -> bool:
-    """Return True for GPT-5 family models that reject custom sampling params.
-
-    OCI's OpenAI-compatible endpoint currently rejects non-default sampling
-    controls such as ``temperature`` for the original GPT-5 family. Newer
-    point releases may add support, so keep the predicate narrow.
-    """
-    if not model_id or not model_id.startswith("openai.gpt-5"):
-        return False
-    return not (
-        model_id.startswith("openai.gpt-5.1")
-        or model_id.startswith("openai.gpt-5.2")
-    )
+def _is_openai_gpt5_base_model(model_id: Optional[str]) -> bool:
+    """Return True for the exact GPT-5 model ID with restricted sampling support."""
+    return model_id == "openai.gpt-5"
 
 
 def _build_headers(
@@ -240,7 +230,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
 
-        if _is_openai_gpt5_legacy_model(self.model_id):
+        if _is_openai_gpt5_base_model(self.model_id):
             unsupported_param_values = {
                 "temperature": chat_params.get("temperature"),
                 "top_p": chat_params.get("top_p"),

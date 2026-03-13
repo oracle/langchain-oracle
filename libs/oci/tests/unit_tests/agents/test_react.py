@@ -258,9 +258,7 @@ class TestCreateOCIReactAgent:
                     )
 
                     call_kwargs = mock_llm_class.call_args.kwargs
-                    assert (
-                        call_kwargs["model_kwargs"]["max_completion_tokens"] == 1024
-                    )
+                    assert call_kwargs["model_kwargs"]["max_completion_tokens"] == 1024
                     assert "max_tokens" not in call_kwargs["model_kwargs"]
 
     def test_passes_store(self) -> None:
