@@ -1397,6 +1397,56 @@ def test_tool_choice_none_after_tool_results() -> None:
     assert len(request.chat_request.tools) > 0
 
 
+@pytest.mark.requires("oci")
+def test_openai_gpt5_legacy_drops_custom_temperature_and_top_p() -> None:
+    """GPT-5 family models should drop unsupported sampling controls."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="openai.gpt-5",
+        client=oci_gen_ai_client,
+        model_kwargs={
+            "temperature": 0.3,
+            "top_p": 0.8,
+            "max_completion_tokens": 1024,
+        },
+    )
+
+    request = llm._prepare_request(
+        [HumanMessage(content="Use a tool if needed.")],
+        stop=None,
+        stream=False,
+    )
+
+    assert request.chat_request.temperature is None
+    assert request.chat_request.top_p is None
+    assert request.chat_request.max_completion_tokens == 1024
+
+
+@pytest.mark.requires("oci")
+def test_openai_gpt5_1_preserves_sampling_controls() -> None:
+    """Newer GPT-5 point releases should keep explicit sampling controls."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="openai.gpt-5.1",
+        client=oci_gen_ai_client,
+        model_kwargs={
+            "temperature": 0.3,
+            "top_p": 0.8,
+            "max_completion_tokens": 1024,
+        },
+    )
+
+    request = llm._prepare_request(
+        [HumanMessage(content="Use a tool if needed.")],
+        stop=None,
+        stream=False,
+    )
+
+    assert request.chat_request.temperature == 0.3
+    assert request.chat_request.top_p == 0.8
+    assert request.chat_request.max_completion_tokens == 1024
+
+
 # =============================================================================
 # Tool Result Guidance Tests
 # =============================================================================

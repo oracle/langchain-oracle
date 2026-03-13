@@ -5,6 +5,7 @@
 
 import importlib
 import json
+import warnings
 from operator import itemgetter
 from typing import (
     Any,
@@ -64,6 +65,21 @@ API_KEY = "<NOTUSED>"
 COMPARTMENT_ID_HEADER = "opc-compartment-id"
 CONVERSATION_STORE_ID_HEADER = "opc-conversation-store-id"
 OUTPUT_VERSION = "responses/v1"
+
+
+def _is_openai_gpt5_legacy_model(model_id: Optional[str]) -> bool:
+    """Return True for GPT-5 family models that reject custom sampling params.
+
+    OCI's OpenAI-compatible endpoint currently rejects non-default sampling
+    controls such as ``temperature`` for the original GPT-5 family. Newer
+    point releases may add support, so keep the predicate narrow.
+    """
+    if not model_id or not model_id.startswith("openai.gpt-5"):
+        return False
+    return not (
+        model_id.startswith("openai.gpt-5.1")
+        or model_id.startswith("openai.gpt-5.2")
+    )
 
 
 def _build_headers(
@@ -224,6 +240,26 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
 
+        if _is_openai_gpt5_legacy_model(self.model_id):
+            unsupported_param_values = {
+                "temperature": chat_params.get("temperature"),
+                "top_p": chat_params.get("top_p"),
+            }
+            dropped_params = [
+                name
+                for name, value in unsupported_param_values.items()
+                if value is not None and value != 1
+            ]
+            if dropped_params:
+                for name in dropped_params:
+                    chat_params.pop(name, None)
+                warnings.warn(
+                    "GPT-5 on OCI ignores custom sampling controls for "
+                    f"{', '.join(dropped_params)}; using model defaults instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
         # Apply provider-specific parameter transformations
         chat_params = self._provider.normalize_params(chat_params)
 
@@ -233,8 +269,6 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             and self.model_id.startswith("openai.")
             and "max_tokens" in chat_params
         ):
-            import warnings
-
             warnings.warn(
                 "OpenAI models require 'max_completion_tokens' "
                 "instead of 'max_tokens'.",

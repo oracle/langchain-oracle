@@ -342,3 +342,47 @@ def test_multi_model_support(model_id: str) -> None:
     # Verify we got a response
     assert "messages" in result
     assert len(result["messages"]) > 1
+
+
+@pytest.mark.requires("oci", "langgraph")
+@pytest.mark.skipif(
+    skip_if_no_oci_credentials(),
+    reason="OCI credentials not available (OCI_COMPARTMENT_ID not set)",
+)
+def test_openai_gpt5_tool_calling() -> None:
+    """Test GPT-5 tool calling works end-to-end with create_oci_agent."""
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID") or os.environ.get(
+        "OCI_COMP", ""
+    )
+    region = os.environ.get("OCI_REGION", "us-chicago-1")
+    service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+
+    agent = create_oci_agent(
+        model_id="openai.gpt-5",
+        tools=[get_weather],
+        compartment_id=compartment_id,
+        service_endpoint=service_endpoint,
+        auth_type="API_KEY",
+        auth_profile="API_KEY_AUTH",
+        system_prompt="You are a weather assistant. Always use the get_weather tool.",
+        temperature=0.3,
+        max_tokens=512,
+    )
+
+    result = agent.invoke(
+        {
+            "messages": [
+                HumanMessage(content="What's the weather in Chicago? Use the tool.")
+            ]
+        }
+    )
+
+    assert "messages" in result
+    message_types = [type(m).__name__ for m in result["messages"]]
+    assert "ToolMessage" in message_types, (
+        "GPT-5 should issue a tool call that the agent executes. "
+        f"Message types: {message_types}"
+    )
+
+    final_message = result["messages"][-1]
+    assert getattr(final_message, "content", ""), "Final message should not be empty"
