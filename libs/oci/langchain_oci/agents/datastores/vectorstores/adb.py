@@ -59,6 +59,16 @@ class ADB(VectorDataStore):
     def name(self) -> str:
         return "adb"
 
+    @property
+    def vectorstore(self) -> Any:
+        if self._oraclevs is None:
+            raise RuntimeError("ADB datastore is not connected.")
+        return self._oraclevs
+
+    @property
+    def keyword_retriever(self) -> Any:
+        return self._text_retriever
+
     def connect(self, embedding_model: Any) -> None:
         try:
             import oracledb
@@ -144,12 +154,7 @@ class ADB(VectorDataStore):
         return str(value) if value else ""
 
     def search(self, query: str, embedding: list[float], top_k: int) -> list[dict]:
-        docs_and_scores = (
-            self._oraclevs.similarity_search_by_vector_with_relevance_scores(  # noqa: E501
-                embedding=embedding,
-                k=top_k,
-            )
-        )
+        docs_and_scores = self.search_documents_with_scores(query=query, top_k=top_k)
         return [
             {
                 "id": (doc.metadata or {}).get("id"),
@@ -162,8 +167,7 @@ class ADB(VectorDataStore):
         ]
 
     def keyword_search(self, query: str, top_k: int) -> list[dict]:
-        self._text_retriever.k = top_k
-        docs = self._text_retriever.invoke(query)
+        docs = self.keyword_search_documents(query=query, top_k=top_k)
         return [
             {
                 "id": (doc.metadata or {}).get("id"),

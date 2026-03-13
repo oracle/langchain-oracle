@@ -33,8 +33,8 @@ class KeywordSearchTool(DatastoreTool):
         store = self.selector.get_store(store_name)
 
         try:
-            raw_results = store.keyword_search(query, self.top_k)
-            results = self._parse_results(raw_results)
+            documents = store.keyword_search_documents(query=query, top_k=self.top_k)
+            results = self._parse_documents(documents)
             return self.formatter.format_search_results(results, store_name, "keyword")
         except Exception as e:
             return self.formatter.format_error("keyword search", e)

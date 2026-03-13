@@ -9,6 +9,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Optional
 
+from langchain_core.documents import Document
 from langchain_core.tools import BaseTool
 from pydantic import ConfigDict, Field
 
@@ -175,3 +176,29 @@ class DatastoreTool(BaseTool, ABC):
             )
             for r in raw_results
         ]
+
+    def _parse_documents(
+        self,
+        documents: list[Document],
+        scores: Optional[list[float]] = None,
+    ) -> list[SearchResult]:
+        """Convert LangChain documents into SearchResult objects."""
+        results: list[SearchResult] = []
+        for index, doc in enumerate(documents):
+            metadata = dict(doc.metadata or {})
+            document_id = getattr(doc, "id", None) or metadata.get("id", "unknown")
+            results.append(
+                SearchResult(
+                    id=str(document_id),
+                    title=str(metadata.get("title", "Untitled")),
+                    content=str(doc.page_content or ""),
+                    score=float(scores[index]) if scores is not None else 0.0,
+                    source=metadata.get("source"),
+                    metadata={
+                        k: v
+                        for k, v in metadata.items()
+                        if k not in ("id", "title", "source")
+                    },
+                )
+            )
+        return results

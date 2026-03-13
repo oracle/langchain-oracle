@@ -97,6 +97,7 @@ def merge_model_kwargs(
     base_kwargs: dict[str, Any],
     temperature: float | None = None,
     max_tokens: int | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Merge temperature and max_tokens into model kwargs.
 
@@ -106,5 +107,8 @@ def merge_model_kwargs(
     if temperature is not None:
         result["temperature"] = temperature
     if max_tokens is not None:
-        result["max_tokens"] = max_tokens
+        if model_id and model_id.startswith("openai."):
+            result["max_completion_tokens"] = max_tokens
+        else:
+            result["max_tokens"] = max_tokens
     return result or None

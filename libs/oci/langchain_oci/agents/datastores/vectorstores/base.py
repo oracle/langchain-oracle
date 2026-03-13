@@ -1,19 +1,25 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Abstract base class for vector store datastores."""
+"""Abstract base class for datastore adapters built on LangChain standards."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.vectorstores import VectorStore
+
 
 class VectorDataStore(ABC):
-    """Abstract base class for vector datastores.
+    """Abstract base class for datastore adapters.
 
-    Implement this class to create custom datastore backends.
-    Built-in implementations: OpenSearch, ADB (Oracle Autonomous Database).
+    Implementations should expose standard LangChain primitives internally:
+    a ``VectorStore`` for semantic search and, optionally, a ``BaseRetriever``
+    for keyword search. The higher-level OCI agent tooling works against those
+    contracts instead of calling backend-specific search methods directly.
 
     Example:
         >>> from langchain_oci.agents import VectorDataStore
@@ -52,15 +58,48 @@ class VectorDataStore(ABC):
         """Initialize connection to the store."""
         ...
 
+    @property
     @abstractmethod
-    def search(self, query: str, embedding: list[float], top_k: int) -> list[dict]:
-        """Perform vector similarity search."""
-        ...
+    def vectorstore(self) -> VectorStore:
+        """LangChain vector store used for semantic retrieval."""
 
-    @abstractmethod
-    def keyword_search(self, query: str, top_k: int) -> list[dict]:
-        """Perform keyword/text search."""
-        ...
+    @property
+    def keyword_retriever(self) -> Optional[BaseRetriever]:
+        """Optional LangChain retriever used for keyword/text search."""
+        return None
+
+    def search_documents(self, query: str, top_k: int) -> list[Document]:
+        """Perform semantic search through the configured vector store."""
+        return self.vectorstore.similarity_search(query, k=top_k)
+
+    def search_documents_with_scores(
+        self, query: str, top_k: int
+    ) -> list[tuple[Document, float]]:
+        """Perform semantic search with scores when the vector store supports it."""
+        search_with_score = getattr(
+            self.vectorstore, "similarity_search_with_score", None
+        )
+        if search_with_score is None:
+            return [(doc, 0.0) for doc in self.search_documents(query, top_k)]
+        return search_with_score(query, k=top_k)
+
+    def keyword_search_documents(self, query: str, top_k: int) -> list[Document]:
+        """Perform keyword search through the configured retriever."""
+        retriever = self.keyword_retriever
+        if retriever is None:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not provide a keyword retriever."
+            )
+
+        original_k = getattr(retriever, "k", None)
+        if original_k is not None:
+            setattr(retriever, "k", top_k)
+
+        try:
+            return retriever.invoke(query)
+        finally:
+            if original_k is not None:
+                setattr(retriever, "k", original_k)
 
     @abstractmethod
     def get(self, document_id: str | int) -> Optional[dict]:

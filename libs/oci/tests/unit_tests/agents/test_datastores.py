@@ -20,7 +20,7 @@ class TestVectorDataStore:
             VectorDataStore()  # type: ignore[abstract]
 
     def test_has_required_methods(self) -> None:
-        """Test that VectorDataStore defines required abstract methods."""
+        """Test that VectorDataStore defines required abstract properties/methods."""
         import inspect
 
         from langchain_oci.agents.datastores.vectorstores import VectorDataStore
@@ -34,8 +34,7 @@ class TestVectorDataStore:
         expected = {
             "name",
             "connect",
-            "search",
-            "keyword_search",
+            "vectorstore",
             "get",
             "insert",
             "bulk_insert",
@@ -55,14 +54,12 @@ class TestVectorDataStore:
             def name(self) -> str:
                 return "test"
 
+            @property
+            def vectorstore(self):
+                return MagicMock()
+
             def connect(self, embedding_model):
                 pass
-
-            def search(self, query, embedding, top_k):
-                return []
-
-            def keyword_search(self, query, top_k):
-                return []
 
             def get(self, document_id):
                 return None
@@ -84,6 +81,53 @@ class TestVectorDataStore:
 
         store = ConcreteStore()
         assert store.datastore_description == ""
+
+    def test_search_documents_uses_vectorstore_standard_contract(self) -> None:
+        """Test semantic search delegates to the configured LangChain vector store."""
+        from langchain_core.documents import Document
+
+        from langchain_oci.agents.datastores.vectorstores import VectorDataStore
+
+        vectorstore = MagicMock()
+        vectorstore.similarity_search_with_score.return_value = [
+            (Document(page_content="alpha", metadata={"id": "1"}), 0.9)
+        ]
+
+        class ConcreteStore(VectorDataStore):
+            @property
+            def name(self) -> str:
+                return "test"
+
+            @property
+            def vectorstore(self):
+                return vectorstore
+
+            def connect(self, embedding_model):
+                pass
+
+            def get(self, document_id):
+                return None
+
+            def insert(self, title, content, source, embedding):
+                return "1"
+
+            def bulk_insert(self, documents, embeddings):
+                return len(documents)
+
+            def update(self, document_id, title, content, source, embedding):
+                return True
+
+            def delete(self, document_id):
+                return True
+
+            def stats(self):
+                return {}
+
+        store = ConcreteStore()
+        results = store.search_documents_with_scores("alpha", 1)
+
+        assert len(results) == 1
+        vectorstore.similarity_search_with_score.assert_called_once_with("alpha", k=1)
 
 
 @pytest.mark.requires("oci")
@@ -187,8 +231,8 @@ class TestADBDataStore:
         assert store.wallet_location is None
         assert store.wallet_password is None
 
-    def test_search_delegates_to_oraclevs_backend(self) -> None:
-        """Test ADB delegates vector search to OracleVS when enabled."""
+    def test_search_documents_delegates_to_oraclevs_backend(self) -> None:
+        """Test ADB delegates semantic search to OracleVS."""
         from langchain_core.documents import Document
 
         from langchain_oci.agents.datastores.vectorstores import ADB
@@ -200,7 +244,7 @@ class TestADBDataStore:
         )
 
         oraclevs = MagicMock()
-        oraclevs.similarity_search_by_vector_with_relevance_scores.return_value = [
+        oraclevs.similarity_search_with_score.return_value = [
             (
                 Document(
                     page_content="alpha content",
@@ -211,13 +255,13 @@ class TestADBDataStore:
         ]
         store._oraclevs = oraclevs
 
-        results = store.search(query="alpha", embedding=[0.1, 0.2], top_k=1)
+        results = store.search_documents_with_scores(query="alpha", top_k=1)
 
         assert len(results) == 1
-        assert results[0]["id"] == "42"
-        assert results[0]["title"] == "Alpha"
-        assert results[0]["source"] == "test_source"
-        assert results[0]["score"] == 0.8
+        assert results[0][0].metadata["id"] == "42"
+        assert results[0][0].metadata["title"] == "Alpha"
+        assert results[0][0].metadata["source"] == "test_source"
+        assert results[0][1] == 0.2
 
     @patch("langchain_oci.agents.datastores.vectorstores.adb.uuid.uuid4")
     def test_insert_delegates_to_oraclevs_backend(self, mock_uuid) -> None:
@@ -340,6 +384,8 @@ class TestCreateDatastoreTools:
 
         mock_store = MagicMock()
         mock_store.datastore_description = "test"
+        mock_store.vectorstore = MagicMock()
+        mock_store.keyword_retriever = MagicMock()
 
         with pytest.raises(ValueError, match="not found"):
             create_datastore_tools(
@@ -353,6 +399,8 @@ class TestCreateDatastoreTools:
 
         mock_store = MagicMock()
         mock_store.datastore_description = "test"
+        mock_store.vectorstore = MagicMock()
+        mock_store.keyword_retriever = MagicMock()
 
         with patch.dict("os.environ", {}, clear=True):
             with pytest.raises(ValueError, match="compartment_id is required"):
@@ -364,6 +412,8 @@ class TestCreateDatastoreTools:
 
         mock_store = MagicMock()
         mock_store.datastore_description = "test"
+        mock_store.vectorstore = MagicMock()
+        mock_store.keyword_retriever = MagicMock()
 
         mock_embedding = MagicMock()
         mock_embedding.embed_query.return_value = [0.1] * 1024
@@ -383,6 +433,8 @@ class TestCreateDatastoreTools:
 
         mock_store = MagicMock()
         mock_store.datastore_description = "test documents"
+        mock_store.vectorstore = MagicMock()
+        mock_store.keyword_retriever = MagicMock()
 
         mock_embedding = MagicMock()
         mock_embedding.embed_query.return_value = [0.1] * 1024
@@ -401,6 +453,8 @@ class TestCreateDatastoreTools:
 
         mock_store = MagicMock()
         mock_store.datastore_description = "test"
+        mock_store.vectorstore = MagicMock()
+        mock_store.keyword_retriever = MagicMock()
 
         mock_embedding = MagicMock()
         mock_embedding.embed_query.return_value = [0.1] * 1024

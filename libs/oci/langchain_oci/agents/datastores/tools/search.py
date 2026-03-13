@@ -33,9 +33,13 @@ class SearchTool(DatastoreTool):
         store = self.selector.get_store(store_name)
 
         try:
-            embedding = self.selector.embedding_model.embed_query(query)
-            raw_results = store.search(query, embedding, self.top_k)
-            results = self._parse_results(raw_results)
+            docs_and_scores = store.search_documents_with_scores(
+                query=query,
+                top_k=self.top_k,
+            )
+            documents = [doc for doc, _ in docs_and_scores]
+            scores = [score for _, score in docs_and_scores]
+            results = self._parse_documents(documents, scores)
             return self.formatter.format_search_results(results, store_name, "semantic")
         except Exception as e:
             return self.formatter.format_error("semantic search", e)

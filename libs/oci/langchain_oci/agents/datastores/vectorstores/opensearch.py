@@ -1,14 +1,191 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""OpenSearch vector store datastore."""
+"""OpenSearch datastore backed by LangChain vector store/retriever contracts."""
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Iterable, Optional, Sequence
+
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.vectorstores import VectorStore
+from pydantic import ConfigDict
 
 from langchain_oci.agents.datastores.vectorstores.base import VectorDataStore
+
+
+class _OpenSearchVectorStore(VectorStore):
+    """Minimal LangChain vector store adapter over an OpenSearch index."""
+
+    def __init__(
+        self,
+        *,
+        client: Any,
+        embedding_model: Any,
+        index_name: str,
+        vector_field: str,
+    ) -> None:
+        self._client = client
+        self._embedding_model = embedding_model
+        self._index_name = index_name
+        self._vector_field = vector_field
+
+    @property
+    def embeddings(self) -> Any:
+        return self._embedding_model
+
+    def add_texts(
+        self,
+        texts: Iterable[str],
+        metadatas: Optional[list[dict]] = None,
+        ids: Optional[list[str]] = None,
+        **kwargs: Any,
+    ) -> list[str]:
+        texts_list = list(texts)
+        metadata_list = metadatas or [{} for _ in texts_list]
+        ids_list = ids or [str(uuid.uuid4()) for _ in texts_list]
+        embeddings = self._embedding_model.embed_documents(texts_list)
+
+        bulk_body: list[dict[str, Any]] = []
+        for doc_id, text, metadata, embedding in zip(
+            ids_list, texts_list, metadata_list, embeddings
+        ):
+            source = {**metadata, "content": text, self._vector_field: embedding}
+            bulk_body.append(
+                {
+                    "index": {
+                        "_index": self._index_name,
+                        "_id": doc_id,
+                    }
+                }
+            )
+            bulk_body.append(source)
+
+        self._client.bulk(body=bulk_body, refresh=True)
+        return ids_list
+
+    @classmethod
+    def from_texts(
+        cls,
+        texts: list[str],
+        embedding: Any,
+        metadatas: Optional[list[dict]] = None,
+        **kwargs: Any,
+    ) -> "_OpenSearchVectorStore":
+        client = kwargs.pop("client")
+        index_name = kwargs.pop("index_name")
+        vector_field = kwargs.pop("vector_field", "embedding")
+        store = cls(
+            client=client,
+            embedding_model=embedding,
+            index_name=index_name,
+            vector_field=vector_field,
+        )
+        store.add_texts(texts, metadatas=metadatas, **kwargs)
+        return store
+
+    def delete(self, ids: Optional[list[str]] = None, **kwargs: Any) -> Optional[bool]:
+        if not ids:
+            return None
+
+        for document_id in ids:
+            self._client.delete(
+                index=self._index_name,
+                id=str(document_id),
+                refresh=True,
+            )
+        return True
+
+    def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
+        docs: list[Document] = []
+        for document_id in ids:
+            try:
+                response = self._client.get(index=self._index_name, id=str(document_id))
+            except Exception:
+                continue
+
+            if not response.get("found"):
+                continue
+
+            source = dict(response.get("_source", {}))
+            source.pop(self._vector_field, None)
+            content = str(source.pop("content", ""))
+            source["id"] = response["_id"]
+            docs.append(Document(page_content=content, metadata=source))
+        return docs
+
+    def similarity_search(
+        self, query: str, k: int = 4, **kwargs: Any
+    ) -> list[Document]:
+        return [
+            doc
+            for doc, _ in self.similarity_search_with_score(query, k=k, **kwargs)
+        ]
+
+    def similarity_search_with_score(
+        self, query: str, k: int = 4, **kwargs: Any
+    ) -> list[tuple[Document, float]]:
+        embedding = self._embedding_model.embed_query(query)
+        search_body = {
+            "size": k,
+            "query": {"knn": {self._vector_field: {"vector": embedding, "k": k}}},
+            "_source": {"excludes": [self._vector_field]},
+        }
+        response = self._client.search(index=self._index_name, body=search_body)
+        hits = response.get("hits", {}).get("hits", [])
+
+        docs_and_scores = []
+        for hit in hits:
+            source = dict(hit.get("_source", {}))
+            content = str(source.pop("content", ""))
+            source["id"] = hit["_id"]
+            docs_and_scores.append(
+                (
+                    Document(page_content=content, metadata=source),
+                    hit.get("_score", 0.0),
+                )
+            )
+        return docs_and_scores
+
+
+class _OpenSearchKeywordRetriever(BaseRetriever):
+    """Minimal keyword retriever over an OpenSearch index."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    client: Any
+    index_name: str
+    search_fields: list[str]
+    vector_field: str
+    k: int = 4
+
+    def _get_relevant_documents(self, query: str, **kwargs: Any) -> list[Document]:
+        search_body = {
+            "size": self.k,
+            "query": {
+                "multi_match": {
+                    "query": query,
+                    "fields": self.search_fields,
+                    "type": "best_fields",
+                    "fuzziness": "AUTO",
+                }
+            },
+            "_source": {"excludes": [self.vector_field]},
+        }
+        response = self.client.search(index=self.index_name, body=search_body)
+        hits = response.get("hits", {}).get("hits", [])
+
+        documents = []
+        for hit in hits:
+            source = dict(hit.get("_source", {}))
+            content = str(source.pop("content", ""))
+            source["id"] = hit["_id"]
+            source["score"] = hit.get("_score", 0.0)
+            documents.append(Document(page_content=content, metadata=source))
+        return documents
 
 
 @dataclass
@@ -44,10 +221,22 @@ class OpenSearch(VectorDataStore):
 
     _client: Any = field(default=None, repr=False)
     _embedding_model: Any = field(default=None, repr=False)
+    _vectorstore: Any = field(default=None, repr=False)
+    _keyword_retriever: Any = field(default=None, repr=False)
 
     @property
     def name(self) -> str:
         return "opensearch"
+
+    @property
+    def vectorstore(self) -> VectorStore:
+        if self._vectorstore is None:
+            raise RuntimeError("OpenSearch datastore is not connected.")
+        return self._vectorstore
+
+    @property
+    def keyword_retriever(self) -> Optional[BaseRetriever]:
+        return self._keyword_retriever
 
     def connect(self, embedding_model: Any) -> None:
         try:
@@ -72,38 +261,53 @@ class OpenSearch(VectorDataStore):
         )
         self._embedding_model = embedding_model
         self._client.info()
+        self._vectorstore = _OpenSearchVectorStore(
+            client=self._client,
+            embedding_model=embedding_model,
+            index_name=self.index_name,
+            vector_field=self.vector_field,
+        )
+        self._keyword_retriever = _OpenSearchKeywordRetriever(
+            client=self._client,
+            index_name=self.index_name,
+            search_fields=self.search_fields,
+            vector_field=self.vector_field,
+        )
 
     def search(self, query: str, embedding: list[float], top_k: int) -> list[dict]:
-        search_body = {
-            "size": top_k,
-            "query": {"knn": {self.vector_field: {"vector": embedding, "k": top_k}}},
-            "_source": {"excludes": [self.vector_field]},
-        }
-        response = self._client.search(index=self.index_name, body=search_body)
-        hits = response.get("hits", {}).get("hits", [])
+        docs_and_scores = self.vectorstore.similarity_search_with_score(query, k=top_k)
         return [
-            {"id": hit["_id"], "score": hit.get("_score", 0), **hit.get("_source", {})}
-            for hit in hits
+            {
+                "id": (doc.metadata or {}).get("id"),
+                "score": score,
+                "title": (doc.metadata or {}).get("title", ""),
+                "content": doc.page_content,
+                "source": (doc.metadata or {}).get("source", ""),
+                **{
+                    key: value
+                    for key, value in (doc.metadata or {}).items()
+                    if key not in {"id", "title", "source"}
+                },
+            }
+            for doc, score in docs_and_scores
         ]
 
     def keyword_search(self, query: str, top_k: int) -> list[dict]:
-        search_body = {
-            "size": top_k,
-            "query": {
-                "multi_match": {
-                    "query": query,
-                    "fields": self.search_fields,
-                    "type": "best_fields",
-                    "fuzziness": "AUTO",
-                }
-            },
-            "_source": {"excludes": [self.vector_field]},
-        }
-        response = self._client.search(index=self.index_name, body=search_body)
-        hits = response.get("hits", {}).get("hits", [])
+        docs = self.keyword_search_documents(query=query, top_k=top_k)
         return [
-            {"id": hit["_id"], "score": hit.get("_score", 0), **hit.get("_source", {})}
-            for hit in hits
+            {
+                "id": (doc.metadata or {}).get("id"),
+                "score": (doc.metadata or {}).get("score", 0),
+                "title": (doc.metadata or {}).get("title", ""),
+                "content": doc.page_content,
+                "source": (doc.metadata or {}).get("source", ""),
+                **{
+                    key: value
+                    for key, value in (doc.metadata or {}).items()
+                    if key not in {"id", "score", "title", "source"}
+                },
+            }
+            for doc in docs
         ]
 
     def get(self, document_id: str | int) -> Optional[dict]:

@@ -155,7 +155,12 @@ def create_deep_research_agent(
         auth_type=oci_config.auth_type,
         auth_profile=oci_config.auth_profile,
         auth_file_location=oci_config.auth_file_location,
-        model_kwargs=merge_model_kwargs(model_kwargs, temperature, max_tokens),
+        model_kwargs=merge_model_kwargs(
+            model_kwargs,
+            temperature,
+            max_tokens,
+            model_id=model_id,
+        ),
     )
 
     # Build agent kwargs - only include non-None values

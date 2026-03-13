@@ -286,6 +286,27 @@ class TestCreateDeepResearchAgent:
                     call_kwargs = mock_llm_class.call_args.kwargs
                     assert call_kwargs["model_id"] == "google.gemini-2.5-flash"
 
+    def test_openai_models_use_max_completion_tokens(self) -> None:
+        """Test OpenAI-compatible models map max_tokens to max_completion_tokens."""
+        from langchain_oci.agents.deep_research.agent import create_deep_research_agent
+
+        with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
+            with patch(
+                "langchain_oci.agents.deep_research.agent.ChatOCIGenAI"
+            ) as mock_llm_class:
+                with mock_deepagents():
+                    create_deep_research_agent(
+                        tools=[dummy_tool],
+                        model_id="openai.gpt-5",
+                        max_tokens=1024,
+                    )
+
+                    call_kwargs = mock_llm_class.call_args.kwargs
+                    assert (
+                        call_kwargs["model_kwargs"]["max_completion_tokens"] == 1024
+                    )
+                    assert "max_tokens" not in call_kwargs["model_kwargs"]
+
     def test_tools_passed_to_create_deep_agent(self) -> None:
         """Test that tools are passed to create_deep_agent."""
         from langchain_oci.agents.deep_research.agent import create_deep_research_agent
