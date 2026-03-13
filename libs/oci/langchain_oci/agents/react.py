@@ -176,7 +176,10 @@ def create_oci_agent(
     if temperature is not None:
         llm_model_kwargs["temperature"] = temperature
     if max_tokens is not None:
-        llm_model_kwargs["max_tokens"] = max_tokens
+        if model_id.startswith("openai."):
+            llm_model_kwargs["max_completion_tokens"] = max_tokens
+        else:
+            llm_model_kwargs["max_tokens"] = max_tokens
 
     # Create OCI chat model
     llm = ChatOCIGenAI(

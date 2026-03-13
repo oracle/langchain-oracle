@@ -246,6 +246,21 @@ class TestCreateOCIReactAgent:
                     call_kwargs = mock_llm_class.call_args.kwargs
                     assert call_kwargs["model_kwargs"]["max_tokens"] == 1024
 
+    def test_openai_maps_max_tokens_to_max_completion_tokens(self) -> None:
+        """Test that OpenAI models receive max_completion_tokens."""
+        with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
+            with patch("langchain_oci.agents.react.ChatOCIGenAI") as mock_llm_class:
+                with mock_create_agent():
+                    create_oci_agent(
+                        model_id="openai.gpt-5",
+                        tools=[dummy_tool],
+                        max_tokens=1024,
+                    )
+
+                    call_kwargs = mock_llm_class.call_args.kwargs
+                    assert call_kwargs["model_kwargs"]["max_completion_tokens"] == 1024
+                    assert "max_tokens" not in call_kwargs["model_kwargs"]
+
     def test_passes_store(self) -> None:
         """Test that store is passed through."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
