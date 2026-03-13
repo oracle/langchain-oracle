@@ -121,8 +121,7 @@ class _OpenSearchVectorStore(VectorStore):
         self, query: str, k: int = 4, **kwargs: Any
     ) -> list[Document]:
         return [
-            doc
-            for doc, _ in self.similarity_search_with_score(query, k=k, **kwargs)
+            doc for doc, _ in self.similarity_search_with_score(query, k=k, **kwargs)
         ]
 
     def similarity_search_with_score(
