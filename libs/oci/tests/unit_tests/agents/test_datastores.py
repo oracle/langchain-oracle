@@ -3,6 +3,7 @@
 
 """Unit tests for datastores and datastore tools."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -467,6 +468,58 @@ class TestCreateDatastoreTools:
 
         search_tool = next(t for t in tools if t.name == "search")
         assert getattr(search_tool, "top_k") == 20
+
+    def test_search_tool_logs_backend_error(self, caplog) -> None:
+        """Test search tool logs backend exceptions with query context."""
+        from langchain_oci.agents.datastores.tools.search import SearchTool
+
+        selector = MagicMock()
+        selector.route.return_value = "research"
+        failing_store = MagicMock()
+        failing_store.search_documents_with_scores.side_effect = RuntimeError("boom")
+        selector.get_store.return_value = failing_store
+
+        tool = SearchTool(
+            selector=selector,
+            store_list="research",
+            top_k=5,
+            description="test search tool",
+        )
+
+        with caplog.at_level(logging.ERROR):
+            result = tool._run("test query")
+
+        assert result == "Error during semantic search: RuntimeError: boom"
+        assert "Datastore semantic search failed" in caplog.text
+        assert "test query" in caplog.text
+        assert "research" in caplog.text
+
+    def test_keyword_search_tool_logs_backend_error(self, caplog) -> None:
+        """Test keyword search tool logs backend exceptions with query context."""
+        from langchain_oci.agents.datastores.tools.keyword_search import (
+            KeywordSearchTool,
+        )
+
+        selector = MagicMock()
+        selector.route.return_value = "research"
+        failing_store = MagicMock()
+        failing_store.keyword_search_documents.side_effect = RuntimeError("boom")
+        selector.get_store.return_value = failing_store
+
+        tool = KeywordSearchTool(
+            selector=selector,
+            store_list="research",
+            top_k=5,
+            description="test keyword search tool",
+        )
+
+        with caplog.at_level(logging.ERROR):
+            result = tool._run("exact term")
+
+        assert result == "Error during keyword search: RuntimeError: boom"
+        assert "Datastore keyword search failed" in caplog.text
+        assert "exact term" in caplog.text
+        assert "research" in caplog.text
 
 
 @pytest.mark.requires("oci")

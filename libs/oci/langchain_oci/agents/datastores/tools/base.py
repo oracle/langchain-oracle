@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
+import logging
 from typing import Any, ClassVar, Optional
 
 from langchain_core.documents import Document
@@ -148,6 +149,13 @@ class DatastoreTool(BaseTool, ABC):
         super().__init__(**data)
         if self.formatter is None:
             object.__setattr__(self, "formatter", ResultFormatter())
+        object.__setattr__(
+            self,
+            "_logger",
+            logging.getLogger(
+                f"{self.__class__.__module__}.{self.__class__.__name__}"
+            ),
+        )
 
     @property
     def full_description(self) -> str:
@@ -202,3 +210,53 @@ class DatastoreTool(BaseTool, ABC):
                 )
             )
         return results
+
+    def _log_start(
+        self,
+        operation: str,
+        *,
+        query: str,
+        store_name: str,
+        top_k: int,
+    ) -> None:
+        """Emit a consistent start log for datastore tool operations."""
+        self._logger.info(
+            "Starting datastore %s store=%s top_k=%s query=%r",
+            operation,
+            store_name,
+            top_k,
+            query,
+        )
+
+    def _log_success(
+        self,
+        operation: str,
+        *,
+        store_name: str,
+        result_count: int,
+    ) -> None:
+        """Emit a consistent success log for datastore tool operations."""
+        self._logger.info(
+            "Datastore %s succeeded store=%s results=%s",
+            operation,
+            store_name,
+            result_count,
+        )
+
+    def _log_error(
+        self,
+        operation: str,
+        *,
+        query: str,
+        store_name: str,
+        error: Exception,
+    ) -> None:
+        """Emit a consistent error log for datastore tool operations."""
+        self._logger.exception(
+            "Datastore %s failed store=%s query=%r error=%s: %s",
+            operation,
+            store_name,
+            query,
+            type(error).__name__,
+            error,
+        )

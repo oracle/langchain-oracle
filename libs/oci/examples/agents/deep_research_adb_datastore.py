@@ -61,10 +61,12 @@ Optional:
 - ADB_WALLET_PASSWORD
 - ADB_TABLE_NAME (default: VECTOR_DOCUMENTS)
 - OCI_AUTH_PROFILE
+- OCI_AGENT_LOG_LEVEL (default: INFO)
 """
 
 from __future__ import annotations
 
+import logging
 import os
 
 from langchain_core.messages import HumanMessage
@@ -80,7 +82,17 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _configure_logging() -> None:
+    level_name = os.environ.get("OCI_AGENT_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+
 def main() -> None:
+    _configure_logging()
     compartment_id = _required_env("OCI_COMPARTMENT_ID")
     service_endpoint = os.environ.get("OCI_SERVICE_ENDPOINT")
     if not service_endpoint:

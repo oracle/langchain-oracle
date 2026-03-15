@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import logging
 from typing import Any, Optional
 
 from langchain_core.documents import Document
@@ -31,6 +32,13 @@ class VectorDataStore(ABC):
         ...
         ...     # ... implement other methods
     """
+
+    @property
+    def logger(self) -> logging.Logger:
+        """Logger scoped to the concrete datastore class."""
+        return logging.getLogger(
+            f"{self.__class__.__module__}.{self.__class__.__name__}"
+        )
 
     @property
     @abstractmethod

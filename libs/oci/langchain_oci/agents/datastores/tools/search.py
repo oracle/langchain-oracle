@@ -31,6 +31,12 @@ class SearchTool(DatastoreTool):
     def _run(self, query: str) -> str:
         store_name = self.selector.route(query)
         store = self.selector.get_store(store_name)
+        self._log_start(
+            "semantic search",
+            query=query,
+            store_name=store_name,
+            top_k=self.top_k,
+        )
 
         try:
             docs_and_scores = store.search_documents_with_scores(
@@ -40,6 +46,17 @@ class SearchTool(DatastoreTool):
             documents = [doc for doc, _ in docs_and_scores]
             scores = [score for _, score in docs_and_scores]
             results = self._parse_documents(documents, scores)
+            self._log_success(
+                "semantic search",
+                store_name=store_name,
+                result_count=len(results),
+            )
             return self.formatter.format_search_results(results, store_name, "semantic")
         except Exception as e:
+            self._log_error(
+                "semantic search",
+                query=query,
+                store_name=store_name,
+                error=e,
+            )
             return self.formatter.format_error("semantic search", e)

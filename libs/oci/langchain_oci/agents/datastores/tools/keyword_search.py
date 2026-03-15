@@ -31,10 +31,27 @@ class KeywordSearchTool(DatastoreTool):
     def _run(self, query: str) -> str:
         store_name = self.selector.route(query)
         store = self.selector.get_store(store_name)
+        self._log_start(
+            "keyword search",
+            query=query,
+            store_name=store_name,
+            top_k=self.top_k,
+        )
 
         try:
             documents = store.keyword_search_documents(query=query, top_k=self.top_k)
             results = self._parse_documents(documents)
+            self._log_success(
+                "keyword search",
+                store_name=store_name,
+                result_count=len(results),
+            )
             return self.formatter.format_search_results(results, store_name, "keyword")
         except Exception as e:
+            self._log_error(
+                "keyword search",
+                query=query,
+                store_name=store_name,
+                error=e,
+            )
             return self.formatter.format_error("keyword search", e)
