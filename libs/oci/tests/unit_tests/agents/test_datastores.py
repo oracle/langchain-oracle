@@ -476,8 +476,10 @@ class TestCreateDatastoreTools:
         selector = MagicMock()
         selector.route.return_value = "research"
         failing_store = MagicMock()
-        failing_store.search_documents_with_scores.side_effect = RuntimeError("boom")
+        failing_store.search.side_effect = RuntimeError("boom")
         selector.get_store.return_value = failing_store
+        selector.embedding_model = MagicMock()
+        selector.embedding_model.embed_query.return_value = [0.1, 0.2]
 
         tool = SearchTool(
             selector=selector,
@@ -503,7 +505,7 @@ class TestCreateDatastoreTools:
         selector = MagicMock()
         selector.route.return_value = "research"
         failing_store = MagicMock()
-        failing_store.keyword_search_documents.side_effect = RuntimeError("boom")
+        failing_store.keyword_search.side_effect = RuntimeError("boom")
         selector.get_store.return_value = failing_store
 
         tool = KeywordSearchTool(
