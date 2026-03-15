@@ -23,6 +23,7 @@ Currently, Google Gemini models have the broadest multimodal support on OCI.
 
 import json
 import uuid
+import warnings
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from langchain_core.messages import (
@@ -156,30 +157,51 @@ class GenericProvider(Provider):
         """Extract text from chat response, or '' if unavailable."""
         chat_resp = getattr(response.data, "chat_response", None)
         choices = getattr(chat_resp, "choices", None)
-        if not choices:
-            return ""
-        msg = getattr(choices[0], "message", None)
-        if not msg or not msg.content:
-            return ""
-        # Concatenate all text content parts to avoid dropping later chunks.
-        return "".join(part.text for part in msg.content if getattr(part, "text", None))
+        text = ""
+        if choices:
+            msg = getattr(choices[0], "message", None)
+            if msg and msg.content:
+                # Concatenate all text content parts to avoid dropping later chunks.
+                text = "".join(
+                    part.text for part in msg.content if getattr(part, "text", None)
+                )
+        if text == "":
+            warnings.warn(
+                "GenericProvider could not extract text and returned an empty "
+                "string. Ensure the selected provider matches the response "
+                "payload format, otherwise content extraction will return an "
+                "empty string.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return text
 
     def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
         """Extract text from chat response dict (async path)."""
         chat_response = response_data.get("chatResponse", {})
         choices = chat_response.get("choices", [])
-        if not choices:
-            return ""
-        content = choices[0].get("message", {}).get("content", [])
-        if not content:
-            return ""
-        if isinstance(content, list):
-            return "".join(
-                c.get("text", "")
-                for c in content
-                if isinstance(c, dict) and c.get("type") == "TEXT"
+        text = ""
+        if choices:
+            content = choices[0].get("message", {}).get("content", [])
+            if content:
+                if isinstance(content, list):
+                    text = "".join(
+                        c.get("text", "")
+                        for c in content
+                        if isinstance(c, dict) and c.get("type") == "TEXT"
+                    )
+                else:
+                    text = str(content)
+        if text == "":
+            warnings.warn(
+                "GenericProvider could not extract text and returned an empty "
+                "string. Ensure the selected provider matches the response "
+                "payload format, otherwise content extraction will return an "
+                "empty string.",
+                UserWarning,
+                stacklevel=2,
             )
-        return str(content)
+        return text
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event."""
@@ -276,13 +298,19 @@ class GenericProvider(Provider):
 
         formatted_tool_calls: List[Dict] = []
         for tool_call in tool_calls:
-            # empty string for fields not present in the tool call
+            # Use None for missing fields to ensure proper chunk merging.
+            # Empty strings can overwrite previously set values during
+            # streaming.
+            tool_id = tool_call.get("id")
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("arguments")
+
             formatted_tool_calls.append(
                 {
-                    "id": tool_call.get("id", ""),
+                    "id": tool_id if tool_id else None,
                     "function": {
-                        "name": tool_call.get("name", ""),
-                        "arguments": tool_call.get("arguments", ""),
+                        "name": tool_name if tool_name else None,
+                        "arguments": tool_args if tool_args else None,
                     },
                     "type": "function",
                 }
@@ -352,6 +380,11 @@ class GenericProvider(Provider):
                     content = [self.oci_chat_message_text_content(text=".")]
                 tool_calls = []
                 for tool_call in message.tool_calls:
+                    # Skip tool calls with empty/missing names or IDs to
+                    # prevent API errors. This can occur when streaming
+                    # chunks are improperly merged.
+                    if not tool_call.get("name") or not tool_call.get("id"):
+                        continue
                     tool_calls.append(
                         self.oci_tool_call(
                             id=tool_call["id"],
@@ -762,8 +795,6 @@ class GeminiProvider(GenericProvider):
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize Gemini parameters with warnings for mapped keys."""
-        import warnings
-
         result = params.copy()
 
         if "max_output_tokens" in result:

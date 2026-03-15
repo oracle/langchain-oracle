@@ -43,6 +43,20 @@ This repository includes three main integration categories. For detailed informa
 - [OCI Data Science (Model Deployment)](https://github.com/oracle/langchain-oracle/tree/main/libs/oci)
 - [Oracle AI Vector Search](https://github.com/oracle/langchain-oracle/tree/main/libs/oracledb)
 
+## Samples
+
+Explore comprehensive code samples covering authentication, vision/multimodal, agents, tool calling, structured output, async patterns, and embeddings:
+
+- [Samples](https://github.com/oracle/langchain-oracle/tree/main/samples)
+
+## Documentation
+
+For full documentation, see the official LangChain integration pages:
+
+- [OCI Generative AI Provider](https://python.langchain.com/docs/integrations/providers/oci/)
+- [ChatOCIGenAI](https://python.langchain.com/docs/integrations/chat/oci_generative_ai/)
+- [OCIGenAIEmbeddings](https://python.langchain.com/docs/integrations/text_embedding/oci_generative_ai/)
+
 ## Contributing
 
 This project welcomes contributions from the community. Before submitting a pull request, please [review our contribution guide](./CONTRIBUTING.md)

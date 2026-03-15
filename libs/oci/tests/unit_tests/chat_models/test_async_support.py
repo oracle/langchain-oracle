@@ -35,15 +35,33 @@ def mock_signer():
 @pytest.fixture
 def llm(mock_oci_client, mock_signer):
     """Create a ChatOCIGenAI instance with mocked dependencies."""
+    # Set up base_client with signer (as accessed by async mixin)
+    mock_oci_client.base_client = MagicMock()
+    mock_oci_client.base_client.signer = mock_signer
+    mock_oci_client.base_client.config = {}
+
     llm = ChatOCIGenAI(
         model_id="meta.llama-3-70b-instruct",
         compartment_id="test-compartment",
         service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         client=mock_oci_client,
     )
-    # Manually set the signer for testing
-    llm.oci_signer = mock_signer
-    llm.oci_config = {}
+    return llm
+
+
+@pytest.fixture
+def llm_cohere(mock_oci_client, mock_signer):
+    """Create a Cohere ChatOCIGenAI instance with mocked dependencies."""
+    mock_oci_client.base_client = MagicMock()
+    mock_oci_client.base_client.signer = mock_signer
+    mock_oci_client.base_client.config = {}
+
+    llm = ChatOCIGenAI(
+        model_id="cohere.command-r-plus",
+        compartment_id="test-compartment",
+        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        client=mock_oci_client,
+    )
     return llm
 
 
@@ -103,11 +121,11 @@ class TestChatOCIGenAIAsyncMixin:
         assert callable(llm._astream)
 
     def test_get_async_client(self, llm, mock_signer):
-        """Test async client creation."""
-        client = llm._get_async_client()
+        """Test async client creation via cached_property."""
+        client = llm._async_client
         assert isinstance(client, OCIAsyncClient)
-        # Should return same instance on second call
-        assert llm._get_async_client() is client
+        # Should return same instance on second call (cached_property)
+        assert llm._async_client is client
 
     @pytest.mark.asyncio
     async def test_agenerate_non_streaming(self, llm):
@@ -244,23 +262,26 @@ class TestChatOCIGenAIAsyncClose:
     @pytest.mark.asyncio
     async def test_aclose_cleans_up_client(self, mock_oci_client, mock_signer):
         """Test that aclose() cleans up the async client."""
+        # Set up base_client with signer
+        mock_oci_client.base_client = MagicMock()
+        mock_oci_client.base_client.signer = mock_signer
+        mock_oci_client.base_client.config = {}
+
         llm = ChatOCIGenAI(
             model_id="meta.llama-3-70b-instruct",
             compartment_id="test-compartment",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             client=mock_oci_client,
         )
-        llm.oci_signer = mock_signer
-        llm.oci_config = {}
 
-        # Create async client
-        client = llm._get_async_client()
+        # Create async client via cached_property
+        client = llm._async_client
         assert client is not None
-        assert llm._async_client is client
+        assert "_async_client" in llm.__dict__
 
-        # Close should clean up
+        # Close should clean up (removes from __dict__ to allow re-creation)
         await llm.aclose()
-        assert llm._async_client is None
+        assert "_async_client" not in llm.__dict__
 
 
 class TestAsyncResponseParsing:
@@ -285,21 +306,53 @@ class TestAsyncResponseParsing:
         content = llm._extract_content_from_response(response_data)
         assert content == "Part 1Part 2"
 
-    def test_extract_content_cohere_v1_format(self, llm):
+    def test_extract_content_cohere_v1_format(self, llm_cohere):
         """Test content extraction from Cohere V1 format response."""
         response_data = {"chatResponse": {"text": "Cohere response"}}
-        content = llm._extract_content_from_response(response_data)
+        content = llm_cohere._extract_content_from_response(response_data)
         assert content == "Cohere response"
 
-    def test_extract_content_cohere_v2_format(self, llm):
+    def test_extract_content_cohere_v2_format(self, llm_cohere):
         """Test content extraction from Cohere V2 format response."""
         response_data = {
             "chatResponse": {
                 "message": {"content": [{"type": "TEXT", "text": "V2 response"}]}
             }
         }
-        content = llm._extract_content_from_response(response_data)
+        content = llm_cohere._extract_content_from_response(response_data)
         assert content == "V2 response"
+
+    def test_extract_content_cohere_provider_with_generic_payload(self, llm_cohere):
+        """Test Cohere provider does not parse Generic-format payloads."""
+        response_data = {
+            "chatResponse": {
+                "choices": [
+                    {
+                        "message": {
+                            "content": [{"type": "TEXT", "text": "Generic response"}]
+                        }
+                    }
+                ]
+            }
+        }
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            content = llm_cohere._extract_content_from_response(response_data)
+        assert content == ""
+
+    def test_extract_content_generic_provider_with_cohere_payload(self, llm):
+        """Test Generic provider does not parse Cohere-format payloads."""
+        response_data: Dict[str, Any] = {
+            "chatResponse": {
+                "message": {"content": [{"type": "TEXT", "text": "V2 response"}]}
+            }
+        }
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            content = llm._extract_content_from_response(response_data)
+        assert content == ""
+        response_data = {"chatResponse": {"text": "Cohere response"}}
+        with pytest.warns(UserWarning, match="selected provider matches"):
+            content = llm._extract_content_from_response(response_data)
+        assert content == ""
 
     def test_extract_tool_calls_generic_format(self, llm):
         """Test tool call extraction from Generic format."""
@@ -320,14 +373,6 @@ class TestAsyncResponseParsing:
 
     def test_extract_usage_metadata(self, llm):
         """Test usage metadata extraction."""
-        # Import UsageMetadata availability check
-        try:
-            from langchain_core.messages import UsageMetadata
-
-            has_usage_metadata = UsageMetadata is not None
-        except ImportError:
-            has_usage_metadata = False
-
         response_data = {
             "chatResponse": {
                 "usage": {
@@ -339,15 +384,11 @@ class TestAsyncResponseParsing:
         }
         usage = llm._extract_usage_metadata(response_data)
 
-        if not has_usage_metadata:
-            # UsageMetadata not available in older langchain-core versions
-            assert usage is None
-        else:
-            assert usage is not None
-            # UsageMetadata is a TypedDict, so access via dict keys
-            assert usage["input_tokens"] == 100
-            assert usage["output_tokens"] == 50
-            assert usage["total_tokens"] == 150
+        assert usage is not None
+        # UsageMetadata is a TypedDict, access via dict-style keys
+        assert usage["input_tokens"] == 100
+        assert usage["output_tokens"] == 50
+        assert usage["total_tokens"] == 150
 
 
 class TestAsyncSupportHelpers:
@@ -574,14 +615,17 @@ class TestAsyncGenerationEdgeCases:
     @pytest.fixture
     def llm_with_mock(self, mock_oci_client, mock_signer):
         """Create a ChatOCIGenAI instance with mocked dependencies."""
+        # Set up base_client with signer
+        mock_oci_client.base_client = MagicMock()
+        mock_oci_client.base_client.signer = mock_signer
+        mock_oci_client.base_client.config = {}
+
         llm = ChatOCIGenAI(
             model_id="meta.llama-3-70b-instruct",
             compartment_id="test-compartment",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             client=mock_oci_client,
         )
-        llm.oci_signer = mock_signer
-        llm.oci_config = {}
         return llm
 
     @pytest.mark.asyncio

@@ -7,12 +7,14 @@ These tests require real OCI credentials and access to OCI Generative AI.
 
 To run:
     export OCI_COMPARTMENT_ID="your-compartment-ocid"
-    export OCI_REGION="us-chicago-1"  # or your region
+    export OCI_CONFIG_PROFILE=DEFAULT
+    export OCI_AUTH_TYPE=API_KEY
     pytest tests/integration_tests/chat_models/test_async_integration.py -v -s
 
 Optional environment variables:
     OCI_AUTH_TYPE: API_KEY (default), SECURITY_TOKEN, INSTANCE_PRINCIPAL
-    OCI_AUTH_PROFILE: OCI config profile name (default: DEFAULT)
+    OCI_CONFIG_PROFILE: OCI config profile name (default: DEFAULT)
+    OCI_MODEL_ID: Model to test (default: meta.llama-3.3-70b-instruct)
 """
 
 import asyncio
@@ -37,8 +39,8 @@ def get_llm():
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     auth_type = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
-    auth_profile = os.environ.get("OCI_AUTH_PROFILE", "DEFAULT")
-    model_id = os.environ.get("OCI_MODEL_ID", "meta.llama-3.1-70b-instruct")
+    auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+    model_id = os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct")
 
     # Only set optional parameters for models that support them
     model_kwargs = {}
