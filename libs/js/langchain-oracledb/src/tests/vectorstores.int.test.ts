@@ -311,7 +311,6 @@ describe("OracleVectorStore", () => {
       },
       vectorType: VectorType.SPARSE,
       format: VectorElementFormat.FLOAT64,
-      dimensions: computedDimensions,
     };
 
     await dropTablePurge(connection as oracledb.Connection, annotatedTable);
@@ -394,17 +393,17 @@ describe("OracleVectorStore", () => {
     }
   });
 
-  test("initialize supports dense binary vectors with explicit dimensions", async () => {
+  test("initialize supports dense binary vectors when embedding dimension is compatible", async () => {
     const binaryTable = `${tableName}_dense_binary`;
     await dropTablePurge(connection as oracledb.Connection, binaryTable);
 
-    const binaryDimensions = 512;
+    const binaryDimensions = (await embedder.embedQuery(dbConfig.query)).length;
+    expect(binaryDimensions % 8).toBe(0);
     const binaryStore = new OracleVS(embedder, {
       ...dbConfig,
       tableName: binaryTable,
       vectorType: VectorType.DENSE,
       format: VectorElementFormat.BINARY,
-      dimensions: binaryDimensions,
     });
     await binaryStore.initialize();
 
@@ -421,17 +420,16 @@ describe("OracleVectorStore", () => {
     }
   });
 
-  test("initialize supports flex vector format with explicit dimension override", async () => {
+  test("initialize supports flex vector format with embedding dimensions", async () => {
     const flexTable = `${tableName}_dense_flex`;
     await dropTablePurge(connection as oracledb.Connection, flexTable);
 
-    const flexDimensions = 384;
+    const flexDimensions = (await embedder.embedQuery(dbConfig.query)).length;
     const flexStore = new OracleVS(embedder, {
       ...dbConfig,
       tableName: flexTable,
       vectorType: VectorType.DENSE,
       format: VectorElementFormat.FLEX,
-      dimensions: flexDimensions,
     });
     await flexStore.initialize();
 
@@ -474,7 +472,7 @@ describe("OracleVectorStore", () => {
         createTable(localConnection, formatOnlyTable, undefined, {
           format: VectorElementFormat.FLOAT64,
         })
-      ).rejects.toThrow(/format requires dimensions/i);
+      ).rejects.toThrow(/Embedding dimension is required/i);
     } finally {
       await localConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, formatOnlyTable);
@@ -494,6 +492,43 @@ describe("OracleVectorStore", () => {
     } finally {
       await localConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, vectorTypeOnlyTable);
+    }
+  });
+
+  test("createTable honors explicit dimensions when embedding dimension is omitted", async () => {
+    const explicitTable = `${tableName}_explicit_override`;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await createTable(localConnection, explicitTable, 96, {
+        vectorType: VectorType.DENSE,
+        format: VectorElementFormat.FLOAT64,
+      });
+
+      const meta = await getVectorColumnMetadata(localConnection, explicitTable);
+      expect(meta.vectorDimensions).toBe(96);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, explicitTable);
+    }
+  });
+
+  test("createTable rejects non-positive embedding dimension", async () => {
+    const mismatchTable = `${tableName}_invalid_dim`;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await expect(
+        createTable(localConnection, mismatchTable, 0, {
+          vectorType: VectorType.DENSE,
+          format: VectorElementFormat.FLOAT32,
+        })
+      ).rejects.toThrow(/Embedding dimension must be a positive integer/i);
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, mismatchTable);
     }
   });
 
@@ -950,14 +985,13 @@ describe("OracleVectorStore", () => {
       await connection?.close();
     }
   });
-  test("buildVectorColumnDefinition uses fallback embedding dimension when dimensions omitted", async () => {
+  test("buildVectorColumnDefinition uses embedding dimension when no override provided", async () => {
     const fallbackTable = `${tableName}_fallback_dim`;
     await dropTablePurge(connection as oracledb.Connection, fallbackTable);
 
     const fallbackStore = new OracleVS(embedder, {
       ...dbConfig,
       tableName: fallbackTable,
-      dimensions: undefined,
       vectorType: VectorType.DENSE,
       format: VectorElementFormat.FLOAT32,
     });
@@ -972,30 +1006,6 @@ describe("OracleVectorStore", () => {
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, fallbackTable);
-    }
-  });
-
-  test("createTable honors explicit dimensions when embedding dimension is undefined", async () => {
-    const explicitTable = `${tableName}_explicit_override`;
-    await dropTablePurge(connection as oracledb.Connection, explicitTable);
-
-    const explicitDimensions = 96;
-    let localConnection: oracledb.Connection | undefined;
-    try {
-      localConnection = await pool.getConnection();
-      await createTable(localConnection, explicitTable, undefined, {
-        vectorType: VectorType.DENSE,
-        format: VectorElementFormat.FLOAT64,
-        dimensions: explicitDimensions,
-      });
-
-      const meta = await getVectorColumnMetadata(localConnection, explicitTable);
-      expect(meta.vectorDimensions).toBe(explicitDimensions);
-      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
-      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
-    } finally {
-      await localConnection?.close();
-      await dropTablePurge(connection as oracledb.Connection, explicitTable);
     }
   });
 

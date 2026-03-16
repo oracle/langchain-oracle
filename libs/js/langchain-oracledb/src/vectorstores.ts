@@ -159,7 +159,6 @@ export interface OracleDBVSArgs {
   description?: string;
   annotations?: Record<string, string>;
   vectorType?: VectorType;
-  dimensions?: number;
   format?: VectorElementFormat;
 }
 
@@ -229,7 +228,6 @@ function quoteIdentifier(identifier: string) {
 
 type TableCustomization = {
   vectorType?: VectorType;
-  dimensions?: number;
   format?: VectorElementFormat;
   description?: string;
   annotations?: Record<string, string>;
@@ -260,11 +258,7 @@ function normalizeVectorTypeValue(value?: VectorType): VectorType {
 function normalizeVectorFormat(
   value: VectorElementFormat | undefined,
   vectorType: VectorType,
-  hasDimensions: boolean,
 ): VectorElementFormat {
-  if (value && !hasDimensions) {
-    throw new Error("Vector format requires dimensions to be specified.");
-  }
   if (!value) return VectorElementFormat.FLOAT32;
   const normalized = value.toUpperCase() as VectorElementFormat;
   if (!VALID_VECTOR_FORMAT.has(normalized)) {
@@ -278,55 +272,30 @@ function normalizeVectorFormat(
   return normalized;
 }
 
-function normalizeVectorDimensions(
-  dimensions: number | undefined,
-  fallback?: number | null,
-): number | undefined {
-  if (dimensions === undefined || dimensions === null) {
-    if (fallback === undefined || fallback === null) {
-      return undefined;
-    }
-    if (!Number.isInteger(fallback) || fallback <= 0) {
-      return undefined;
-    }
-    return fallback;
-  }
-
-  if (!Number.isInteger(dimensions) || dimensions <= 0) {
-    throw new Error("Vector dimensions must be a positive integer.");
-  }
-  return dimensions;
-}
-
 function buildVectorColumnDefinition(
   embeddingDim?: number | null,
   customization?: TableCustomization,
 ): string {
+  if (embeddingDim === undefined || embeddingDim === null) {
+    throw new Error("Embedding dimension is required to create the vector column.");
+  }
+  if (!Number.isInteger(embeddingDim) || embeddingDim <= 0) {
+    throw new Error("Embedding dimension must be a positive integer.");
+  }
+
   const vectorType = normalizeVectorTypeValue(customization?.vectorType);
-  const dimensionValue = normalizeVectorDimensions(
-    customization?.dimensions,
-    embeddingDim ?? undefined,
-  );
-  if (customization?.vectorType && (customization?.format === undefined || customization?.format === null)) {
+
+  if (customization?.vectorType && customization?.format === undefined) {
     throw new Error("Vector type requires both dimensions and format to be specified.");
   }
 
-  const hasDimensions = dimensionValue !== undefined;
-  const format = normalizeVectorFormat(customization?.format, vectorType, hasDimensions);
+  const format = normalizeVectorFormat(customization?.format, vectorType);
 
-  if (format === VectorElementFormat.BINARY && dimensionValue === undefined) {
-    throw new Error("BINARY vector format requires explicit dimensions.");
-  }
-  if (
-    format === VectorElementFormat.BINARY &&
-    dimensionValue !== undefined &&
-    dimensionValue % 8 !== 0
-  ) {
+  if (format === VectorElementFormat.BINARY && embeddingDim % 8 !== 0) {
     throw new Error("BINARY vector format requires dimensions to be a multiple of 8.");
   }
 
-  const dimensionSegment =
-    dimensionValue !== undefined ? String(dimensionValue) : VectorElementFormat.FLEX;
+  const dimensionSegment = String(embeddingDim);
   const formatSegment = format ?? VectorElementFormat.FLOAT32;
 
   if (vectorType === VectorType.SPARSE) {
@@ -598,8 +567,6 @@ export class OracleVS extends VectorStore {
 
   readonly vectorType?: VectorType;
 
-  readonly vectorDimensions?: number;
-
   readonly vectorFormat?: VectorElementFormat;
 
   readonly query: string;
@@ -623,7 +590,6 @@ export class OracleVS extends VectorStore {
         ? { ...dbConfig.annotations }
         : undefined;
       this.vectorType = dbConfig.vectorType;
-      this.vectorDimensions = dbConfig.dimensions;
       this.vectorFormat = dbConfig.format;
     } catch (error: unknown) {
       handleError(error);
@@ -644,7 +610,6 @@ export class OracleVS extends VectorStore {
         description: this.description,
         annotations: this.annotations,
         vectorType: this.vectorType,
-        dimensions: this.vectorDimensions,
         format: this.vectorFormat
       });
     } catch (error: unknown) {
