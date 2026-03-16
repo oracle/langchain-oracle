@@ -434,9 +434,6 @@ You do not need to implement an extra ADB-specific search tool class for normal 
 - ❌ Handle chunking manually (automatic with `chunk_on_write=True`)
 - ❌ Import from `langchain-oracledb` directly (handled internally by `ADB`)
 
-**Complete working example:**
-`examples/agents/deep_research_adb_datastore.py`
-
 ### What `datastore_description` Does
 
 `datastore_description` is not indexed document content. It is store-level metadata used by the

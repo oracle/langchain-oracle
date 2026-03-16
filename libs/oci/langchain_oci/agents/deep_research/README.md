@@ -224,9 +224,3 @@ agent = create_deep_research_agent(
 If your workflow keeps agents/models alive across many async calls, explicitly
 close the underlying model client when done to avoid unclosed HTTP session
 warnings.
-
-## Runnable Examples in This Repo
-
-- `libs/oci/examples/agents/deep_research_adb_datastore.py`
-- `libs/oci/examples/agents/deep_research_agent_demo.py`
-- `libs/oci/examples/agents/deep_research_oci_storage.py`
