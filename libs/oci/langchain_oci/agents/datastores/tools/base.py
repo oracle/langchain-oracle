@@ -12,7 +12,7 @@ from typing import Any, ClassVar, Optional
 
 from langchain_core.documents import Document
 from langchain_core.tools import BaseTool
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, PrivateAttr
 
 
 @dataclass
@@ -144,6 +144,7 @@ class DatastoreTool(BaseTool, ABC):
     selector: Any = Field(default=None, exclude=True)
     formatter: Any = Field(default=None, exclude=True)
     store_list: str = Field(default="", exclude=True)
+    _logger: logging.Logger = PrivateAttr()
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)
@@ -152,9 +153,7 @@ class DatastoreTool(BaseTool, ABC):
         object.__setattr__(
             self,
             "_logger",
-            logging.getLogger(
-                f"{self.__class__.__module__}.{self.__class__.__name__}"
-            ),
+            logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}"),
         )
 
     @property
