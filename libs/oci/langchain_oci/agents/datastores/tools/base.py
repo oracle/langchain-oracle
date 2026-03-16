@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC
 from dataclasses import dataclass, field
-import logging
 from typing import Any, ClassVar, Optional
 
 from langchain_core.documents import Document

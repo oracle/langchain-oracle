@@ -122,7 +122,10 @@ class ADB(VectorDataStore):
             ) from e
 
         self.logger.debug(
-            "Initializing ADB OracleVS backend table=%s chunk_on_write=%s chunking_params=%s",
+            (
+                "Initializing ADB OracleVS backend table=%s "
+                "chunk_on_write=%s chunking_params=%s"
+            ),
             self.table_name,
             self.chunk_on_write,
             self.chunking_params,
