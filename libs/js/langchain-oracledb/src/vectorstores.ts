@@ -11,12 +11,12 @@ export type Metadata = Record<string, unknown>;
 
 export function generateWhereClause(
   dbFilter: Metadata,
-  bindValues: unknown[],
+  bindValues: unknown[]
 ): string {
   // Handle $and
   if ("$and" in dbFilter && Array.isArray(dbFilter.$and)) {
     const andConditions = dbFilter.$and.map((cond) =>
-      generateWhereClause(cond as Metadata, bindValues),
+      generateWhereClause(cond as Metadata, bindValues)
     );
     return `(${andConditions.join(" AND ")})`;
   }
@@ -24,7 +24,7 @@ export function generateWhereClause(
   // Handle $or
   if ("$or" in dbFilter && Array.isArray(dbFilter.$or)) {
     const orConditions = dbFilter.$or.map((cond) =>
-      generateWhereClause(cond as Metadata, bindValues),
+      generateWhereClause(cond as Metadata, bindValues)
     );
     return `(${orConditions.join(" OR ")})`;
   }
@@ -36,7 +36,7 @@ export function generateWhereClause(
       // Operator-based filters ($eq, $lte, $in,...)
       for (const [op, operand] of Object.entries(val)) {
         conditions.push(
-          generateOperatorCondition(col, op, operand, bindValues),
+          generateOperatorCondition(col, op, operand, bindValues)
         );
       }
     } else if (Array.isArray(val)) {
@@ -57,7 +57,7 @@ function generateOperatorCondition(
   column: string,
   operator: string,
   value: unknown,
-  bindValues: unknown[],
+  bindValues: unknown[]
 ): string {
   switch (operator) {
     case "$eq":
@@ -81,7 +81,7 @@ function generateOperatorCondition(
     case "$in": {
       if (!Array.isArray(value)) throw new Error("$in requires array");
       const inClauses = value.map((v) =>
-        jsonCompare(column, "=", v, bindValues),
+        jsonCompare(column, "=", v, bindValues)
       );
       return `(${inClauses.join(" OR ")})`;
     }
@@ -89,7 +89,7 @@ function generateOperatorCondition(
     case "$nin": {
       if (!Array.isArray(value)) throw new Error("$nin requires array");
       const ninClauses = value.map((v) =>
-        jsonCompare(column, "!=", v, bindValues),
+        jsonCompare(column, "!=", v, bindValues)
       );
       return `(${ninClauses.join(" AND ")})`;
     }
@@ -121,7 +121,7 @@ function jsonCompare(
   column: string,
   op: string,
   value: unknown,
-  bindValues: unknown[],
+  bindValues: unknown[]
 ): string {
   bindValues.push(value);
   const pos = bindValues.length;
@@ -174,7 +174,7 @@ function handleError(error: unknown): never {
         throw new Error("Operation failed due to a validation error.");
       default:
         throw new Error(
-          `An unexpected error occurred during the operation. ${error}`,
+          `An unexpected error occurred during the operation. ${error}`
         );
     }
   }
@@ -182,7 +182,7 @@ function handleError(error: unknown): never {
 }
 
 function isPool(
-  client: oracledb.Connection | oracledb.Pool,
+  client: oracledb.Connection | oracledb.Pool
 ): client is oracledb.Pool {
   return "getConnection" in client;
 }
@@ -229,7 +229,7 @@ export async function createTable(
   connection: oracledb.Connection,
   tableName: string,
   embeddingDim: number,
-  customization?: TableCustomization,
+  customization?: TableCustomization
 ): Promise<void> {
   const tableIdentifier = quoteIdentifier(tableName);
   const vectorType = normalizeVectorType(customization?.vectorType);
@@ -260,14 +260,14 @@ export async function createTable(
 
     if (customization?.annotations) {
       for (const [columnName, note] of Object.entries(
-        customization.annotations,
+        customization.annotations
       )) {
         const trimmedNote = note?.trim();
         if (!trimmedNote) continue;
         const columnKey = columnName.trim().toLowerCase();
         if (!(columnKey in colsDict)) continue;
         const normalizedColumnIdentifier = `${tableIdentifier}.${quoteIdentifier(
-          columnKey.toUpperCase(),
+          columnKey.toUpperCase()
         )}`;
         const escapedNote = escapeCommentText(trimmedNote);
         const columnCommentSql = `COMMENT ON COLUMN ${normalizedColumnIdentifier} IS '${escapedNote}'`;
@@ -287,7 +287,7 @@ function _getIndexName(baseName: string): string {
 export async function createIndex(
   client: oracledb.Connection,
   vectorStore: OracleVS,
-  params?: { [key: string]: any },
+  params?: { [key: string]: any }
 ): Promise<void> {
   const idxType = params?.idxType || "HNSW";
 
@@ -301,7 +301,7 @@ export async function createIndex(
 async function createHNSWIndex(
   connection: oracledb.Connection,
   oraclevs: OracleVS,
-  params?: { [key: string]: any },
+  params?: { [key: string]: any }
 ): Promise<void> {
   try {
     const defaults: { [key: string]: any } = {
@@ -339,7 +339,7 @@ async function createHNSWIndex(
 
     const { idxName } = config;
     const baseSql = `CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(
-      idxName,
+      idxName
     )}
                               ON ${oraclevs.tableName}(embedding) 
                               ORGANIZATION INMEMORY NEIGHBOR GRAPH`;
@@ -377,7 +377,7 @@ async function createHNSWIndex(
 async function createIVFIndex(
   connection: oracledb.Connection,
   oraclevs: OracleVS,
-  params?: { [key: string]: any },
+  params?: { [key: string]: any }
 ): Promise<void> {
   try {
     const defaults: { [key: string]: any } = {
@@ -415,7 +415,7 @@ async function createIVFIndex(
     // Base SQL statement
     const { idxName } = config;
     const baseSql = `CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(
-      idxName,
+      idxName
     )}
                               ON ${oraclevs.tableName}(embedding) 
                               ORGANIZATION NEIGHBOR PARTITIONS`;
@@ -446,7 +446,7 @@ async function createIVFIndex(
 
 export async function dropTablePurge(
   connection: oracledb.Connection,
-  tableName: string,
+  tableName: string
 ): Promise<void> {
   try {
     const ddl = `DROP TABLE IF EXISTS ${quoteIdentifier(tableName)} PURGE`;
@@ -514,7 +514,7 @@ export class OracleVS extends VectorStore {
       await createTable(connection, this.tableName, this.embeddingDimension, {
         description: this.description,
         annotations: this.annotations,
-        vectorType: this.vectorType,
+        vectorType: this.vectorType
       });
     } catch (error: unknown) {
       handleError(error);
@@ -558,7 +558,7 @@ export class OracleVS extends VectorStore {
   public async addVectors(
     vectors: number[][],
     documents: DocumentInterface[],
-    options?: AddDocumentOptions,
+    options?: AddDocumentOptions
   ): Promise<string[] | undefined> {
     if (vectors.length === 0) {
       throw new Error("Vectors input null. Nothing to add...");
@@ -571,7 +571,7 @@ export class OracleVS extends VectorStore {
       // Ensure there are IDs for all documents
       if (inputIds !== undefined && inputIds.length !== vectors.length) {
         throw new Error(
-          "The number of ids must match the number of vectors provided.",
+          "The number of ids must match the number of vectors provided."
         );
       }
 
@@ -642,14 +642,14 @@ export class OracleVS extends VectorStore {
 
   public async addDocuments(
     documents: DocumentInterface[],
-    options?: AddDocumentOptions,
+    options?: AddDocumentOptions
   ): Promise<string[] | undefined> {
     const texts = documents.map(({ pageContent }) => pageContent);
 
     return this.addVectors(
       await this.embeddings.embedDocuments(texts),
       documents,
-      options,
+      options
     );
   }
 
@@ -663,7 +663,7 @@ export class OracleVS extends VectorStore {
   public async similaritySearchByVectorReturningEmbeddings(
     query: number[],
     k = 4,
-    filter?: this["FilterType"],
+    filter?: this["FilterType"]
   ): Promise<[Document, number, Float32Array | number[]][]> {
     const docsScoresAndEmbeddings: Array<
       [Document, number, Float32Array | number[]]
@@ -727,7 +727,7 @@ export class OracleVS extends VectorStore {
   public async similaritySearchVectorWithScore(
     query: number[],
     k: number,
-    filter?: this["FilterType"],
+    filter?: this["FilterType"]
   ): Promise<[DocumentInterface, number][]> {
     const docsScoresAndEmbeddings =
       await this.similaritySearchByVectorReturningEmbeddings(query, k, filter);
@@ -755,7 +755,7 @@ export class OracleVS extends VectorStore {
    */
   public async maxMarginalRelevanceSearch(
     query: string,
-    options: MaxMarginalRelevanceSearchOptions<this["FilterType"]>,
+    options: MaxMarginalRelevanceSearchOptions<this["FilterType"]>
   ): Promise<Document[]> {
     const embedding = await this.embeddings.embedQuery(query);
     return await this.maxMarginalRelevanceSearchByVector(embedding, options);
@@ -763,13 +763,13 @@ export class OracleVS extends VectorStore {
 
   public async maxMarginalRelevanceSearchByVector(
     embedding: number[],
-    options: MaxMarginalRelevanceSearchOptions<this["FilterType"]>,
+    options: MaxMarginalRelevanceSearchOptions<this["FilterType"]>
   ): Promise<Document[]> {
     // Fetch documents and their scores. This calls the previously adapted function.
     const docsAndScores =
       await this.maxMarginalRelevanceSearchWithScoreByVector(
         embedding,
-        options,
+        options
       );
 
     // Extract and return only the documents from the results
@@ -778,14 +778,14 @@ export class OracleVS extends VectorStore {
 
   public async maxMarginalRelevanceSearchWithScoreByVector(
     embedding: number[],
-    options: MaxMarginalRelevanceSearchOptions<this["FilterType"]>,
+    options: MaxMarginalRelevanceSearchOptions<this["FilterType"]>
   ): Promise<Array<{ document: Document; score: number }>> {
     // Fetch documents and their scores.
     const docsScoresEmbeddings =
       await this.similaritySearchByVectorReturningEmbeddings(
         embedding,
         options.fetchK,
-        options.filter,
+        options.filter
       );
 
     if (!docsScoresEmbeddings.length) {
@@ -794,16 +794,16 @@ export class OracleVS extends VectorStore {
 
     // Split documents, scores, and embeddings
     const documents: Document[] = docsScoresEmbeddings.map(
-      ([document]) => document,
+      ([document]) => document
     );
     const scores: number[] = docsScoresEmbeddings.map(([, score]) => score);
     const embeddings: (Float32Array | number[])[] = docsScoresEmbeddings.map(
-      ([, , embedding]) => new Float32Array(embedding),
+      ([, , embedding]) => new Float32Array(embedding)
     );
 
     // Convert all embeddings to Float32Array for consistency
     const consistentEmbeddings: number[][] = embeddings.map((embedding) =>
-      Array.from(embedding),
+      Array.from(embedding)
     );
     const queryEmbedding: number[] = Array.from(embedding);
 
@@ -813,7 +813,7 @@ export class OracleVS extends VectorStore {
       queryEmbedding,
       consistentEmbeddings,
       lambdaMult,
-      options.k,
+      options.k
     );
 
     // Filter documents based on MMR-selected indices and map scores
@@ -844,7 +844,7 @@ export class OracleVS extends VectorStore {
         await connection.execute(
           `TRUNCATE TABLE ${this.tableName}`,
           [],
-          options,
+          options
         );
       }
     } catch (error: unknown) {
@@ -857,7 +857,7 @@ export class OracleVS extends VectorStore {
   static async fromDocuments(
     documents: Document[],
     embeddings: EmbeddingsInterface,
-    dbConfig: OracleDBVSArgs,
+    dbConfig: OracleDBVSArgs
   ): Promise<OracleVS> {
     const { client } = dbConfig;
     if (!client) throw new Error("client parameter is required...");

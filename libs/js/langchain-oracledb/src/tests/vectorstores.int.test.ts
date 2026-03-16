@@ -78,11 +78,11 @@ describe("OracleVectorStore", () => {
       });
 
       const embedding = await embedder.embedQuery(
-        "What is your favourite sport?",
+        "What is your favourite sport?"
       );
       const matches = await oraclevs.similaritySearchVectorWithScore(
         embedding,
-        1,
+        1
       );
 
       expect(matches).toHaveLength(1);
@@ -114,7 +114,7 @@ describe("OracleVectorStore", () => {
     const results2 = await oraclevs.similaritySearchWithScore(
       "hello!",
       1,
-      dbFilter,
+      dbFilter
     );
     expect(results2).toHaveLength(1);
   });
@@ -140,7 +140,7 @@ describe("OracleVectorStore", () => {
             fetchInfo: {
               TEXT: { type: oracledb.STRING },
             },
-          },
+          }
         );
         return (result.rows?.[0] ?? null) as {
           EXTERNAL_ID?: string;
@@ -159,7 +159,7 @@ describe("OracleVectorStore", () => {
             metadata: { version: 1 },
           }),
         ],
-        { ids: [docId] },
+        { ids: [docId] }
       );
 
       const initialRow = await getRow();
@@ -181,13 +181,13 @@ describe("OracleVectorStore", () => {
               metadata: { version: 2, updated: true },
             }),
           ],
-          { ids: [docId] },
-        ),
+          { ids: [docId] }
+        )
       ).rejects.toThrow(/ORA-00001|unique constraint/i);
 
       const rowAfterFailedInsert = await getRow();
       expect(rowAfterFailedInsert?.TEXT ?? rowAfterFailedInsert?.text).toBe(
-        "Original content",
+        "Original content"
       );
       const metadataAfterFailedInsert = (
         rowAfterFailedInsert?.METADATA ?? rowAfterFailedInsert?.metadata
@@ -201,7 +201,7 @@ describe("OracleVectorStore", () => {
             metadata: { version: 2, updated: true },
           }),
         ],
-        { ids: [docId], upsert: true },
+        { ids: [docId], upsert: true }
       );
 
       const updatedRow = await getRow();
@@ -228,7 +228,7 @@ describe("OracleVectorStore", () => {
       description: "Integration test table description",
       annotations: {
         external_id: "External identifier for documents",
-        metadata: "JSON metadata payload",
+        metadata: "JSON metadata payload"
       },
     };
 
@@ -244,7 +244,7 @@ describe("OracleVectorStore", () => {
       const tableCommentResult = await metaConnection.execute(
         `SELECT comments FROM user_tab_comments WHERE table_name = :tableName`,
         [annotatedTable],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
       const tableCommentRow = tableCommentResult.rows?.[0] as
         | { COMMENTS?: string; comments?: string }
@@ -254,12 +254,12 @@ describe("OracleVectorStore", () => {
       expect(tableComment).toBe("Integration test table description");
 
       const fetchColumnComment = async (
-        columnName: string,
+        columnName: string
       ): Promise<string | null> => {
         const columnResult = await metaConnection!.execute(
           `SELECT comments FROM user_col_comments WHERE table_name = :tableName AND column_name = :columnName`,
           [annotatedTable, columnName],
-          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
         );
         const columnRow = columnResult.rows?.[0] as
           | { COMMENTS?: string; comments?: string }
@@ -278,7 +278,7 @@ describe("OracleVectorStore", () => {
       }
       await dropTablePurge(
         connection as oracledb.Connection,
-        annotatedTable,
+        annotatedTable
       );
     }
   });
@@ -290,7 +290,7 @@ describe("OracleVectorStore", () => {
     const makeDoc = (
       content: string,
       author: string | string[],
-      category = "research/AI",
+      category = "research/AI"
     ) => ({
       pageContent: content,
       metadata: {
@@ -305,19 +305,19 @@ describe("OracleVectorStore", () => {
       makeDoc(
         "Alice discusses the application of machine learning and AI research in predicting football match outcomes.",
         ["Alice", "Bob"],
-        "sports",
+        "sports"
       ),
       makeDoc(
         "Geoffrey Hinton explores the future of deep learning and its impact on AI research.",
-        "Geoffrey Hinton",
+        "Geoffrey Hinton"
       ),
       makeDoc(
         "Yoshua Bengio presents breakthroughs in neural network architectures for natural language understanding.",
-        "Yoshua Bengio",
+        "Yoshua Bengio"
       ),
       makeDoc(
         "Andrew Ng shares insights on scaling AI education to democratize access to machine learning tools.",
-        "Andrew Ng",
+        "Andrew Ng"
       ),
     ];
 
@@ -328,7 +328,7 @@ describe("OracleVectorStore", () => {
     let results = await oraclevs.similaritySearch(
       "latest advances in AI research for education",
       1,
-      filter,
+      filter
     );
 
     expect(results).toHaveLength(1);
@@ -350,7 +350,7 @@ describe("OracleVectorStore", () => {
     results = await oraclevs.similaritySearch(
       "latest advances in AI research for education",
       1,
-      filter,
+      filter
     );
 
     expect(results).toHaveLength(1);
@@ -372,7 +372,7 @@ describe("OracleVectorStore", () => {
     results = await oraclevs.similaritySearch(
       "latest advances in AI research for education",
       5,
-      filter,
+      filter
     );
 
     expect(results).toHaveLength(3);
@@ -409,7 +409,7 @@ describe("OracleVectorStore", () => {
           pageContent:
             "Alice discusses the application of machine learning and AI research in predicting football match outcomes.",
         }),
-      ]),
+      ])
     );
   });
 
@@ -512,13 +512,13 @@ describe("OracleVectorStore", () => {
     // filter with $exists to return rows which do not contain price
     filter = { price: { $exists: false } };
     await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
-      "No rows found",
+      "No rows found"
     );
 
     // filter with $exists for non-existing key
     filter = { cost: { $exists: true } };
     await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
-      "No rows found",
+      "No rows found"
     );
   });
 
@@ -560,7 +560,7 @@ describe("OracleVectorStore", () => {
 
     results.forEach((doc) => {
       expect(
-        doc.metadata.price <= 20 || doc.metadata.category === "books",
+        doc.metadata.price <= 20 || doc.metadata.category === "books"
       ).toBe(true);
     });
   });
@@ -642,7 +642,7 @@ describe("OracleVectorStore", () => {
           metadata: { category: "books", price: 18, rating: 4.2 },
           id: "3",
         }),
-      ]),
+      ])
     );
   });
 
@@ -678,7 +678,7 @@ describe("OracleVectorStore", () => {
       "best beaches in Europe",
       {
         k: 3,
-      },
+      }
     );
 
     // Extract only page contents for checking
