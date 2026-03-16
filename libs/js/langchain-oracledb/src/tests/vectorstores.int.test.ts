@@ -17,7 +17,85 @@ import {
   OracleEmbeddings,
   type OracleDBVSArgs,
 } from "../index.js";
-import { OracleVS, type Metadata } from "../vectorstores.js";
+import {
+  OracleVS,
+  type Metadata,
+  VectorElementFormat,
+  VectorStorage,
+  createTable,
+} from "../vectorstores.js";
+
+type VectorColumnMetadata = {
+  vectorLength?: number;
+  vectorFormat?: string;
+  storage?: string;
+};
+
+function formatTableNameForMetadata(tableName: string): string {
+  if (tableName.startsWith('"') && tableName.endsWith('"')) {
+    return tableName.slice(1, -1);
+  }
+  if (/[a-z]/.test(tableName)) {
+    return tableName;
+  }
+  return tableName.toUpperCase();
+}
+
+async function getVectorColumnMetadata(
+  connection: oracledb.Connection,
+  tableName: string,
+): Promise<VectorColumnMetadata> {
+  const normalized = formatTableNameForMetadata(tableName);
+  const candidates = Array.from(
+    new Set([normalized, normalized.toUpperCase()]),
+  );
+
+  let ddlResult: oracledb.Result<unknown> | undefined;
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    try {
+      ddlResult = await connection.execute(
+        `SELECT DBMS_METADATA.GET_DDL('TABLE', :tableName, USER) AS DDL FROM dual`,
+        [candidate],
+        {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+          fetchInfo: {
+            DDL: { type: oracledb.STRING },
+          },
+        },
+      );
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!ddlResult) {
+    throw lastError ?? new Error("Unable to fetch table metadata.");
+  }
+
+  const ddlRow = ddlResult.rows?.[0] as { DDL?: string; ddl?: string } | undefined;
+  const ddlText = ddlRow?.DDL ?? ddlRow?.ddl ?? "";
+  const match = ddlText.match(/"?(?:EMBEDDING)"?\s+VECTOR\(([^)]+)\)/i);
+  if (!match) {
+    throw new Error(`Unable to parse vector definition from DDL: ${normalized}`);
+  }
+  const parts = match[1]
+    .split(",")
+    .map((part) => part.trim().toUpperCase());
+
+  const [lengthPart, formatPart = "FLOAT32", storagePart = "DENSE"] = parts;
+  const parsedLength =
+    lengthPart === VectorElementFormat.FLEX ? undefined : Number(lengthPart);
+
+  return {
+    vectorLength: parsedLength,
+    vectorFormat: formatPart,
+    storage: storagePart,
+  };
+}
 
 describe("OracleVectorStore", () => {
   const tableName = "testlangchain_1";
@@ -222,6 +300,7 @@ describe("OracleVectorStore", () => {
 
   test("initialize applies table description and column annotations", async () => {
     const annotatedTable = `${tableName}_meta`;
+    const computedDimensions = (await embedder.embedQuery(dbConfig.query)).length;
     const annotatedConfig: OracleDBVSArgs = {
       ...dbConfig,
       tableName: annotatedTable,
@@ -230,6 +309,9 @@ describe("OracleVectorStore", () => {
         external_id: "External identifier for documents",
         metadata: "JSON metadata payload"
       },
+      vectorType: VectorStorage.SPARSE,
+      format: VectorElementFormat.FLOAT64,
+      dimensions: computedDimensions,
     };
 
     await dropTablePurge(connection as oracledb.Connection, annotatedTable);
@@ -272,6 +354,11 @@ describe("OracleVectorStore", () => {
 
       const metadataComment = await fetchColumnComment("METADATA");
       expect(metadataComment).toBe("JSON metadata payload");
+
+      const meta = await getVectorColumnMetadata(metaConnection, annotatedTable);
+      expect(meta.vectorLength).toBe(computedDimensions);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
+      expect((meta.storage ?? "").toUpperCase()).toBe("SPARSE");
     } finally {
       if (metaConnection) {
         await metaConnection.close();
@@ -280,6 +367,101 @@ describe("OracleVectorStore", () => {
         connection as oracledb.Connection,
         annotatedTable
       );
+    }
+  });
+
+  test("initialize defaults to dense float32 vectors when unspecified", async () => {
+    const defaultVectorTable = `${tableName}_dense_default`;
+    await dropTablePurge(connection as oracledb.Connection, defaultVectorTable);
+
+    const defaultStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: defaultVectorTable,
+    });
+    await defaultStore.initialize();
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const meta = await getVectorColumnMetadata(metaConnection, defaultVectorTable);
+      const expectedDim = defaultStore.embeddingDimension ?? 0;
+      expect(meta.vectorLength).toBe(expectedDim);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT32");
+      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, defaultVectorTable);
+    }
+  });
+
+  test("initialize supports dense binary vectors with explicit dimensions", async () => {
+    const binaryTable = `${tableName}_dense_binary`;
+    await dropTablePurge(connection as oracledb.Connection, binaryTable);
+
+    const binaryDimensions = 512;
+    const binaryStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: binaryTable,
+      vectorType: VectorStorage.DENSE,
+      format: VectorElementFormat.BINARY,
+      dimensions: binaryDimensions,
+    });
+    await binaryStore.initialize();
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const meta = await getVectorColumnMetadata(metaConnection, binaryTable);
+      expect(meta.vectorLength).toBe(binaryDimensions);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("BINARY");
+      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, binaryTable);
+    }
+  });
+
+  test("initialize supports flex vector format with explicit dimension override", async () => {
+    const flexTable = `${tableName}_dense_flex`;
+    await dropTablePurge(connection as oracledb.Connection, flexTable);
+
+    const flexDimensions = 384;
+    const flexStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: flexTable,
+      vectorType: VectorStorage.DENSE,
+      format: VectorElementFormat.FLEX,
+      dimensions: flexDimensions,
+    });
+    await flexStore.initialize();
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const meta = await getVectorColumnMetadata(metaConnection, flexTable);
+      expect(meta.vectorLength).toBe(flexDimensions);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("*");
+      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, flexTable);
+    }
+  });
+
+  test("createTable rejects unsupported sparse binary configuration", async () => {
+    const validationTable = `${tableName}_invalid_binary`;
+    let tempConnection: oracledb.Connection | undefined;
+    try {
+      tempConnection = await pool.getConnection();
+      await expect(
+        createTable(tempConnection, validationTable, 128, {
+          vectorType: VectorStorage.SPARSE,
+          format: VectorElementFormat.BINARY,
+        })
+      ).rejects.toThrow(/BINARY format is not supported for SPARSE vectors./i);
+    } finally {
+      await tempConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, validationTable);
     }
   });
 
@@ -736,4 +918,53 @@ describe("OracleVectorStore", () => {
       await connection?.close();
     }
   });
+  test("buildVectorColumnDefinition uses fallback embedding dimension when dimensions omitted", async () => {
+    const fallbackTable = `${tableName}_fallback_dim`;
+    await dropTablePurge(connection as oracledb.Connection, fallbackTable);
+
+    const fallbackStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: fallbackTable,
+      dimensions: undefined,
+      vectorType: VectorStorage.DENSE,
+      format: VectorElementFormat.FLOAT32,
+    });
+    await fallbackStore.initialize();
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const meta = await getVectorColumnMetadata(metaConnection, fallbackTable);
+      const expected = fallbackStore.embeddingDimension ?? 0;
+      expect(meta.vectorLength).toBe(expected);
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, fallbackTable);
+    }
+  });
+
+  test("createTable honors explicit dimensions when embedding dimension is undefined", async () => {
+    const explicitTable = `${tableName}_explicit_override`;
+    await dropTablePurge(connection as oracledb.Connection, explicitTable);
+
+    const explicitDimensions = 96;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await createTable(localConnection, explicitTable, undefined, {
+        vectorType: VectorStorage.DENSE,
+        format: VectorElementFormat.FLOAT64,
+        dimensions: explicitDimensions,
+      });
+
+      const meta = await getVectorColumnMetadata(localConnection, explicitTable);
+      expect(meta.vectorLength).toBe(explicitDimensions);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
+      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, explicitTable);
+    }
+  });
+
 });

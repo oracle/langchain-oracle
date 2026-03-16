@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import oracledb from "oracledb";
 import {
   type MaxMarginalRelevanceSearchOptions,
@@ -130,16 +131,36 @@ function jsonCompare(
   return `JSON_EXISTS(metadata, '$.${column}?(@ ${operator} $${alias})' PASSING :${pos} AS "${alias}")`;
 }
 
+export const VectorStorage = {
+  DENSE: "DENSE",
+  SPARSE: "SPARSE",
+} as const;
+
+export type VectorStorage = (typeof VectorStorage)[keyof typeof VectorStorage];
+
+export const VectorElementFormat = {
+  INT8: "INT8",
+  FLOAT32: "FLOAT32",
+  FLOAT64: "FLOAT64",
+  BINARY: "BINARY",
+  FLEX: "*",
+} as const;
+
+export type VectorElementFormat =
+  (typeof VectorElementFormat)[keyof typeof VectorElementFormat];
+
 export interface OracleDBVSArgs {
   tableName: string;
   schemaName?: string | null;
   client: oracledb.Pool | oracledb.Connection;
-  query: string; // compulsory?
+  query: string;
   distanceStrategy?: DistanceStrategy;
   filter?: Metadata;
   description?: string;
   annotations?: Record<string, string>;
-  vectorType?: string;
+  vectorType?: VectorStorage;
+  dimensions?: number;
+  format?: VectorElementFormat;
 }
 
 export const DistanceStrategy = {
@@ -207,18 +228,103 @@ function quoteIdentifier(identifier: string) {
 }
 
 type TableCustomization = {
-  vectorType?: string;
+  vectorType?: VectorStorage;
+  dimensions?: number;
+  format?: VectorElementFormat;
   description?: string;
   annotations?: Record<string, string>;
 };
 
-function normalizeVectorType(vectorType?: string): string {
-  if (!vectorType) return "FLOAT32";
-  const normalized = vectorType.trim().toUpperCase();
-  if (!/^[A-Z0-9_]+$/.test(normalized)) {
-    throw new Error(`Vector type ${vectorType} is not valid.`);
+const VALID_VECTOR_STORAGE = new Set<VectorStorage>([
+  VectorStorage.DENSE,
+  VectorStorage.SPARSE,
+]);
+
+const VALID_VECTOR_FORMAT = new Set<VectorElementFormat>([
+  VectorElementFormat.INT8,
+  VectorElementFormat.FLOAT32,
+  VectorElementFormat.FLOAT64,
+  VectorElementFormat.BINARY,
+  VectorElementFormat.FLEX,
+]);
+
+function normalizeVectorStorage(value?: VectorStorage): VectorStorage {
+  if (!value) return VectorStorage.DENSE;
+  const normalized = value.toUpperCase() as VectorStorage;
+  if (!VALID_VECTOR_STORAGE.has(normalized)) {
+    throw new Error(`Vector storage type ${value} is not valid. Use DENSE or SPARSE.`);
   }
   return normalized;
+}
+
+function normalizeVectorFormat(
+  value: VectorElementFormat | undefined,
+  storage: VectorStorage,
+): VectorElementFormat {
+  if (!value) return VectorElementFormat.FLOAT32;
+  const normalized = value.toUpperCase() as VectorElementFormat;
+  if (!VALID_VECTOR_FORMAT.has(normalized)) {
+    throw new Error(
+      `Vector format ${value} is not valid. Use INT8, FLOAT32, FLOAT64, BINARY, or *.`,
+    );
+  }
+  if (storage === VectorStorage.SPARSE && normalized === VectorElementFormat.BINARY) {
+    throw new Error("BINARY format is not supported for SPARSE vectors.");
+  }
+  return normalized;
+}
+
+function normalizeVectorDimensions(
+  dimensions: number | undefined,
+  fallback?: number | null,
+): number | undefined {
+  if (dimensions === undefined || dimensions === null) {
+    if (fallback === undefined || fallback === null) {
+      return undefined;
+    }
+    if (!Number.isInteger(fallback) || fallback <= 0) {
+      return undefined;
+    }
+    return fallback;
+  }
+
+  if (!Number.isInteger(dimensions) || dimensions <= 0) {
+    throw new Error("Vector dimensions must be a positive integer.");
+  }
+  return dimensions;
+}
+
+function buildVectorColumnDefinition(
+  embeddingDim?: number | null,
+  customization?: TableCustomization,
+): string {
+  const storage = normalizeVectorStorage(customization?.vectorType);
+  const dimensionValue = normalizeVectorDimensions(
+    customization?.dimensions,
+    embeddingDim ?? undefined,
+  );
+  const format = normalizeVectorFormat(customization?.format, storage);
+
+  if (format === VectorElementFormat.BINARY && dimensionValue === undefined) {
+    throw new Error("BINARY vector format requires explicit dimensions.");
+  }
+  if (
+    format === VectorElementFormat.BINARY &&
+    dimensionValue !== undefined &&
+    dimensionValue % 8 !== 0
+  ) {
+    throw new Error("BINARY vector format requires dimensions to be a multiple of 8.");
+  }
+
+  const dimensionSegment =
+    dimensionValue !== undefined ? String(dimensionValue) : VectorElementFormat.FLEX;
+  const formatSegment = format ?? VectorElementFormat.FLOAT32;
+
+  if (storage === VectorStorage.SPARSE) {
+    return `VECTOR(${dimensionSegment}, ${formatSegment}, SPARSE)`;
+  }
+
+  return `VECTOR(${dimensionSegment}, ${formatSegment}, DENSE)`;
 }
 
 function escapeCommentText(comment: string): string {
@@ -228,15 +334,14 @@ function escapeCommentText(comment: string): string {
 export async function createTable(
   connection: oracledb.Connection,
   tableName: string,
-  embeddingDim: number,
+  embeddingDim?: number | null,
   customization?: TableCustomization
 ): Promise<void> {
   const tableIdentifier = quoteIdentifier(tableName);
-  const vectorType = normalizeVectorType(customization?.vectorType);
   const colsDict = {
     id: "RAW(16) DEFAULT SYS_GUID() PRIMARY KEY",
     external_id: `VARCHAR2(36) UNIQUE`,
-    embedding: `vector(${embeddingDim}, ${vectorType})`,
+    embedding: buildVectorColumnDefinition(embeddingDim, customization),
     text: "CLOB",
     metadata: "JSON",
   };
@@ -252,10 +357,13 @@ export async function createTable(
     await connection.execute(ddl);
 
     const tableDescription = customization?.description?.trim();
+    const commentStatements: string[] = [];
+
     if (tableDescription) {
       const escapedDescription = escapeCommentText(tableDescription);
-      const tableCommentSql = `COMMENT ON TABLE ${tableIdentifier} IS '${escapedDescription}'`;
-      await connection.execute(tableCommentSql);
+      commentStatements.push(
+        `EXECUTE IMMEDIATE 'COMMENT ON TABLE ${tableIdentifier} IS ''${escapedDescription}''';`,
+      );
     }
 
     if (customization?.annotations) {
@@ -270,9 +378,15 @@ export async function createTable(
           columnKey.toUpperCase()
         )}`;
         const escapedNote = escapeCommentText(trimmedNote);
-        const columnCommentSql = `COMMENT ON COLUMN ${normalizedColumnIdentifier} IS '${escapedNote}'`;
-        await connection.execute(columnCommentSql);
+        commentStatements.push(
+          `EXECUTE IMMEDIATE 'COMMENT ON COLUMN ${normalizedColumnIdentifier} IS ''${escapedNote}''';`,
+        );
       }
+    }
+
+    if (commentStatements.length > 0) {
+      const block = `BEGIN\n  ${commentStatements.join("\n  ")}\nEND;`;
+      await connection.execute(block);
     }
   } catch (error: unknown) {
     handleError(error);
@@ -473,7 +587,11 @@ export class OracleVS extends VectorStore {
 
   readonly annotations?: Record<string, string>;
 
-  readonly vectorType?: string;
+  readonly vectorType?: VectorStorage;
+
+  readonly vectorDimensions?: number;
+
+  readonly vectorFormat?: VectorElementFormat;
 
   readonly query: string;
 
@@ -496,6 +614,8 @@ export class OracleVS extends VectorStore {
         ? { ...dbConfig.annotations }
         : undefined;
       this.vectorType = dbConfig.vectorType;
+      this.vectorDimensions = dbConfig.dimensions;
+      this.vectorFormat = dbConfig.format;
     } catch (error: unknown) {
       handleError(error);
     }
@@ -514,7 +634,9 @@ export class OracleVS extends VectorStore {
       await createTable(connection, this.tableName, this.embeddingDimension, {
         description: this.description,
         annotations: this.annotations,
-        vectorType: this.vectorType
+        vectorType: this.vectorType,
+        dimensions: this.vectorDimensions,
+        format: this.vectorFormat
       });
     } catch (error: unknown) {
       handleError(error);
@@ -589,7 +711,7 @@ export class OracleVS extends VectorStore {
         binds.push({
           ext_id: externalId,
           text: doc.pageContent,
-          metadata: doc.metadata, // Ensure JSON is stringified for DB_TYPE_JSON
+          metadata: doc.metadata,
           embedding: new Float32Array(vectors[index]),
         });
       }
@@ -629,7 +751,6 @@ export class OracleVS extends VectorStore {
 
       // Commit once all inserts are queued up
       await connection.commit();
-      // console.log("All documents have been inserted and committed.");
       return finalIds;
     } catch (error: any) {
       return handleError(error);
