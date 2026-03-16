@@ -40,8 +40,8 @@ This script does not write embeddings or populate ADB.
 ## Quick answers (review checklist)
 
 - Data source: OCI Object Storage buckets filled by repository upload scripts.
-- Embeddings: not applicable in this gist (no vector datastore retrieval path).
-- Additional ADB search class: no; this gist uses Object Storage tools only.
+- Embeddings: not applicable in this example (no vector datastore retrieval path).
+- Additional ADB search class: no; this example uses Object Storage tools only.
 - Runtime inputs: OCI storage config and user prompt.
 
 ## Prerequisites

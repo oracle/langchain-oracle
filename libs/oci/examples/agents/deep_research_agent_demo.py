@@ -54,7 +54,7 @@ No custom search class is implemented in this file.
 - Data source: existing OpenSearch index (`OPENSEARCH_INDEX`), pre-populated by you.
 - Embeddings: explicitly passed as `cohere.embed-v4.0` via
   `OCIGenAIEmbeddings`.
-- Additional ADB search class: not used here; this gist uses built-in OpenSearch
+- Additional ADB search class: not used here; this example uses built-in OpenSearch
   datastore integration.
 - Runtime inputs: datastore connection, OCI config, and user prompt.
 
