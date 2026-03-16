@@ -21,14 +21,14 @@ import {
   OracleVS,
   type Metadata,
   VectorElementFormat,
-  VectorStorage,
+  VectorType,
   createTable,
 } from "../vectorstores.js";
 
 type VectorColumnMetadata = {
-  vectorLength?: number;
+  vectorDimensions?: number;
   vectorFormat?: string;
-  storage?: string;
+  vectorType?: string;
 };
 
 function formatTableNameForMetadata(tableName: string): string {
@@ -91,9 +91,9 @@ async function getVectorColumnMetadata(
     lengthPart === VectorElementFormat.FLEX ? undefined : Number(lengthPart);
 
   return {
-    vectorLength: parsedLength,
+    vectorDimensions: parsedLength,
     vectorFormat: formatPart,
-    storage: storagePart,
+    vectorType: storagePart,
   };
 }
 
@@ -309,7 +309,7 @@ describe("OracleVectorStore", () => {
         external_id: "External identifier for documents",
         metadata: "JSON metadata payload"
       },
-      vectorType: VectorStorage.SPARSE,
+      vectorType: VectorType.SPARSE,
       format: VectorElementFormat.FLOAT64,
       dimensions: computedDimensions,
     };
@@ -356,9 +356,9 @@ describe("OracleVectorStore", () => {
       expect(metadataComment).toBe("JSON metadata payload");
 
       const meta = await getVectorColumnMetadata(metaConnection, annotatedTable);
-      expect(meta.vectorLength).toBe(computedDimensions);
+      expect(meta.vectorDimensions).toBe(computedDimensions);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
-      expect((meta.storage ?? "").toUpperCase()).toBe("SPARSE");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("SPARSE");
     } finally {
       if (metaConnection) {
         await metaConnection.close();
@@ -385,9 +385,9 @@ describe("OracleVectorStore", () => {
       metaConnection = await pool.getConnection();
       const meta = await getVectorColumnMetadata(metaConnection, defaultVectorTable);
       const expectedDim = defaultStore.embeddingDimension ?? 0;
-      expect(meta.vectorLength).toBe(expectedDim);
+      expect(meta.vectorDimensions).toBe(expectedDim);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT32");
-      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, defaultVectorTable);
@@ -402,7 +402,7 @@ describe("OracleVectorStore", () => {
     const binaryStore = new OracleVS(embedder, {
       ...dbConfig,
       tableName: binaryTable,
-      vectorType: VectorStorage.DENSE,
+      vectorType: VectorType.DENSE,
       format: VectorElementFormat.BINARY,
       dimensions: binaryDimensions,
     });
@@ -412,9 +412,9 @@ describe("OracleVectorStore", () => {
     try {
       metaConnection = await pool.getConnection();
       const meta = await getVectorColumnMetadata(metaConnection, binaryTable);
-      expect(meta.vectorLength).toBe(binaryDimensions);
+      expect(meta.vectorDimensions).toBe(binaryDimensions);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("BINARY");
-      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, binaryTable);
@@ -429,7 +429,7 @@ describe("OracleVectorStore", () => {
     const flexStore = new OracleVS(embedder, {
       ...dbConfig,
       tableName: flexTable,
-      vectorType: VectorStorage.DENSE,
+      vectorType: VectorType.DENSE,
       format: VectorElementFormat.FLEX,
       dimensions: flexDimensions,
     });
@@ -439,9 +439,9 @@ describe("OracleVectorStore", () => {
     try {
       metaConnection = await pool.getConnection();
       const meta = await getVectorColumnMetadata(metaConnection, flexTable);
-      expect(meta.vectorLength).toBe(flexDimensions);
+      expect(meta.vectorDimensions).toBe(flexDimensions);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("*");
-      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, flexTable);
@@ -455,13 +455,45 @@ describe("OracleVectorStore", () => {
       tempConnection = await pool.getConnection();
       await expect(
         createTable(tempConnection, validationTable, 128, {
-          vectorType: VectorStorage.SPARSE,
+          vectorType: VectorType.SPARSE,
           format: VectorElementFormat.BINARY,
         })
       ).rejects.toThrow(/BINARY format is not supported for SPARSE vectors./i);
     } finally {
       await tempConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, validationTable);
+    }
+  });
+
+  test("createTable rejects format without dimensions", async () => {
+    const formatOnlyTable = `${tableName}_format_no_dim`;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await expect(
+        createTable(localConnection, formatOnlyTable, undefined, {
+          format: VectorElementFormat.FLOAT64,
+        })
+      ).rejects.toThrow(/format requires dimensions/i);
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, formatOnlyTable);
+    }
+  });
+
+  test("createTable rejects vector type without explicit format", async () => {
+    const vectorTypeOnlyTable = `${tableName}_type_no_format`;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await expect(
+        createTable(localConnection, vectorTypeOnlyTable, 256, {
+          vectorType: VectorType.SPARSE,
+        })
+      ).rejects.toThrow(/Vector type requires both dimensions and format/i);
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, vectorTypeOnlyTable);
     }
   });
 
@@ -926,7 +958,7 @@ describe("OracleVectorStore", () => {
       ...dbConfig,
       tableName: fallbackTable,
       dimensions: undefined,
-      vectorType: VectorStorage.DENSE,
+      vectorType: VectorType.DENSE,
       format: VectorElementFormat.FLOAT32,
     });
     await fallbackStore.initialize();
@@ -936,7 +968,7 @@ describe("OracleVectorStore", () => {
       metaConnection = await pool.getConnection();
       const meta = await getVectorColumnMetadata(metaConnection, fallbackTable);
       const expected = fallbackStore.embeddingDimension ?? 0;
-      expect(meta.vectorLength).toBe(expected);
+      expect(meta.vectorDimensions).toBe(expected);
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, fallbackTable);
@@ -952,15 +984,15 @@ describe("OracleVectorStore", () => {
     try {
       localConnection = await pool.getConnection();
       await createTable(localConnection, explicitTable, undefined, {
-        vectorType: VectorStorage.DENSE,
+        vectorType: VectorType.DENSE,
         format: VectorElementFormat.FLOAT64,
         dimensions: explicitDimensions,
       });
 
       const meta = await getVectorColumnMetadata(localConnection, explicitTable);
-      expect(meta.vectorLength).toBe(explicitDimensions);
+      expect(meta.vectorDimensions).toBe(explicitDimensions);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
-      expect((meta.storage ?? "").toUpperCase()).toBe("DENSE");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await localConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, explicitTable);

@@ -131,12 +131,12 @@ function jsonCompare(
   return `JSON_EXISTS(metadata, '$.${column}?(@ ${operator} $${alias})' PASSING :${pos} AS "${alias}")`;
 }
 
-export const VectorStorage = {
+export const VectorType = {
   DENSE: "DENSE",
   SPARSE: "SPARSE",
 } as const;
 
-export type VectorStorage = (typeof VectorStorage)[keyof typeof VectorStorage];
+export type VectorType = (typeof VectorType)[keyof typeof VectorType];
 
 export const VectorElementFormat = {
   INT8: "INT8",
@@ -158,7 +158,7 @@ export interface OracleDBVSArgs {
   filter?: Metadata;
   description?: string;
   annotations?: Record<string, string>;
-  vectorType?: VectorStorage;
+  vectorType?: VectorType;
   dimensions?: number;
   format?: VectorElementFormat;
 }
@@ -228,16 +228,16 @@ function quoteIdentifier(identifier: string) {
 }
 
 type TableCustomization = {
-  vectorType?: VectorStorage;
+  vectorType?: VectorType;
   dimensions?: number;
   format?: VectorElementFormat;
   description?: string;
   annotations?: Record<string, string>;
 };
 
-const VALID_VECTOR_STORAGE = new Set<VectorStorage>([
-  VectorStorage.DENSE,
-  VectorStorage.SPARSE,
+const VALID_VECTOR_TYPES = new Set<VectorType>([
+  VectorType.DENSE,
+  VectorType.SPARSE,
 ]);
 
 const VALID_VECTOR_FORMAT = new Set<VectorElementFormat>([
@@ -248,10 +248,10 @@ const VALID_VECTOR_FORMAT = new Set<VectorElementFormat>([
   VectorElementFormat.FLEX,
 ]);
 
-function normalizeVectorStorage(value?: VectorStorage): VectorStorage {
-  if (!value) return VectorStorage.DENSE;
-  const normalized = value.toUpperCase() as VectorStorage;
-  if (!VALID_VECTOR_STORAGE.has(normalized)) {
+function normalizeVectorTypeValue(value?: VectorType): VectorType {
+  if (!value) return VectorType.DENSE;
+  const normalized = value.toUpperCase() as VectorType;
+  if (!VALID_VECTOR_TYPES.has(normalized)) {
     throw new Error(`Vector storage type ${value} is not valid. Use DENSE or SPARSE.`);
   }
   return normalized;
@@ -259,8 +259,12 @@ function normalizeVectorStorage(value?: VectorStorage): VectorStorage {
 
 function normalizeVectorFormat(
   value: VectorElementFormat | undefined,
-  storage: VectorStorage,
+  vectorType: VectorType,
+  hasDimensions: boolean,
 ): VectorElementFormat {
+  if (value && !hasDimensions) {
+    throw new Error("Vector format requires dimensions to be specified.");
+  }
   if (!value) return VectorElementFormat.FLOAT32;
   const normalized = value.toUpperCase() as VectorElementFormat;
   if (!VALID_VECTOR_FORMAT.has(normalized)) {
@@ -268,7 +272,7 @@ function normalizeVectorFormat(
       `Vector format ${value} is not valid. Use INT8, FLOAT32, FLOAT64, BINARY, or *.`,
     );
   }
-  if (storage === VectorStorage.SPARSE && normalized === VectorElementFormat.BINARY) {
+  if (vectorType === VectorType.SPARSE && normalized === VectorElementFormat.BINARY) {
     throw new Error("BINARY format is not supported for SPARSE vectors.");
   }
   return normalized;
@@ -298,12 +302,17 @@ function buildVectorColumnDefinition(
   embeddingDim?: number | null,
   customization?: TableCustomization,
 ): string {
-  const storage = normalizeVectorStorage(customization?.vectorType);
+  const vectorType = normalizeVectorTypeValue(customization?.vectorType);
   const dimensionValue = normalizeVectorDimensions(
     customization?.dimensions,
     embeddingDim ?? undefined,
   );
-  const format = normalizeVectorFormat(customization?.format, storage);
+  if (customization?.vectorType && (customization?.format === undefined || customization?.format === null)) {
+    throw new Error("Vector type requires both dimensions and format to be specified.");
+  }
+
+  const hasDimensions = dimensionValue !== undefined;
+  const format = normalizeVectorFormat(customization?.format, vectorType, hasDimensions);
 
   if (format === VectorElementFormat.BINARY && dimensionValue === undefined) {
     throw new Error("BINARY vector format requires explicit dimensions.");
@@ -320,7 +329,7 @@ function buildVectorColumnDefinition(
     dimensionValue !== undefined ? String(dimensionValue) : VectorElementFormat.FLEX;
   const formatSegment = format ?? VectorElementFormat.FLOAT32;
 
-  if (storage === VectorStorage.SPARSE) {
+  if (vectorType === VectorType.SPARSE) {
     return `VECTOR(${dimensionSegment}, ${formatSegment}, SPARSE)`;
   }
 
@@ -587,7 +596,7 @@ export class OracleVS extends VectorStore {
 
   readonly annotations?: Record<string, string>;
 
-  readonly vectorType?: VectorStorage;
+  readonly vectorType?: VectorType;
 
   readonly vectorDimensions?: number;
 
