@@ -17,6 +17,7 @@ Models tested:
 import io
 import os
 import sys
+from typing import Any, cast
 
 import requests
 from langchain_core.messages import HumanMessage
@@ -53,7 +54,7 @@ def download_image(url: str) -> bytes:
 def create_gradient_image(size: tuple = (300, 200)) -> bytes:
     """Create a gradient image using PIL."""
     img = Image.new("RGB", size)
-    pixels = img.load()
+    pixels = cast(Any, img.load())
 
     for x in range(size[0]):
         for y in range(size[1]):
@@ -61,7 +62,7 @@ def create_gradient_image(size: tuple = (300, 200)) -> bytes:
             r = int((x / size[0]) * 255)
             b = int(((size[0] - x) / size[0]) * 255)
             g = int((y / size[1]) * 128)
-            pixels[x, y] = (r, g, b)  # type: ignore[index]
+            pixels[x, y] = (r, g, b)
 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
@@ -71,7 +72,7 @@ def create_gradient_image(size: tuple = (300, 200)) -> bytes:
 def create_pattern_image(pattern: str = "stripes", size: tuple = (300, 200)) -> bytes:
     """Create a patterned image using PIL."""
     img = Image.new("RGB", size, color="white")
-    pixels = img.load()
+    pixels = cast(Any, img.load())
 
     if pattern == "stripes":
         # Vertical stripes
@@ -79,7 +80,7 @@ def create_pattern_image(pattern: str = "stripes", size: tuple = (300, 200)) -> 
             color = "red" if (x // 30) % 2 == 0 else "blue"
             color_rgb = (255, 0, 0) if color == "red" else (0, 0, 255)
             for y in range(size[1]):
-                pixels[x, y] = color_rgb  # type: ignore[index]
+                pixels[x, y] = color_rgb
 
     elif pattern == "checkerboard":
         # Checkerboard pattern
@@ -87,7 +88,7 @@ def create_pattern_image(pattern: str = "stripes", size: tuple = (300, 200)) -> 
         for x in range(size[0]):
             for y in range(size[1]):
                 is_black = ((x // square_size) + (y // square_size)) % 2 == 0
-                pixels[x, y] = (0, 0, 0) if is_black else (255, 255, 255)  # type: ignore[index]
+                pixels[x, y] = (0, 0, 0) if is_black else (255, 255, 255)
 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")

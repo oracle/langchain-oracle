@@ -1,6 +1,3 @@
-from collections.abc import Generator
-from typing import AsyncGenerator
-
 import oracledb
 import pytest
 import pytest_asyncio
@@ -31,7 +28,7 @@ class TestOracleVSStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:  # type: ignore[override]
+    def vectorstore(self) -> VectorStore:
         """Get an empty vectorstore for unit tests."""
         conn = oracledb.connect(user=username, password=password, dsn=dsn)
         drop_table_purge(conn, "standard_tests")
@@ -41,7 +38,7 @@ class TestOracleVSStandardSync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        return store
 
 
 class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
@@ -51,7 +48,7 @@ class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:  # type: ignore[override]
+    def vectorstore(self) -> VectorStore:
         """Get an empty vectorstore for unit tests."""
         conn = oracledb.connect(user=username, password=password, dsn=dsn)
         drop_table_purge(conn, "standard_tests")
@@ -67,7 +64,7 @@ class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        return store
 
 
 class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
@@ -77,7 +74,7 @@ class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
         return False
 
     @pytest_asyncio.fixture
-    async def vectorstore(self) -> AsyncGenerator[VectorStore, None]:
+    async def vectorstore(self) -> VectorStore:
         """Get an empty vectorstore for unit tests (async version)."""
 
         conn = await oracledb.connect_async(user=username, password=password, dsn=dsn)
@@ -89,7 +86,7 @@ class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        return store
 
 
 class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
@@ -99,7 +96,7 @@ class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
         return False
 
     @pytest_asyncio.fixture
-    async def vectorstore(self) -> AsyncGenerator[VectorStore, None]:
+    async def vectorstore(self) -> VectorStore:
         """Get an empty vectorstore for unit tests (async version)."""
 
         conn = await oracledb.connect_async(user=username, password=password, dsn=dsn)
@@ -117,4 +114,4 @@ class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        return store

@@ -614,13 +614,21 @@ class CohereProvider(Provider):
         if isinstance(tool, BaseTool):
             # Use args_schema.model_json_schema() to get rich properties
             # (enum, constraints) that tool.args loses via tool_call_schema.
+            properties = None
             if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
-                schema = tool.args_schema.model_json_schema()
-                # Resolve $ref/$defs and anyOf — OCI doesn't support them
-                schema = OCIUtils.resolve_schema_refs(schema)
-                schema = OCIUtils.resolve_anyof(schema)
-                properties = schema.get("properties", {})
-            else:
+                try:
+                    schema = tool.args_schema.model_json_schema()
+                    # Resolve $ref/$defs and anyOf — OCI doesn't support them
+                    schema = OCIUtils.resolve_schema_refs(schema)
+                    schema = OCIUtils.resolve_anyof(schema)
+                    properties = schema.get("properties", {})
+                except Exception:
+                    # Fall back to tool.args if schema generation fails
+                    # This can happen with tools that have injected runtime parameters
+                    # (e.g., ToolRuntime which contains Callable types that Pydantic
+                    # can't serialize to JSON schema)
+                    pass
+            if properties is None:
                 properties = tool.args
 
             return self.oci_tool(
