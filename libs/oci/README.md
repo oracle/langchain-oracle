@@ -400,9 +400,12 @@ This is optimal for large documents (e.g., 800-page legal documents) - each page
 **Semantic Retrieval:**
 
 Semantic retrieval is executed through datastore tools, especially `SearchTool`, which:
-- creates query embeddings using the configured embedding model
 - routes to the best datastore
-- calls `store.search(...)` on that datastore (including `ADB.search(...)` for ADB-backed stores)
+- calls `store.search_documents_with_scores(...)` on that datastore
+- relies on the datastore adapter's LangChain-compatible `vectorstore` implementation
+
+For `ADB`, the adapter exposes OracleVS through the standard datastore contract and
+uses the configured query-time embedding model under the hood.
 
 You do not need to implement an extra ADB-specific search tool class for normal usage.
 
@@ -423,6 +426,7 @@ You do not need to implement an extra ADB-specific search tool class for normal 
 1. **ADB connection config**: `dsn`, `user`, `password`, optional `wallet_location`
 2. **OCI GenAI config**: `compartment_id`, `service_endpoint`, `auth_type`, `auth_profile`
 3. **Your research prompt/query**: The question you want the agent to answer
+4. **Optional diagnostics**: `OCI_AGENT_LOG_LEVEL=DEBUG` for datastore-level logs
 
 **You do NOT need to:**
 - ❌ Implement a custom ADB search class (handled by `ADB` adapter)
