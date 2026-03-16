@@ -7,7 +7,6 @@ import {
   beforeAll,
   beforeEach,
 } from "vitest";
-import { createHash } from "crypto";
 import { env } from "node:process";
 import { Document } from "@langchain/core/documents";
 import oracledb from "oracledb";
@@ -79,11 +78,11 @@ describe("OracleVectorStore", () => {
       });
 
       const embedding = await embedder.embedQuery(
-        "What is your favourite sport?"
+        "What is your favourite sport?",
       );
       const matches = await oraclevs.similaritySearchVectorWithScore(
         embedding,
-        1
+        1,
       );
 
       expect(matches).toHaveLength(1);
@@ -115,9 +114,173 @@ describe("OracleVectorStore", () => {
     const results2 = await oraclevs.similaritySearchWithScore(
       "hello!",
       1,
-      dbFilter
+      dbFilter,
     );
     expect(results2).toHaveLength(1);
+  });
+
+  test("Test vectorstore addDocuments upsert", async () => {
+    let connection: oracledb.Connection | undefined;
+
+    try {
+      connection = await pool.getConnection();
+      const oraclevs = new OracleVS(embedder, dbConfig);
+      await oraclevs.initialize();
+
+      const docId = "doc-upsert-1";
+      const getRow = async () => {
+        if (!connection) {
+          throw new Error("Connection not available");
+        }
+        const result = await connection.execute(
+          `SELECT external_id, text, metadata FROM "${tableName}" WHERE external_id = :id`,
+          [docId],
+          {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            fetchInfo: {
+              TEXT: { type: oracledb.STRING },
+            },
+          },
+        );
+        return (result.rows?.[0] ?? null) as {
+          EXTERNAL_ID?: string;
+          external_id?: string;
+          TEXT?: string;
+          text?: string;
+          METADATA?: Metadata;
+          metadata?: Metadata;
+        } | null;
+      };
+
+      await oraclevs.addDocuments(
+        [
+          new Document({
+            pageContent: "Original content",
+            metadata: { version: 1 },
+          }),
+        ],
+        { ids: [docId] },
+      );
+
+      const initialRow = await getRow();
+      expect(initialRow).toBeTruthy();
+      const initialId = initialRow?.EXTERNAL_ID ?? initialRow?.external_id;
+      expect(initialId).toBe(docId);
+      const initialText = initialRow?.TEXT ?? initialRow?.text;
+      expect(initialText).toBe("Original content");
+      const initialMetadata = (initialRow?.METADATA ?? initialRow?.metadata) as
+        | Metadata
+        | undefined;
+      expect(initialMetadata?.version).toBe(1);
+
+      await expect(
+        oraclevs.addDocuments(
+          [
+            new Document({
+              pageContent: "Updated content",
+              metadata: { version: 2, updated: true },
+            }),
+          ],
+          { ids: [docId] },
+        ),
+      ).rejects.toThrow(/ORA-00001|unique constraint/i);
+
+      const rowAfterFailedInsert = await getRow();
+      expect(rowAfterFailedInsert?.TEXT ?? rowAfterFailedInsert?.text).toBe(
+        "Original content",
+      );
+      const metadataAfterFailedInsert = (
+        rowAfterFailedInsert?.METADATA ?? rowAfterFailedInsert?.metadata
+      ) as Metadata | undefined;
+      expect(metadataAfterFailedInsert?.version).toBe(1);
+
+      await oraclevs.addDocuments(
+        [
+          new Document({
+            pageContent: "Updated content",
+            metadata: { version: 2, updated: true },
+          }),
+        ],
+        { ids: [docId], upsert: true },
+      );
+
+      const updatedRow = await getRow();
+      expect(updatedRow).toBeTruthy();
+      const updatedId = updatedRow?.EXTERNAL_ID ?? updatedRow?.external_id;
+      expect(updatedId).toBe(docId);
+      const updatedText = updatedRow?.TEXT ?? updatedRow?.text;
+      expect(updatedText).toBe("Updated content");
+      const updatedMetadata = (updatedRow?.METADATA ?? updatedRow?.metadata) as
+        | Metadata
+        | undefined;
+      expect(updatedMetadata?.version).toBe(2);
+      expect(updatedMetadata?.updated).toBe(true);
+    } finally {
+      await connection?.close();
+    }
+  });
+
+  test("initialize applies table description and column annotations", async () => {
+    const annotatedTable = `${tableName}_meta`;
+    const annotatedConfig: OracleDBVSArgs = {
+      ...dbConfig,
+      tableName: annotatedTable,
+      description: "Integration test table description",
+      annotations: {
+        external_id: "External identifier for documents",
+        metadata: "JSON metadata payload",
+      },
+    };
+
+    await dropTablePurge(connection as oracledb.Connection, annotatedTable);
+
+    const annotatedStore = new OracleVS(embedder, annotatedConfig);
+    await annotatedStore.initialize();
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+
+      const tableCommentResult = await metaConnection.execute(
+        `SELECT comments FROM user_tab_comments WHERE table_name = :tableName`,
+        [annotatedTable],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const tableCommentRow = tableCommentResult.rows?.[0] as
+        | { COMMENTS?: string; comments?: string }
+        | undefined;
+      const tableComment =
+        tableCommentRow?.COMMENTS ?? tableCommentRow?.comments ?? null;
+      expect(tableComment).toBe("Integration test table description");
+
+      const fetchColumnComment = async (
+        columnName: string,
+      ): Promise<string | null> => {
+        const columnResult = await metaConnection!.execute(
+          `SELECT comments FROM user_col_comments WHERE table_name = :tableName AND column_name = :columnName`,
+          [annotatedTable, columnName],
+          { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        );
+        const columnRow = columnResult.rows?.[0] as
+          | { COMMENTS?: string; comments?: string }
+          | undefined;
+        return columnRow?.COMMENTS ?? columnRow?.comments ?? null;
+      };
+
+      const externalIdComment = await fetchColumnComment("EXTERNAL_ID");
+      expect(externalIdComment).toBe("External identifier for documents");
+
+      const metadataComment = await fetchColumnComment("METADATA");
+      expect(metadataComment).toBe("JSON metadata payload");
+    } finally {
+      if (metaConnection) {
+        await metaConnection.close();
+      }
+      await dropTablePurge(
+        connection as oracledb.Connection,
+        annotatedTable,
+      );
+    }
   });
 
   test("Test vectorstore addDocuments and find using filter IN and NIN Clause", async () => {
@@ -127,7 +290,7 @@ describe("OracleVectorStore", () => {
     const makeDoc = (
       content: string,
       author: string | string[],
-      category = "research/AI"
+      category = "research/AI",
     ) => ({
       pageContent: content,
       metadata: {
@@ -142,19 +305,19 @@ describe("OracleVectorStore", () => {
       makeDoc(
         "Alice discusses the application of machine learning and AI research in predicting football match outcomes.",
         ["Alice", "Bob"],
-        "sports"
+        "sports",
       ),
       makeDoc(
         "Geoffrey Hinton explores the future of deep learning and its impact on AI research.",
-        "Geoffrey Hinton"
+        "Geoffrey Hinton",
       ),
       makeDoc(
         "Yoshua Bengio presents breakthroughs in neural network architectures for natural language understanding.",
-        "Yoshua Bengio"
+        "Yoshua Bengio",
       ),
       makeDoc(
         "Andrew Ng shares insights on scaling AI education to democratize access to machine learning tools.",
-        "Andrew Ng"
+        "Andrew Ng",
       ),
     ];
 
@@ -165,7 +328,7 @@ describe("OracleVectorStore", () => {
     let results = await oraclevs.similaritySearch(
       "latest advances in AI research for education",
       1,
-      filter
+      filter,
     );
 
     expect(results).toHaveLength(1);
@@ -187,7 +350,7 @@ describe("OracleVectorStore", () => {
     results = await oraclevs.similaritySearch(
       "latest advances in AI research for education",
       1,
-      filter
+      filter,
     );
 
     expect(results).toHaveLength(1);
@@ -209,7 +372,7 @@ describe("OracleVectorStore", () => {
     results = await oraclevs.similaritySearch(
       "latest advances in AI research for education",
       5,
-      filter
+      filter,
     );
 
     expect(results).toHaveLength(3);
@@ -246,7 +409,7 @@ describe("OracleVectorStore", () => {
           pageContent:
             "Alice discusses the application of machine learning and AI research in predicting football match outcomes.",
         }),
-      ])
+      ]),
     );
   });
 
@@ -349,13 +512,13 @@ describe("OracleVectorStore", () => {
     // filter with $exists to return rows which do not contain price
     filter = { price: { $exists: false } };
     await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
-      "No rows found"
+      "No rows found",
     );
 
     // filter with $exists for non-existing key
     filter = { cost: { $exists: true } };
     await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
-      "No rows found"
+      "No rows found",
     );
   });
 
@@ -397,7 +560,7 @@ describe("OracleVectorStore", () => {
 
     results.forEach((doc) => {
       expect(
-        doc.metadata.price <= 20 || doc.metadata.category === "books"
+        doc.metadata.price <= 20 || doc.metadata.category === "books",
       ).toBe(true);
     });
   });
@@ -461,36 +624,25 @@ describe("OracleVectorStore", () => {
 
     // Complex filter example with _or and nested _and/_or
     const results = await oraclevs.similaritySearch("test", 10, filter);
-    const expectedId = (id: string) => {
-      const buf = Buffer.from(
-        createHash("sha256")
-          .update(id)
-          .digest("hex")
-          .substring(0, 16)
-          .toUpperCase(),
-        "hex"
-      );
-      return buf.toString("hex");
-    };
     expect(results).toHaveLength(3);
     expect(results).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           pageContent: "A thrilling mystery novel",
           metadata: { category: "books", price: 15, rating: 4.5 },
-          id: expectedId("1"),
+          id: "1",
         }),
         expect.objectContaining({
           pageContent: "Budget wired earphones",
           metadata: { category: "electronics", price: 15, rating: 3.9 },
-          id: expectedId("5"),
+          id: "5",
         }),
         expect.objectContaining({
           pageContent: "Affordable cooking guide",
           metadata: { category: "books", price: 18, rating: 4.2 },
-          id: expectedId("3"),
+          id: "3",
         }),
-      ])
+      ]),
     );
   });
 
@@ -526,7 +678,7 @@ describe("OracleVectorStore", () => {
       "best beaches in Europe",
       {
         k: 3,
-      }
+      },
     );
 
     // Extract only page contents for checking
