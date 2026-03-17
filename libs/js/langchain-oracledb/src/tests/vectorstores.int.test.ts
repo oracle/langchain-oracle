@@ -97,6 +97,18 @@ async function getVectorColumnMetadata(
   };
 }
 
+function unpackBinaryVector(buffer: Uint8Array | Buffer, dimension: number): number[] {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const values = new Array<number>(dimension).fill(0);
+  for (let i = 0; i < dimension; i += 1) {
+    const byteIndex = Math.floor(i / 8);
+    const bitOffset = 7 - (i % 8);
+    const byte = bytes[byteIndex];
+    values[i] = (byte >> bitOffset) & 1;
+  }
+  return values;
+}
+
 describe("OracleVectorStore", () => {
   const tableName = "testlangchain_1";
   let pool: oracledb.Pool;
@@ -443,6 +455,146 @@ describe("OracleVectorStore", () => {
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, flexTable);
+    }
+  });
+
+  test("addVectors stores dense binary vectors using configured format", async () => {
+    const binaryTable = `${tableName}_dense_binary_store`;
+    await dropTablePurge(connection as oracledb.Connection, binaryTable);
+
+    const dimension = (await embedder.embedQuery(dbConfig.query)).length;
+    expect(dimension % 8).toBe(0);
+    const binaryStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: binaryTable,
+      vectorType: VectorType.DENSE,
+      format: VectorElementFormat.BINARY,
+    });
+    await binaryStore.initialize();
+
+    const vector = new Array<number>(dimension).fill(0);
+    for (let i = 0; i < dimension; i += 2) {
+      vector[i] = 1;
+    }
+
+    await binaryStore.addVectors(
+      [vector],
+      [
+        new Document({
+          pageContent: "binary doc",
+          metadata: {},
+        }),
+      ],
+      { ids: ["binary-1"] },
+    );
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const result = await metaConnection.execute(
+        `SELECT embedding FROM ${binaryStore.tableName} WHERE external_id = :id`,
+        ["binary-1"],
+      );
+      const row = result.rows?.[0] as unknown[] | undefined;
+      const stored = row?.[0] as Uint8Array | Buffer | undefined;
+      expect(stored).toBeTruthy();
+      const unpacked = unpackBinaryVector(stored as Uint8Array | Buffer, dimension);
+      expect(unpacked).toEqual(vector);
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, binaryTable);
+    }
+  });
+
+  test("addVectors converts dense embeddings to sparse storage", async () => {
+    const sparseTable = `${tableName}_sparse_vectors`;
+    await dropTablePurge(connection as oracledb.Connection, sparseTable);
+
+    const dimension = (await embedder.embedQuery(dbConfig.query)).length;
+    const sparseStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: sparseTable,
+      vectorType: VectorType.SPARSE,
+      format: VectorElementFormat.FLOAT32,
+    });
+    await sparseStore.initialize();
+
+    const vector = new Array<number>(dimension).fill(0);
+    vector[1] = 0.5;
+    vector[dimension - 2] = -0.25;
+
+    await sparseStore.addVectors(
+      [vector],
+      [
+        new Document({
+          pageContent: "sparse doc",
+          metadata: {},
+        }),
+      ],
+      { ids: ["sparse-1"] },
+    );
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const result = await metaConnection.execute(
+        `SELECT embedding FROM ${sparseStore.tableName} WHERE external_id = :id`,
+        ["sparse-1"],
+      );
+      const row = result.rows?.[0] as unknown[] | undefined;
+      const stored = row?.[0] as oracledb.SparseVector;
+      expect(stored).toBeTruthy();
+      const indices = Array.from(stored.indices ?? []);
+      expect(indices).toEqual([1, dimension - 2]);
+      const values = Array.from(stored.values ?? []);
+      expect(values[0]).toBeCloseTo(0.5, 5);
+      expect(values[1]).toBeCloseTo(-0.25, 5);
+      expect(stored.numDimensions).toBe(dimension);
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, sparseTable);
+    }
+  });
+
+  test("addVectors stores dense INT8 vectors with rounding", async () => {
+    const int8Table = `${tableName}_dense_int8_store`;
+    await dropTablePurge(connection as oracledb.Connection, int8Table);
+
+    const dimension = (await embedder.embedQuery(dbConfig.query)).length;
+    const int8Store = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: int8Table,
+      vectorType: VectorType.DENSE,
+      format: VectorElementFormat.INT8,
+    });
+    await int8Store.initialize();
+
+    const vector = Array.from({ length: dimension }, (_, i) => {
+      const cycle = i % 4;
+      if (cycle === 0) return 62.6;
+      if (cycle === 1) return -31.4;
+      if (cycle === 2) return 0.49;
+      return -80.9;
+    });
+    await int8Store.addVectors(
+      [vector],
+      [
+        new Document({
+          pageContent: "int8 doc",
+          metadata: {},
+        }),
+      ],
+      { ids: ["int8-1"] },
+    );
+
+    try {
+      const searchResults =
+        await int8Store.similaritySearchByVectorReturningEmbeddings(vector, 1);
+      expect(searchResults).toHaveLength(1);
+      const firstResult = searchResults[0];
+      expect(firstResult[0].pageContent).toBe("int8 doc");
+    } finally {
+      await dropTablePurge(connection as oracledb.Connection, int8Table);
     }
   });
 
@@ -942,6 +1094,41 @@ describe("OracleVectorStore", () => {
 
     // The top result should be highly relevant to "best beaches"
     expect(pageContents[0].toLowerCase()).toMatch(/beach|island/);
+  });
+
+  test("maxMarginalRelevanceSearchByVector uses supplied embeddings", async () => {
+    oraclevs = new OracleVS(embedder, dbConfig);
+    await oraclevs.initialize();
+
+    const documents = [
+      {
+        pageContent: "Dense rainforest ecology report",
+        metadata: { topic: "nature" },
+      },
+      {
+        pageContent: "Urban planning guidelines for smart cities",
+        metadata: { topic: "cities" },
+      },
+      {
+        pageContent: "Conservation strategies for endangered species",
+        metadata: { topic: "nature" },
+      },
+    ];
+
+    await oraclevs.addDocuments(documents);
+
+    const customQuery = await embedder.embedQuery("urban development in smart cities");
+    const mmrResults = await oraclevs.maxMarginalRelevanceSearchByVector(
+      customQuery,
+      {
+        k: 2,
+        fetchK: 3,
+      },
+    );
+
+    expect(mmrResults).toHaveLength(2);
+    const topics = new Set(mmrResults.map((d) => d.metadata.topic));
+    expect(topics).toContain("cities");
   });
 
   test("Delete document by id", async () => {

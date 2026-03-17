@@ -233,6 +233,13 @@ type TableCustomization = {
   annotations?: Record<string, string>;
 };
 
+type ReturnedEmbedding =
+  | Float32Array
+  | Float64Array
+  | Int8Array
+  | Uint8Array
+  | number[];
+
 const VALID_VECTOR_TYPES = new Set<VectorType>([
   VectorType.DENSE,
   VectorType.SPARSE,
@@ -374,6 +381,94 @@ export async function createTable(
 function _getIndexName(baseName: string): string {
   const uniqueId = crypto.randomUUID().replace(/-/g, "");
   return `${baseName}_${uniqueId}`;
+}
+
+function packBinaryVector(bits: number[]): Uint8Array {
+  const byteLength = Math.ceil(bits.length / 8);
+  const buffer = new Uint8Array(byteLength);
+  for (let i = 0; i < bits.length; i += 1) {
+    const bit = bits[i] > 0 ? 1 : 0;
+    if (bit === 1) {
+      const byteIndex = Math.floor(i / 8);
+      const bitOffset = 7 - (i % 8);
+      buffer[byteIndex] |= 1 << bitOffset;
+    }
+  }
+  return buffer;
+}
+
+function convertDenseVectorForFormat(
+  values: number[],
+  format: VectorElementFormat,
+): Float32Array | Float64Array | Int8Array | Uint8Array {
+  switch (format) {
+    case VectorElementFormat.FLOAT32:
+    case undefined:
+      return new Float32Array(values);
+    case VectorElementFormat.FLOAT64:
+      return new Float64Array(values);
+    case VectorElementFormat.INT8: {
+      const clamped = new Int8Array(values.length);
+      for (let i = 0; i < values.length; i += 1) {
+        const rounded = Math.round(values[i]);
+        if (rounded < -128 || rounded > 127) {
+          throw new Error("INT8 vector values must be within [-128, 127].");
+        }
+        clamped[i] = rounded;
+      }
+      return clamped;
+    }
+    case VectorElementFormat.BINARY:
+      return packBinaryVector(values);
+    case VectorElementFormat.FLEX:
+      return new Float32Array(values);
+    default:
+      return new Float32Array(values);
+  }
+}
+
+function buildSparseVector(
+  values: number[],
+  format: VectorElementFormat,
+  dimension: number,
+): oracledb.SparseVector {
+  const indices: number[] = [];
+  const denseValues: number[] = [];
+  for (let i = 0; i < values.length; i += 1) {
+    const value = values[i];
+    if (value === 0) continue;
+    indices.push(i);
+    if (format === VectorElementFormat.INT8) {
+      const rounded = Math.round(value);
+      if (rounded < -128 || rounded > 127) {
+        throw new Error("INT8 sparse vector values must be within [-128, 127].");
+      }
+      denseValues.push(rounded);
+    } else {
+      denseValues.push(value);
+    }
+  }
+
+  return new oracledb.SparseVector({
+    values: denseValues,
+    indices,
+    numDimensions: dimension,
+  });
+}
+
+function unpackBinaryVector(
+  buffer: Uint8Array | Buffer,
+  dimension: number,
+): Float32Array {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const result = new Float32Array(dimension);
+  for (let i = 0; i < dimension; i += 1) {
+    const byteIndex = Math.floor(i / 8);
+    const bitOffset = 7 - (i % 8);
+    const byte = bytes[byteIndex];
+    result[i] = (byte >> bitOffset) & 1;
+  }
+  return result;
 }
 
 export async function createIndex(
@@ -596,6 +691,98 @@ export class OracleVS extends VectorStore {
     }
   }
 
+  private getActiveVectorType(): VectorType {
+    return this.vectorType ? normalizeVectorTypeValue(this.vectorType) : VectorType.DENSE;
+  }
+
+  private ensureEmbeddingDimension(): number {
+    if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
+      throw new Error("Embedding dimension is not initialized for this vector store.");
+    }
+    return this.embeddingDimension;
+  }
+
+  private prepareVectorForStorage(vector: number[]): any {
+    if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
+      this.embeddingDimension = vector.length;
+    }
+    const dimension = this.ensureEmbeddingDimension();
+    const vectorType = this.getActiveVectorType();
+    const format = this.vectorFormat
+      ? normalizeVectorFormat(this.vectorFormat, vectorType)
+      : VectorElementFormat.FLOAT32;
+
+    if (vectorType === VectorType.SPARSE) {
+      if (vector.length !== dimension) {
+        throw new Error("Sparse vectors must supply full-dimension arrays for conversion.");
+      }
+      return buildSparseVector(vector, format, dimension);
+    }
+
+    if (vector.length !== dimension) {
+      throw new Error("Vector length does not match the embedding dimension.");
+    }
+
+    return convertDenseVectorForFormat(vector, format);
+  }
+
+  private prepareQueryVector(vector: number[]): any {
+    return this.prepareVectorForStorage(vector);
+  }
+
+  private normalizeReturnedEmbedding(value: unknown): ReturnedEmbedding {
+    if (value instanceof oracledb.SparseVector) {
+      const dense = value.dense?.();
+      if (!dense) {
+        throw new Error("Unable to expand sparse vector to dense representation.");
+      }
+      if (dense instanceof Float32Array) {
+        return dense;
+      }
+      if (dense instanceof Float64Array) {
+        return new Float32Array(dense);
+      }
+      if (dense instanceof Int8Array) {
+        return Float32Array.from(dense);
+      }
+      if (Array.isArray(dense)) {
+        return Float32Array.from(dense as number[]);
+      }
+      return Float32Array.from(dense as ArrayLike<number>);
+    }
+    if (
+      value instanceof Float32Array ||
+      value instanceof Float64Array ||
+      value instanceof Int8Array ||
+      value instanceof Uint8Array ||
+      Array.isArray(value)
+    ) {
+      return value as ReturnedEmbedding;
+    }
+    throw new Error("Received unsupported vector representation from the database.");
+  }
+
+  private coerceEmbeddingToFloat32(value: unknown): Float32Array {
+    if (value instanceof Float32Array) {
+      return value;
+    }
+    if (value instanceof Float64Array) {
+      return new Float32Array(value);
+    }
+    if (value instanceof Int8Array) {
+      return Float32Array.from(value);
+    }
+    if (value instanceof Uint8Array) {
+      const byteLength = value.length;
+      const dimension = this.embeddingDimension ?? byteLength * 8;
+      return unpackBinaryVector(value, dimension);
+    }
+    if (Array.isArray(value)) {
+      return Float32Array.from(value as number[]);
+    }
+    return this.coerceEmbeddingToFloat32(this.normalizeReturnedEmbedding(value));
+  }
+
   async getEmbeddingDimension(query: string): Promise<number> {
     const embeddingVector = await this.embeddings.embedQuery(query);
     return embeddingVector.length;
@@ -682,11 +869,14 @@ export class OracleVS extends VectorStore {
         const externalId =
           inputIds?.[index] ?? doc.metadata.id ?? crypto.randomUUID();
         finalIds.push(externalId);
+        const preparedEmbedding = this.prepareVectorForStorage(
+          vectors[index],
+        );
         binds.push({
           ext_id: externalId,
           text: doc.pageContent,
           metadata: doc.metadata,
-          embedding: new Float32Array(vectors[index]),
+          embedding: preparedEmbedding,
         });
       }
 
@@ -759,16 +949,15 @@ export class OracleVS extends VectorStore {
     query: number[],
     k = 4,
     filter?: this["FilterType"]
-  ): Promise<[Document, number, Float32Array | number[]][]> {
+  ): Promise<[Document, number, ReturnedEmbedding][]> {
     const docsScoresAndEmbeddings: Array<
-      [Document, number, Float32Array | number[]]
+      [Document, number, ReturnedEmbedding]
     > = [];
 
     let connection: oracledb.Connection | null = null;
 
     try {
-      const convertedEmbedding = new Float32Array(query);
-      const bindValues: any = [convertedEmbedding];
+      const bindValues: any = [this.prepareQueryVector(query)];
 
       let sqlQuery = `
       SELECT external_id,
@@ -799,7 +988,7 @@ export class OracleVS extends VectorStore {
           const text = row[1] as string;
           const metadata = row[2] as Metadata;
           const distance = row[3] as number;
-          const embedding = row[4] as any;
+          const embedding = this.normalizeReturnedEmbedding(row[4]);
           const document = new Document({
             pageContent: text || "",
             metadata: metadata || {},
@@ -892,15 +1081,10 @@ export class OracleVS extends VectorStore {
       ([document]) => document
     );
     const scores: number[] = docsScoresEmbeddings.map(([, score]) => score);
-    const embeddings: (Float32Array | number[])[] = docsScoresEmbeddings.map(
-      ([, , embedding]) => new Float32Array(embedding)
+    const consistentEmbeddings: number[][] = docsScoresEmbeddings.map(([, , emb]) =>
+      Array.from(this.coerceEmbeddingToFloat32(emb))
     );
-
-    // Convert all embeddings to Float32Array for consistency
-    const consistentEmbeddings: number[][] = embeddings.map((embedding) =>
-      Array.from(embedding)
-    );
-    const queryEmbedding: number[] = Array.from(embedding);
+    const queryEmbedding: number[] = Array.from(this.coerceEmbeddingToFloat32(embedding));
 
     // Ensure lambdaMult has a default value if not provided
     const lambdaMult = options.lambda ?? 0.5;
