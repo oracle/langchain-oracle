@@ -384,11 +384,11 @@ export async function createTable(
                    (
                        ${ddlBody}
                    )`;
-    const tableDescription = customization?.description?.trim();
     const statements: string[] = [
       `EXECUTE IMMEDIATE '${escapePlSqlLiteral(createTableSql)}';`,
     ];
 
+    const tableDescription = customization?.description?.trim();
     if (tableDescription) {
       const escapedDescription = escapeCommentText(tableDescription);
       statements.push(
@@ -465,41 +465,9 @@ function convertDenseVectorForFormat(
     }
     case VectorElementFormat.BINARY:
       return packBinaryVector(values);
-    case VectorElementFormat.FLEX:
-      return new Float32Array(values);
     default:
-      return new Float32Array(values);
+      return new Float64Array(values);
   }
-}
-
-// Builds an oracledb.SparseVector from a dense array while enforcing format-specific constraints.
-function buildSparseVector(
-  values: number[],
-  format: VectorElementFormat,
-  dimension: number,
-): oracledb.SparseVector {
-  const indices: number[] = [];
-  const denseValues: number[] = [];
-  for (let i = 0; i < values.length; i += 1) {
-    const value = values[i];
-    if (value === 0) continue;
-    indices.push(i);
-    if (format === VectorElementFormat.INT8) {
-      const rounded = Math.round(value);
-      if (rounded < -128 || rounded > 127) {
-        throw new Error("INT8 sparse vector values must be within [-128, 127].");
-      }
-      denseValues.push(rounded);
-    } else {
-      denseValues.push(value);
-    }
-  }
-
-  return new oracledb.SparseVector({
-    values: denseValues,
-    indices,
-    numDimensions: dimension,
-  });
 }
 
 function unpackBinaryVector(
@@ -695,7 +663,25 @@ export class OracleVS extends VectorStore {
       if (vector.length !== dimension) {
         throw new Error("Sparse vectors must supply full-dimension arrays for conversion.");
       }
-      return buildSparseVector(vector, format, dimension);
+
+      let sparseInput: number[] | Float32Array | Float64Array | Int8Array = vector;
+      if (format === VectorElementFormat.INT8) {
+        const clamped = new Int8Array(vector.length);
+        for (let i = 0; i < vector.length; i += 1) {
+          const rounded = Math.round(vector[i]);
+          if (rounded < -128 || rounded > 127) {
+            throw new Error("INT8 sparse vector values must be within [-128, 127].");
+          }
+          clamped[i] = rounded;
+        }
+        sparseInput = clamped;
+      } else if (format === VectorElementFormat.FLOAT64) {
+        sparseInput = new Float64Array(vector);
+      } else if (format === VectorElementFormat.FLOAT32) {
+        sparseInput = new Float32Array(vector);
+      }
+
+      return new oracledb.SparseVector(sparseInput);
     }
 
     if (vector.length !== dimension) {
