@@ -97,8 +97,8 @@ async function getVectorColumnMetadata(
   };
 }
 
-function unpackBinaryVector(buffer: Uint8Array | Buffer, dimension: number): number[] {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+function unpackBinaryVector(buffer: ArrayLike<number>, dimension: number): number[] {
+  const bytes = Uint8Array.from(buffer);
   const values = new Array<number>(dimension).fill(0);
   for (let i = 0; i < dimension; i += 1) {
     const byteIndex = Math.floor(i / 8);
@@ -496,9 +496,18 @@ describe("OracleVectorStore", () => {
         ["binary-1"],
       );
       const row = result.rows?.[0] as unknown[] | undefined;
-      const stored = row?.[0] as Uint8Array | Buffer | undefined;
+      const stored = row?.[0];
       expect(stored).toBeTruthy();
-      const unpacked = unpackBinaryVector(stored as Uint8Array | Buffer, dimension);
+      const rawBytes = Buffer.isBuffer(stored)
+        ? Uint8Array.from(stored)
+        : ArrayBuffer.isView(stored)
+        ? new Uint8Array(
+            (stored as ArrayBufferView).buffer,
+            (stored as ArrayBufferView).byteOffset,
+            (stored as ArrayBufferView).byteLength,
+          )
+        : Uint8Array.from(stored as number[]);
+      const unpacked = unpackBinaryVector(rawBytes, dimension);
       expect(unpacked).toEqual(vector);
     } finally {
       await metaConnection?.close();
@@ -595,6 +604,44 @@ describe("OracleVectorStore", () => {
       expect(firstResult[0].pageContent).toBe("int8 doc");
     } finally {
       await dropTablePurge(connection as oracledb.Connection, int8Table);
+    }
+  });
+
+  test("initialize handles quoted table names via PL/SQL block", async () => {
+    const quotedTable = `"Test Langchain Q"`;
+    await dropTablePurge(connection as oracledb.Connection, quotedTable);
+
+    const quotedStore = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: quotedTable,
+      description: "Quoted table description",
+      annotations: {
+        text: "Holds document text",
+      },
+    });
+
+    await quotedStore.initialize();
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      const sampleVector = await embedder.embedQuery("quoted table test");
+      await quotedStore.addVectors(
+        [sampleVector],
+        [new Document({ pageContent: "quoted table test", metadata: {} })],
+      );
+
+      metaConnection = await pool.getConnection();
+      const countResult = await metaConnection.execute(
+        `SELECT COUNT(*) AS CNT FROM ${quotedTable}`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const row = countResult.rows?.[0] as { CNT?: number; cnt?: number } | undefined;
+      const rowCount = row?.CNT ?? row?.cnt ?? 0;
+      expect(rowCount).toBe(1);
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, quotedTable);
     }
   });
 

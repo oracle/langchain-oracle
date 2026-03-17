@@ -9,6 +9,10 @@ import type { EmbeddingsInterface } from "@langchain/core/embeddings";
 import { maximalMarginalRelevance } from "@langchain/core/utils/math";
 
 export type Metadata = Record<string, unknown>;
+interface AddDocumentOptions {
+  ids?: string[];
+  upsert?: boolean;
+}
 
 export function generateWhereClause(
   dbFilter: Metadata,
@@ -174,8 +178,6 @@ export const DistanceStrategy = {
 export type DistanceStrategy =
   (typeof DistanceStrategy)[keyof typeof DistanceStrategy];
 
-type AddDocumentOptions = Record<string, any>;
-
 function handleError(error: unknown): never {
   // Type guard to check if the error is an object and has 'name' and 'message' properties
   if (
@@ -240,6 +242,34 @@ type ReturnedEmbedding =
   | Uint8Array
   | number[];
 
+type StoredEmbedding =
+  | Float32Array
+  | Float64Array
+  | Int8Array
+  | Uint8Array
+  | oracledb.SparseVector;
+
+
+const isFloat32Array = (value: unknown): value is Float32Array =>
+  // eslint-disable-next-line no-instanceof/no-instanceof
+  value instanceof Float32Array;
+
+const isFloat64Array = (value: unknown): value is Float64Array =>
+  // eslint-disable-next-line no-instanceof/no-instanceof
+  value instanceof Float64Array;
+
+const isInt8Array = (value: unknown): value is Int8Array =>
+  // eslint-disable-next-line no-instanceof/no-instanceof
+  value instanceof Int8Array;
+
+const isUint8Array = (value: unknown): value is Uint8Array =>
+  // eslint-disable-next-line no-instanceof/no-instanceof
+  value instanceof Uint8Array;
+
+const isSparseVector = (value: unknown): value is oracledb.SparseVector =>
+  // eslint-disable-next-line no-instanceof/no-instanceof
+  value instanceof oracledb.SparseVector;
+
 const VALID_VECTOR_TYPES = new Set<VectorType>([
   VectorType.DENSE,
   VectorType.SPARSE,
@@ -252,6 +282,23 @@ const VALID_VECTOR_FORMAT = new Set<VectorElementFormat>([
   VectorElementFormat.BINARY,
   VectorElementFormat.FLEX,
 ]);
+
+interface HNSWIndexParams {
+  idxName?: string;
+  idxType?: string;
+  neighbors?: number;
+  efConstruction?: number;
+  accuracy?: number;
+  parallel?: number;
+}
+
+interface IVFIndexParams {
+  idxName?: string;
+  idxType?: string;
+  neighborPart?: number;
+  accuracy?: number;
+  parallel?: number;
+}
 
 function normalizeVectorTypeValue(value?: VectorType): VectorType {
   if (!value) return VectorType.DENSE;
@@ -462,15 +509,17 @@ function buildSparseVector(
 }
 
 function unpackBinaryVector(
-  buffer: Uint8Array | Buffer,
+  bytesLike: ArrayLike<number>,
   dimension: number,
 ): Float32Array {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const bytes = isUint8Array(bytesLike)
+    ? (bytesLike as Uint8Array)
+    : Uint8Array.from(bytesLike);
   const result = new Float32Array(dimension);
   for (let i = 0; i < dimension; i += 1) {
     const byteIndex = Math.floor(i / 8);
     const bitOffset = 7 - (i % 8);
-    const byte = bytes[byteIndex];
+    const byte = bytes[byteIndex] ?? 0;
     result[i] = (byte >> bitOffset) & 1;
   }
   return result;
@@ -479,79 +528,52 @@ function unpackBinaryVector(
 export async function createIndex(
   client: oracledb.Connection,
   vectorStore: OracleVS,
-  params?: { [key: string]: any }
+  params?: HNSWIndexParams | IVFIndexParams
 ): Promise<void> {
-  const idxType = params?.idxType || "HNSW";
+  const idxType = (params?.idxType ?? "HNSW").toUpperCase();
 
   if (idxType === "IVF") {
-    await createIVFIndex(client, vectorStore, params);
+    await createIVFIndex(client, vectorStore, params as IVFIndexParams | undefined);
   } else {
-    await createHNSWIndex(client, vectorStore, params);
+    await createHNSWIndex(client, vectorStore, params as HNSWIndexParams | undefined);
   }
 }
 
 async function createHNSWIndex(
   connection: oracledb.Connection,
   oraclevs: OracleVS,
-  params?: { [key: string]: any }
+  params?: HNSWIndexParams
 ): Promise<void> {
   try {
-    const defaults: { [key: string]: any } = {
-      idxName: "HNSW",
-      idxType: "HNSW",
-      neighbors: 32,
-      efConstruction: 200,
-      accuracy: 90,
-      parallel: 8,
-    };
-
-    // if params then copy params to config
-    const config: { [key: string]: any } = params
-      ? { ...params }
-      : { ...defaults };
-
-    // Ensure compulsory parts are included
-    const compulsoryKeys = ["idxName", "parallel"];
-    for (const key of compulsoryKeys) {
-      if (!(key in config)) {
-        if (key === "idxName") {
-          config[key] = _getIndexName(defaults[key] as string);
-        } else {
-          config[key] = defaults[key] as number;
+    const allowedKeys = new Set(["idxName", "idxType", "neighbors", "efConstruction", "accuracy", "parallel"]);
+    if (params) {
+      for (const key of Object.keys(params)) {
+        if (!allowedKeys.has(key)) {
+          throw new Error(`Invalid parameter: ${key}`);
         }
       }
     }
 
-    // Validate keys in config against defaults
-    for (const key of Object.keys(config)) {
-      if (!(key in defaults)) {
-        throw new Error(`Invalid parameter: ${key}`);
-      }
-    }
+    const config: Required<HNSWIndexParams> = {
+      idxName: params?.idxName ?? _getIndexName("HNSW"),
+      idxType: params?.idxType ?? "HNSW",
+      neighbors: params?.neighbors ?? 32,
+      efConstruction: params?.efConstruction ?? 200,
+      accuracy: params?.accuracy ?? 90,
+      parallel: params?.parallel ?? 8,
+    };
 
-    const { idxName } = config;
     const baseSql = `CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(
-      idxName
+      config.idxName
     )}
                               ON ${oraclevs.tableName}(embedding) 
                               ORGANIZATION INMEMORY NEIGHBOR GRAPH`;
-    const accuracyPart = config.accuracy
-      ? ` WITH TARGET ACCURACY ${config.accuracy}`
-      : "";
+    const accuracyPart =
+      typeof config.accuracy === "number" ? ` WITH TARGET ACCURACY ${config.accuracy}` : "";
     const distancePart = ` DISTANCE ${oraclevs.distanceStrategy}`;
 
     let parametersPart = "";
-    if ("neighbors" in config && "efConstruction" in config) {
-      parametersPart = ` parameters (type ${config.idxType}, 
-                                     neighbors ${config.neighbors}, 
-                                     efConstruction ${config.efConstruction})`;
-    } else if ("neighbors" in config && !("efConstruction" in config)) {
-      config.efConstruction = defaults.efConstruction;
-      parametersPart = ` parameters (type ${config.idxType}, 
-                                     neighbors ${config.neighbors}, 
-                                     efConstruction ${config.efConstruction})`;
-    } else if (!("neighbors" in config) && "efConstruction" in config) {
-      config.neighbors = defaults.neighbors;
+    if (config.neighbors !== undefined && config.efConstruction !== undefined) {
       parametersPart = ` parameters (type ${config.idxType}, 
                                      neighbors ${config.neighbors}, 
                                      efConstruction ${config.efConstruction})`;
@@ -569,57 +591,39 @@ async function createHNSWIndex(
 async function createIVFIndex(
   connection: oracledb.Connection,
   oraclevs: OracleVS,
-  params?: { [key: string]: any }
+  params?: IVFIndexParams
 ): Promise<void> {
   try {
-    const defaults: { [key: string]: any } = {
-      idxName: "IVF",
-      idxType: "IVF",
-      neighborPart: 32,
-      accuracy: 90,
-      parallel: 8,
-    };
-
-    // Combine defaults with any provided params. Note: params could contain keys not explicitly declared in IndexConfig
-    const config: { [key: string]: any } = params
-      ? { ...params }
-      : { ...defaults };
-
-    // Ensure compulsory parts are included
-    const compulsoryKeys = ["idxName", "parallel"];
-    for (const key of compulsoryKeys) {
-      if (!(key in config)) {
-        if (key === "idxName") {
-          config[key] = _getIndexName(defaults[key] as string);
-        } else {
-          config[key] = defaults[key] as number;
+    const allowedKeys = new Set(["idxName", "idxType", "neighborPart", "accuracy", "parallel"]);
+    if (params) {
+      for (const key of Object.keys(params)) {
+        if (!allowedKeys.has(key)) {
+          throw new Error(`Invalid parameter: ${key}`);
         }
       }
     }
 
-    // Validate keys in config against defaults
-    for (const key of Object.keys(config)) {
-      if (!(key in defaults)) {
-        throw new Error(`Invalid parameter: ${key}`);
-      }
-    }
+    const config: Required<IVFIndexParams> = {
+      idxName: params?.idxName ?? _getIndexName("IVF"),
+      idxType: params?.idxType ?? "IVF",
+      neighborPart: params?.neighborPart ?? 32,
+      accuracy: params?.accuracy ?? 90,
+      parallel: params?.parallel ?? 8,
+    };
 
-    // Base SQL statement
-    const { idxName } = config;
     const baseSql = `CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(
-      idxName
+      config.idxName
     )}
                               ON ${oraclevs.tableName}(embedding) 
                               ORGANIZATION NEIGHBOR PARTITIONS`;
 
     // Optional parts depending on parameters
-    const accuracyPart = config.accuracy
-      ? ` WITH TARGET ACCURACY ${config.accuracy}`
-      : "";
+    const accuracyPart =
+      typeof config.accuracy === "number" ? ` WITH TARGET ACCURACY ${config.accuracy}` : "";
     const distancePart = ` DISTANCE ${oraclevs.distanceStrategy}`;
 
     let parametersPart = "";
-    if ("idxType" in config && "neighborPart" in config) {
+    if (config.idxType && config.neighborPart !== undefined) {
       parametersPart = ` PARAMETERS (type ${config.idxType}, 
                          neighbor partitions ${config.neighborPart})`;
     }
@@ -707,7 +711,7 @@ export class OracleVS extends VectorStore {
     return this.embeddingDimension;
   }
 
-  private prepareVectorForStorage(vector: number[]): any {
+  private prepareVectorForStorage(vector: number[]): StoredEmbedding {
     if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
       this.embeddingDimension = vector.length;
     }
@@ -731,24 +735,25 @@ export class OracleVS extends VectorStore {
     return convertDenseVectorForFormat(vector, format);
   }
 
-  private prepareQueryVector(vector: number[]): any {
+  private prepareQueryVector(vector: number[]): StoredEmbedding {
     return this.prepareVectorForStorage(vector);
   }
 
   // Preserves the native driver representation, only expanding sparse vectors to dense form.
+  // Preserves the native driver representation, only expanding sparse vectors to dense form.
   private normalizeReturnedEmbedding(value: unknown): ReturnedEmbedding {
-    if (value instanceof oracledb.SparseVector) {
+    if (isSparseVector(value)) {
       const dense = value.dense?.();
       if (!dense) {
         throw new Error("Unable to expand sparse vector to dense representation.");
       }
-      if (dense instanceof Float32Array) {
+      if (isFloat32Array(dense)) {
         return dense;
       }
-      if (dense instanceof Float64Array) {
+      if (isFloat64Array(dense)) {
         return new Float32Array(dense);
       }
-      if (dense instanceof Int8Array) {
+      if (isInt8Array(dense)) {
         return Float32Array.from(dense);
       }
       if (Array.isArray(dense)) {
@@ -756,14 +761,11 @@ export class OracleVS extends VectorStore {
       }
       return Float32Array.from(dense as ArrayLike<number>);
     }
-    if (
-      value instanceof Float32Array ||
-      value instanceof Float64Array ||
-      value instanceof Int8Array ||
-      value instanceof Uint8Array ||
-      Array.isArray(value)
-    ) {
+    if (isFloat32Array(value) || isFloat64Array(value) || isInt8Array(value) || isUint8Array(value)) {
       return value as ReturnedEmbedding;
+    }
+    if (Array.isArray(value)) {
+      return value as number[];
     }
     throw new Error("Received unsupported vector representation from the database.");
   }
@@ -772,22 +774,22 @@ export class OracleVS extends VectorStore {
   // (MMR, distance calculations) can assume a consistent element type without forcing
   // callers to give up the native shape returned by node-oracledb.
   private coerceEmbeddingToFloat32(value: unknown): Float32Array {
-    if (value instanceof Float32Array) {
+    if (isFloat32Array(value)) {
       return value;
     }
-    if (value instanceof Float64Array) {
+    if (isFloat64Array(value)) {
       return new Float32Array(value);
     }
-    if (value instanceof Int8Array) {
+    if (isInt8Array(value)) {
       return Float32Array.from(value);
     }
-    if (value instanceof Uint8Array) {
+    if (isUint8Array(value)) {
       const byteLength = value.length;
       const dimension = this.embeddingDimension ?? byteLength * 8;
       return unpackBinaryVector(value, dimension);
     }
     if (Array.isArray(value)) {
-      return Float32Array.from(value as number[]);
+      return Float32Array.from(value);
     }
     return this.coerceEmbeddingToFloat32(this.normalizeReturnedEmbedding(value));
   }
@@ -869,7 +871,7 @@ export class OracleVS extends VectorStore {
 
       connection = await this.getConnection();
       const finalIds: string[] = [];
-      const binds: any[] = [];
+      const binds: oracledb.BindParameters[] = [];
 
       for (let index = 0; index < documents.length; index += 1) {
         const doc = documents[index];
@@ -881,12 +883,13 @@ export class OracleVS extends VectorStore {
         const preparedEmbedding = this.prepareVectorForStorage(
           vectors[index],
         );
-        binds.push({
+        const row = {
           ext_id: externalId,
           text: doc.pageContent,
           metadata: doc.metadata,
           embedding: preparedEmbedding,
-        });
+        } as Record<string, unknown>;
+        binds.push(row as oracledb.BindParameters);
       }
 
       const isUpsert = options?.upsert ?? false; // Default to false for better performance
@@ -910,7 +913,7 @@ export class OracleVS extends VectorStore {
         VALUES (s.external_id, s.embedding, s.metadata, s.text)`;
 
       const sql = isUpsert ? mergeSql : insertSql;
-      const executeOptions = {
+      const executeOptions: oracledb.ExecuteManyOptions = {
         bindDefs: {
           ext_id: { type: oracledb.STRING, maxSize: 255 },
           text: { type: oracledb.STRING, maxSize: 10000000 },
@@ -925,7 +928,7 @@ export class OracleVS extends VectorStore {
       // Commit once all inserts are queued up
       await connection.commit();
       return finalIds;
-    } catch (error: any) {
+    } catch (error: unknown) {
       return handleError(error);
     } finally {
       if (connection) {
@@ -966,7 +969,7 @@ export class OracleVS extends VectorStore {
     let connection: oracledb.Connection | null = null;
 
     try {
-      const bindValues: any = [this.prepareQueryVector(query)];
+      const bindValues: unknown[] = [this.prepareQueryVector(query)];
 
       let sqlQuery = `
       SELECT external_id,
