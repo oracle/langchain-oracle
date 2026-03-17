@@ -270,19 +270,6 @@ const isSparseVector = (value: unknown): value is oracledb.SparseVector =>
   // eslint-disable-next-line no-instanceof/no-instanceof
   value instanceof oracledb.SparseVector;
 
-const VALID_VECTOR_TYPES = new Set<VectorType>([
-  VectorType.DENSE,
-  VectorType.SPARSE,
-]);
-
-const VALID_VECTOR_FORMAT = new Set<VectorElementFormat>([
-  VectorElementFormat.INT8,
-  VectorElementFormat.FLOAT32,
-  VectorElementFormat.FLOAT64,
-  VectorElementFormat.BINARY,
-  VectorElementFormat.FLEX,
-]);
-
 interface HNSWIndexParams {
   idxName?: string;
   idxType?: string;
@@ -300,30 +287,37 @@ interface IVFIndexParams {
   parallel?: number;
 }
 
-function normalizeVectorTypeValue(value?: VectorType): VectorType {
-  if (!value) return VectorType.DENSE;
-  const normalized = value.toUpperCase() as VectorType;
-  if (!VALID_VECTOR_TYPES.has(normalized)) {
-    throw new Error(`Vector storage type ${value} is not valid. Use DENSE or SPARSE.`);
+function normalizeVectorTypeValue(value?: string): VectorType {
+  const normalized = value?.toUpperCase() as VectorType | undefined;
+  if (normalized === VectorType.DENSE || normalized === VectorType.SPARSE) {
+    return normalized;
   }
-  return normalized;
+  return VectorType.DENSE;
 }
 
 function normalizeVectorFormat(
   value: VectorElementFormat | undefined,
   vectorType: VectorType,
 ): VectorElementFormat {
-  if (!value) return VectorElementFormat.FLOAT32;
-  const normalized = value.toUpperCase() as VectorElementFormat;
-  if (!VALID_VECTOR_FORMAT.has(normalized)) {
-    throw new Error(
-      `Vector format ${value} is not valid. Use INT8, FLOAT32, FLOAT64, BINARY, or *.`,
-    );
+  if (!value) {
+    return VectorElementFormat.FLOAT32;
   }
-  if (vectorType === VectorType.SPARSE && normalized === VectorElementFormat.BINARY) {
+
+  const normalizedValue =
+    value === VectorElementFormat.FLEX
+      ? VectorElementFormat.FLEX
+      : (value.toUpperCase() as VectorElementFormat);
+
+  const validFormats = Object.values(VectorElementFormat) as VectorElementFormat[];
+  const format = validFormats.includes(normalizedValue)
+    ? normalizedValue
+    : VectorElementFormat.FLOAT32;
+
+  if (vectorType === VectorType.SPARSE && format === VectorElementFormat.BINARY) {
     throw new Error("BINARY format is not supported for SPARSE vectors.");
   }
-  return normalized;
+
+  return format;
 }
 
 function buildVectorColumnDefinition(
@@ -339,8 +333,8 @@ function buildVectorColumnDefinition(
 
   const vectorType = normalizeVectorTypeValue(customization?.vectorType);
 
-  if (customization?.vectorType && customization?.format === undefined) {
-    throw new Error("Vector type requires both dimensions and format to be specified.");
+  if (vectorType === VectorType.SPARSE && customization?.format === undefined) {
+    throw new Error("Sparse vector type requires a vector format to be specified.");
   }
 
   const format = normalizeVectorFormat(customization?.format, vectorType);
@@ -542,46 +536,36 @@ export async function createIndex(
 async function createHNSWIndex(
   connection: oracledb.Connection,
   oraclevs: OracleVS,
-  params?: HNSWIndexParams
+  params: HNSWIndexParams = {}
 ): Promise<void> {
   try {
-    const allowedKeys = new Set(["idxName", "idxType", "neighbors", "efConstruction", "accuracy", "parallel"]);
-    if (params) {
-      for (const key of Object.keys(params)) {
-        if (!allowedKeys.has(key)) {
-          throw new Error(`Invalid parameter: ${key}`);
-        }
-      }
+    const {
+      idxName = _getIndexName("HNSW"),
+      idxType = "HNSW",
+      neighbors = 32,
+      efConstruction = 200,
+      accuracy = 90,
+      parallel = 8,
+      ...extra
+    } = params;
+
+    const invalidKeys = Object.keys(extra);
+    if (invalidKeys.length > 0) {
+      throw new Error(`Invalid parameter(s): ${invalidKeys.join(", ")}`);
     }
 
-    const config: Required<HNSWIndexParams> = {
-      idxName: params?.idxName ?? _getIndexName("HNSW"),
-      idxType: params?.idxType ?? "HNSW",
-      neighbors: params?.neighbors ?? 32,
-      efConstruction: params?.efConstruction ?? 200,
-      accuracy: params?.accuracy ?? 90,
-      parallel: params?.parallel ?? 8,
-    };
+    const ddl = `
+      CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(idxName)}
+      ON ${oraclevs.tableName}(embedding)
+      ORGANIZATION INMEMORY NEIGHBOR GRAPH
+      WITH TARGET ACCURACY ${accuracy}
+      DISTANCE ${oraclevs.distanceStrategy}
+      PARAMETERS (type ${idxType}, neighbors ${neighbors}, efConstruction ${efConstruction})
+      PARALLEL ${parallel}
+    `
+      .trim()
+      .replace(/\s+/g, " ");
 
-    const baseSql = `CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(
-      config.idxName
-    )}
-                              ON ${oraclevs.tableName}(embedding) 
-                              ORGANIZATION INMEMORY NEIGHBOR GRAPH`;
-    const accuracyPart =
-      typeof config.accuracy === "number" ? ` WITH TARGET ACCURACY ${config.accuracy}` : "";
-    const distancePart = ` DISTANCE ${oraclevs.distanceStrategy}`;
-
-    let parametersPart = "";
-    if (config.neighbors !== undefined && config.efConstruction !== undefined) {
-      parametersPart = ` parameters (type ${config.idxType}, 
-                                     neighbors ${config.neighbors}, 
-                                     efConstruction ${config.efConstruction})`;
-    }
-
-    const parallelPart = ` PARALLEL ${config.parallel}`;
-    const ddl =
-      baseSql + accuracyPart + distancePart + parametersPart + parallelPart;
     await connection.execute(ddl);
   } catch (error: unknown) {
     handleError(error);
@@ -591,49 +575,35 @@ async function createHNSWIndex(
 async function createIVFIndex(
   connection: oracledb.Connection,
   oraclevs: OracleVS,
-  params?: IVFIndexParams
+  params: IVFIndexParams = {}
 ): Promise<void> {
   try {
-    const allowedKeys = new Set(["idxName", "idxType", "neighborPart", "accuracy", "parallel"]);
-    if (params) {
-      for (const key of Object.keys(params)) {
-        if (!allowedKeys.has(key)) {
-          throw new Error(`Invalid parameter: ${key}`);
-        }
-      }
+    const {
+      idxName = _getIndexName("IVF"),
+      idxType = "IVF",
+      neighborPart = 32,
+      accuracy = 90,
+      parallel = 8,
+      ...extra
+    } = params;
+
+    const invalidKeys = Object.keys(extra);
+    if (invalidKeys.length > 0) {
+      throw new Error(`Invalid parameter(s): ${invalidKeys.join(", ")}`);
     }
 
-    const config: Required<IVFIndexParams> = {
-      idxName: params?.idxName ?? _getIndexName("IVF"),
-      idxType: params?.idxType ?? "IVF",
-      neighborPart: params?.neighborPart ?? 32,
-      accuracy: params?.accuracy ?? 90,
-      parallel: params?.parallel ?? 8,
-    };
+    const ddl = `
+      CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(idxName)}
+      ON ${oraclevs.tableName}(embedding)
+      ORGANIZATION NEIGHBOR PARTITIONS
+      WITH TARGET ACCURACY ${accuracy}
+      DISTANCE ${oraclevs.distanceStrategy}
+      PARAMETERS (type ${idxType}, neighbor partitions ${neighborPart})
+      PARALLEL ${parallel}
+    `
+      .trim()
+      .replace(/\s+/g, " ");
 
-    const baseSql = `CREATE VECTOR INDEX IF NOT EXISTS ${quoteIdentifier(
-      config.idxName
-    )}
-                              ON ${oraclevs.tableName}(embedding) 
-                              ORGANIZATION NEIGHBOR PARTITIONS`;
-
-    // Optional parts depending on parameters
-    const accuracyPart =
-      typeof config.accuracy === "number" ? ` WITH TARGET ACCURACY ${config.accuracy}` : "";
-    const distancePart = ` DISTANCE ${oraclevs.distanceStrategy}`;
-
-    let parametersPart = "";
-    if (config.idxType && config.neighborPart !== undefined) {
-      parametersPart = ` PARAMETERS (type ${config.idxType}, 
-                         neighbor partitions ${config.neighborPart})`;
-    }
-
-    // Always included part for parallel - assuming parallel is compulsory and always included
-    const parallelPart = ` PARALLEL ${config.parallel}`;
-
-    // Combine all parts
-    const ddl =
-      baseSql + accuracyPart + distancePart + parametersPart + parallelPart;
     await connection.execute(ddl);
   } catch (error: unknown) {
     handleError(error);

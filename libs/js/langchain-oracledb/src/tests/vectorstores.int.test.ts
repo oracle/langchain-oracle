@@ -138,6 +138,60 @@ describe("OracleVectorStore", () => {
     };
   });
 
+  test("createIndex builds HNSW vector index with custom parameters", async () => {
+    const hnswTable = `${tableName}_hnsw_idx`;
+    await dropTablePurge(connection as oracledb.Connection, hnswTable);
+
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      const docs = [
+        new Document({ pageContent: "Graph search tuning" }),
+        new Document({ pageContent: "Vector performance tricks" }),
+      ];
+      const hnswStore = await OracleVS.fromDocuments(docs, embedder, {
+        ...dbConfig,
+        tableName: hnswTable,
+      });
+
+      let creationError: unknown;
+      try {
+        await createIndex(localConnection, hnswStore, {
+          idxName: "hnsw_vector_idx",
+          idxType: "HNSW",
+          neighbors: 8,
+          efConstruction: 32,
+          accuracy: 80,
+          parallel: 1,
+        });
+      } catch (error) {
+        creationError = error;
+      }
+
+      if (creationError) {
+        const message = (creationError as Error).message ?? String(creationError);
+        expect(message).toMatch(/ORA-51962/);
+        return;
+      }
+
+      const indexResult = await localConnection.execute(
+        `SELECT index_name FROM user_indexes WHERE table_name = :table AND index_name = :index`,
+        {
+          table: hnswTable.toUpperCase(),
+          index: "HNSW_VECTOR_IDX",
+        },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const indexRow =
+        indexResult.rows?.[0] as { INDEX_NAME?: string; index_name?: string } | undefined;
+      const indexName = indexRow?.INDEX_NAME ?? indexRow?.index_name;
+      expect(indexName?.toUpperCase()).toBe("HNSW_VECTOR_IDX");
+    } finally {
+      await dropTablePurge(connection as oracledb.Connection, hnswTable);
+      await localConnection?.close();
+    }
+  });
+
   beforeEach(async () => {
     // Drop table for the next test.
     await dropTablePurge(connection as oracledb.Connection, tableName);
@@ -607,6 +661,47 @@ describe("OracleVectorStore", () => {
     }
   });
 
+  test("addVectors falls back to metadata.id when ids option is omitted", async () => {
+    const metadataIdTable = `${tableName}_metadata_id`;
+    await dropTablePurge(connection as oracledb.Connection, metadataIdTable);
+
+    const store = new OracleVS(embedder, {
+      ...dbConfig,
+      tableName: metadataIdTable,
+    });
+    await store.initialize();
+
+    const docId = "metadata-derived-id";
+    const doc = new Document({
+      pageContent: "Uses metadata id",
+      metadata: { id: docId, note: "stored from metadata" },
+    });
+    const vector = await embedder.embedQuery(doc.pageContent);
+
+    await store.addVectors([vector], [doc]);
+
+    let metaConnection: oracledb.Connection | undefined;
+    try {
+      metaConnection = await pool.getConnection();
+      const result = await metaConnection.execute(
+        `SELECT external_id, metadata FROM ${store.tableName}`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const row =
+        (result.rows?.[0] as
+          | { EXTERNAL_ID?: string; external_id?: string; METADATA?: Metadata; metadata?: Metadata }
+          | undefined) ?? {};
+      const persistedId = row.EXTERNAL_ID ?? row.external_id;
+      const persistedMetadata = row.METADATA ?? row.metadata;
+      expect(persistedId).toBe(docId);
+      expect(persistedMetadata).toMatchObject({ id: docId, note: "stored from metadata" });
+    } finally {
+      await metaConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, metadataIdTable);
+    }
+  });
+
   test("initialize handles quoted table names via PL/SQL block", async () => {
     const quotedTable = `"Test Langchain Q"`;
     await dropTablePurge(connection as oracledb.Connection, quotedTable);
@@ -687,10 +782,47 @@ describe("OracleVectorStore", () => {
         createTable(localConnection, vectorTypeOnlyTable, 256, {
           vectorType: VectorType.SPARSE,
         })
-      ).rejects.toThrow(/Vector type requires both dimensions and format/i);
+      ).rejects.toThrow(/Sparse vector type requires a vector format/i);
     } finally {
       await localConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, vectorTypeOnlyTable);
+    }
+  });
+
+  test("createTable defaults invalid vector type to dense", async () => {
+    const fallbackTypeTable = `${tableName}_invalid_type`;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await createTable(localConnection, fallbackTypeTable, 128, {
+        // Force an invalid value at the type level
+        vectorType: "nonsense" as unknown as VectorType,
+      });
+
+      const meta = await getVectorColumnMetadata(localConnection, fallbackTypeTable);
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, fallbackTypeTable);
+    }
+  });
+
+  test("createTable defaults invalid vector format to float32", async () => {
+    const fallbackFormatTable = `${tableName}_invalid_format`;
+    let localConnection: oracledb.Connection | undefined;
+    try {
+      localConnection = await pool.getConnection();
+      await createTable(localConnection, fallbackFormatTable, 128, {
+        vectorType: VectorType.DENSE,
+        format: "float128" as unknown as VectorElementFormat,
+      });
+
+      const meta = await getVectorColumnMetadata(localConnection, fallbackFormatTable);
+      expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT32");
+      expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
+    } finally {
+      await localConnection?.close();
+      await dropTablePurge(connection as oracledb.Connection, fallbackFormatTable);
     }
   });
 
