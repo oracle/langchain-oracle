@@ -309,11 +309,15 @@ function buildVectorColumnDefinition(
     return `VECTOR(${dimensionSegment}, ${formatSegment}, SPARSE)`;
   }
 
-  return `VECTOR(${dimensionSegment}, ${formatSegment}, DENSE)`;
+  return `VECTOR(${dimensionSegment}, ${formatSegment})`;
 }
 
 function escapeCommentText(comment: string): string {
   return comment.replace(/'/g, "''");
+}
+
+function escapePlSqlLiteral(sql: string): string {
+  return sql.replace(/'/g, "''");
 }
 
 export async function createTable(
@@ -335,18 +339,18 @@ export async function createTable(
     const ddlBody = Object.entries(colsDict)
       .map(([colName, colType]) => `${colName} ${colType}`)
       .join(", ");
-    const ddl = `CREATE TABLE IF NOT EXISTS ${tableIdentifier}
+    const createTableSql = `CREATE TABLE IF NOT EXISTS ${tableIdentifier}
                    (
                        ${ddlBody}
                    )`;
-    await connection.execute(ddl);
-
     const tableDescription = customization?.description?.trim();
-    const commentStatements: string[] = [];
+    const statements: string[] = [
+      `EXECUTE IMMEDIATE '${escapePlSqlLiteral(createTableSql)}';`,
+    ];
 
     if (tableDescription) {
       const escapedDescription = escapeCommentText(tableDescription);
-      commentStatements.push(
+      statements.push(
         `EXECUTE IMMEDIATE 'COMMENT ON TABLE ${tableIdentifier} IS ''${escapedDescription}''';`,
       );
     }
@@ -363,16 +367,14 @@ export async function createTable(
           columnKey.toUpperCase()
         )}`;
         const escapedNote = escapeCommentText(trimmedNote);
-        commentStatements.push(
+        statements.push(
           `EXECUTE IMMEDIATE 'COMMENT ON COLUMN ${normalizedColumnIdentifier} IS ''${escapedNote}''';`,
         );
       }
     }
 
-    if (commentStatements.length > 0) {
-      const block = `BEGIN\n  ${commentStatements.join("\n  ")}\nEND;`;
-      await connection.execute(block);
-    }
+    const block = `BEGIN\n  ${statements.join("\n  ")}\nEND;`;
+    await connection.execute(block);
   } catch (error: unknown) {
     handleError(error);
   }
@@ -383,6 +385,7 @@ function _getIndexName(baseName: string): string {
   return `${baseName}_${uniqueId}`;
 }
 
+// Packs an array of 0/1 numbers into a big-endian Uint8Array for BINARY VECTOR storage.
 function packBinaryVector(bits: number[]): Uint8Array {
   const byteLength = Math.ceil(bits.length / 8);
   const buffer = new Uint8Array(byteLength);
@@ -397,6 +400,7 @@ function packBinaryVector(bits: number[]): Uint8Array {
   return buffer;
 }
 
+// Converts a dense numeric vector into the typed array that matches the configured element format.
 function convertDenseVectorForFormat(
   values: number[],
   format: VectorElementFormat,
@@ -427,6 +431,7 @@ function convertDenseVectorForFormat(
   }
 }
 
+// Builds an oracledb.SparseVector from a dense array while enforcing format-specific constraints.
 function buildSparseVector(
   values: number[],
   format: VectorElementFormat,
@@ -730,6 +735,7 @@ export class OracleVS extends VectorStore {
     return this.prepareVectorForStorage(vector);
   }
 
+  // Preserves the native driver representation, only expanding sparse vectors to dense form.
   private normalizeReturnedEmbedding(value: unknown): ReturnedEmbedding {
     if (value instanceof oracledb.SparseVector) {
       const dense = value.dense?.();
@@ -762,6 +768,9 @@ export class OracleVS extends VectorStore {
     throw new Error("Received unsupported vector representation from the database.");
   }
 
+  // Normalizes any supported vector representation into Float32Array so downstream math
+  // (MMR, distance calculations) can assume a consistent element type without forcing
+  // callers to give up the native shape returned by node-oracledb.
   private coerceEmbeddingToFloat32(value: unknown): Float32Array {
     if (value instanceof Float32Array) {
       return value;
