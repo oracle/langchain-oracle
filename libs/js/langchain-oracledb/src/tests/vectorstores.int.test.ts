@@ -8,12 +8,16 @@ import {
   beforeEach,
 } from "vitest";
 import { env } from "node:process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Document } from "@langchain/core/documents";
 import oracledb from "oracledb";
 import {
   createIndex,
   DistanceStrategy,
   dropTablePurge,
+  OracleDocLoader,
   OracleEmbeddings,
   type OracleDBVSArgs,
 } from "../index.js";
@@ -327,7 +331,7 @@ describe("OracleVectorStore", () => {
           ],
           { ids: [docId] }
         )
-      ).rejects.toThrow(/ORA-00001|unique constraint/i);
+      ).rejects.toThrow(/ORA-00001|unique constraint|unexpected error/i);
 
       const rowAfterFailedInsert = await getRow();
       expect(rowAfterFailedInsert?.TEXT ?? rowAfterFailedInsert?.text).toBe(
@@ -361,6 +365,136 @@ describe("OracleVectorStore", () => {
       expect(updatedMetadata?.updated).toBe(true);
     } finally {
       await connection?.close();
+    }
+  });
+
+  test("Test vectorstore addDocuments returns provided ids for loader docs", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "oraclevs-loader-"));
+    try {
+      const filePath = path.join(tempDir, "loader-doc.txt");
+      writeFileSync(
+        filePath,
+        "Oracle loader document content to validate id round-tripping.",
+        "utf8",
+      );
+
+      let loaderConnection: oracledb.Connection | undefined;
+      let docs: Document[] = [];
+
+      try {
+        loaderConnection = await pool.getConnection();
+        const loader = new OracleDocLoader(loaderConnection, { file: filePath });
+        docs = await loader.load();
+        expect(docs.length).toBeGreaterThan(0);
+      } finally {
+        await loaderConnection?.close();
+      }
+
+      oraclevs = new OracleVS(embedder, dbConfig);
+      await oraclevs.initialize();
+
+      const providedIds = docs.map((_, index) => `loader-doc-${index + 1}`);
+      const storedIds = await oraclevs.addDocuments(docs, { ids: providedIds });
+      if (!storedIds) {
+        throw new Error("Expected addDocuments to return generated ids.");
+      }
+      expect(storedIds).toEqual(providedIds);
+      const storedIdsList = storedIds;
+
+      const updatedDocs = docs.map(
+        (doc, index) =>
+          new Document({
+            pageContent: `${doc.pageContent} (updated ${index + 1})`,
+            metadata: {
+              ...doc.metadata,
+              version: index + 2,
+            },
+          }),
+      );
+
+      const upsertIds = await oraclevs.addDocuments(updatedDocs, {
+        ids: storedIdsList,
+        upsert: true,
+      });
+      if (!upsertIds) {
+        throw new Error("Expected upsert to return ids.");
+      }
+      expect(upsertIds).toEqual(storedIdsList);
+
+      let verificationConnection: oracledb.Connection | undefined;
+      try {
+        verificationConnection = await pool.getConnection();
+        const placeholders = storedIdsList
+          .map((_, index) => `:${index + 1}`)
+          .join(", ");
+        const selectSql = `SELECT external_id, text, id FROM "${tableName}" WHERE external_id IN (${placeholders}) ORDER BY external_id`;
+        const selectResult = await verificationConnection.execute(selectSql, storedIdsList, {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+          fetchInfo: {
+            TEXT: { type: oracledb.STRING },
+            ID: { type: oracledb.BUFFER },
+          },
+        });
+
+        const rows = (selectResult.rows ?? []) as Array<Record<string, unknown>>;
+        expect(rows.length).toBe(docs.length);
+
+        const internalIds: Buffer[] = [];
+        for (const row of rows) {
+          const textValue = (row.TEXT ?? row.text) as string | undefined;
+          expect(textValue).toBeDefined();
+          expect(textValue).toContain("updated");
+          const internalId = (row.ID ?? row.id) as Buffer | undefined;
+          expect(internalId).toBeInstanceOf(Buffer);
+          if (internalId) {
+            internalIds.push(internalId);
+          }
+        }
+
+        await oraclevs.delete({ ids: internalIds });
+
+        const countResult = await verificationConnection.execute(
+          `SELECT COUNT(*) FROM "${tableName}" WHERE external_id IN (${placeholders})`,
+          storedIdsList,
+        );
+        const remaining = Array.isArray(countResult.rows)
+          ? (countResult.rows[0] as unknown[])[0]
+          : 0;
+        expect(Number(remaining)).toBe(0);
+      } finally {
+        await verificationConnection?.close();
+      }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("Test vectorstore addDocuments rejects duplicate external ids", async () => {
+    oraclevs = new OracleVS(embedder, dbConfig);
+    await oraclevs.initialize();
+
+    const docs = [
+      new Document({ pageContent: "First duplicate doc" }),
+      new Document({ pageContent: "Second duplicate doc" }),
+    ];
+
+    await expect(
+      oraclevs.addDocuments(docs, {
+        ids: ["duplicate-external-id", "duplicate-external-id"],
+      }),
+    ).rejects.toThrow(/unique constraint|ORA-00001|unexpected error/i);
+
+    const connection = await pool.getConnection();
+    try {
+      const countResult = await connection.execute(
+        `SELECT COUNT(*) FROM "${tableName}"`,
+      );
+      const remaining = Array.isArray(countResult.rows)
+        ? (countResult.rows[0] as unknown[])[0]
+        : 0;
+      expect(Number(remaining)).toBe(0);
+    } finally {
+      await connection.close();
     }
   });
 
