@@ -100,9 +100,7 @@ class TestMediaContentType:
     def test_missing_data_raises(self) -> None:
         """media without data raises ValueError."""
         provider = GenericProvider()
-        content: List[Dict[str, Any]] = [
-            {"type": "media", "mime_type": "video/mp4"}
-        ]
+        content: List[Dict[str, Any]] = [{"type": "media", "mime_type": "video/mp4"}]
         with pytest.raises(ValueError, match="must have 'data' and 'mime_type'"):
             provider._process_message_content(content)  # type: ignore[arg-type]
 
