@@ -11,7 +11,7 @@ import { maximalMarginalRelevance } from "@langchain/core/utils/math";
 export type Metadata = Record<string, unknown>;
 interface AddDocumentOptions {
   ids?: string[];
-  upsert?: boolean;
+  mutateOnDuplicate?: boolean;
 }
 
 export function generateWhereClause(
@@ -802,7 +802,7 @@ export class OracleVS extends VectorStore {
    * @param vectors The vectors to add.
    * @param documents The documents associated with the vectors.
    * @param options
-   * ** Add { upsert?: boolean } to do upsert
+   * ** Add { mutateOnDuplicate?: boolean } to do upsert
    * @returns Promise that resolves when the vectors have been added.
    */
   public async addVectors(
@@ -848,7 +848,7 @@ export class OracleVS extends VectorStore {
         binds.push(row as oracledb.BindParameters);
       }
 
-      const isUpsert = options?.upsert ?? false; // Default to false for better performance
+      const isMutateOnDuplicate = options?.mutateOnDuplicate ?? false; // Default to false for better performance
       const insertSql = `
         INSERT INTO ${this.tableName} (external_id, embedding, text, metadata)
         VALUES (:ext_id, :embedding, :text, :metadata)`;
@@ -868,7 +868,7 @@ export class OracleVS extends VectorStore {
         INSERT (external_id, embedding, metadata, text)
         VALUES (s.external_id, s.embedding, s.metadata, s.text)`;
 
-      const sql = isUpsert ? mergeSql : insertSql;
+      const sql = isMutateOnDuplicate ? mergeSql : insertSql;
       const executeOptions: oracledb.ExecuteManyOptions = {
         bindDefs: {
           ext_id: { type: oracledb.STRING, maxSize: 255 },

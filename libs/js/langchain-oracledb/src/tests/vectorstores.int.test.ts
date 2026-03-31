@@ -349,7 +349,7 @@ describe("OracleVectorStore", () => {
             metadata: { version: 2, updated: true },
           }),
         ],
-        { ids: [docId], upsert: true }
+        { ids: [docId], mutateOnDuplicate: true }
       );
 
       const updatedRow = await getRow();
@@ -414,7 +414,7 @@ describe("OracleVectorStore", () => {
 
       const upsertIds = await oraclevs.addDocuments(updatedDocs, {
         ids: storedIdsList,
-        upsert: true,
+        mutateOnDuplicate: true,
       });
       if (!upsertIds) {
         throw new Error("Expected upsert to return ids.");
@@ -493,6 +493,83 @@ describe("OracleVectorStore", () => {
         ? (countResult.rows[0] as unknown[])[0]
         : 0;
       expect(Number(remaining)).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  test("addDocuments rolls back when serialization fails without mutateOnDuplicate", async () => {
+    oraclevs = new OracleVS(embedder, dbConfig);
+    await oraclevs.initialize();
+
+    const validDoc = new Document({
+      pageContent: "valid payload",
+      metadata: { idx: 1 },
+    });
+    const cyclicMetadata: Record<string, unknown> & { self?: unknown } = { idx: 2 };
+    cyclicMetadata.self = cyclicMetadata;
+    const invalidDoc = new Document({
+      pageContent: "invalid payload",
+      metadata: cyclicMetadata,
+    });
+
+    await expect(
+      oraclevs.addDocuments([validDoc, invalidDoc], {
+        ids: ["rollback-no-upsert-1", "rollback-no-upsert-2"],
+      }),
+    ).rejects.toThrow(/circular structure|unexpected error/i);
+
+    const connection = await pool.getConnection();
+    try {
+      const countResult = await connection.execute(
+        `SELECT COUNT(*) AS TOTAL FROM "${tableName}"`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const row = countResult.rows?.[0] as
+        | { TOTAL?: number; total?: number; "COUNT(*)"?: number }
+        | undefined;
+      const total = row?.TOTAL ?? row?.total ?? row?.["COUNT(*)"] ?? 0;
+      expect(Number(total)).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  test("addDocuments rolls back when serialization fails with mutateOnDuplicate", async () => {
+    oraclevs = new OracleVS(embedder, dbConfig);
+    await oraclevs.initialize();
+
+    const validDoc = new Document({
+      pageContent: "valid payload",
+      metadata: { idx: 1 },
+    });
+    const cyclicMetadata: Record<string, unknown> & { self?: unknown } = { idx: 2 };
+    cyclicMetadata.self = cyclicMetadata;
+    const invalidDoc = new Document({
+      pageContent: "invalid payload",
+      metadata: cyclicMetadata,
+    });
+
+    await expect(
+      oraclevs.addDocuments([validDoc, invalidDoc], {
+        ids: ["rollback-upsert-1", "rollback-upsert-2"],
+        mutateOnDuplicate: true,
+      }),
+    ).rejects.toThrow(/circular structure|unexpected error/i);
+
+    const connection = await pool.getConnection();
+    try {
+      const countResult = await connection.execute(
+        `SELECT COUNT(*) AS TOTAL FROM "${tableName}"`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      );
+      const row = countResult.rows?.[0] as
+        | { TOTAL?: number; total?: number; "COUNT(*)"?: number }
+        | undefined;
+      const total = row?.TOTAL ?? row?.total ?? row?.["COUNT(*)"] ?? 0;
+      expect(Number(total)).toBe(0);
     } finally {
       await connection.close();
     }
