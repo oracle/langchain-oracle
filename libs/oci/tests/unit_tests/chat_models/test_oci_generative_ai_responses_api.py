@@ -13,6 +13,7 @@ from oci_openai import (
     OciSessionAuth,
 )
 from oci_openai.oci_openai import _resolve_base_url
+from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
 from pydantic import BaseModel, Field
 
 from langchain_oci import ChatOCIOpenAI
@@ -247,6 +248,57 @@ def oci_openai_client(auth_instance):
         model=MODEL,
     )
     return client
+
+
+@pytest.mark.requires("langchain_openai")
+def test_client_configures_sync_and_async_http_clients(oci_openai_client):
+    assert oci_openai_client.http_client is not None
+    assert oci_openai_client.http_async_client is not None
+
+    assert oci_openai_client.http_client.headers.get(COMPARTMENT_ID_HEADER) == (
+        COMPARTMENT_ID
+    )
+    assert oci_openai_client.http_async_client.headers.get(COMPARTMENT_ID_HEADER) == (
+        COMPARTMENT_ID
+    )
+    assert oci_openai_client.http_client.headers.get(CONVERSATION_STORE_ID_HEADER) == (
+        CONVERSATION_STORE_ID
+    )
+    assert (
+        oci_openai_client.http_async_client.headers.get(CONVERSATION_STORE_ID_HEADER)
+        == CONVERSATION_STORE_ID
+    )
+
+    assert type(oci_openai_client.http_client.auth) is type(
+        oci_openai_client.http_async_client.auth
+    )
+
+
+@pytest.mark.requires("langchain_openai")
+def test_client_respects_custom_sync_and_async_http_client_overrides(auth_instance):
+    custom_http_client = DefaultHttpxClient(
+        auth=auth_instance,
+        headers={"x-test-sync-client": "custom"},
+    )
+    custom_http_async_client = DefaultAsyncHttpxClient(
+        auth=auth_instance,
+        headers={"x-test-async-client": "custom"},
+    )
+
+    client = ChatOCIOpenAI(
+        auth=auth_instance,
+        compartment_id=COMPARTMENT_ID,
+        conversation_store_id=CONVERSATION_STORE_ID,
+        region=REGION,
+        model=MODEL,
+        http_client=custom_http_client,
+        http_async_client=custom_http_async_client,
+    )
+
+    assert client.http_client is custom_http_client
+    assert client.http_async_client is custom_http_async_client
+    assert client.http_client.headers.get("x-test-sync-client") == "custom"
+    assert client.http_async_client.headers.get("x-test-async-client") == "custom"
 
 
 @pytest.mark.requires("langchain_openai")

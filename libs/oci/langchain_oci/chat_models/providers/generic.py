@@ -508,6 +508,12 @@ class GenericProvider(Provider):
                     "url": "data:audio/wav;base64,..."
                 }}
             ]
+
+            # Generic media type (routes by mime_type)
+            content = [
+                {"type": "text", "text": "Describe this video"},
+                {"type": "media", "data": "<base64>", "mime_type": "video/mp4"}
+            ]
         """
         if isinstance(content, str):
             return [self.oci_chat_message_text_content(text=content)]
@@ -598,11 +604,53 @@ class GenericProvider(Provider):
                         )
                     )
 
+                # Generic media content — route by mime_type
+                elif content_type == "media":
+                    mime_type = item.get("mime_type", "")
+                    data = item.get("data", "")
+                    if not mime_type or not data:
+                        raise ValueError(
+                            "Media content must have 'data' and 'mime_type'. "
+                            "Example: {'type': 'media', 'data': '<base64>', "
+                            "'mime_type': 'video/mp4'}"
+                        )
+                    url = f"data:{mime_type};base64,{data}"
+                    if mime_type.startswith("image/"):
+                        processed_content.append(
+                            self.oci_chat_message_image_content(
+                                image_url=self.oci_chat_message_image_url(url=url)
+                            )
+                        )
+                    elif mime_type.startswith("video/"):
+                        processed_content.append(
+                            self.oci_chat_message_video_content(
+                                video_url=self.oci_chat_message_video_url(url=url)
+                            )
+                        )
+                    elif mime_type.startswith("audio/"):
+                        processed_content.append(
+                            self.oci_chat_message_audio_content(
+                                audio_url=self.oci_chat_message_audio_url(url=url)
+                            )
+                        )
+                    elif mime_type == "application/pdf":
+                        processed_content.append(
+                            self.oci_chat_message_document_content(
+                                document_url=self.oci_chat_message_document_url(url=url)
+                            )
+                        )
+                    else:
+                        raise ValueError(
+                            f"Unsupported mime_type for media: {mime_type}. "
+                            f"Supported: image/*, video/*, audio/*, "
+                            f"application/pdf"
+                        )
+
                 else:
                     raise ValueError(
                         f"Unsupported content type: {content_type}. "
                         f"Supported types: text, image_url, document_url, "
-                        f"video_url, audio_url"
+                        f"video_url, audio_url, media"
                     )
             else:
                 raise ValueError(
@@ -641,6 +689,7 @@ class GenericProvider(Provider):
             # Resolve $ref/$defs and anyOf — OCI doesn't support them
             resolved_params = OCIUtils.resolve_schema_refs(parameters)
             resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            resolved_params = OCIUtils.sanitize_schema(resolved_params)
             properties = resolved_params.get("properties", {})
 
             return self.oci_function_definition(
