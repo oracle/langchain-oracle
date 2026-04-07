@@ -241,6 +241,43 @@ describe("OracleVectorStore", () => {
     }
   });
 
+  test("fromDocuments forwards add options", async () => {
+    let connection: oracledb.Connection | undefined;
+
+    try {
+      connection = await pool.getConnection();
+      const docs = [
+        new Document({ pageContent: "custom doc one" }),
+        new Document({ pageContent: "custom doc two" }),
+      ];
+      const ids = ["doc-one", "doc-two"];
+
+      oraclevs = await OracleVS.fromDocuments(docs, embedder, dbConfig, {
+        ids,
+      });
+
+      const queryEmbedding = await embedder.embedQuery("custom doc one");
+      const matches = await oraclevs.similaritySearchVectorWithScore(
+        queryEmbedding,
+        1,
+      );
+      expect(matches).toHaveLength(1);
+      const [match] = matches[0];
+      expect(match.id).toBe(ids[0]);
+
+      const rows = await connection.execute(
+        `SELECT external_id FROM ${oraclevs.tableName}`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_ARRAY },
+      );
+      const insertedIds =
+        rows.rows?.map((row) => (Array.isArray(row) ? row[0] : undefined)) ?? [];
+      expect(new Set(insertedIds)).toEqual(new Set(ids));
+    } finally {
+      await connection?.close();
+    }
+  });
+
   test("Test vectorstore addDocuments", async () => {
     oraclevs = new OracleVS(embedder, dbConfig);
     await oraclevs.initialize();

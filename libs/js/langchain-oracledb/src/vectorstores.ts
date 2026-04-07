@@ -1104,7 +1104,8 @@ export class OracleVS extends VectorStore {
   static async fromDocuments(
     documents: Document[],
     embeddings: EmbeddingsInterface,
-    dbConfig: OracleDBVSArgs
+    dbConfig: OracleDBVSArgs,
+    options?: AddDocumentOptions
   ): Promise<OracleVS> {
     const { client } = dbConfig;
     if (!client) throw new Error("client parameter is required...");
@@ -1117,7 +1118,7 @@ export class OracleVS extends VectorStore {
       const vectors = await embeddings.embedDocuments(texts);
 
       // Assuming a method exists to handle adding texts and metadata appropriately
-      await vss.addVectors(vectors, documents);
+      await vss.addVectors(vectors, documents, options);
 
       return vss;
     } catch (error: unknown) {
