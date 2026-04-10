@@ -38,18 +38,27 @@ def _get_oci_genai_api_version() -> str:
 OCI_GENAI_API_VERSION = _get_oci_genai_api_version()
 
 
-def _snake_to_camel(name: str) -> str:
-    """Convert snake_case to camelCase."""
-    components = name.split("_")
-    return components[0] + "".join(x.title() for x in components[1:])
+def serialize_oci_model(obj: Any) -> Any:
+    """Serialize an OCI SDK model to a JSON-ready dict using ``attribute_map``.
 
+    Unlike ``oci.util.to_dict`` (which produces snake_case keys that need a
+    separate camelCase pass), this function uses the SDK model's own
+    ``attribute_map`` to emit the correct REST API key names directly.
 
-def _convert_keys_to_camel(obj: Any) -> Any:
-    """Recursively convert dict keys from snake_case to camelCase."""
+    Plain dicts (e.g. JSON Schema inside tool ``parameters``) pass through
+    unchanged, so user-defined property names are never mangled.
+    """
+    if hasattr(obj, "attribute_map") and hasattr(obj, "swagger_types"):
+        result: Dict[str, Any] = {}
+        for attr, json_key in obj.attribute_map.items():
+            val = getattr(obj, attr)
+            if val is not None:
+                result[json_key] = serialize_oci_model(val)
+        return result
     if isinstance(obj, dict):
-        return {_snake_to_camel(k): _convert_keys_to_camel(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_convert_keys_to_camel(item) for item in obj]
+        return obj
+    if isinstance(obj, list):
+        return [serialize_oci_model(item) for item in obj]
     return obj
 
 
@@ -245,11 +254,10 @@ class OCIAsyncClient:
         """
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/chat"
 
-        # Convert snake_case keys to camelCase for OCI REST API
         body = {
             "compartmentId": compartment_id,
-            "servingMode": _convert_keys_to_camel(serving_mode_dict),
-            "chatRequest": _convert_keys_to_camel(chat_request_dict),
+            "servingMode": serving_mode_dict,
+            "chatRequest": chat_request_dict,
         }
 
         headers = self._sign_headers("POST", url, body, stream=stream)

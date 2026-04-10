@@ -391,63 +391,138 @@ class TestAsyncResponseParsing:
         assert usage["total_tokens"] == 150
 
 
-class TestAsyncSupportHelpers:
-    """Tests for async support helper functions."""
+class TestSerializeOciModelHelpers:
+    """Tests for serialize_oci_model helper behavior."""
 
-    def test_snake_to_camel_simple(self):
-        """Test snake_case to camelCase conversion."""
-        from langchain_oci.common.async_support import _snake_to_camel
+    def test_list_of_models(self):
+        """Test serialization of a list of OCI models."""
+        from oci.generative_ai_inference.models import TextContent
 
-        assert _snake_to_camel("hello_world") == "helloWorld"
-        assert _snake_to_camel("model_id") == "modelId"
-        assert _snake_to_camel("is_stream") == "isStream"
+        from langchain_oci.common.async_support import serialize_oci_model
 
-    def test_snake_to_camel_single_word(self):
-        """Test conversion with single word (no underscore)."""
-        from langchain_oci.common.async_support import _snake_to_camel
+        items = [TextContent(text="a"), TextContent(text="b")]
+        result = serialize_oci_model(items)
+        assert result == [{"type": "TEXT", "text": "a"}, {"type": "TEXT", "text": "b"}]
 
-        assert _snake_to_camel("hello") == "hello"
-        assert _snake_to_camel("model") == "model"
+    def test_none_attributes_excluded(self):
+        """Test that None attributes are excluded from output."""
+        from oci.generative_ai_inference.models import FunctionDefinition
 
-    def test_snake_to_camel_multiple_underscores(self):
-        """Test conversion with multiple underscores."""
-        from langchain_oci.common.async_support import _snake_to_camel
+        from langchain_oci.common.async_support import serialize_oci_model
 
-        assert _snake_to_camel("max_output_tokens") == "maxOutputTokens"
-        assert _snake_to_camel("a_b_c_d") == "aBCD"
+        tool = FunctionDefinition(name="test", description="desc")
+        result = serialize_oci_model(tool)
+        assert "parameters" not in result
+        assert result["name"] == "test"
 
-    def test_convert_keys_to_camel_dict(self):
-        """Test recursive key conversion in dicts."""
-        from langchain_oci.common.async_support import _convert_keys_to_camel
 
-        input_dict = {
-            "model_id": "test",
-            "is_stream": True,
-            "nested_object": {"inner_key": "value"},
-        }
-        expected = {
-            "modelId": "test",
-            "isStream": True,
-            "nestedObject": {"innerKey": "value"},
-        }
-        assert _convert_keys_to_camel(input_dict) == expected
+class TestSerializeOciModel:
+    """Tests for serialize_oci_model preserving user-defined tool parameter names.
 
-    def test_convert_keys_to_camel_list(self):
-        """Test key conversion in lists."""
-        from langchain_oci.common.async_support import _convert_keys_to_camel
+    Regression tests for issue #188: the previous approach (to_dict +
+    _convert_keys_to_camel) converted snake_case tool argument names to
+    camelCase, breaking tool execution. serialize_oci_model uses the SDK's
+    own attribute_map so only OCI fields get renamed.
+    """
 
-        input_list = [{"item_one": 1}, {"item_two": 2}]
-        expected = [{"itemOne": 1}, {"itemTwo": 2}]
-        assert _convert_keys_to_camel(input_list) == expected
+    def test_generic_tool_parameters_preserved(self):
+        """JSON Schema property names inside tool 'parameters' must not be converted."""
+        from oci.generative_ai_inference.models import (
+            FunctionDefinition,
+            GenericChatRequest,
+            TextContent,
+            UserMessage,
+        )
 
-    def test_convert_keys_to_camel_primitives(self):
-        """Test that primitives are returned unchanged."""
-        from langchain_oci.common.async_support import _convert_keys_to_camel
+        from langchain_oci.common.async_support import serialize_oci_model
 
-        assert _convert_keys_to_camel("hello") == "hello"
-        assert _convert_keys_to_camel(42) == 42
-        assert _convert_keys_to_camel(None) is None
-        assert _convert_keys_to_camel(True) is True
+        req = GenericChatRequest(
+            messages=[UserMessage(content=[TextContent(text="hello")])],
+            max_tokens=100,
+            tools=[
+                FunctionDefinition(
+                    name="websearch",
+                    description="do websearch",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query_web": {"type": "string"},
+                            "max_results": {"type": "integer"},
+                        },
+                        "required": ["query_web"],
+                    },
+                )
+            ],
+        )
+        result = serialize_oci_model(req)
+        props = result["tools"][0]["parameters"]["properties"]
+        assert "query_web" in props, f"got {list(props.keys())}"
+        assert "max_results" in props
+        # OCI structural keys must be camelCase
+        assert "apiFormat" in result
+        assert "maxTokens" in result
+
+    def test_cohere_v1_parameter_definitions_preserved(self):
+        """Cohere V1: user-defined parameter names preserved, SDK fields converted."""
+        from oci.generative_ai_inference.models import CohereTool
+
+        from langchain_oci.common.async_support import serialize_oci_model
+
+        tool = CohereTool(
+            name="websearch",
+            description="do websearch",
+            parameter_definitions={
+                "query_web": {
+                    "type": "string",
+                    "description": "search query",
+                    "is_required": True,
+                },
+            },
+        )
+        result = serialize_oci_model(tool)
+        pd = result["parameterDefinitions"]
+        # User-defined parameter name preserved
+        assert "query_web" in pd
+        assert "queryWeb" not in pd
+
+    def test_cohere_v2_nested_function_parameters_preserved(self):
+        """Cohere V2: function.parameters JSON Schema preserved."""
+        from oci.generative_ai_inference.models import CohereToolV2, Function
+
+        from langchain_oci.common.async_support import serialize_oci_model
+
+        tool = CohereToolV2(
+            type="FUNCTION",
+            function=Function(
+                name="websearch",
+                description="do websearch",
+                parameters={
+                    "type": "object",
+                    "properties": {"query_web": {"type": "string"}},
+                    "required": ["query_web"],
+                },
+            ),
+        )
+        result = serialize_oci_model(tool)
+        props = result["function"]["parameters"]["properties"]
+        assert "query_web" in props
+        assert "queryWeb" not in props
+
+    def test_plain_dicts_pass_through(self):
+        """Plain dicts (no attribute_map) are returned unchanged."""
+        from langchain_oci.common.async_support import serialize_oci_model
+
+        d = {"snake_key": "value", "nested": {"inner_key": 1}}
+        assert serialize_oci_model(d) is d
+
+    def test_none_and_primitives(self):
+        """Primitives pass through unchanged."""
+        from langchain_oci.common.async_support import serialize_oci_model
+
+        assert serialize_oci_model("hello") == "hello"
+        assert serialize_oci_model(42) == 42
+        assert serialize_oci_model(None) is None
+        assert serialize_oci_model(True) is True
 
 
 class TestAsyncClientErrorHandling:

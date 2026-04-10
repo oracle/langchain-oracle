@@ -163,6 +163,105 @@ class TestAsyncWithTools:
         # Should either have tool calls or a response
         assert result.content or result.tool_calls
 
+    @pytest.mark.asyncio
+    async def test_async_tool_args_preserve_snake_case(self):
+        """Regression test for issue #188: async must preserve snake_case tool arg names.
+
+        The async client serializes the request via HTTP (not the OCI SDK client).
+        Previously, _convert_keys_to_camel converted user-defined JSON Schema
+        property names (e.g. query_web -> queryWeb), causing the model to return
+        camelCase args that don't match the original function signature.
+
+        This test verifies that sync and async produce identical tool call
+        argument keys when the tool has snake_case parameter names.
+        """
+        llm = get_llm()
+
+        def web_search(search_query: str, max_results: int = 5) -> str:
+            """Search the web for information."""
+            return f"Results for '{search_query}' (max {max_results})"
+
+        llm_with_tools = llm.bind_tools([web_search])
+
+        prompt = [
+            HumanMessage(
+                content=(
+                    "Search the web for 'latest AI news'. "
+                    "You must call the web_search tool."
+                )
+            )
+        ]
+
+        # Run sync and async in sequence
+        sync_result = llm_with_tools.invoke(prompt)
+        async_result = await llm_with_tools.ainvoke(prompt)
+
+        # Both should produce tool calls
+        assert sync_result.tool_calls, "Sync should produce tool calls"
+        assert async_result.tool_calls, "Async should produce tool calls"
+
+        sync_args = sync_result.tool_calls[0]["args"]
+        async_args = async_result.tool_calls[0]["args"]
+
+        # The critical assertion: async args must use the same keys as sync
+        assert set(sync_args.keys()) == set(async_args.keys()), (
+            f"Sync/async arg keys diverge!\n"
+            f"  Sync:  {sorted(sync_args.keys())}\n"
+            f"  Async: {sorted(async_args.keys())}\n"
+            f"If async has camelCase keys (e.g. 'searchQuery' instead of "
+            f"'search_query'), issue #188 has regressed."
+        )
+
+        # Verify the keys are actually snake_case (matching the function signature)
+        for key in async_args:
+            assert "_" in key or key.islower(), (
+                f"Arg key '{key}' looks like camelCase — expected snake_case "
+                f"matching the function parameter name"
+            )
+
+    @pytest.mark.asyncio
+    async def test_async_tool_roundtrip_snake_case(self):
+        """End-to-end: async tool call args can invoke the original function.
+
+        This is the practical impact of issue #188 — if args are camelCase,
+        the function call fails with an unexpected keyword argument error.
+        """
+        llm = get_llm()
+
+        def get_flight_info(departure_city: str, arrival_city: str) -> str:
+            """Look up flight information between two cities."""
+            return f"Flight from {departure_city} to {arrival_city}: 3h, $299"
+
+        llm_with_tools = llm.bind_tools([get_flight_info])
+
+        result = await llm_with_tools.ainvoke(
+            [
+                HumanMessage(
+                    content=(
+                        "Look up flights from New York to Los Angeles. "
+                        "You must call the get_flight_info tool."
+                    )
+                )
+            ]
+        )
+
+        assert result.tool_calls, "Model should have called get_flight_info"
+
+        tc = result.tool_calls[0]
+        assert tc["name"] == "get_flight_info"
+
+        # This is the real test: can we actually call the function with the args?
+        # If args are camelCase (departureCity, arrivalCity) this will raise TypeError
+        try:
+            output = get_flight_info(**tc["args"])
+        except TypeError as e:
+            pytest.fail(
+                f"Tool call args don't match function signature (issue #188): {e}\n"
+                f"Args received: {tc['args']}"
+            )
+
+        assert "Flight from" in output
+
 
 class TestAsyncStreaming:
     """Test async streaming scenarios."""
