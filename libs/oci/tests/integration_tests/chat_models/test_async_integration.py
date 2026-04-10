@@ -163,6 +163,80 @@ class TestAsyncWithTools:
         # Should either have tool calls or a response
         assert result.content or result.tool_calls
 
+    @pytest.mark.asyncio
+    async def test_async_tool_args_preserve_snake_case(self):
+        """Test async tool call args use snake_case matching function params."""
+        llm = get_llm()
+
+        def web_search(search_query: str, max_results: int = 5) -> str:
+            """Search the web for information."""
+            return f"Results for '{search_query}' (max {max_results})"
+
+        llm_with_tools = llm.bind_tools([web_search])
+
+        prompt = [
+            HumanMessage(
+                content=(
+                    "Search the web for 'latest AI news'. "
+                    "You must call the web_search tool."
+                )
+            )
+        ]
+
+        async_result = await llm_with_tools.ainvoke(prompt)
+        assert async_result.tool_calls, "Async should produce tool calls"
+
+        async_args = async_result.tool_calls[0]["args"]
+        valid_params = {"search_query", "max_results"}
+
+        # All returned keys must be valid snake_case parameter names.
+        # The bug in #188 produced camelCase keys like "searchQuery".
+        for key in async_args:
+            assert key in valid_params, (
+                f"Unexpected arg key '{key}'. "
+                f"Expected one of {valid_params}. "
+                f"If key is camelCase (e.g. 'searchQuery'), #188 regressed."
+            )
+
+    @pytest.mark.asyncio
+    async def test_async_tool_roundtrip_snake_case(self):
+        """Test async tool call args can invoke the original function."""
+        llm = get_llm()
+
+        def get_flight_info(departure_city: str, arrival_city: str) -> str:
+            """Look up flight information between two cities."""
+            return f"Flight from {departure_city} to {arrival_city}: 3h, $299"
+
+        llm_with_tools = llm.bind_tools([get_flight_info])
+
+        result = await llm_with_tools.ainvoke(
+            [
+                HumanMessage(
+                    content=(
+                        "Look up flights from New York to Los Angeles. "
+                        "You must call the get_flight_info tool."
+                    )
+                )
+            ]
+        )
+
+        assert result.tool_calls, "Model should have called get_flight_info"
+
+        tc = result.tool_calls[0]
+        assert tc["name"] == "get_flight_info"
+
+        # This is the real test: can we actually call the function with the args?
+        # If args are camelCase (departureCity, arrivalCity) this will raise TypeError
+        try:
+            output = get_flight_info(**tc["args"])
+        except TypeError as e:
+            pytest.fail(
+                f"Tool call args don't match function signature (issue #188): {e}\n"
+                f"Args received: {tc['args']}"
+            )
+
+        assert "Flight from" in output
+
 
 class TestAsyncStreaming:
     """Test async streaming scenarios."""
