@@ -38,32 +38,6 @@ def _get_oci_genai_api_version() -> str:
 OCI_GENAI_API_VERSION = _get_oci_genai_api_version()
 
 
-def serialize_oci_model(obj: Any) -> Any:
-    """Serialize an OCI SDK model to a JSON-ready dict using ``attribute_map``.
-
-    Unlike ``oci.util.to_dict`` (which produces snake_case keys that need a
-    separate camelCase pass), this function uses the SDK model's own
-    ``attribute_map`` to emit the correct REST API key names directly.
-
-    Plain dict **keys** (e.g. JSON Schema property names inside tool
-    ``parameters``) are never renamed.  Dict **values** are still recursed
-    so that any nested OCI model objects (e.g. ``CohereParameterDefinition``
-    inside ``parameter_definitions``) are properly serialized.
-    """
-    if hasattr(obj, "attribute_map") and hasattr(obj, "swagger_types"):
-        result: Dict[str, Any] = {}
-        for attr, json_key in obj.attribute_map.items():
-            val = getattr(obj, attr)
-            if val is not None:
-                result[json_key] = serialize_oci_model(val)
-        return result
-    if isinstance(obj, dict):
-        return {k: serialize_oci_model(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [serialize_oci_model(item) for item in obj]
-    return obj
-
-
 class OCIAsyncClient:
     """Async HTTP client for OCI Generative AI services.
 

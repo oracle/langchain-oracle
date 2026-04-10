@@ -65,19 +65,20 @@ class ChatOCIGenAIAsyncMixin:
         Returns dict with compartment_id, chat_request_dict, serving_mode_dict.
 
         Reuses _prepare_request from the main class and serializes OCI model
-        objects using ``attribute_map`` so that API keys are correctly
-        camelCased while user-defined content (e.g. JSON Schema property
-        names inside tool definitions) is preserved untouched.
+        objects using the SDK's own ``sanitize_for_serialization`` — the same
+        serializer the sync client uses internally.  This guarantees sync and
+        async produce identical JSON, and user-defined content (e.g. JSON
+        Schema property names inside tool definitions) is preserved.
         """
-        from langchain_oci.common.async_support import serialize_oci_model
-
         # Reuse the sync _prepare_request which returns a ChatDetails object
         chat_details = self._prepare_request(messages, stop, stream, **kwargs)  # type: ignore[attr-defined]
 
+        serialize = self.client.base_client.sanitize_for_serialization  # type: ignore[attr-defined]
+
         return {
             "compartment_id": chat_details.compartment_id,
-            "chat_request_dict": serialize_oci_model(chat_details.chat_request),
-            "serving_mode_dict": serialize_oci_model(chat_details.serving_mode),
+            "chat_request_dict": serialize(chat_details.chat_request),
+            "serving_mode_dict": serialize(chat_details.serving_mode),
         }
 
     async def _agenerate(

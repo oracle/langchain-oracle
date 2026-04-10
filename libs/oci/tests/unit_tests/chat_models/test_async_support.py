@@ -32,13 +32,27 @@ def mock_signer():
     return signer
 
 
-@pytest.fixture
-def llm(mock_oci_client, mock_signer):
-    """Create a ChatOCIGenAI instance with mocked dependencies."""
-    # Set up base_client with signer (as accessed by async mixin)
+def _setup_base_client(mock_oci_client, mock_signer):
+    """Wire up a mock base_client with real sanitize_for_serialization."""
+    from oci.base_client import BaseClient
+
     mock_oci_client.base_client = MagicMock()
     mock_oci_client.base_client.signer = mock_signer
     mock_oci_client.base_client.config = {}
+    # Use the real serializer so unit tests catch serialization bugs
+    mock_oci_client.base_client.sanitize_for_serialization = (
+        BaseClient.sanitize_for_serialization.__get__(
+            mock_oci_client.base_client, type(mock_oci_client.base_client)
+        )
+    )
+    # Required by sanitize_for_serialization for type resolution
+    mock_oci_client.base_client.complex_type_mappings = {}
+
+
+@pytest.fixture
+def llm(mock_oci_client, mock_signer):
+    """Create a ChatOCIGenAI instance with mocked dependencies."""
+    _setup_base_client(mock_oci_client, mock_signer)
 
     llm = ChatOCIGenAI(
         model_id="meta.llama-3-70b-instruct",
@@ -52,9 +66,7 @@ def llm(mock_oci_client, mock_signer):
 @pytest.fixture
 def llm_cohere(mock_oci_client, mock_signer):
     """Create a Cohere ChatOCIGenAI instance with mocked dependencies."""
-    mock_oci_client.base_client = MagicMock()
-    mock_oci_client.base_client.signer = mock_signer
-    mock_oci_client.base_client.config = {}
+    _setup_base_client(mock_oci_client, mock_signer)
 
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-plus",
@@ -391,141 +403,98 @@ class TestAsyncResponseParsing:
         assert usage["total_tokens"] == 150
 
 
-class TestSerializeOciModelHelpers:
-    """Tests for serialize_oci_model helper behavior."""
-
-    def test_list_of_models(self):
-        """Test serialization of a list of OCI models."""
-        from oci.generative_ai_inference.models import TextContent
-
-        from langchain_oci.common.async_support import serialize_oci_model
-
-        items = [TextContent(text="a"), TextContent(text="b")]
-        result = serialize_oci_model(items)
-        assert result == [{"type": "TEXT", "text": "a"}, {"type": "TEXT", "text": "b"}]
-
-    def test_none_attributes_excluded(self):
-        """Test that None attributes are excluded from output."""
-        from oci.generative_ai_inference.models import FunctionDefinition
-
-        from langchain_oci.common.async_support import serialize_oci_model
-
-        tool = FunctionDefinition(name="test", description="desc")
-        result = serialize_oci_model(tool)
-        assert "parameters" not in result
-        assert result["name"] == "test"
-
-
-class TestSerializeOciModel:
-    """Tests for serialize_oci_model preserving user-defined tool parameter names.
+class TestAsyncSerializationPreservesToolSchemas:
+    """Tests that async serialization preserves user-defined tool parameter names.
 
     Regression tests for issue #188: the previous approach (to_dict +
     _convert_keys_to_camel) converted snake_case tool argument names to
-    camelCase, breaking tool execution. serialize_oci_model uses the SDK's
-    own attribute_map so only OCI fields get renamed.
+    camelCase, breaking tool execution.  The fix uses the SDK's own
+    ``sanitize_for_serialization`` so sync and async serialize identically.
     """
 
-    def test_generic_tool_parameters_preserved(self):
-        """JSON Schema property names inside tool 'parameters' must not be converted."""
-        from oci.generative_ai_inference.models import (
-            FunctionDefinition,
-            GenericChatRequest,
-            TextContent,
-            UserMessage,
-        )
+    def test_generic_tool_parameters_preserved(self, llm):
+        """JSON Schema property names inside tool 'parameters' are preserved."""
+        from langchain_core.tools import StructuredTool
 
-        from langchain_oci.common.async_support import serialize_oci_model
+        def websearch(query_web: str, max_results: int = 5) -> str:
+            """Do websearch."""
+            return "ok"
 
-        req = GenericChatRequest(
-            messages=[UserMessage(content=[TextContent(text="hello")])],
-            max_tokens=100,
-            tools=[
-                FunctionDefinition(
-                    name="websearch",
-                    description="do websearch",
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            "query_web": {"type": "string"},
-                            "max_results": {"type": "integer"},
-                        },
-                        "required": ["query_web"],
-                    },
-                )
-            ],
+        tool = StructuredTool.from_function(
+            func=websearch, name="websearch", description="do websearch"
         )
-        result = serialize_oci_model(req)
-        props = result["tools"][0]["parameters"]["properties"]
+        oci_tool = llm._provider.convert_to_oci_tool(tool)
+        request_data = llm._prepare_async_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
+        props = request_data["chat_request_dict"]["tools"][0]["parameters"][
+            "properties"
+        ]
         assert "query_web" in props, f"got {list(props.keys())}"
         assert "max_results" in props
+        assert "queryWeb" not in props
         # OCI structural keys must be camelCase
-        assert "apiFormat" in result
-        assert "maxTokens" in result
+        assert "apiFormat" in request_data["chat_request_dict"]
 
-    def test_cohere_v1_parameter_definitions_preserved(self):
-        """Cohere V1: user-defined parameter names preserved, SDK fields converted."""
-        from oci.generative_ai_inference.models import CohereTool
+    def test_cohere_v1_parameter_definitions_preserved(self, llm_cohere):
+        """Cohere V1: user-defined parameter names preserved."""
+        from langchain_core.tools import StructuredTool
 
-        from langchain_oci.common.async_support import serialize_oci_model
+        def websearch(query_web: str) -> str:
+            """Do websearch."""
+            return "ok"
 
-        tool = CohereTool(
-            name="websearch",
-            description="do websearch",
-            parameter_definitions={
-                "query_web": {
-                    "type": "string",
-                    "description": "search query",
-                    "is_required": True,
-                },
-            },
+        tool = StructuredTool.from_function(
+            func=websearch, name="websearch", description="do websearch"
         )
-        result = serialize_oci_model(tool)
-        pd = result["parameterDefinitions"]
-        # User-defined parameter name preserved
+        oci_tool = llm_cohere._provider.convert_to_oci_tool(tool)
+        request_data = llm_cohere._prepare_async_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
+        pd = request_data["chat_request_dict"]["tools"][0]["parameterDefinitions"]
         assert "query_web" in pd
         assert "queryWeb" not in pd
 
-    def test_cohere_v2_nested_function_parameters_preserved(self):
-        """Cohere V2: function.parameters JSON Schema preserved."""
-        from oci.generative_ai_inference.models import CohereToolV2, Function
+    def test_sync_async_produce_identical_json(self, llm):
+        """Sync and async paths produce the same serialized request."""
+        from langchain_core.tools import StructuredTool
 
-        from langchain_oci.common.async_support import serialize_oci_model
+        def lookup(departure_city: str, arrival_city: str) -> str:
+            """Lookup flights."""
+            return "ok"
 
-        tool = CohereToolV2(
-            type="FUNCTION",
-            function=Function(
-                name="websearch",
-                description="do websearch",
-                parameters={
-                    "type": "object",
-                    "properties": {"query_web": {"type": "string"}},
-                    "required": ["query_web"],
-                },
-            ),
+        tool = StructuredTool.from_function(
+            func=lookup, name="lookup", description="lookup"
         )
-        result = serialize_oci_model(tool)
-        props = result["function"]["parameters"]["properties"]
-        assert "query_web" in props
-        assert "queryWeb" not in props
+        oci_tool = llm._provider.convert_to_oci_tool(tool)
 
-    def test_plain_dict_keys_preserved(self):
-        """Plain dict keys are never renamed; values are recursed."""
-        from langchain_oci.common.async_support import serialize_oci_model
+        # Async path: _prepare_async_request
+        async_data = llm._prepare_async_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
 
-        d = {"snake_key": "value", "nested": {"inner_key": 1}}
-        result = serialize_oci_model(d)
-        assert result == d
-        assert "snake_key" in result
-        assert "inner_key" in result["nested"]
+        # Sync path: SDK's sanitize_for_serialization on same objects
+        chat_details = llm._prepare_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
+        serialize = llm.client.base_client.sanitize_for_serialization
+        sync_chat = serialize(chat_details.chat_request)
+        sync_serving = serialize(chat_details.serving_mode)
 
-    def test_none_and_primitives(self):
-        """Primitives pass through unchanged."""
-        from langchain_oci.common.async_support import serialize_oci_model
-
-        assert serialize_oci_model("hello") == "hello"
-        assert serialize_oci_model(42) == 42
-        assert serialize_oci_model(None) is None
-        assert serialize_oci_model(True) is True
+        assert async_data["chat_request_dict"] == sync_chat
+        assert async_data["serving_mode_dict"] == sync_serving
 
 
 class TestAsyncClientErrorHandling:
