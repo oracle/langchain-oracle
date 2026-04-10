@@ -508,12 +508,15 @@ class TestSerializeOciModel:
         assert "query_web" in props
         assert "queryWeb" not in props
 
-    def test_plain_dicts_pass_through(self):
-        """Plain dicts (no attribute_map) are returned unchanged."""
+    def test_plain_dict_keys_preserved(self):
+        """Plain dict keys are never renamed; values are recursed."""
         from langchain_oci.common.async_support import serialize_oci_model
 
         d = {"snake_key": "value", "nested": {"inner_key": 1}}
-        assert serialize_oci_model(d) is d
+        result = serialize_oci_model(d)
+        assert result == d
+        assert "snake_key" in result
+        assert "inner_key" in result["nested"]
 
     def test_none_and_primitives(self):
         """Primitives pass through unchanged."""

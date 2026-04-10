@@ -45,8 +45,10 @@ def serialize_oci_model(obj: Any) -> Any:
     separate camelCase pass), this function uses the SDK model's own
     ``attribute_map`` to emit the correct REST API key names directly.
 
-    Plain dicts (e.g. JSON Schema inside tool ``parameters``) pass through
-    unchanged, so user-defined property names are never mangled.
+    Plain dict **keys** (e.g. JSON Schema property names inside tool
+    ``parameters``) are never renamed.  Dict **values** are still recursed
+    so that any nested OCI model objects (e.g. ``CohereParameterDefinition``
+    inside ``parameter_definitions``) are properly serialized.
     """
     if hasattr(obj, "attribute_map") and hasattr(obj, "swagger_types"):
         result: Dict[str, Any] = {}
@@ -56,7 +58,7 @@ def serialize_oci_model(obj: Any) -> Any:
                 result[json_key] = serialize_oci_model(val)
         return result
     if isinstance(obj, dict):
-        return obj
+        return {k: serialize_oci_model(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [serialize_oci_model(item) for item in obj]
     return obj

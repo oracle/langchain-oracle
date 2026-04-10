@@ -165,16 +165,7 @@ class TestAsyncWithTools:
 
     @pytest.mark.asyncio
     async def test_async_tool_args_preserve_snake_case(self):
-        """Regression test for issue #188: async must preserve snake_case tool arg names.
-
-        The async client serializes the request via HTTP (not the OCI SDK client).
-        Previously, _convert_keys_to_camel converted user-defined JSON Schema
-        property names (e.g. query_web -> queryWeb), causing the model to return
-        camelCase args that don't match the original function signature.
-
-        This test verifies that sync and async produce identical tool call
-        argument keys when the tool has snake_case parameter names.
-        """
+        """Test async tool call args use snake_case matching function params."""
         llm = get_llm()
 
         def web_search(search_query: str, max_results: int = 5) -> str:
@@ -192,40 +183,24 @@ class TestAsyncWithTools:
             )
         ]
 
-        # Run sync and async in sequence
-        sync_result = llm_with_tools.invoke(prompt)
         async_result = await llm_with_tools.ainvoke(prompt)
-
-        # Both should produce tool calls
-        assert sync_result.tool_calls, "Sync should produce tool calls"
         assert async_result.tool_calls, "Async should produce tool calls"
 
-        sync_args = sync_result.tool_calls[0]["args"]
         async_args = async_result.tool_calls[0]["args"]
+        valid_params = {"search_query", "max_results"}
 
-        # The critical assertion: async args must use the same keys as sync
-        assert set(sync_args.keys()) == set(async_args.keys()), (
-            f"Sync/async arg keys diverge!\n"
-            f"  Sync:  {sorted(sync_args.keys())}\n"
-            f"  Async: {sorted(async_args.keys())}\n"
-            f"If async has camelCase keys (e.g. 'searchQuery' instead of "
-            f"'search_query'), issue #188 has regressed."
-        )
-
-        # Verify the keys are actually snake_case (matching the function signature)
+        # All returned keys must be valid snake_case parameter names.
+        # The bug in #188 produced camelCase keys like "searchQuery".
         for key in async_args:
-            assert "_" in key or key.islower(), (
-                f"Arg key '{key}' looks like camelCase — expected snake_case "
-                f"matching the function parameter name"
+            assert key in valid_params, (
+                f"Unexpected arg key '{key}'. "
+                f"Expected one of {valid_params}. "
+                f"If key is camelCase (e.g. 'searchQuery'), #188 regressed."
             )
 
     @pytest.mark.asyncio
     async def test_async_tool_roundtrip_snake_case(self):
-        """End-to-end: async tool call args can invoke the original function.
-
-        This is the practical impact of issue #188 — if args are camelCase,
-        the function call fails with an unexpected keyword argument error.
-        """
+        """Test async tool call args can invoke the original function."""
         llm = get_llm()
 
         def get_flight_info(departure_city: str, arrival_city: str) -> str:
