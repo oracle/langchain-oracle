@@ -1397,6 +1397,132 @@ def test_tool_choice_none_after_tool_results() -> None:
     assert len(request.chat_request.tools) > 0
 
 
+@pytest.mark.requires("oci")
+def test_retry_strips_unsupported_temperature() -> None:
+    """OCI 400 for unsupported temperature should be retried with param removed."""
+    import json as _json
+
+    from langchain_oci.chat_models.oci_generative_ai import (
+        _handle_unsupported_param_error,
+    )
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="openai.gpt-5",
+        client=oci_gen_ai_client,
+        model_kwargs={"temperature": 0.3, "max_completion_tokens": 1024},
+    )
+
+    request = llm._prepare_request(
+        [HumanMessage(content="hi")], stop=None, stream=False
+    )
+    assert request.chat_request.temperature == 0.3
+
+    error_msg = _json.dumps(
+        {
+            "error": {
+                "message": "Unsupported value",
+                "type": "invalid_request_error",
+                "param": "temperature",
+                "code": "unsupported_value",
+            }
+        }
+    )
+    modified = _handle_unsupported_param_error(error_msg, request)
+    assert modified is True
+    assert request.chat_request.temperature is None
+    assert request.chat_request.max_completion_tokens == 1024
+
+
+@pytest.mark.requires("oci")
+def test_retry_converts_max_tokens_to_max_completion_tokens() -> None:
+    """OCI 400 for maxTokens should rename to max_completion_tokens and retry."""
+    from langchain_oci.chat_models.oci_generative_ai import (
+        _handle_unsupported_param_error,
+    )
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="openai.gpt-5",
+        client=oci_gen_ai_client,
+        model_kwargs={"max_tokens": 512},
+    )
+
+    request = llm._prepare_request(
+        [HumanMessage(content="hi")], stop=None, stream=False
+    )
+    assert request.chat_request.max_tokens == 512
+
+    error_msg = (
+        "Invalid 'maxTokens': Unsupported parameter: "
+        "'maxTokens' is not supported with this model. "
+        "Use 'maxCompletionTokens' instead."
+    )
+    modified = _handle_unsupported_param_error(error_msg, request)
+    assert modified is True
+    assert request.chat_request.max_tokens is None
+    assert request.chat_request.max_completion_tokens == 512
+
+
+@pytest.mark.requires("oci")
+def test_retry_strips_unsupported_top_p() -> None:
+    """OCI 400 for unsupported top_p should be retried with param removed."""
+    import json as _json
+
+    from langchain_oci.chat_models.oci_generative_ai import (
+        _handle_unsupported_param_error,
+    )
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="openai.gpt-5",
+        client=oci_gen_ai_client,
+        model_kwargs={"top_p": 0.8},
+    )
+
+    request = llm._prepare_request(
+        [HumanMessage(content="hi")], stop=None, stream=False
+    )
+    assert request.chat_request.top_p == 0.8
+
+    error_msg = _json.dumps(
+        {
+            "error": {
+                "message": "Unsupported parameter",
+                "type": "invalid_request_error",
+                "param": "top_p",
+                "code": "unsupported_parameter",
+            }
+        }
+    )
+    modified = _handle_unsupported_param_error(error_msg, request)
+    assert modified is True
+    assert request.chat_request.top_p is None
+
+
+@pytest.mark.requires("oci")
+def test_no_retry_on_unrelated_400() -> None:
+    """Unrelated 400 errors should not trigger retry logic."""
+    from langchain_oci.chat_models.oci_generative_ai import (
+        _handle_unsupported_param_error,
+    )
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(
+        model_id="openai.gpt-5",
+        client=oci_gen_ai_client,
+        model_kwargs={"temperature": 0.3},
+    )
+
+    request = llm._prepare_request(
+        [HumanMessage(content="hi")], stop=None, stream=False
+    )
+
+    modified = _handle_unsupported_param_error("Some other error", request)
+    assert modified is False
+    assert request.chat_request.temperature == 0.3
+
+
 # =============================================================================
 # Tool Result Guidance Tests
 # =============================================================================
