@@ -1,22 +1,24 @@
 # Copyright (c) 2023 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Unit tests for tool schema conversion — all 14 scenarios.
+"""Unit tests for tool schema conversion.
 
 Covers nested schemas, anyOf resolution, json_schema_extra constraints,
 Pydantic-native constraints, Python Enums, and backward compatibility
-for both GenericProvider and CohereProvider.
+for both GenericProvider and CohereProvider, including tools with injected
+runtime arguments that cannot be serialized via args_schema.model_json_schema().
 
 See: https://github.com/oracle/langchain-oracle/issues/103
      https://github.com/oracle/langchain-oracle/pull/109#issuecomment-3837468732
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import Annotated, Callable, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.tools import BaseTool, tool
+from langchain_core.tools.base import InjectedToolArg
 from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models.providers.cohere import CohereProvider
@@ -237,6 +239,43 @@ class ConstInput(BaseModel):
 def const_tool(version: str) -> str:
     """Use const version."""
     return version
+
+
+# 15: injected runtime field should be excluded from tool-call schema fallback
+class RuntimeInjectedInput(BaseModel):
+    query: str = Field(description="User query")
+    runtime: Annotated[Callable[..., str], InjectedToolArg]
+
+
+class RuntimeInjectedTool(BaseTool):
+    name: str = "runtime_injected_tool"
+    description: str = "Tool with runtime-only injected argument"
+    args_schema: type[BaseModel] = RuntimeInjectedInput
+
+    def _run(self, query: str, runtime=None) -> str:
+        return query
+
+
+# 16: injected runtime field + json_schema_extra on non-injected fields
+class RuntimeWithConstraintsInput(BaseModel):
+    query: str = Field(
+        description="Search query",
+        json_schema_extra={"enum": ["alpha", "beta", "gamma"]},
+    )
+    limit: int = Field(
+        description="Max results",
+        json_schema_extra={"minimum": 1, "maximum": 100},
+    )
+    runtime: Annotated[Callable[..., str], InjectedToolArg]
+
+
+class RuntimeWithConstraintsTool(BaseTool):
+    name: str = "runtime_with_constraints_tool"
+    description: str = "Tool with injected runtime and json_schema_extra constraints"
+    args_schema: type[BaseModel] = RuntimeWithConstraintsInput
+
+    def _run(self, query: str, limit: int = 10, runtime=None) -> str:
+        return query
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +628,40 @@ def test_backward_compat_simple_tool():
     assert p["count"]["type"] == "integer"
 
 
+@pytest.mark.requires("oci")
+def test_runtime_injected_field_falls_back_to_tool_call_schema():
+    """GenericProvider should ignore runtime-only injected fields."""
+    provider = GenericProvider()
+
+    result = provider.convert_to_oci_tool(RuntimeInjectedTool())
+
+    assert result.name == "runtime_injected_tool"  # type: ignore[attr-defined]
+    properties = result.parameters["properties"]  # type: ignore[attr-defined]
+    assert "query" in properties
+    assert "runtime" not in properties
+    assert result.parameters["required"] == ["query"]  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires("oci")
+def test_runtime_injected_with_schema_extras_preserved():
+    """GenericProvider should exclude runtime fields AND preserve json_schema_extra."""
+    provider = GenericProvider()
+
+    result = provider.convert_to_oci_tool(RuntimeWithConstraintsTool())
+
+    properties = result.parameters["properties"]  # type: ignore[attr-defined]
+    assert "runtime" not in properties, "runtime field must be excluded"
+    assert "query" in properties
+    assert "limit" in properties
+    assert properties["query"].get("enum") == [
+        "alpha",
+        "beta",
+        "gamma",
+    ], "json_schema_extra enum must be preserved"
+    assert properties["limit"].get("minimum") == 1, "minimum must be preserved"
+    assert properties["limit"].get("maximum") == 100, "maximum must be preserved"
+
+
 # ---------------------------------------------------------------------------
 # CohereProvider tests
 # ---------------------------------------------------------------------------
@@ -628,6 +701,32 @@ def test_cohere_range_in_description():
     desc = params["duration_hours"].description
     assert "min=1" in desc
     assert "max=168" in desc
+
+
+@pytest.mark.requires("oci")
+def test_cohere_runtime_injected_field_falls_back_to_tool_args():
+    """CohereProvider should ignore runtime-only injected fields."""
+    params = _cohere_params(RuntimeInjectedTool())
+
+    assert "query" in params
+    assert "runtime" not in params
+    assert params["query"].type == "str"
+
+
+@pytest.mark.requires("oci")
+def test_cohere_runtime_injected_with_schema_extras_preserved():
+    """CohereProvider should exclude runtime fields AND preserve json_schema_extra."""
+    params = _cohere_params(RuntimeWithConstraintsTool())
+
+    assert "runtime" not in params, "runtime field must be excluded"
+    assert "query" in params
+    assert "limit" in params
+    # Cohere embeds enum/range in description text
+    assert "alpha" in params["query"].description
+    assert "beta" in params["query"].description
+    assert "gamma" in params["query"].description
+    assert "min=1" in params["limit"].description
+    assert "max=100" in params["limit"].description
 
 
 @pytest.mark.requires("oci")

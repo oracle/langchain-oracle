@@ -3,8 +3,15 @@
 
 """Shared OCI authentication utilities."""
 
+import os
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, Union
+
+# Default timeout: (connect_timeout, read_timeout) in seconds.
+# Override via OCI_REQUEST_TIMEOUT env var (read timeout only)
+# or pass timeout= to create_oci_client_kwargs.
+_DEFAULT_CONNECT_TIMEOUT = 10
+_DEFAULT_READ_TIMEOUT = 240
 
 
 class OCIAuthType(Enum):
@@ -16,11 +23,28 @@ class OCIAuthType(Enum):
     RESOURCE_PRINCIPAL = 4
 
 
+def _resolve_timeout(
+    timeout: Optional[Union[int, float, Tuple[int, int]]] = None,
+) -> Tuple[int, int]:
+    """Resolve timeout from parameter or OCI_REQUEST_TIMEOUT env var."""
+    if timeout is not None:
+        if isinstance(timeout, tuple):
+            return timeout
+        return (_DEFAULT_CONNECT_TIMEOUT, int(timeout))
+
+    env_timeout = os.environ.get("OCI_REQUEST_TIMEOUT")
+    if env_timeout:
+        return (_DEFAULT_CONNECT_TIMEOUT, int(env_timeout))
+
+    return (_DEFAULT_CONNECT_TIMEOUT, _DEFAULT_READ_TIMEOUT)
+
+
 def create_oci_client_kwargs(
     auth_type: str,
     service_endpoint: Optional[str] = None,
     auth_file_location: str = "~/.oci/config",
     auth_profile: str = "DEFAULT",
+    timeout: Optional[Union[int, float, Tuple[int, int]]] = None,
 ) -> Dict[str, Any]:
     """Create OCI client kwargs based on authentication type.
 
@@ -33,6 +57,9 @@ def create_oci_client_kwargs(
         service_endpoint: The OCI service endpoint URL.
         auth_file_location: Path to the OCI config file.
         auth_profile: The profile name in the OCI config file.
+        timeout: Request timeout. Can be an int/float (read timeout in seconds),
+                 or a tuple of (connect_timeout, read_timeout). Defaults to
+                 (10, 240). Override globally via OCI_REQUEST_TIMEOUT env var.
 
     Returns:
         Dict with 'config' and/or 'signer' keys ready for OCI client initialization.
@@ -54,7 +81,7 @@ def create_oci_client_kwargs(
         "signer": None,
         "service_endpoint": service_endpoint,
         "retry_strategy": oci.retry.DEFAULT_RETRY_STRATEGY,
-        "timeout": (10, 240),  # default timeout config for OCI Gen AI service
+        "timeout": _resolve_timeout(timeout),
     }
 
     if auth_type == OCIAuthType.API_KEY.name:

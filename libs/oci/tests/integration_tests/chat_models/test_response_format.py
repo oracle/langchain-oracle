@@ -64,7 +64,10 @@ def create_chat_model(model_id: str, response_format=None, **kwargs):
     region = os.getenv("OCI_REGION", "us-chicago-1")
     endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
-    model_kwargs = {"temperature": 0.1, "max_tokens": 512}
+    if model_id.startswith("openai."):
+        model_kwargs = {"temperature": 0.1, "max_completion_tokens": 1024}
+    else:
+        model_kwargs = {"temperature": 0.1, "max_tokens": 512}
     if response_format:
         model_kwargs["response_format"] = response_format
 
@@ -353,3 +356,248 @@ def test_response_format_class_level():
         pytest.fail(
             f"Class-level response_format failed: {e}\nContent: {response.content}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Structured output: tool_choice and empty description fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "meta.llama-3.3-70b-instruct",
+        "google.gemini-2.5-flash",
+        "meta.llama-4-scout-17b-16e-instruct",
+        "cohere.command-a-03-2025",
+        "xai.grok-4-1-fast-non-reasoning",
+        "openai.gpt-5.1",
+        "openai.gpt-5.2",
+        "openai.gpt-4.1",
+    ],
+)
+def test_structured_output_no_docstring(model_id: str):
+    """Pydantic models without docstrings must work with with_structured_output.
+
+    Before the fix, Cohere crashed with 400 (empty description) and Gemini
+    returned None (no tool_choice forcing the tool call).
+    """
+
+    class BugReport(BaseModel):
+        title: str = Field(description="Short bug title")
+        severity: str = Field(description="low, medium, high, or critical")
+        steps_to_reproduce: str = Field(description="Steps to reproduce the bug")
+
+    llm = create_chat_model(model_id)
+    result = llm.with_structured_output(BugReport).invoke(
+        "File a bug report: The login page returns a 500 error when the "
+        "password contains special characters like & or #. This is critical "
+        "because users cannot sign in."
+    )
+
+    assert result is not None, f"{model_id}: structured output returned None"
+    assert isinstance(result, BugReport), f"{model_id}: wrong type {type(result)}"
+    assert result.title, f"{model_id}: title is empty"
+    assert result.severity, f"{model_id}: severity is empty"
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "meta.llama-3.3-70b-instruct",
+        "google.gemini-2.5-flash",
+        "meta.llama-4-scout-17b-16e-instruct",
+        "xai.grok-4-1-fast-non-reasoning",
+        "openai.gpt-5.1",
+        "openai.gpt-5.2",
+        "openai.gpt-4.1",
+    ],
+)
+def test_structured_output_with_enum(model_id: str):
+    """Structured output with enum fields and varied input."""
+    from enum import Enum
+
+    class Sentiment(str, Enum):
+        POSITIVE = "positive"
+        NEGATIVE = "negative"
+        NEUTRAL = "neutral"
+
+    class FeedbackAnalysis(BaseModel):
+        """Analysis of customer feedback."""
+
+        customer_intent: str = Field(description="What the customer wants")
+        sentiment: Sentiment = Field(description="Overall sentiment")
+        requires_followup: bool = Field(description="Whether a human should follow up")
+
+    llm = create_chat_model(model_id)
+    result = llm.with_structured_output(FeedbackAnalysis).invoke(
+        "Analyze this support ticket: 'I have been waiting 3 weeks for my "
+        "refund and nobody has responded to my emails. This is unacceptable. "
+        "I want to speak to a manager immediately.'"
+    )
+
+    assert result is not None, f"{model_id}: returned None"
+    assert isinstance(result, FeedbackAnalysis)
+    assert result.customer_intent
+    assert isinstance(result.sentiment, Sentiment)
+    assert isinstance(result.requires_followup, bool)
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "google.gemini-2.5-flash",
+        "meta.llama-4-scout-17b-16e-instruct",
+        "openai.gpt-5.1",
+        "openai.gpt-5.2",
+        "openai.gpt-4.1",
+    ],
+)
+def test_structured_output_nested(model_id: str):
+    """Structured output with nested Pydantic models and lists."""
+    from typing import List
+
+    class Ingredient(BaseModel):
+        """A recipe ingredient."""
+
+        name: str = Field(description="Ingredient name")
+        quantity: str = Field(description="Amount needed")
+
+    class Recipe(BaseModel):
+        """A cooking recipe."""
+
+        dish_name: str = Field(description="Name of the dish")
+        cuisine: str = Field(description="Type of cuisine")
+        ingredients: List[Ingredient] = Field(description="Required ingredients")
+        prep_time_minutes: int = Field(description="Preparation time in minutes")
+
+    llm = create_chat_model(model_id)
+    result = llm.with_structured_output(Recipe).invoke(
+        "Give me a recipe for a classic Italian margherita pizza."
+    )
+
+    assert result is not None, f"{model_id}: returned None"
+    assert isinstance(result, Recipe)
+    assert result.dish_name
+    assert result.cuisine
+    assert len(result.ingredients) >= 1
+    assert all(isinstance(i, Ingredient) for i in result.ingredients)
+    assert all(i.name for i in result.ingredients)
+    assert result.prep_time_minutes > 0
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "google.gemini-2.5-flash",
+        "meta.llama-4-scout-17b-16e-instruct",
+        "xai.grok-4-1-fast-non-reasoning",
+        "openai.gpt-5.1",
+        "openai.gpt-5.2",
+        "openai.gpt-4.1",
+    ],
+)
+def test_structured_output_deeply_nested(model_id: str):
+    """Structured output with multiple nesting levels and mixed types."""
+    from enum import Enum
+    from typing import List
+
+    class RiskLevel(str, Enum):
+        LOW = "low"
+        MEDIUM = "medium"
+        HIGH = "high"
+
+    class Metric(BaseModel):
+        """A metric measurement."""
+
+        name: str = Field(description="Metric name")
+        value: str = Field(description="Measured value with unit")
+
+    class ServiceHealth(BaseModel):
+        """Health status of a service."""
+
+        service_name: str = Field(description="Name of the service")
+        status: str = Field(description="up or down")
+        risk: RiskLevel = Field(description="Risk level")
+        metrics: List[Metric] = Field(description="Key metrics")
+
+    class InfraReport(BaseModel):
+        """Infrastructure health report."""
+
+        region: str = Field(description="Cloud region")
+        services: List[ServiceHealth] = Field(description="Services")
+        overall_risk: RiskLevel = Field(description="Overall risk")
+
+    llm = create_chat_model(model_id)
+    # Override token limit — deeply nested schemas need more room
+    if model_id.startswith("openai."):
+        llm.model_kwargs["max_completion_tokens"] = 4096
+    else:
+        llm.model_kwargs["max_tokens"] = 4096
+    result = llm.with_structured_output(InfraReport).invoke(
+        "Infrastructure report for us-east-1: API gateway is up, low risk, "
+        "45ms latency. Database is up, medium risk, 85% CPU."
+    )
+
+    assert result is not None, f"{model_id}: returned None"
+    assert isinstance(result, InfraReport)
+    assert result.region
+    assert len(result.services) >= 1
+    for svc in result.services:
+        assert isinstance(svc, ServiceHealth)
+        assert svc.service_name
+        assert isinstance(svc.risk, RiskLevel)
+    assert isinstance(result.overall_risk, RiskLevel)
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "openai.gpt-5.1",
+        "openai.gpt-5.2",
+        "openai.gpt-4.1",
+    ],
+)
+def test_structured_output_openai_models(model_id: str):
+    """Structured output on OpenAI commercial models via OCI GenAI.
+
+    These models need max_completion_tokens instead of max_tokens.
+    """
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+    if not compartment_id:
+        pytest.skip("OCI_COMPARTMENT_ID not set")
+
+    profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+    region = os.getenv("OCI_REGION", "us-chicago-1")
+    endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+
+    class TicketSummary(BaseModel):
+        ticket_id: str = Field(description="Ticket identifier")
+        category: str = Field(description="Issue category")
+        resolution: str = Field(description="Recommended resolution")
+
+    llm = ChatOCIGenAI(
+        model_id=model_id,
+        service_endpoint=endpoint,
+        compartment_id=compartment_id,
+        model_kwargs={"temperature": 0.0, "max_completion_tokens": 1024},
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+        auth_profile=profile,
+    )
+
+    result = llm.with_structured_output(TicketSummary).invoke(
+        "Summarize ticket JIRA-4521: User reports login timeout after "
+        "password reset. Network team confirmed no outage. Likely a "
+        "session cache issue — clear the auth cache and retry."
+    )
+
+    assert result is not None, f"{model_id}: returned None"
+    assert isinstance(result, TicketSummary)
+    assert result.ticket_id
+    assert result.category
+    assert result.resolution
