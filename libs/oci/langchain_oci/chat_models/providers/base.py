@@ -124,6 +124,34 @@ class Provider(ABC):
         """Process streaming tool calls from event data into chunks."""
         ...
 
+    @staticmethod
+    def _overlay_schema_extras(
+        schema: Dict[str, Any],
+        args_schema: Union[type, Dict[str, Any]],
+    ) -> None:
+        """Overlay json_schema_extra from args_schema fields onto a schema.
+
+        tool_call_schema.model_json_schema() drops json_schema_extra (enum,
+        format, pattern, etc.). This restores those constraints from the
+        original args_schema field definitions for fields present in both.
+        """
+        properties = schema.get("properties", {})
+        if not properties:
+            return
+        fields = getattr(args_schema, "model_fields", {})
+        for field_name, prop in properties.items():
+            field_info = fields.get(field_name)
+            if field_info is None:
+                continue
+            extras = getattr(field_info, "json_schema_extra", None)
+            if extras and isinstance(extras, dict):
+                prop.update(extras)
+
+    @property
+    def supports_tool_choice(self) -> bool:
+        """Whether this provider supports the tool_choice parameter."""
+        return False
+
     @property
     def supports_parallel_tool_calls(self) -> bool:
         """Whether this provider supports parallel tool calling.

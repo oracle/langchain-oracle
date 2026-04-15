@@ -393,7 +393,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         if method == "function_calling":
             if schema is None:
                 raise ValueError("Schema must be provided for function_calling method.")
-            llm = self.bind_tools([schema], **kwargs)
+            # Force tool use when the provider supports tool_choice, so the
+            # model returns structured output instead of free-form text.
+            bind_kwargs: Dict[str, Any] = {**kwargs}
+            if self._provider.supports_tool_choice:
+                bind_kwargs["tool_choice"] = "required"
+            llm = self.bind_tools([schema], **bind_kwargs)
             tool_name = getattr(self._provider.convert_to_oci_tool(schema), "name")
             if is_pydantic_schema:
                 output_parser: OutputParserLike = PydanticToolsParser(
