@@ -1183,6 +1183,150 @@ class OracleVS(VectorStore):
         else:
             return self.embedding_function(text)
 
+    @staticmethod
+    def _prepare_texts_from_documents(
+        documents: List[Document],
+        text_splitter: Optional[Any] = None,
+        add_chunk_metadata: bool = True,
+    ) -> Tuple[List[str], List[dict], List[int]]:
+        """Prepare texts and metadatas for insertion.
+
+        If `text_splitter` is provided, each document is split and every chunk
+        is returned as a separate text row.
+        """
+        if text_splitter is not None and not hasattr(text_splitter, "split_text"):
+            raise ValueError(
+                "text_splitter must provide a split_text(text: str) method."
+            )
+
+        texts: List[str] = []
+        metadatas: List[dict] = []
+        source_doc_indices: List[int] = []
+
+        for doc_index, doc in enumerate(documents):
+            base_metadata = dict(doc.metadata) if doc.metadata else {}
+
+            if text_splitter is None:
+                texts.append(doc.page_content)
+                metadatas.append(base_metadata)
+                source_doc_indices.append(doc_index)
+                continue
+
+            chunks = text_splitter.split_text(doc.page_content)
+            for chunk_index, chunk in enumerate(chunks):
+                chunk_metadata = dict(base_metadata)
+                if add_chunk_metadata:
+                    chunk_metadata["source_doc_index"] = doc_index
+                    chunk_metadata["chunk_index"] = chunk_index
+                texts.append(chunk)
+                metadatas.append(chunk_metadata)
+                source_doc_indices.append(doc_index)
+
+        return texts, metadatas, source_doc_indices
+
+    @_handle_exceptions
+    def add_documents(self, documents: List[Document], **kwargs: Any) -> List[str]:
+        """Add documents to the vector store.
+
+        Optional kwargs:
+            text_splitter: splitter object with split_text(str) -> List[str]
+            add_chunk_metadata: when splitting, adds source_doc_index/chunk_index
+            ids: optional IDs aligned to the input documents
+        """
+        text_splitter = kwargs.pop("text_splitter", None)
+        add_chunk_metadata = kwargs.pop("add_chunk_metadata", True)
+        ids = kwargs.pop("ids", None)
+
+        if ids is None:
+            doc_ids = [doc.id for doc in documents]
+            if any(doc_ids):
+                ids = doc_ids
+
+        if ids is not None and len(ids) != len(documents):
+            raise ValueError(
+                f"Length mismatch: 'ids' has {len(ids)} items, "
+                f"but 'documents' has {len(documents)} items."
+            )
+
+        texts, metadatas, source_doc_indices = self._prepare_texts_from_documents(
+            documents,
+            text_splitter=text_splitter,
+            add_chunk_metadata=add_chunk_metadata,
+        )
+
+        if ids is not None:
+            if text_splitter is None:
+                return self.add_texts(
+                    texts=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                    **kwargs,
+                )
+
+            id_counts: Dict[int, int] = {}
+            chunk_ids: List[str] = []
+            for doc_index in source_doc_indices:
+                current_idx = id_counts.get(doc_index, 0)
+                chunk_ids.append(f"{ids[doc_index]}#chunk-{current_idx}")
+                id_counts[doc_index] = current_idx + 1
+
+            return self.add_texts(
+                texts=texts,
+                metadatas=metadatas,
+                ids=chunk_ids,
+                **kwargs,
+            )
+
+        return self.add_texts(texts=texts, metadatas=metadatas, **kwargs)
+
+    @_ahandle_exceptions
+    async def aadd_documents(
+        self, documents: List[Document], **kwargs: Any
+    ) -> List[str]:
+        """Async version of add_documents with optional chunking."""
+        text_splitter = kwargs.pop("text_splitter", None)
+        add_chunk_metadata = kwargs.pop("add_chunk_metadata", True)
+        ids = kwargs.pop("ids", None)
+
+        if ids is None:
+            doc_ids = [doc.id for doc in documents]
+            if any(doc_ids):
+                ids = doc_ids
+
+        if ids is not None and len(ids) != len(documents):
+            raise ValueError(
+                f"Length mismatch: 'ids' has {len(ids)} items, "
+                f"but 'documents' has {len(documents)} items."
+            )
+
+        texts, metadatas, source_doc_indices = self._prepare_texts_from_documents(
+            documents,
+            text_splitter=text_splitter,
+            add_chunk_metadata=add_chunk_metadata,
+        )
+
+        if ids is not None:
+            if text_splitter is None:
+                return await self.aadd_texts(
+                    texts=texts, metadatas=metadatas, ids=ids, **kwargs
+                )
+
+            id_counts: Dict[int, int] = {}
+            chunk_ids: List[str] = []
+            for doc_index in source_doc_indices:
+                current_idx = id_counts.get(doc_index, 0)
+                chunk_ids.append(f"{ids[doc_index]}#chunk-{current_idx}")
+                id_counts[doc_index] = current_idx + 1
+
+            return await self.aadd_texts(
+                texts=texts,
+                metadatas=metadatas,
+                ids=chunk_ids,
+                **kwargs,
+            )
+
+        return await self.aadd_texts(texts=texts, metadatas=metadatas, **kwargs)
+
     @_handle_exceptions
     def add_texts(
         self,
