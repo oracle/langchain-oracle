@@ -96,7 +96,7 @@ class TestOCIReactAgentIntegration:
     @pytest.fixture
     def auth_type(self) -> str:
         """Get auth type from environment."""
-        return os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN")
+        return os.environ.get("OCI_AUTH_TYPE", "API_KEY")
 
     @pytest.fixture
     def auth_profile(self) -> str:
@@ -231,19 +231,19 @@ class TestOCIReactAgentIntegration:
         )
 
         thread_id = "test_thread_123"
-        config = {"configurable": {"thread_id": thread_id}}
+        config: dict = {"configurable": {"thread_id": thread_id}}
 
         # First message
         result1 = agent.invoke(
             {"messages": [HumanMessage(content="What's the weather in Chicago?")]},
-            config=config,
+            config=config,  # type: ignore[arg-type]
         )
         assert len(result1["messages"]) > 1
 
         # Second message in same thread should have context
         result2 = agent.invoke(
             {"messages": [HumanMessage(content="How about New York?")]},
-            config=config,
+            config=config,  # type: ignore[arg-type]
         )
         assert len(result2["messages"]) > len(result1["messages"]), (
             "Second invocation should include previous messages"
@@ -273,13 +273,16 @@ def test_multi_model_tool_calling(model_id: str) -> None:
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
+    auth_type = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
+    auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+
     agent = create_oci_agent(
         model_id=model_id,
         tools=[get_weather],
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
-        auth_type="API_KEY",
-        auth_profile="API_KEY_AUTH",
+        auth_type=auth_type,
+        auth_profile=auth_profile,
         system_prompt="You are a weather assistant. Always use the get_weather tool.",
         temperature=0.3,
         max_tokens=512,
@@ -323,13 +326,16 @@ def test_multi_model_support(model_id: str) -> None:
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
+    auth_type = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
+    auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+
     agent = create_oci_agent(
         model_id=model_id,
         tools=[get_weather],
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
-        auth_type="API_KEY",
-        auth_profile="API_KEY_AUTH",
+        auth_type=auth_type,
+        auth_profile=auth_profile,
         system_prompt="You are a helpful weather assistant.",
         temperature=0.3,
         max_tokens=512,
