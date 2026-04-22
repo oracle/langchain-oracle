@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Union
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union, cast
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, create_model, model_validator
 
 from langchain_oci.common.auth import OCIAuthType
+
+logger = logging.getLogger(__name__)
 
 
 class AgentConfig(BaseModel):
@@ -122,3 +126,105 @@ def _get_agent_factory() -> tuple[Callable[..., Any], bool]:
 def _filter_none(**kwargs: Any) -> dict[str, Any]:
     """Filter out None values from keyword arguments."""
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+# Exception types raised by pydantic for the OmitFromSchema + NotRequired combo
+# that deepagents middleware attaches to injected runtime fields. Resolved at
+# module load so the fallback catches real types rather than class-name strings.
+_SCHEMA_FALLBACK_EXCEPTIONS: tuple = (TypeError,)
+try:
+    from pydantic import PydanticForbiddenQualifier
+
+    _SCHEMA_FALLBACK_EXCEPTIONS = (PydanticForbiddenQualifier, TypeError)
+except ImportError:
+    pass
+
+
+def _build_loose_model(
+    model_name: str,
+    field_definitions: Optional[Dict[str, Any]] = None,
+    root: Optional[Any] = None,
+) -> type[BaseModel]:
+    """Build a permissive pydantic model when strict creation fails."""
+    if root is not None:
+        return create_model(model_name, root=(Any, None))
+    fields = {name: (Any, None) for name in (field_definitions or {})} or {
+        "output": (Any, None)
+    }
+    return cast(
+        type[BaseModel],
+        create_model(model_name, **fields),  # type: ignore[call-overload]
+    )
+
+
+@contextmanager
+def _langgraph_schema_fallback() -> Iterator[None]:
+    """Scope-limited workaround for a pydantic/langgraph schema bug.
+
+    Deepagents' tool middleware attaches ``OmitFromSchema + NotRequired``
+    annotations to runtime-injected fields. Pydantic refuses that combo, so
+    langgraph's ``create_model`` blows up while compiling the agent graph.
+
+    This context manager replaces ``langgraph._internal._pydantic.create_model``
+    with a variant that falls back to a permissive ``Any`` schema when it hits
+    the specific exceptions, and restores the original on exit. Scope is
+    intentionally tight: the patch is only live for the wrapped call, not a
+    global import-time side effect.
+
+    Does nothing (and never raises) on langgraph versions where the internal
+    module layout doesn't match; the call executes against the real upstream
+    ``create_model`` in that case.
+    """
+    try:
+        from langgraph._internal import _pydantic as lg_pydantic
+    except ImportError:
+        yield
+        return
+
+    original = getattr(lg_pydantic, "create_model", None)
+    if original is None:
+        yield
+        return
+
+    def patched(
+        model_name: str,
+        *,
+        field_definitions: Optional[Dict[str, Any]] = None,
+        root: Optional[Any] = None,
+    ) -> type[BaseModel]:
+        try:
+            return original(
+                model_name,
+                field_definitions=field_definitions,
+                root=root,
+            )
+        except _SCHEMA_FALLBACK_EXCEPTIONS as ex:
+            logger.debug(
+                "langgraph schema fallback for %s: %s",
+                model_name,
+                ex.__class__.__name__,
+            )
+            return _build_loose_model(
+                model_name,
+                field_definitions=field_definitions,
+                root=root,
+            )
+
+    # Swap the source of truth plus any modules that did `from X import create_model`
+    # (those capture the reference at import time).
+    import sys
+
+    rebound = []
+    lg_pydantic.create_model = patched
+    for mod_name in ("langgraph.pregel.main", "langgraph.pregel"):
+        mod = sys.modules.get(mod_name)
+        if mod is not None and getattr(mod, "create_model", None) is original:
+            mod.create_model = patched  # type: ignore[attr-defined]
+            rebound.append(mod)
+
+    try:
+        yield
+    finally:
+        lg_pydantic.create_model = original
+        for mod in rebound:
+            mod.create_model = original  # type: ignore[attr-defined]

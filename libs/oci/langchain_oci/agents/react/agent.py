@@ -14,6 +14,7 @@ from langchain_oci.agents.common import (
     _build_llm,
     _filter_none,
     _get_agent_factory,
+    _langgraph_schema_fallback,
 )
 from langchain_oci.common.auth import OCIAuthType
 
@@ -144,4 +145,5 @@ def create_oci_agent(
     if config.debug:
         agent_kwargs["debug"] = True
 
-    return create_agent_func(**agent_kwargs)
+    with _langgraph_schema_fallback():
+        return create_agent_func(**agent_kwargs)
