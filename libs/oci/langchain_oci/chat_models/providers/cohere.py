@@ -622,7 +622,7 @@ class CohereProvider(Provider):
                 schema = tool_call_schema.model_json_schema()
                 # Overlay json_schema_extra constraints from args_schema
                 if tool.args_schema:
-                    self._overlay_schema_extras(schema, tool.args_schema)
+                    OCIUtils.overlay_schema_extras(schema, tool.args_schema)
                 # Resolve $ref/$defs and anyOf — OCI doesn't support them
                 schema = OCIUtils.resolve_schema_refs(schema)
                 schema = OCIUtils.resolve_anyof(schema)

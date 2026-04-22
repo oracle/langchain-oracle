@@ -700,7 +700,7 @@ class GenericProvider(Provider):
             schema = tool_call_schema.model_json_schema()
             # Overlay json_schema_extra constraints from args_schema when present
             if tool.args_schema:
-                self._overlay_schema_extras(schema, tool.args_schema)
+                OCIUtils.overlay_schema_extras(schema, tool.args_schema)
             return schema
         # Final fallback for tools without tool_call_schema
         as_json_schema_function = convert_to_openai_function(tool)
