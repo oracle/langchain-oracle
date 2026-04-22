@@ -385,10 +385,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             # Respect an explicit caller-supplied tool_choice to allow opting
             # out when a specific provider/model handles "required" poorly.
             bind_kwargs: Dict[str, Any] = {**kwargs}
-            if (
-                self._provider.supports_tool_choice
-                and "tool_choice" not in bind_kwargs
-            ):
+            if self._provider.supports_tool_choice and "tool_choice" not in bind_kwargs:
                 bind_kwargs["tool_choice"] = "required"
             llm = self.bind_tools([schema], **bind_kwargs)
             tool_name = getattr(self._provider.convert_to_oci_tool(schema), "name")
