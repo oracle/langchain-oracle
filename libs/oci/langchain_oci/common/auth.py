@@ -8,7 +8,9 @@ from enum import Enum
 from typing import Any, Dict, Optional, Tuple, Union
 
 # Default timeout: (connect_timeout, read_timeout) in seconds.
-# Override via OCI_REQUEST_TIMEOUT env var (read timeout only)
+# Overrides the OCI SDK default of (10, 60) because long-context LLM generation
+# and streaming calls routinely exceed 60s read timeout. Connect timeout kept at
+# the SDK default. Override via OCI_REQUEST_TIMEOUT env var (read timeout only)
 # or pass timeout= to create_oci_client_kwargs.
 _DEFAULT_CONNECT_TIMEOUT = 10
 _DEFAULT_READ_TIMEOUT = 240

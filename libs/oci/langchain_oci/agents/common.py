@@ -78,10 +78,9 @@ def _build_llm(config: AgentConfig, **extra_kwargs: Any) -> Any:
     if config.temperature is not None:
         merged_kwargs["temperature"] = config.temperature
     if config.max_tokens is not None:
-        if config.model_id and config.model_id.startswith("openai."):
-            merged_kwargs["max_completion_tokens"] = config.max_tokens
-        else:
-            merged_kwargs["max_tokens"] = config.max_tokens
+        # Provider-layer normalize_params remaps to max_completion_tokens for
+        # OpenAI models, so agent-level config stays model-agnostic.
+        merged_kwargs["max_tokens"] = config.max_tokens
 
     return ChatOCIGenAI(
         model_id=config.model_id,

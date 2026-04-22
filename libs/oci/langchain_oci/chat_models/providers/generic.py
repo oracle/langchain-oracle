@@ -875,6 +875,26 @@ class MetaProvider(GenericProvider):
     pass
 
 
+class OpenAIProvider(GenericProvider):
+    """Provider for OpenAI models served via OCI GenAI.
+
+    Handles OpenAI-specific parameter requirements:
+    - max_tokens → max_completion_tokens (OpenAI rejects max_tokens on GPT-5
+      family and reasoning models; max_completion_tokens is the forward-compatible
+      name).
+    """
+
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize OpenAI parameters, mapping legacy max_tokens."""
+        result = params.copy()
+        if "max_tokens" in result and "max_completion_tokens" not in result:
+            result["max_completion_tokens"] = result.pop("max_tokens")
+        elif "max_tokens" in result and "max_completion_tokens" in result:
+            # Both provided - prefer the OpenAI-native key and drop the legacy one
+            result.pop("max_tokens")
+        return result
+
+
 class GeminiProvider(GenericProvider):
     """Provider for Google Gemini models.
 
