@@ -612,17 +612,33 @@ class CohereProvider(Provider):
         or Pydantic models/callables.
         """
         if isinstance(tool, BaseTool):
-            # Use args_schema.model_json_schema() to get rich properties
-            # (enum, constraints) that tool.args loses via tool_call_schema.
-            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
-                schema = tool.args_schema.model_json_schema()
+            # Use tool_call_schema (model-facing schema) as the primary source.
+            # This excludes injected runtime parameters (e.g., ToolRuntime from
+            # Deep Agents middleware) that args_schema includes and that Pydantic
+            # cannot serialize to JSON schema.
+            properties = None
+            tool_call_schema = getattr(tool, "tool_call_schema", None)
+            if tool_call_schema and hasattr(tool_call_schema, "model_json_schema"):
+                schema = tool_call_schema.model_json_schema()
+                # Overlay json_schema_extra constraints from args_schema
+                if tool.args_schema:
+                    OCIUtils.overlay_schema_extras(schema, tool.args_schema)
                 # Resolve $ref/$defs and anyOf — OCI doesn't support them
                 schema = OCIUtils.resolve_schema_refs(schema)
                 schema = OCIUtils.resolve_anyof(schema)
                 schema = OCIUtils.sanitize_schema(schema)
                 properties = schema.get("properties", {})
+            if properties is None:
+                as_json_schema_function = convert_to_openai_function(tool)
+                parameters = as_json_schema_function.get("parameters", {})
+                properties = parameters.get("properties", {})
+                required = set(parameters.get("required", []))
             else:
-                properties = tool.args
+                required = {
+                    p_name
+                    for p_name, p_def in properties.items()
+                    if "default" not in p_def
+                }
 
             return self.oci_tool(
                 name=tool.name,
@@ -638,7 +654,7 @@ class CohereProvider(Provider):
                             p_def.get("type"),
                             p_def.get("type", "any"),
                         ),
-                        is_required="default" not in p_def,
+                        is_required=p_name in required,
                     )
                     for p_name, p_def in properties.items()
                 },
@@ -670,12 +686,10 @@ class CohereProvider(Provider):
             as_json_schema_function = convert_to_openai_function(tool)
             parameters = as_json_schema_function.get("parameters", {})
             properties = parameters.get("properties", {})
+            fn_name = as_json_schema_function.get("name", "")
             return self.oci_tool(
-                name=as_json_schema_function.get("name"),
-                description=as_json_schema_function.get(
-                    "description",
-                    as_json_schema_function.get("name"),
-                ),
+                name=fn_name,
+                description=as_json_schema_function.get("description") or fn_name,
                 parameter_definitions={
                     p_name: self.oci_tool_param(
                         description=self._enrich_description(

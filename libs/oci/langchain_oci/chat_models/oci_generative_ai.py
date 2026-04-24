@@ -54,6 +54,7 @@ from langchain_oci.chat_models.providers import (
     GeminiProvider,
     GenericProvider,
     MetaProvider,
+    OpenAIProvider,
     Provider,
 )
 from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, OCIUtils
@@ -174,7 +175,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             "cohere": CohereProvider(),
             "google": GeminiProvider(),
             "meta": MetaProvider(),
-            "openai": GenericProvider(),
+            "openai": OpenAIProvider(),
             "generic": GenericProvider(),
         }
 
@@ -225,22 +226,8 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
 
         # Apply provider-specific parameter transformations
+        # (e.g. OpenAIProvider maps max_tokens -> max_completion_tokens here)
         chat_params = self._provider.normalize_params(chat_params)
-
-        # Warn if using max_tokens with OpenAI models
-        if (
-            self.model_id
-            and self.model_id.startswith("openai.")
-            and "max_tokens" in chat_params
-        ):
-            import warnings
-
-            warnings.warn(
-                "OpenAI models require 'max_completion_tokens' "
-                "instead of 'max_tokens'.",
-                UserWarning,
-                stacklevel=2,
-            )
 
         if not self.model_id:
             raise ValueError("Model ID is required for chat.")
@@ -393,7 +380,14 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         if method == "function_calling":
             if schema is None:
                 raise ValueError("Schema must be provided for function_calling method.")
-            llm = self.bind_tools([schema], **kwargs)
+            # Force tool use when the provider supports tool_choice, so the
+            # model returns structured output instead of free-form text.
+            # Respect an explicit caller-supplied tool_choice to allow opting
+            # out when a specific provider/model handles "required" poorly.
+            bind_kwargs: Dict[str, Any] = {**kwargs}
+            if self._provider.supports_tool_choice and "tool_choice" not in bind_kwargs:
+                bind_kwargs["tool_choice"] = "required"
+            llm = self.bind_tools([schema], **bind_kwargs)
             tool_name = getattr(self._provider.convert_to_oci_tool(schema), "name")
             if is_pydantic_schema:
                 output_parser: OutputParserLike = PydanticToolsParser(

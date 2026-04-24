@@ -6,7 +6,7 @@
 import json
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from pydantic import BaseModel
@@ -133,6 +133,31 @@ class OCIUtils:
         elif isinstance(obj, list):
             return [OCIUtils.resolve_anyof(item) for item in obj]
         return obj
+
+    @staticmethod
+    def overlay_schema_extras(
+        schema: Dict[str, Any],
+        args_schema: Union[type, Dict[str, Any]],
+    ) -> None:
+        """Overlay ``json_schema_extra`` constraints from ``args_schema`` onto a schema.
+
+        ``tool_call_schema.model_json_schema()`` drops ``json_schema_extra`` (enum,
+        format, pattern, etc.). This restores those constraints from the original
+        ``args_schema`` field definitions for fields present in both.
+
+        Mutates ``schema`` in place.
+        """
+        properties = schema.get("properties", {})
+        if not properties:
+            return
+        fields = getattr(args_schema, "model_fields", {})
+        for field_name, prop in properties.items():
+            field_info = fields.get(field_name)
+            if field_info is None:
+                continue
+            extras = getattr(field_info, "json_schema_extra", None)
+            if extras and isinstance(extras, dict):
+                prop.update(extras)
 
     @staticmethod
     def sanitize_schema(schema: Any) -> Any:

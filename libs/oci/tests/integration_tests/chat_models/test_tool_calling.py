@@ -803,3 +803,115 @@ def test_meta_llama_tool_result_guidance():
     assert "incorrect assumption" not in content.lower(), (
         f"Model failed to incorporate tool results: {content[:200]}"
     )
+
+
+# --------------- Multi-turn tool call scoping ---------------
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id", ["google.gemini-2.5-flash", "google.gemini-2.5-pro"]
+)
+def test_gemini_multi_turn_tool_calls_not_blocked(model_id: str):
+    """Second user turn should not be blocked by tool calls from the first turn.
+
+    Reproduces the bug where _should_allow_more_tool_calls counted ToolMessages
+    across the entire conversation history. After the first turn used many tool
+    calls, the second turn immediately got tool_choice=NONE, causing Gemini to
+    return finish_reason='unexpected_tool_call' with an empty message.
+
+    The fix scopes the tool call count to the current turn (since the last
+    HumanMessage).
+    """
+    compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+    if not compartment_id:
+        pytest.skip("OCI_COMPARTMENT_ID not set")
+
+    region = os.getenv("OCI_REGION", "us-chicago-1")
+    endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+
+    # Gemini Pro is a thinking model — it needs more token budget than Flash
+    # to form tool calls (reasoning tokens are consumed before tool output).
+    max_tokens = 4096 if "pro" in model_id else 256
+
+    llm = ChatOCIGenAI(
+        model_id=model_id,
+        service_endpoint=endpoint,
+        compartment_id=compartment_id,
+        model_kwargs={"max_tokens": max_tokens},
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "API_KEY_AUTH"),
+        auth_file_location=os.path.expanduser("~/.oci/config"),
+    )
+
+    tools = [
+        StructuredTool.from_function(
+            func=get_weather,
+            name="get_weather",
+            description="Get the current weather for a given city name.",
+        ),
+        StructuredTool.from_function(
+            func=get_time,
+            name="get_time",
+            description="Get the current local time in a city.",
+        ),
+    ]
+
+    tool_node = ToolNode(tools=tools)
+    model_with_tools = llm.bind_tools(tools)
+
+    def call_model(state: MessagesState):
+        return {"messages": [model_with_tools.invoke(state["messages"])]}
+
+    def should_continue(state: MessagesState):
+        last = state["messages"][-1]
+        return "tools" if hasattr(last, "tool_calls") and last.tool_calls else END
+
+    builder = StateGraph(MessagesState)
+    builder.add_node("call_model", call_model)
+    builder.add_node("tools", tool_node)
+    builder.add_edge(START, "call_model")
+    builder.add_conditional_edges("call_model", should_continue, ["tools", END])
+    builder.add_edge("tools", "call_model")
+    agent = builder.compile()
+
+    # Turn 1: Ask about multiple cities to generate many tool calls.
+    turn1_prompt = HumanMessage(
+        content=(
+            "Get the weather for Chicago, New York, San Francisco, "
+            "London, and Tokyo. Also get the time for each city."
+        )
+    )
+    result = agent.invoke(
+        {"messages": [turn1_prompt]}  # type: ignore[arg-type]
+    )
+
+    turn1_final = result["messages"][-1]
+    if not turn1_final.content:
+        pytest.skip(
+            f"Turn 1 returned empty (transient model issue): "
+            f"finish_reason={turn1_final.additional_kwargs.get('finish_reason')}"
+        )
+
+    # Count tool calls from turn 1 — we need enough to previously trigger
+    # the global count bug (default max_sequential_tool_calls=8).
+    tool_msg_count = sum(1 for m in result["messages"] if isinstance(m, ToolMessage))
+    if tool_msg_count < 5:
+        pytest.skip(
+            f"Turn 1 only generated {tool_msg_count} tool calls "
+            f"(need >=5 to exercise the bug). Model may be flaky today."
+        )
+
+    # Turn 2: New question using the same conversation history.
+    # Before the fix, this would get tool_choice=NONE and crash.
+    turn2_messages = list(result["messages"]) + [
+        HumanMessage(content="Which city had the warmest weather?")
+    ]
+
+    result2 = agent.invoke({"messages": turn2_messages})  # type: ignore[arg-type]
+
+    turn2_final = result2["messages"][-1]
+    assert turn2_final.content, (
+        f"Turn 2 should produce a non-empty response, got empty AIMessage. "
+        f"finish_reason={turn2_final.additional_kwargs.get('finish_reason')}"
+    )

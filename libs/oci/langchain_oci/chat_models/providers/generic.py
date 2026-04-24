@@ -48,8 +48,12 @@ def _should_allow_more_tool_calls(
     """
     Determine if the model should be allowed to call more tools.
 
+    Only counts tool calls in the **current turn** (since the last HumanMessage),
+    so multi-turn conversations don't accumulate a stale count that blocks
+    legitimate tool use on subsequent user prompts.
+
     Returns False (force stop) if:
-    - Tool call limit exceeded
+    - Tool call limit exceeded in the current turn
     - Infinite loop detected (same tool called repeatedly with same args)
 
     Returns True otherwise to allow multi-step tool orchestration.
@@ -58,8 +62,17 @@ def _should_allow_more_tool_calls(
         messages: Conversation history
         max_tool_calls: Maximum number of tool calls before forcing stop
     """
-    # Count total tool calls made so far
-    tool_call_count = sum(1 for msg in messages if isinstance(msg, ToolMessage))
+    # Find the start of the current turn (last HumanMessage)
+    current_turn_start = 0
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage):
+            current_turn_start = i
+            break
+
+    current_turn = messages[current_turn_start:]
+
+    # Count tool calls in the current turn only
+    tool_call_count = sum(1 for msg in current_turn if isinstance(msg, ToolMessage))
 
     # Safety limit: prevent runaway tool calling
     if tool_call_count >= max_tool_calls:
@@ -67,7 +80,7 @@ def _should_allow_more_tool_calls(
 
     # Detect infinite loop: same tool called with same arguments in succession
     recent_calls: list = []
-    for msg in reversed(messages):
+    for msg in reversed(current_turn):
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 # Create signature: (tool_name, sorted_args)
@@ -102,6 +115,11 @@ class GenericProvider(Provider):
         Subclasses can override for provider-specific transformations.
         """
         return params
+
+    @property
+    def supports_tool_choice(self) -> bool:
+        """GenericProvider models support tool_choice."""
+        return True
 
     @property
     def supports_parallel_tool_calls(self) -> bool:
@@ -658,6 +676,36 @@ class GenericProvider(Provider):
                 )
         return processed_content
 
+    def _get_tool_parameters(self, tool: BaseTool) -> Dict[str, Any]:
+        """Extract parameters from a BaseTool for OCI tool conversion.
+
+        Uses tool_call_schema (the model-facing schema) as the primary source.
+        This correctly excludes injected runtime parameters (e.g., ToolRuntime
+        with Callable types from Deep Agents middleware) that args_schema
+        includes and that Pydantic cannot serialize to JSON schema.
+
+        After building the base schema from tool_call_schema, overlays any
+        json_schema_extra constraints (enum, format, pattern, etc.) from the
+        original args_schema field definitions, since tool_call_schema does
+        not carry those forward.
+
+        Args:
+            tool: The BaseTool to extract parameters from.
+
+        Returns:
+            Dict containing the tool parameters schema.
+        """
+        tool_call_schema = getattr(tool, "tool_call_schema", None)
+        if tool_call_schema and hasattr(tool_call_schema, "model_json_schema"):
+            schema = tool_call_schema.model_json_schema()
+            # Overlay json_schema_extra constraints from args_schema when present
+            if tool.args_schema:
+                OCIUtils.overlay_schema_extras(schema, tool.args_schema)
+            return schema
+        # Final fallback for tools without tool_call_schema
+        as_json_schema_function = convert_to_openai_function(tool)
+        return as_json_schema_function.get("parameters", {})
+
     def convert_to_oci_tool(
         self,
         tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
@@ -679,12 +727,7 @@ class GenericProvider(Provider):
         if isinstance(tool, BaseTool):
             # Use model_json_schema() if available to preserve json_schema_extra
             # constraints (enum, format, etc.) that convert_to_openai_function strips
-            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
-                schema = tool.args_schema.model_json_schema()
-                parameters = schema
-            else:
-                as_json_schema_function = convert_to_openai_function(tool)
-                parameters = as_json_schema_function.get("parameters", {})
+            parameters = self._get_tool_parameters(tool)
 
             # Resolve $ref/$defs and anyOf — OCI doesn't support them
             resolved_params = OCIUtils.resolve_schema_refs(parameters)
@@ -706,12 +749,10 @@ class GenericProvider(Provider):
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
             as_json_schema_function = convert_to_openai_function(tool)
             parameters = as_json_schema_function.get("parameters", {})
+            fn_name = as_json_schema_function.get("name", "")
             return self.oci_function_definition(
-                name=as_json_schema_function.get("name"),
-                description=as_json_schema_function.get(
-                    "description",
-                    as_json_schema_function.get("name"),
-                ),
+                name=fn_name,
+                description=as_json_schema_function.get("description") or fn_name,
                 parameters={
                     "type": "object",
                     "properties": parameters.get("properties", {}),
@@ -832,6 +873,26 @@ class MetaProvider(GenericProvider):
     """Provider for Meta models. This provider is for backward compatibility."""
 
     pass
+
+
+class OpenAIProvider(GenericProvider):
+    """Provider for OpenAI models served via OCI GenAI.
+
+    Handles OpenAI-specific parameter requirements:
+    - max_tokens → max_completion_tokens (OpenAI rejects max_tokens on GPT-5
+      family and reasoning models; max_completion_tokens is the forward-compatible
+      name).
+    """
+
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize OpenAI parameters, mapping legacy max_tokens."""
+        result = params.copy()
+        if "max_tokens" in result and "max_completion_tokens" not in result:
+            result["max_completion_tokens"] = result.pop("max_tokens")
+        elif "max_tokens" in result and "max_completion_tokens" in result:
+            # Both provided - prefer the OpenAI-native key and drop the legacy one
+            result.pop("max_tokens")
+        return result
 
 
 class GeminiProvider(GenericProvider):
