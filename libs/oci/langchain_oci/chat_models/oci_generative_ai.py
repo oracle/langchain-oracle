@@ -5,6 +5,7 @@
 
 import importlib
 import json
+import warnings
 from operator import itemgetter
 from typing import (
     Any,
@@ -45,6 +46,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from oci.exceptions import ServiceError
 from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
 from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
@@ -65,6 +67,96 @@ API_KEY = "<NOTUSED>"
 COMPARTMENT_ID_HEADER = "opc-compartment-id"
 CONVERSATION_STORE_ID_HEADER = "opc-conversation-store-id"
 OUTPUT_VERSION = "responses/v1"
+
+
+# OCI parameter names (camelCase) → ChatRequest attribute names (snake_case)
+_OCI_PARAM_TO_ATTR = {
+    "temperature": "temperature",
+    "top_p": "top_p",
+    "topP": "top_p",
+    "maxTokens": "max_tokens",
+    "max_tokens": "max_tokens",
+    "maxCompletionTokens": "max_completion_tokens",
+}
+
+# Known parameter renames: when OCI says "use X instead", map old → new
+_OCI_PARAM_RENAME = {
+    "max_tokens": "max_completion_tokens",
+    "maxTokens": "max_completion_tokens",
+}
+
+
+def _handle_unsupported_param_error(message: str, request: Any) -> bool:
+    """Parse an OCI 400 error and fix the request in place if possible.
+
+    Returns True if the request was modified and should be retried.
+    """
+    import json as _json
+
+    # Try to parse structured error (JSON body)
+    param = None
+    code = None
+    try:
+        err = _json.loads(message).get("error", {})
+        param = err.get("param")
+        code = err.get("code")
+    except (ValueError, TypeError, AttributeError):
+        pass
+
+    chat_req = request.chat_request
+
+    # Case 1: unsupported_value — drop the param (e.g. temperature=0.3 on GPT-5)
+    if param and code == "unsupported_value":
+        attr = _OCI_PARAM_TO_ATTR.get(param, param)
+        if hasattr(chat_req, attr):
+            setattr(chat_req, attr, None)
+            warnings.warn(
+                f"OCI rejected '{param}' for this model; removed and retrying.",
+                UserWarning,
+                stacklevel=4,
+            )
+            return True
+
+    # Case 2: unsupported_parameter — drop or rename
+    if param and code == "unsupported_parameter":
+        attr = _OCI_PARAM_TO_ATTR.get(param, param)
+        rename_to = _OCI_PARAM_RENAME.get(param)
+        if rename_to and hasattr(chat_req, rename_to):
+            old_val = getattr(chat_req, attr, None)
+            if old_val is not None:
+                setattr(chat_req, rename_to, old_val)
+                setattr(chat_req, attr, None)
+                warnings.warn(
+                    f"OCI rejected '{param}'; converted to '{rename_to}' and retrying.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+                return True
+        # No rename — just drop
+        if hasattr(chat_req, attr):
+            setattr(chat_req, attr, None)
+            warnings.warn(
+                f"OCI rejected '{param}' for this model; removed and retrying.",
+                UserWarning,
+                stacklevel=4,
+            )
+            return True
+
+    # Case 3: unstructured message — "Use 'maxCompletionTokens' instead"
+    if "maxTokens" in message and "maxCompletionTokens" in message:
+        old_val = getattr(chat_req, "max_tokens", None)
+        if old_val is not None:
+            chat_req.max_completion_tokens = old_val
+            chat_req.max_tokens = None
+            warnings.warn(
+                "OCI rejected 'max_tokens'; converted to 'max_completion_tokens' "
+                "and retrying.",
+                UserWarning,
+                stacklevel=4,
+            )
+            return True
+
+    return False
 
 
 def _build_headers(
@@ -482,7 +574,21 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
-        response = self.client.chat(request)
+
+        # Retry loop: if OCI rejects an unsupported param, fix and retry once
+        _max_retries = 3
+        for _attempt in range(_max_retries):
+            try:
+                response = self.client.chat(request)
+                break
+            except ServiceError as e:
+                if (
+                    e.status == 400
+                    and _attempt < _max_retries - 1
+                    and _handle_unsupported_param_error(e.message, request)
+                ):
+                    continue
+                raise
 
         content = self._provider.chat_response_to_text(response)
 
@@ -544,7 +650,21 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         Processes each event and yields chunks until the stream ends.
         """
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
-        response = self.client.chat(request)
+
+        # Retry loop: if OCI rejects an unsupported param, fix and retry once
+        _max_retries = 3
+        for _attempt in range(_max_retries):
+            try:
+                response = self.client.chat(request)
+                break
+            except ServiceError as e:
+                if (
+                    e.status == 400
+                    and _attempt < _max_retries - 1
+                    and _handle_unsupported_param_error(e.message, request)
+                ):
+                    continue
+                raise
         tool_call_ids: Dict[int, str] = {}
 
         for event in response.data.events():
