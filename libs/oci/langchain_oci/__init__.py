@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_oci.agents.react.agent import create_oci_agent
 
 if TYPE_CHECKING:
+    from langchain_oci.agents.deep_research import create_deep_research_agent
     from langchain_oci.datastores import (
         ADB,
         OpenSearch,
@@ -42,6 +43,10 @@ from langchain_oci.utils.vision import (
 
 def __getattr__(name: str) -> Any:
     """Lazy import for optional dependencies."""
+    if name == "create_deep_research_agent":
+        from langchain_oci.agents.deep_research import create_deep_research_agent
+
+        return create_deep_research_agent
     if name == "create_datastore_tools":
         from langchain_oci.datastores import create_datastore_tools
 
@@ -69,6 +74,8 @@ __all__ = [
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
     "create_oci_agent",
+    # Deep research agent
+    "create_deep_research_agent",
     # Datastores
     "VectorDataStore",
     "OpenSearch",
