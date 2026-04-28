@@ -135,7 +135,16 @@ class ResultFormatter:
 
 
 class DatastoreTool(BaseTool, ABC):
-    """Base class for datastore tools with common configuration."""
+    """Base class for datastore tools with common configuration.
+
+    Subclasses set ``base_description`` and (optionally) ``usage_hint`` as
+    class-level metadata. The factory in
+    ``langchain_oci.datastores.tools.factory.create_datastore_tools`` composes
+    those with a runtime list of available stores into the ``description``
+    field that ``BaseTool`` exposes to the LLM. When a tool is constructed
+    directly without the factory, ``base_description`` is used as the
+    ``description`` so the LLM still sees the intended text.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -147,10 +156,12 @@ class DatastoreTool(BaseTool, ABC):
     # Injected dependencies
     selector: Any = Field(default=None, exclude=True)
     formatter: Any = Field(default=None, exclude=True)
-    store_list: str = Field(default="", exclude=True)
     _logger: logging.Logger = PrivateAttr()
 
     def __init__(self, **data: Any) -> None:
+        # Fall back to base_description so BaseTool.description is populated
+        # even when the tool is constructed without the factory.
+        data.setdefault("description", self.base_description)
         super().__init__(**data)
         if self.formatter is None:
             object.__setattr__(self, "formatter", ResultFormatter())
@@ -159,16 +170,6 @@ class DatastoreTool(BaseTool, ABC):
             "_logger",
             logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}"),
         )
-
-    @property
-    def full_description(self) -> str:
-        """Build full description with usage hints and store list."""
-        parts = [self.base_description]
-        if self.usage_hint:
-            parts.append(self.usage_hint)
-        if self.store_list:
-            parts.append(f"Available stores: {self.store_list}")
-        return " ".join(parts)
 
     def _parse_results(self, raw_results: list[dict]) -> list[SearchResult]:
         """Convert raw store results to SearchResult objects."""

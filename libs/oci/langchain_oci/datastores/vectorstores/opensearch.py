@@ -118,6 +118,18 @@ class _OpenSearchVectorStore(VectorStore):
         ids_list = ids or [str(uuid.uuid4()) for _ in texts_list]
         embeddings = self._embedding_model.embed_documents(texts_list)
 
+        lengths = {
+            "ids": len(ids_list),
+            "texts": len(texts_list),
+            "metadatas": len(metadata_list),
+            "embeddings": len(embeddings),
+        }
+        if len(set(lengths.values())) != 1:
+            raise ValueError(
+                f"add_texts requires ids, texts, metadatas, and embeddings of "
+                f"equal length, got {lengths}"
+            )
+
         bulk_body: list[dict[str, Any]] = []
         for doc_id, text, metadata, embedding in zip(
             ids_list, texts_list, metadata_list, embeddings
