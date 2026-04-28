@@ -1612,6 +1612,7 @@ description = "Library with base interfaces for LangGraph checkpoint savers."
 optional = false
 python-versions = ">=3.9"
 groups = ["main", "test", "test-integration"]
+markers = "python_version == \"3.9\""
 files = [
     {file = "langgraph_checkpoint-2.1.2-py3-none-any.whl", hash = "sha256:911ebffb069fd01775d4b5184c04aaafc2962fcdf50cf49d524cd4367c4d0c60"},
     {file = "langgraph_checkpoint-2.1.2.tar.gz", hash = "sha256:112e9d067a6eff8937caf198421b1ffba8d9207193f14ac6f89930c1260c06f9"},
@@ -1620,6 +1621,23 @@ files = [
 [package.dependencies]
 langchain-core = ">=0.2.38"
 ormsgpack = ">=1.10.0"
+
+[[package]]
+name = "langgraph-checkpoint"
+version = "3.0.1"
+description = "Library with base interfaces for LangGraph checkpoint savers."
+optional = false
+python-versions = ">=3.10"
+groups = ["main", "test", "test-integration"]
+markers = "python_version >= \"3.10\""
+files = [
+    {file = "langgraph_checkpoint-3.0.1-py3-none-any.whl", hash = "sha256:9b04a8d0edc0474ce4eaf30c5d731cee38f11ddff50a6177eead95b5c4e4220b"},
+    {file = "langgraph_checkpoint-3.0.1.tar.gz", hash = "sha256:59222f875f85186a22c494aedc65c4e985a3df27e696e5016ba0b98a5ed2cee0"},
+]
+
+[package.dependencies]
+langchain-core = ">=0.2.38"
+ormsgpack = ">=1.12.0"
 
 [[package]]
 name = "langgraph-prebuilt"
