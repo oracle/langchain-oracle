@@ -32,6 +32,15 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
+    - name: Configure Poetry environment
+      shell: bash
+      # Make poetry create project virtualenvs using whatever Python is active
+      # on PATH (i.e. the matrix Python set up by actions/setup-python above).
+      # This decouples the Python that runs the poetry CLI from the Python used
+      # for the project venv, which lets us keep poetry on a single, fixed
+      # interpreter even when matrix.python-version is older.
+      run: echo "POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON=true" >> "$GITHUB_ENV"
+
     - uses: actions/cache@v4
       id: cache-bin-poetry
       name: Cache Poetry binary - Python ${{ inputs.python-version }}
@@ -40,15 +49,16 @@ runs:
       with:
         path: |
           /opt/pipx/venvs/poetry
-        # This step caches the poetry installation, so make sure it's keyed on the poetry version as well.
-        key: bin-poetry-${{ runner.os }}-${{ runner.arch }}-py-${{ inputs.python-version }}-${{ inputs.poetry-version }}
+        # Poetry now runs under the system python3, not the matrix Python,
+        # so the cache no longer depends on inputs.python-version. The -v2
+        # suffix busts the previous (matrix-Python-bound) cache.
+        key: bin-poetry-${{ runner.os }}-${{ runner.arch }}-${{ inputs.poetry-version }}-v2
 
     - name: Refresh shell hashtable and fixup softlinks
       if: steps.cache-bin-poetry.outputs.cache-hit == 'true'
       shell: bash
       env:
         POETRY_VERSION: ${{ inputs.poetry-version }}
-        PYTHON_VERSION: ${{ inputs.python-version }}
       run: |
         set -eux
 
@@ -59,7 +69,7 @@ runs:
         # Delete and recreate the softlinks pipx expects to have.
         rm /opt/pipx/venvs/poetry/bin/python
         cd /opt/pipx/venvs/poetry/bin
-        ln -s "$(which "python$PYTHON_VERSION")" python
+        ln -s "$(which python3)" python
         chmod +x python
         cd /opt/pipx_bin/
         ln -s /opt/pipx/venvs/poetry/bin/poetry poetry
@@ -74,9 +84,13 @@ runs:
       shell: bash
       env:
         POETRY_VERSION: ${{ inputs.poetry-version }}
-        PYTHON_VERSION: ${{ inputs.python-version }}
-      # Install poetry using the python version installed by setup-python step.
-      run: pipx install "poetry==$POETRY_VERSION" --python '${{ steps.setup-python.outputs.python-path }}' --verbose
+      # Install poetry under the runner's system Python (typically 3.12 on
+      # ubuntu-24.04). Using the matrix Python (e.g. 3.9) breaks here because
+      # one of poetry's transitive deps now uses dataclass(slots=...), which is
+      # Python 3.10+ only. Poetry itself doesn't need to share the project's
+      # interpreter; POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON ensures the
+      # project venv is still built with the matrix Python.
+      run: pipx install "poetry==$POETRY_VERSION" --python "$(which python3)" --verbose
 
     - name: Restore pip and poetry cached dependencies
       uses: actions/cache@v4
