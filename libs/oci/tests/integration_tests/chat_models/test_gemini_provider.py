@@ -46,7 +46,7 @@ def _get_config() -> Dict[str, Any]:
     return {
         "compartment_id": compartment_id,
         "service_endpoint": endpoint,
-        "auth_type": os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
         "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "NON-DEFAULT"),
         "auth_file_location": os.path.expanduser("~/.oci/config"),
     }

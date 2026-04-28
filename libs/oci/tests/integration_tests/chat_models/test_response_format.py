@@ -76,7 +76,7 @@ def create_chat_model(model_id: str, response_format=None, **kwargs):
         service_endpoint=endpoint,
         compartment_id=compartment_id,
         model_kwargs=model_kwargs,
-        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
         auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_file_location=os.path.expanduser("~/.oci/config"),
         **kwargs,
@@ -283,7 +283,7 @@ def test_response_format_via_model_kwargs():
             "max_tokens": 512,
             "response_format": {"type": "JSON_OBJECT"},
         },
-        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
         auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         auth_file_location=os.path.expanduser("~/.oci/config"),
     )
