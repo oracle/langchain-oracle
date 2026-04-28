@@ -178,15 +178,23 @@ class ADB(VectorDataStore):
         return str(value) if value else ""
 
     def search(self, query: str, embedding: list[float], top_k: int) -> list[dict]:
-        docs_and_scores = self.search_documents_with_scores(query=query, top_k=top_k)
         self.logger.debug(
             "ADB search requested table=%s top_k=%s query=%r embedding_dims=%s",
             self.table_name,
             top_k,
             query,
-            len(embedding),
+            len(embedding) if embedding else 0,
         )
-        docs_and_scores = self.search_documents_with_scores(query=query, top_k=top_k)
+        if embedding:
+            docs_and_scores = (
+                self.vectorstore.similarity_search_by_vector_with_relevance_scores(
+                    embedding=embedding, k=top_k
+                )
+            )
+        else:
+            docs_and_scores = self.search_documents_with_scores(
+                query=query, top_k=top_k
+            )
         return [
             {
                 "id": (doc.metadata or {}).get("id"),
