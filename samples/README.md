@@ -1,6 +1,7 @@
 # langchain-oci Samples
 
-Welcome to the langchain-oci samples! These samples will take you from beginner to expert, progressively building your skills with OCI Generative AI and LangChain.
+Welcome to the `langchain-oci` samples. This directory includes the numbered
+learning-path samples plus a dedicated Deep Research sample folder.
 
 ## Learning Path
 
@@ -57,7 +58,7 @@ Welcome to the langchain-oci samples! These samples will take you from beginner 
 ## Sample Index
 
 | # | Sample | Level | Description |
-|---|----------|-------|-------------|
+|---|--------|-------|-------------|
 | 01 | [Getting Started](./01-getting-started/) | Beginner | Authentication, ChatOCIGenAI, providers |
 | 02 | [Vision & Multimodal](./02-vision-and-multimodal/) | Beginner | Image analysis, PDF, video, audio |
 | 03 | [Building AI Agents](./03-building-ai-agents/) | Intermediate | ReAct agents, tools, memory |
@@ -66,10 +67,11 @@ Welcome to the langchain-oci samples! These samples will take you from beginner 
 | 07 | [Async for Production](./07-async-for-production/) | Advanced | ainvoke, astream, FastAPI |
 | 09 | [Provider Deep Dive](./09-provider-deep-dive/) | Specialized | Meta, Gemini, Cohere, xAI |
 | 10 | [Embeddings](./10-embeddings/) | Specialized | Text & image embeddings, RAG |
+| 11 | [Deep Research](./11-deepresearch/) | Specialized | ADB and OpenSearch multi-store Deep Research tutorials |
 
 ## Quick Start
 
-If you're new to langchain-oci, start here:
+If you're new to `langchain-oci`, start here:
 
 ```bash
 pip install langchain-oci oci
@@ -93,10 +95,11 @@ Then continue with [Sample 01: Getting Started](./01-getting-started/).
 ## Feature Coverage
 
 | Feature | Sample(s) |
-|---------|-------------|
+|---------|-----------|
 | `ChatOCIGenAI` | 01, 02, 03, 04, 05, 07 |
-| `OCIGenAIEmbeddings` | 10 |
+| `OCIGenAIEmbeddings` | 10, 11 |
 | `create_oci_agent()` | 03 |
+| `create_deep_research_agent()` | 11 |
 | Vision (13 models) | 02 |
 | Gemini PDF/video/audio | 02 |
 | Tool calling | 03, 04 |
@@ -104,10 +107,13 @@ Then continue with [Sample 01: Getting Started](./01-getting-started/).
 | Structured output | 05 |
 | Async (ainvoke/astream/abatch) | 07 |
 | Image embeddings | 10 |
+| ADB datastores | 11 |
+| OpenSearch datastores | 11 |
 
 ## Prerequisites
 
 All samples assume:
+
 - Python 3.9+
 - OCI CLI configured (`~/.oci/config`)
 - Access to OCI Generative AI service
