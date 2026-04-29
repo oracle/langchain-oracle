@@ -236,14 +236,14 @@ class TestOCIReactAgentIntegration:
         # First message
         result1 = agent.invoke(
             {"messages": [HumanMessage(content="What's the weather in Chicago?")]},
-            config=config,  # type: ignore[arg-type]
+            config=config,  # type: ignore
         )
         assert len(result1["messages"]) > 1
 
         # Second message in same thread should have context
         result2 = agent.invoke(
             {"messages": [HumanMessage(content="How about New York?")]},
-            config=config,  # type: ignore[arg-type]
+            config=config,  # type: ignore
         )
         assert len(result2["messages"]) > len(result1["messages"]), (
             "Second invocation should include previous messages"
