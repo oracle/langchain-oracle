@@ -70,7 +70,8 @@ runs:
         rm /opt/pipx/venvs/poetry/bin/python
         cd /opt/pipx/venvs/poetry/bin
         ln -s "/usr/bin/python3" python
-        chmod +x python
+        # Do not chmod the symlink: chmod follows it and tries to modify
+        # /usr/bin/python3 (root-owned), which fails. The target is already +x.
         cd /opt/pipx_bin/
         ln -s /opt/pipx/venvs/poetry/bin/poetry poetry
         chmod +x poetry
