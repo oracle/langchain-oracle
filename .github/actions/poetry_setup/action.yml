@@ -69,7 +69,7 @@ runs:
         # Delete and recreate the softlinks pipx expects to have.
         rm /opt/pipx/venvs/poetry/bin/python
         cd /opt/pipx/venvs/poetry/bin
-        ln -s "$(which python3)" python
+        ln -s "/usr/bin/python3" python
         chmod +x python
         cd /opt/pipx_bin/
         ln -s /opt/pipx/venvs/poetry/bin/poetry poetry
@@ -90,7 +90,7 @@ runs:
       # Python 3.10+ only. Poetry itself doesn't need to share the project's
       # interpreter; POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON ensures the
       # project venv is still built with the matrix Python.
-      run: pipx install "poetry==$POETRY_VERSION" --python "$(which python3)" --verbose
+      run: pipx install "poetry==$POETRY_VERSION" --python "/usr/bin/python3" --verbose
 
     - name: Restore pip and poetry cached dependencies
       uses: actions/cache@v4
