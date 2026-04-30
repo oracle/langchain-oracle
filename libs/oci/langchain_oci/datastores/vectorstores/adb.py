@@ -69,6 +69,33 @@ class ADB(VectorDataStore):
     def keyword_retriever(self) -> Any:
         return self._text_retriever
 
+    def close(self) -> None:
+        """Release the underlying Oracle DB connection.
+
+        Safe to call multiple times. After ``close()``, the datastore must be
+        reconnected via :meth:`connect` before further use.
+        """
+        conn = self._connection
+        if conn is None:
+            return
+        self._connection = None
+        self._oraclevs = None
+        self._text_retriever = None
+        self._write_text_splitter = None
+        try:
+            conn.close()
+        except Exception as exc:
+            self.logger.warning(
+                "ADB datastore close raised %s; connection may already be closed.",
+                exc,
+            )
+
+    def __enter__(self) -> "ADB":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     def connect(self, embedding_model: Any) -> None:
         try:
             import oracledb
@@ -144,6 +171,7 @@ class ADB(VectorDataStore):
             distance_strategy=distance_strategy,
             mutate_on_duplicate=True,
         )
+        self._ensure_metadata_id_index()
         self._text_retriever = OracleTextSearchRetriever(vector_store=self._oraclevs)
         if self.chunk_on_write:
             params = self.chunking_params or {
@@ -157,19 +185,59 @@ class ADB(VectorDataStore):
             )
         self.logger.debug("ADB OracleVS backend initialized table=%s", self.table_name)
 
+    def _ensure_metadata_id_index(self) -> None:
+        """Create a function-based index on metadata.id for fast lookups.
+
+        ``get`` / ``delete`` filter on ``JSON_VALUE(metadata, '$.id')`` because
+        when ``chunk_on_write`` is enabled the per-row primary key holds chunk
+        IDs, not the logical document id — so the doc id only lives in the
+        metadata JSON. Without this index, those queries do a full scan.
+        """
+        # 30-char Oracle identifier cap (pre-12.2 compatible). table_name may
+        # itself be long; truncate the prefix accordingly.
+        index_name = f"IDX_{self.table_name}_MID"[:30]
+        ddl = (
+            f"CREATE INDEX {index_name} ON {self.table_name} "
+            "(JSON_VALUE(metadata, '$.id'))"
+        )
+        cursor = self._connection.cursor()
+        try:
+            cursor.execute(ddl)
+        except Exception as exc:
+            # ORA-00955: name already used by an existing object → already created.
+            if "ORA-00955" in str(exc):
+                self.logger.debug(
+                    "ADB metadata.id index %s already exists.", index_name
+                )
+            else:
+                self.logger.warning(
+                    "ADB metadata.id index %s could not be created: %s. "
+                    "Lookups by document id will full-scan %s.",
+                    index_name,
+                    exc,
+                    self.table_name,
+                )
+        finally:
+            cursor.close()
+
     def _ingest_document(self, document: Document, doc_id: str) -> None:
+        self._ingest_documents([document], [doc_id])
+
+    def _ingest_documents(self, documents: list[Document], doc_ids: list[str]) -> None:
+        if not documents:
+            return
         if self._write_text_splitter is not None:
             self._oraclevs.add_documents(
-                [document],
+                documents,
                 text_splitter=self._write_text_splitter,
-                ids=[doc_id],
+                ids=doc_ids,
             )
             return
 
         self._oraclevs.add_texts(
-            texts=[document.page_content],
-            metadatas=[document.metadata],
-            ids=[doc_id],
+            texts=[d.page_content for d in documents],
+            metadatas=[d.metadata for d in documents],
+            ids=doc_ids,
         )
 
     def _read_text(self, value: Any) -> str:
@@ -270,9 +338,14 @@ class ADB(VectorDataStore):
         return doc_id
 
     def bulk_insert(self, documents: list[dict], embeddings: list[list[float]]) -> int:
+        if not documents:
+            return 0
+        lc_documents: list[Document] = []
+        doc_ids: list[str] = []
         for doc in documents:
             doc_id = str(doc.get("id") or uuid.uuid4())
-            self._ingest_document(
+            doc_ids.append(doc_id)
+            lc_documents.append(
                 Document(
                     page_content=str(doc.get("content", "")),
                     metadata={
@@ -280,9 +353,9 @@ class ADB(VectorDataStore):
                         "title": str(doc.get("title", "Untitled")),
                         "source": str(doc.get("source", "bulk_insert")),
                     },
-                ),
-                doc_id,
+                )
             )
+        self._ingest_documents(lc_documents, doc_ids)
         return len(documents)
 
     def update(
@@ -301,18 +374,45 @@ class ADB(VectorDataStore):
             content if content is not None else str(current.get("content", ""))
         )
         new_source = source if source is not None else str(current.get("source", ""))
+
+        # Best-effort recovery: delete commits before ingestion runs, so a
+        # mid-update failure would lose the original document. If ingestion
+        # raises, re-ingest the snapshot we just took.
         self.delete(document_id)
-        self._ingest_document(
-            Document(
-                page_content=new_content,
-                metadata={
-                    "id": str(document_id),
-                    "title": new_title,
-                    "source": new_source,
-                },
-            ),
-            str(document_id),
-        )
+        try:
+            self._ingest_document(
+                Document(
+                    page_content=new_content,
+                    metadata={
+                        "id": str(document_id),
+                        "title": new_title,
+                        "source": new_source,
+                    },
+                ),
+                str(document_id),
+            )
+        except Exception:
+            self.logger.warning(
+                "ADB update ingestion failed for id=%s; restoring snapshot.",
+                document_id,
+            )
+            try:
+                self._ingest_document(
+                    Document(
+                        page_content=str(current.get("content", "")),
+                        metadata={
+                            "id": str(document_id),
+                            "title": str(current.get("title", "")),
+                            "source": str(current.get("source", "")),
+                        },
+                    ),
+                    str(document_id),
+                )
+            except Exception:
+                self.logger.exception(
+                    "ADB update snapshot restore failed for id=%s.", document_id
+                )
+            raise
         return True
 
     def delete(self, document_id: str | int) -> bool:
