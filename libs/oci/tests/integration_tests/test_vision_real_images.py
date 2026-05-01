@@ -130,6 +130,10 @@ class TestVisionRealImages:
             f"Expected 'Google' in response, got: {result.content}"
         )
 
+    @pytest.mark.skip(
+        reason="Wikimedia rejects urllib hotlinking with HTTP 400 "
+        "(see https://w.wiki/GHai)"
+    )
     def test_landmark_identification(self, gemini_llm):
         """Test that Gemini can identify famous landmarks."""
         eiffel_url = (
@@ -160,6 +164,10 @@ class TestVisionRealImages:
             f"Expected 'Eiffel' in response, got: {result.content}"
         )
 
+    @pytest.mark.skip(
+        reason="Wikimedia rejects urllib hotlinking with HTTP 400 "
+        "(see https://w.wiki/GHai)"
+    )
     def test_animal_identification(self, gemini_llm):
         """Test that Gemini can identify animals in photos."""
         cat_url = (
