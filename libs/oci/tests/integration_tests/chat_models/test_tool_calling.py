@@ -519,7 +519,7 @@ def test_multi_step_tool_orchestration(model_id: str):
         ),
     ]
     result = agent.invoke(
-        {"messages": input_messages},  # type: ignore[arg-type]
+        {"messages": input_messages},  # type: ignore
         config={"recursion_limit": 25},  # Allow enough recursion for multi-step
     )
 
@@ -642,7 +642,7 @@ def test_gemini_agent_with_parallel_tools(gemini_llm, weather_tool, time_tool):
     agent = builder.compile()
 
     result = agent.invoke(
-        {  # type: ignore[arg-type]
+        {  # type: ignore
             "messages": [
                 HumanMessage(
                     content="What is the weather AND the time in New York? Use both."
@@ -883,7 +883,7 @@ def test_gemini_multi_turn_tool_calls_not_blocked(model_id: str):
         )
     )
     result = agent.invoke(
-        {"messages": [turn1_prompt]}  # type: ignore[arg-type]
+        {"messages": [turn1_prompt]}  # type: ignore
     )
 
     turn1_final = result["messages"][-1]
@@ -908,7 +908,7 @@ def test_gemini_multi_turn_tool_calls_not_blocked(model_id: str):
         HumanMessage(content="Which city had the warmest weather?")
     ]
 
-    result2 = agent.invoke({"messages": turn2_messages})  # type: ignore[arg-type]
+    result2 = agent.invoke({"messages": turn2_messages})  # type: ignore
 
     turn2_final = result2["messages"][-1]
     assert turn2_final.content, (
