@@ -111,12 +111,15 @@ class _OpenSearchVectorStore(VectorStore):
         texts: Iterable[str],
         metadatas: Optional[list[dict]] = None,
         ids: Optional[list[str]] = None,
+        *,
+        embeddings: Optional[list[list[float]]] = None,
         **kwargs: Any,
     ) -> list[str]:
         texts_list = list(texts)
         metadata_list = metadatas or [{} for _ in texts_list]
         ids_list = ids or [str(uuid.uuid4()) for _ in texts_list]
-        embeddings = self._embedding_model.embed_documents(texts_list)
+        if embeddings is None:
+            embeddings = self._embedding_model.embed_documents(texts_list)
 
         lengths = {
             "ids": len(ids_list),
@@ -145,8 +148,17 @@ class _OpenSearchVectorStore(VectorStore):
             )
             bulk_body.append(source)
 
-        self._client.bulk(body=bulk_body, refresh=True)
-        return ids_list
+        response = self._client.bulk(body=bulk_body, refresh=True)
+        if not response.get("errors"):
+            return ids_list
+
+        # Bulk reports per-item failures with HTTP 200 overall; surface only
+        # the IDs that actually indexed so callers can trust the return value.
+        return [
+            ids_list[i]
+            for i, item in enumerate(response.get("items", []))
+            if "error" not in item.get("index", {})
+        ]
 
     @classmethod
     def from_texts(
@@ -424,33 +436,27 @@ class OpenSearch(VectorDataStore):
     def insert(
         self, title: str, content: str, source: str, embedding: list[float]
     ) -> str:
-        doc = {
-            "title": title,
-            "content": content,
-            "source": source,
-            self.vector_field: embedding,
-        }
-        response = self._client.index(index=self.index_name, body=doc, refresh=True)
-        return response.get("_id", "")
+        ids = self._vectorstore.add_texts(
+            texts=[content],
+            metadatas=[{"title": title, "source": source}],
+            embeddings=[embedding],
+        )
+        return ids[0]
 
     def bulk_insert(self, documents: list[dict], embeddings: list[list[float]]) -> int:
-        bulk_body: list[dict] = []
-        for doc, embedding in zip(documents, embeddings):
-            bulk_body.append({"index": {"_index": self.index_name}})
-            doc_entry: dict = {
+        texts = [doc.get("content", "") for doc in documents]
+        metadatas = [
+            {
                 "title": doc.get("title", "Untitled"),
-                "content": doc.get("content", ""),
                 "source": doc.get("source", "bulk_insert"),
-                self.vector_field: embedding,
             }
-            bulk_body.append(doc_entry)
-        response = self._client.bulk(body=bulk_body, refresh=True)
-        if response.get("errors"):
-            failed = sum(
-                1 for item in response["items"] if "error" in item.get("index", {})
+            for doc in documents
+        ]
+        return len(
+            self._vectorstore.add_texts(
+                texts=texts, metadatas=metadatas, embeddings=embeddings
             )
-            return len(documents) - failed
-        return len(documents)
+        )
 
     def update(
         self,
