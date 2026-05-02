@@ -155,7 +155,7 @@ class DatastoreTool(BaseTool, ABC):
 
     # Injected dependencies
     selector: Any = Field(default=None, exclude=True)
-    formatter: Any = Field(default=None, exclude=True)
+    formatter: Any = Field(default_factory=ResultFormatter, exclude=True)
     _logger: logging.Logger = PrivateAttr()
 
     def __init__(self, **data: Any) -> None:
@@ -163,8 +163,6 @@ class DatastoreTool(BaseTool, ABC):
         # even when the tool is constructed without the factory.
         data.setdefault("description", self.base_description)
         super().__init__(**data)
-        if self.formatter is None:
-            object.__setattr__(self, "formatter", ResultFormatter())
         object.__setattr__(
             self,
             "_logger",
