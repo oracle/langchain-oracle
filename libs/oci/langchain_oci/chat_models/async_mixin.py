@@ -183,6 +183,11 @@ class ChatOCIGenAIAsyncMixin:
         )
         tool_call_ids: Dict[int, str] = {}
 
+        # Reset per-stream provider state (see _stream's note).
+        reset = getattr(self._provider, "reset_stream_state", None)  # type: ignore[attr-defined]
+        if reset is not None:
+            reset()
+
         async for event_data in client.chat_async(
             compartment_id=request_data["compartment_id"],
             chat_request_dict=request_data["chat_request_dict"],
@@ -206,6 +211,13 @@ class ChatOCIGenAIAsyncMixin:
                     await run_manager.on_llm_new_token(delta, chunk=chunk)
                 yield chunk
             else:
+                # Flush any held-back text from the provider's <tool_call>
+                # buffer so trailing characters don't disappear.
+                flush = getattr(self._provider, "flush_stream_state", None)  # type: ignore[attr-defined]
+                tail = flush() if flush is not None else ""
+                if tail:
+                    yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
+
                 generation_info = self._provider.chat_stream_generation_info(event_data)  # type: ignore[attr-defined]
                 yield ChatGenerationChunk(
                     message=AIMessageChunk(
