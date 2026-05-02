@@ -207,7 +207,9 @@ def test_stream_tool_call_split_across_chunks_emits_chunk_after_close() -> None:
     assert len(tool_calls) == 1
     chunk = tool_calls[0]
     assert chunk["name"] == "add"
-    assert json.loads(chunk["args"]) == {"a": 1, "b": 2}
+    args = chunk["args"]
+    assert args is not None
+    assert json.loads(args) == {"a": 1, "b": 2}
     assert chunk["id"]
 
 
