@@ -16,6 +16,15 @@ from pydantic import ConfigDict
 
 from langchain_oci.datastores.vectorstores.base import VectorDataStore
 
+try:
+    from opensearchpy.exceptions import NotFoundError as _OpenSearchNotFound
+except ImportError:
+    # opensearch-py is an optional dep; if it's missing, connect() raises a clear
+    # ImportError before any of the methods below run. Define a sentinel so the
+    # except clauses are still syntactically valid at import time.
+    class _OpenSearchNotFound(Exception):  # type: ignore[no-redef]
+        pass
+
 
 def _coerce_text(value: Any) -> str:
     if isinstance(value, str):
@@ -197,7 +206,7 @@ class _OpenSearchVectorStore(VectorStore):
         for document_id in ids:
             try:
                 response = self._client.get(index=self._index_name, id=str(document_id))
-            except Exception:
+            except _OpenSearchNotFound:
                 continue
 
             if not response.get("found"):
@@ -423,14 +432,14 @@ class OpenSearch(VectorDataStore):
     def get(self, document_id: str | int) -> Optional[dict]:
         try:
             response = self._client.get(index=self.index_name, id=str(document_id))
-            if response.get("found"):
-                return _normalize_source(
-                    response.get("_source", {}),
-                    vector_field=self.vector_field,
-                    document_id=response["_id"],
-                )
-        except Exception:
-            pass
+        except _OpenSearchNotFound:
+            return None
+        if response.get("found"):
+            return _normalize_source(
+                response.get("_source", {}),
+                vector_field=self.vector_field,
+                document_id=response["_id"],
+            )
         return None
 
     def insert(
@@ -485,7 +494,7 @@ class OpenSearch(VectorDataStore):
                 refresh=True,
             )
             return True
-        except Exception:
+        except _OpenSearchNotFound:
             return False
 
     def delete(self, document_id: str | int) -> bool:
@@ -494,7 +503,7 @@ class OpenSearch(VectorDataStore):
                 index=self.index_name, id=str(document_id), refresh=True
             )
             return response.get("result") == "deleted"
-        except Exception:
+        except _OpenSearchNotFound:
             return False
 
     def stats(self) -> dict:
