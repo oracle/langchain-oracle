@@ -260,6 +260,21 @@ def test_stream_unicode_round_trip() -> None:
         assert token in text
 
 
+def test_invoke_does_not_leak_tool_calling_variant_marker() -> None:
+    """Belt-and-braces: even if the model emits ``<tool_calling>...`` instead of
+    ``<tool_call>...``, the tags must not bleed into ``content``.
+
+    See https://github.com/oracle/langchain-oracle/issues/207.
+    """
+    chat = _make_llm().bind_tools([add_numbers])
+    result = chat.invoke("Use add_numbers to compute 41 plus 1.")
+    content = result.content or ""
+    assert "<tool_call>" not in content
+    assert "<tool_calling>" not in content
+    assert "</tool_call>" not in content
+    assert "</tool_calling>" not in content
+
+
 def test_chat_instance_reuse_across_stream_invoke_stream() -> None:
     """The provider's per-stream buffer must not leak across calls on the same chat."""
     shared = _make_llm().bind_tools([add_numbers])

@@ -118,6 +118,45 @@ def test_extract_handles_whitespace_around_payload() -> None:
     assert calls[0]["name"] == "ws"
 
 
+def test_extract_supports_tool_calling_variant() -> None:
+    """Qwen3 also emits ``<tool_calling>...</tool_calling>``; both must work.
+
+    See https://github.com/oracle/langchain-oracle/issues/207.
+    """
+    text = (
+        "Calling now.\n"
+        '<tool_calling>{"name": "ping", "arguments": {"x": 1}}</tool_calling>'
+    )
+    cleaned, calls = _extract_xml_tool_calls(text)
+    assert cleaned == "Calling now."
+    assert len(calls) == 1
+    assert calls[0]["name"] == "ping"
+    assert json.loads(calls[0]["arguments"]) == {"x": 1}
+
+
+def test_extract_mixed_tag_variants_in_one_response() -> None:
+    """One model turn occasionally mixes both tags; both must extract."""
+    text = (
+        '<tool_call>{"name": "first", "arguments": {"a": 1}}</tool_call>'
+        " then "
+        '<tool_calling>{"name": "second", "arguments": {"b": 2}}</tool_calling>'
+    )
+    cleaned, calls = _extract_xml_tool_calls(text)
+    assert "tool_call" not in cleaned
+    assert "tool_calling" not in cleaned
+    assert [c["name"] for c in calls] == ["first", "second"]
+
+
+def test_extract_does_not_match_mismatched_open_close() -> None:
+    """``<tool_call>...</tool_calling>`` is malformed — must NOT be parsed."""
+    text = '<tool_call>{"name": "x", "arguments": {}}</tool_calling>'
+    cleaned, calls = _extract_xml_tool_calls(text)
+    assert calls == []
+    # The text comes back unchanged so the caller can see what happened.
+    assert "<tool_call>" in cleaned
+    assert "</tool_calling>" in cleaned
+
+
 # ---------------------------------------------------------------------------
 # _safe_emit_split
 # ---------------------------------------------------------------------------
@@ -138,6 +177,7 @@ def test_safe_emit_unrelated_lt_emits_everything() -> None:
 @pytest.mark.parametrize(
     "tail",
     [
+        # <tool_call> partials and full opener
         "<",
         "<t",
         "<too",
@@ -145,6 +185,14 @@ def test_safe_emit_unrelated_lt_emits_everything() -> None:
         "<tool_call",
         "<tool_call>",
         "<tool_call>{partial",
+        # <tool_calling> partials and full opener (extra disambiguation chars)
+        "<tool_",
+        "<tool_c",
+        "<tool_cal",
+        "<tool_calli",
+        "<tool_calling",
+        "<tool_calling>",
+        "<tool_calling>{partial",
     ],
 )
 def test_safe_emit_holds_back_partial_or_open_tag(tail: str) -> None:
@@ -244,6 +292,38 @@ def test_reset_stream_state_clears_between_streams() -> None:
     out = p.chat_stream_to_text(_stream_event("fresh"))
     assert out == "fresh"
     assert p.flush_stream_state() == ""
+
+
+def test_stream_tool_calling_variant_split_across_chunks() -> None:
+    """The longer ``<tool_calling>`` opener must also stream correctly."""
+    p = GenericProvider()
+    p.reset_stream_state()
+    deltas = [
+        "Doing it: ",
+        "<tool_call",
+        'ing>{"name":',
+        ' "ping", "arguments": {"x": 1}}',
+        "</tool_calling>",
+        " ok",
+    ]
+    text_buf = ""
+    tool_calls: list = []
+    tool_call_ids: dict = {}
+    for d in deltas:
+        text_buf += p.chat_stream_to_text(_stream_event(d))
+        tool_calls.extend(p.process_stream_tool_calls({}, tool_call_ids))
+    text_buf += p.flush_stream_state()
+
+    assert "<tool_calling>" not in text_buf
+    assert "</tool_calling>" not in text_buf
+    assert text_buf.startswith("Doing it: ")
+    assert text_buf.endswith(" ok")
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["name"] == "ping"
+    args = tool_calls[0]["args"]
+    assert args is not None
+    assert json.loads(args) == {"x": 1}
 
 
 # ---------------------------------------------------------------------------

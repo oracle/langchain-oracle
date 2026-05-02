@@ -42,17 +42,25 @@ from pydantic import BaseModel
 from langchain_oci.chat_models.providers.base import Provider
 from langchain_oci.common.utils import OCIUtils
 
-# Hermes/Llama-style inline tool-call format. Some fine-tuned models hosted on
-# OCI Dedicated AI Clusters return tool calls as `<tool_call>{...}</tool_call>`
-# blocks inside the assistant message text instead of populating the structured
-# `tool_calls` field on the response. We extract those here so callers see
-# normal structured tool calls in both `_generate` and `_stream`.
-_XML_TOOL_OPEN = "<tool_call>"
-_XML_TOOL_CLOSE = "</tool_call>"
+# Hermes/Llama/Qwen-style inline tool-call format. Some fine-tuned models
+# hosted on OCI Dedicated AI Clusters return tool calls inside the assistant
+# message text using one of two equivalent tag pairs:
+#
+#   <tool_call>{"name": ..., "arguments": {...}}</tool_call>
+#   <tool_calling>{"name": ..., "arguments": {...}}</tool_calling>
+#
+# (Qwen3 has been observed emitting either form — see
+# https://github.com/oracle/langchain-oracle/issues/207.) We extract both
+# variants here so callers see normal structured tool calls in `_generate`
+# and `_stream`.
+_XML_TOOL_TAG_NAMES = ("tool_call", "tool_calling")
 _XML_TOOL_BLOCK_RE = re.compile(
-    re.escape(_XML_TOOL_OPEN) + r"\s*(.*?)\s*" + re.escape(_XML_TOOL_CLOSE),
+    r"<(?P<tag>" + "|".join(_XML_TOOL_TAG_NAMES) + r")>\s*(?P<body>.*?)\s*</(?P=tag)>",
     re.DOTALL,
 )
+# Used by the streaming buffer to detect that the trailing portion of the
+# buffer could still be the start of an opening tag for either variant.
+_XML_TOOL_OPENERS = tuple(f"<{name}>" for name in _XML_TOOL_TAG_NAMES)
 
 
 def _parse_xml_tool_call_payload(payload: str) -> Optional[Dict[str, Any]]:
@@ -83,20 +91,22 @@ def _parse_xml_tool_call_payload(payload: str) -> Optional[Dict[str, Any]]:
 
 
 def _extract_xml_tool_calls(text: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Strip ``<tool_call>...</tool_call>`` blocks and return parsed calls.
+    """Strip ``<tool_call>``/``<tool_calling>`` blocks and return parsed calls.
 
     Returns ``(cleaned_text, [{"id", "name", "arguments"}, ...])``. Blocks
     whose JSON payload doesn't parse are left intact in ``cleaned_text`` so
     no information is silently lost.
     """
-    if _XML_TOOL_OPEN not in text or _XML_TOOL_CLOSE not in text:
+    # Cheap pre-check: skip the regex scan entirely when the text doesn't
+    # contain either opener — the common case for plain assistant turns.
+    if not any(opener in text for opener in _XML_TOOL_OPENERS):
         return text, []
 
     parsed: List[Dict[str, Any]] = []
     cleaned_parts: List[str] = []
     cursor = 0
     for match in _XML_TOOL_BLOCK_RE.finditer(text):
-        payload = _parse_xml_tool_call_payload(match.group(1))
+        payload = _parse_xml_tool_call_payload(match.group("body"))
         if payload is None:
             # Malformed block — leave it in the text and continue scanning.
             continue
@@ -135,9 +145,9 @@ def _safe_emit_split(buffer: str) -> Tuple[str, str]:
     """Split a streaming buffer into (safe_to_emit, hold_back).
 
     ``hold_back`` covers any trailing portion that could still be the start of
-    a ``<tool_call>`` opening tag, or a complete-but-not-yet-closed tag whose
-    closing marker hasn't arrived. Everything before the earliest such ``<``
-    is safe to forward to the caller as text.
+    a ``<tool_call>`` / ``<tool_calling>`` opening tag, or a
+    complete-but-not-yet-closed tag whose closing marker hasn't arrived.
+    Everything before the earliest such ``<`` is safe to forward as text.
     """
     earliest_hold = len(buffer)
     pos = 0
@@ -146,9 +156,12 @@ def _safe_emit_split(buffer: str) -> Tuple[str, str]:
         if idx == -1:
             break
         rem = buffer[idx:]
-        # Either rem is a strict prefix of "<tool_call>" (still arriving) or
-        # rem already starts with "<tool_call>" (full opener, body in flight).
-        if _XML_TOOL_OPEN.startswith(rem) or rem.startswith(_XML_TOOL_OPEN):
+        # Either rem is a strict prefix of an opener (still arriving) or
+        # rem already starts with one (full opener, body in flight).
+        if any(
+            opener.startswith(rem) or rem.startswith(opener)
+            for opener in _XML_TOOL_OPENERS
+        ):
             earliest_hold = idx
             break
         pos = idx + 1
