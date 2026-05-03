@@ -927,8 +927,13 @@ def _get_similarity_search_query(
     if filter:
         where_clause = _generate_where_clause(filter, bind_variables)
 
+    # `VECTOR_INDEX_TRANSFORM` keeps the vector index in the plan even when a
+    # JSON Search Index is also defined on the table. Without the hint, when
+    # both indexes exist the optimizer picks the JSON Search Index for the
+    # `JSON_EXISTS` filter and skips the vector index entirely, which kills
+    # similarity-search latency. See issue #130.
     query = f"""
-    SELECT 
+    SELECT /*+ VECTOR_INDEX_TRANSFORM({table_name}) */
         text,
         metadata,
         vector_distance(embedding, :embedding,
