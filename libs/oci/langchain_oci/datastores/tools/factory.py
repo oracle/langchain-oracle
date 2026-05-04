@@ -130,8 +130,9 @@ def create_datastore_tools(
         "store_list": store_list,
     }
 
-    def build_description(base: str, usage: str = "") -> str:
-        """Build full description with store list."""
+    def build_description(tool_cls: type[BaseTool], usage: str = "") -> str:
+        """Compose a tool's static description with usage hint and store list."""
+        base = tool_cls.model_fields["description"].default
         parts = [base]
         if usage:
             parts.append(usage)
@@ -140,30 +141,23 @@ def create_datastore_tools(
 
     return [
         StatsTool(
-            description=build_description(StatsTool.base_description),
+            description=build_description(StatsTool),
             **common_kwargs,
         ),
         SearchTool(
-            description=build_description(
-                SearchTool.base_description,
-                SearchTool.usage_hint,
-            ),
+            description=build_description(SearchTool, SearchTool.usage_hint),
             top_k=top_k,
             **common_kwargs,
         ),
         KeywordSearchTool(
             description=build_description(
-                KeywordSearchTool.base_description,
-                KeywordSearchTool.usage_hint,
+                KeywordSearchTool, KeywordSearchTool.usage_hint
             ),
             top_k=top_k,
             **common_kwargs,
         ),
         GetDocumentTool(
-            description=build_description(
-                GetDocumentTool.base_description,
-                GetDocumentTool.usage_hint,
-            ),
+            description=build_description(GetDocumentTool, GetDocumentTool.usage_hint),
             **common_kwargs,
         ),
     ]

@@ -3,7 +3,7 @@
 
 """Stats tool for datastore information."""
 
-from typing import ClassVar, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -16,7 +16,7 @@ class StatsTool(DatastoreTool):
 
     name: str = "stats"
     args_schema: type[BaseModel] = StatsInput
-    base_description: ClassVar[str] = (
+    description: str = (
         "START HERE - Get statistics about available datastores including "
         "document counts and descriptions. Call this first to understand "
         "what data is available for research."
