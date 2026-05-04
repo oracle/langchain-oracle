@@ -16,7 +16,7 @@ class GetDocumentTool(DatastoreTool):
 
     name: str = "get_document"
     args_schema: type[BaseModel] = GetDocumentInput
-    base_description: ClassVar[str] = (
+    description: str = (
         "Retrieve full document content by ID. Use after search or "
         "keyword_search to get complete text of relevant documents."
     )
