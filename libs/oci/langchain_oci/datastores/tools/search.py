@@ -16,7 +16,7 @@ class SearchTool(DatastoreTool):
 
     name: str = "search"
     args_schema: type[BaseModel] = SearchInput
-    base_description: ClassVar[str] = (
+    description: str = (
         "Semantic search - find documents by meaning and concept. "
         "Best for broad research queries like 'cancer treatment outcomes' "
         "or 'database performance issues'."

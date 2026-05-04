@@ -16,7 +16,7 @@ class KeywordSearchTool(DatastoreTool):
 
     name: str = "keyword_search"
     args_schema: type[BaseModel] = SearchInput
-    base_description: ClassVar[str] = (
+    description: str = (
         "Keyword search - find documents containing exact terms. "
         "Best for specific technical terms like 'connection_exhaustion', "
         "'metastasis', or 'NullPointerException'."

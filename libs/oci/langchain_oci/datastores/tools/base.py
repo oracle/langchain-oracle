@@ -137,20 +137,19 @@ class ResultFormatter:
 class DatastoreTool(BaseTool, ABC):
     """Base class for datastore tools with common configuration.
 
-    Subclasses set ``base_description`` and (optionally) ``usage_hint`` as
-    class-level metadata. The factory in
-    ``langchain_oci.datastores.tools.factory.create_datastore_tools`` composes
-    those with a runtime list of available stores into the ``description``
-    field that ``BaseTool`` exposes to the LLM. When a tool is constructed
-    directly without the factory, ``base_description`` is used as the
-    ``description`` so the LLM still sees the intended text.
+    Subclasses override ``description`` (the field ``BaseTool`` already
+    exposes to the LLM) and optionally ``usage_hint``. The factory in
+    ``langchain_oci.datastores.tools.factory.create_datastore_tools`` reads
+    the subclass default for ``description``, composes it with a runtime
+    list of available stores, and overwrites the per-instance value before
+    handing the tool to the LLM.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # Tool metadata - override in subclasses
     name: str = "datastore_tool"
-    base_description: ClassVar[str] = "A datastore tool."
+    description: str = "A datastore tool."
     usage_hint: ClassVar[str] = ""
 
     # Injected dependencies
@@ -159,9 +158,6 @@ class DatastoreTool(BaseTool, ABC):
     _logger: logging.Logger = PrivateAttr()
 
     def __init__(self, **data: Any) -> None:
-        # Fall back to base_description so BaseTool.description is populated
-        # even when the tool is constructed without the factory.
-        data.setdefault("description", self.base_description)
         super().__init__(**data)
         object.__setattr__(
             self,
