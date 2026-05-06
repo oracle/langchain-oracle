@@ -114,7 +114,7 @@ class ResultFormatter:
         """Format datastore statistics."""
         lines = [
             "=== DATASTORE STATISTICS ===",
-            "Available datastores for search, keyword_search, get_document.",
+            "Available datastores for search, get_document.",
             "",
         ]
 
