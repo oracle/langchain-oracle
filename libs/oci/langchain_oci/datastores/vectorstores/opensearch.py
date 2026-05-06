@@ -163,11 +163,20 @@ class _OpenSearchVectorStore(VectorStore):
 
         # Bulk reports per-item failures with HTTP 200 overall; surface only
         # the IDs that actually indexed so callers can trust the return value.
-        return [
-            ids_list[i]
-            for i, item in enumerate(response.get("items", []))
-            if "error" not in item.get("index", {})
-        ]
+        succeeded = []
+        for i, item in enumerate(response.get("items", [])):
+            err = item.get("index", {}).get("error")
+            if err:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "OpenSearch bulk index failed id=%s reason=%s",
+                    ids_list[i],
+                    err.get("reason", err),
+                )
+            else:
+                succeeded.append(ids_list[i])
+        return succeeded
 
     @classmethod
     def from_texts(
@@ -193,12 +202,11 @@ class _OpenSearchVectorStore(VectorStore):
         if not ids:
             return None
 
-        for document_id in ids:
-            self._client.delete(
-                index=self._index_name,
-                id=str(document_id),
-                refresh=True,
-            )
+        bulk_body = [
+            {"delete": {"_index": self._index_name, "_id": str(document_id)}}
+            for document_id in ids
+        ]
+        self._client.bulk(body=bulk_body, refresh=True)
         return True
 
     def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
