@@ -500,8 +500,8 @@ class TestCreateDatastoreTools:
             with pytest.raises(ValueError, match="compartment_id is required"):
                 create_datastore_tools(stores={"store1": mock_store})
 
-    def test_creates_four_tools(self) -> None:
-        """Test that factory creates all four datastore tools."""
+    def test_creates_three_tools(self) -> None:
+        """Test that factory creates the three datastore tools."""
         from langchain_oci.datastores.tools import create_datastore_tools
 
         mock_store = MagicMock()
@@ -517,9 +517,9 @@ class TestCreateDatastoreTools:
             embedding_model=mock_embedding,
         )
 
-        assert len(tools) == 4
+        assert len(tools) == 3
         tool_names = {t.name for t in tools}
-        assert tool_names == {"search", "keyword_search", "get_document", "stats"}
+        assert tool_names == {"search", "get_document", "stats"}
 
     def test_tools_have_descriptions(self) -> None:
         """Test that all tools have descriptions."""
@@ -587,30 +587,28 @@ class TestCreateDatastoreTools:
         assert "test query" in caplog.text
         assert "research" in caplog.text
 
-    def test_keyword_search_tool_logs_backend_error(self, caplog) -> None:
-        """Test keyword search tool logs backend exceptions with query context."""
-        from langchain_oci.datastores.tools.keyword_search import (
-            KeywordSearchTool,
-        )
+    def test_hybrid_search_tool_logs_backend_error(self, caplog) -> None:
+        """Test hybrid search tool logs backend exceptions with query context."""
+        from langchain_oci.datastores.tools.hybrid_search import HybridSearchTool
 
         selector = MagicMock()
         selector.route.return_value = "research"
         failing_store = MagicMock()
-        failing_store.keyword_search_documents.side_effect = RuntimeError("boom")
+        failing_store.hybrid_search_documents.side_effect = RuntimeError("boom")
         selector.get_store.return_value = failing_store
 
-        tool = KeywordSearchTool(
+        tool = HybridSearchTool(
             selector=selector,
             store_list="research",
             top_k=5,
-            description="test keyword search tool",
+            description="test hybrid search tool",
         )
 
         with caplog.at_level(logging.ERROR):
             result = tool._run("exact term")
 
-        assert result == "Error during keyword search: RuntimeError: boom"
-        assert "Datastore keyword search failed" in caplog.text
+        assert result == "Error during hybrid search: RuntimeError: boom"
+        assert "Datastore hybrid search failed" in caplog.text
         assert "exact term" in caplog.text
         assert "research" in caplog.text
 
