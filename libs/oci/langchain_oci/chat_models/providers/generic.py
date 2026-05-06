@@ -40,6 +40,11 @@ from pydantic import BaseModel
 
 from langchain_oci.chat_models.providers.base import Provider
 from langchain_oci.common.utils import OCIUtils
+from langchain_oci.common.xml_tool_call_parser import (
+    XmlStreamBuffer,
+    XmlToolCall,
+    extract_xml_tool_calls,
+)
 
 
 def _should_allow_more_tool_calls(
@@ -129,6 +134,11 @@ class GenericProvider(Provider):
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
 
+        # Per-stream incremental parser for inline <tool_call>...</tool_call>
+        # blocks emitted by Hermes/Llama/Qwen-style fine-tunes. Reset by
+        # `reset_stream_state()` at the start of each `_stream` call.
+        self._xml_buffer = XmlStreamBuffer()
+
         # Chat request and message models
         self.oci_chat_request = models.GenericChatRequest
         self.oci_chat_message = {
@@ -172,7 +182,12 @@ class GenericProvider(Provider):
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract text from chat response, or '' if unavailable."""
+        """Extract text from chat response, or '' if unavailable.
+
+        Strips any ``<tool_call>...</tool_call>`` blocks emitted inline by
+        Hermes/Llama-style fine-tunes — those are surfaced as structured
+        ``tool_calls`` by ``chat_tool_calls`` instead.
+        """
         chat_resp = getattr(response.data, "chat_response", None)
         choices = getattr(chat_resp, "choices", None)
         text = ""
@@ -183,7 +198,8 @@ class GenericProvider(Provider):
                 text = "".join(
                     part.text for part in msg.content if getattr(part, "text", None)
                 )
-        if text == "":
+        cleaned, _ = extract_xml_tool_calls(text)
+        if cleaned == "" and text == "":
             warnings.warn(
                 "GenericProvider could not extract text and returned an empty "
                 "string. Ensure the selected provider matches the response "
@@ -192,10 +208,14 @@ class GenericProvider(Provider):
                 UserWarning,
                 stacklevel=2,
             )
-        return text
+        return cleaned
 
     def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
-        """Extract text from chat response dict (async path)."""
+        """Extract text from chat response dict (async path).
+
+        Strips inline ``<tool_call>...</tool_call>`` blocks for the same reason
+        as :meth:`chat_response_to_text`.
+        """
         chat_response = response_data.get("chatResponse", {})
         choices = chat_response.get("choices", [])
         text = ""
@@ -210,7 +230,8 @@ class GenericProvider(Provider):
                     )
                 else:
                     text = str(content)
-        if text == "":
+        cleaned, _ = extract_xml_tool_calls(text)
+        if cleaned == "" and text == "":
             warnings.warn(
                 "GenericProvider could not extract text and returned an empty "
                 "string. Ensure the selected provider matches the response "
@@ -219,14 +240,42 @@ class GenericProvider(Provider):
                 UserWarning,
                 stacklevel=2,
             )
-        return text
+        return cleaned
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
-        """Extract text from Meta chat stream event."""
+        """Extract text from Meta chat stream event.
+
+        Routes the raw delta through :class:`XmlStreamBuffer` so inline
+        ``<tool_call>``/``<tool_calling>`` blocks (Hermes/Llama/Qwen-style
+        fine-tunes) are surfaced via :meth:`process_stream_tool_calls`
+        instead of leaking into normal token-stream content.
+        """
         content = event_data.get("message", {}).get("content", None)
         if not content:
-            return ""
-        return "".join(part.get("text", "") for part in content if part.get("text"))
+            raw_delta = ""
+        else:
+            raw_delta = "".join(
+                part.get("text", "") for part in content if part.get("text")
+            )
+        return self._xml_buffer.feed(raw_delta)
+
+    def reset_stream_state(self) -> None:
+        """Clear per-stream ``<tool_call>`` parsing state.
+
+        Called by ``ChatOCIGenAI._stream`` / ``_astream`` at the start of each
+        new stream so a previous, possibly-aborted stream's leftover buffer
+        doesn't leak into the next one.
+        """
+        self._xml_buffer.reset()
+
+    def flush_stream_state(self) -> str:
+        """Return any held-back text and reset the per-stream buffer.
+
+        Called once at end-of-stream so trailing characters that were held
+        back as a possible ``<tool_call>`` prefix don't get dropped if the
+        opener never actually arrived.
+        """
+        return self._xml_buffer.flush()
 
     def is_chat_stream_end(self, event_data: Dict) -> bool:
         """Determine if Meta chat stream event indicates the end."""
@@ -263,11 +312,30 @@ class GenericProvider(Provider):
         return {"finish_reason": event_data["finishReason"]}
 
     def chat_tool_calls(self, response: Any) -> List[Any]:
-        """Retrieve tool calls from chat response."""
+        """Retrieve tool calls from chat response.
+
+        Falls back to parsing inline ``<tool_call>...</tool_call>`` blocks out
+        of the assistant message text when the model didn't populate the
+        structured ``tool_calls`` field — typical for Hermes/Llama-style
+        fine-tunes hosted on OCI Dedicated AI Clusters.
+        """
         choices = response.data.chat_response.choices
         if not choices or choices[0].message is None:
             return []
-        return choices[0].message.tool_calls
+        message = choices[0].message
+        native = message.tool_calls or []
+        if native:
+            return native
+        # Fallback: parse <tool_call>...</tool_call> blocks from the text.
+        text = "".join(
+            part.text for part in (message.content or []) if getattr(part, "text", None)
+        )
+        _, parsed = extract_xml_tool_calls(text)
+        if not parsed:
+            return []
+        # Synthesise objects shaped like OCI FunctionCall so the downstream
+        # `format_response_tool_calls` path keeps working unchanged.
+        return [XmlToolCall(**tc) for tc in parsed]
 
     def chat_stream_tool_calls(self, event_data: Dict) -> List[Any]:
         """Retrieve tool calls from Meta stream event."""
@@ -821,6 +889,10 @@ class GenericProvider(Provider):
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
 
+        Drains any inline ``<tool_call>...</tool_call>`` blocks parsed by
+        :meth:`chat_stream_to_text` first, then falls through to the standard
+        OCI structured tool-call path.
+
         Args:
             event_data: The event data from the stream
             tool_call_ids: Dict mapping tool call index to ID for aggregation
@@ -829,6 +901,20 @@ class GenericProvider(Provider):
             List of ToolCallChunk objects
         """
         tool_call_chunks: List[ToolCallChunk] = []
+
+        # Drain XML tool calls that completed during this event.
+        for parsed in self._xml_buffer.drain_completed():
+            index = len(tool_call_ids)
+            tool_call_ids[index] = parsed["id"]
+            tool_call_chunks.append(
+                tool_call_chunk(
+                    name=parsed["name"],
+                    args=parsed["arguments"],
+                    id=parsed["id"],
+                    index=index,
+                )
+            )
+
         tool_call_response = self.chat_stream_tool_calls(event_data)
 
         if not tool_call_response:

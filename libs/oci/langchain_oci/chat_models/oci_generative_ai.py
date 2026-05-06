@@ -547,6 +547,13 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         response = self.client.chat(request)
         tool_call_ids: Dict[int, str] = {}
 
+        # Reset any per-stream provider state (currently the GenericProvider's
+        # incremental <tool_call> XML buffer used for Hermes/Llama-style DAC
+        # fine-tunes). Older providers don't define this hook.
+        reset = getattr(self._provider, "reset_stream_state", None)
+        if reset is not None:
+            reset()
+
         for event in response.data.events():
             event_data = json.loads(event.data)
 
@@ -567,6 +574,14 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     run_manager.on_llm_new_token(delta, chunk=chunk)
                 yield chunk
             else:
+                # Flush any text the provider was holding back waiting on a
+                # potential <tool_call> opener; emit it as a final delta so
+                # callers don't lose trailing characters.
+                flush = getattr(self._provider, "flush_stream_state", None)
+                tail = flush() if flush is not None else ""
+                if tail:
+                    yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
+
                 generation_info = self._provider.chat_stream_generation_info(event_data)
                 yield ChatGenerationChunk(
                     message=AIMessageChunk(
