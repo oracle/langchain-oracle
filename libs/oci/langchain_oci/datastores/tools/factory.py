@@ -12,8 +12,7 @@ from langchain_core.tools import BaseTool
 
 from langchain_oci.datastores.tools.base import ResultFormatter
 from langchain_oci.datastores.tools.get_document import GetDocumentTool
-from langchain_oci.datastores.tools.keyword_search import KeywordSearchTool
-from langchain_oci.datastores.tools.search import SearchTool
+from langchain_oci.datastores.tools.hybrid_search import HybridSearchTool
 from langchain_oci.datastores.tools.selector import StoreSelector
 from langchain_oci.datastores.tools.stats import StatsTool
 
@@ -51,7 +50,7 @@ def create_datastore_tools(
         top_k: Number of results to return from searches.
 
     Returns:
-        List of tools: [stats, search, keyword_search, get_document]
+        List of tools: [stats, search, get_document]
 
     Example:
         >>> from langchain_oci.agents import (
@@ -144,14 +143,9 @@ def create_datastore_tools(
             description=build_description(StatsTool),
             **common_kwargs,
         ),
-        SearchTool(
-            description=build_description(SearchTool, SearchTool.usage_hint),
-            top_k=top_k,
-            **common_kwargs,
-        ),
-        KeywordSearchTool(
+        HybridSearchTool(
             description=build_description(
-                KeywordSearchTool, KeywordSearchTool.usage_hint
+                HybridSearchTool, HybridSearchTool.usage_hint
             ),
             top_k=top_k,
             **common_kwargs,
