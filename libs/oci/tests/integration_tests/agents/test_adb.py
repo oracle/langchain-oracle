@@ -56,12 +56,12 @@ class TestADBDatastore:
 
         assert len(results) > 0
 
-    def test_keyword_search(self, adb_store, embedding_model) -> None:
-        """Test keyword search."""
+    def test_hybrid_search(self, adb_store, embedding_model) -> None:
+        """Test hybrid search falls back to semantic-only when ADB has no text index."""
         adb_store.connect(embedding_model)
 
-        keyword = os.environ.get("ADB_TEST_KEYWORD", "test")
-        results = adb_store.keyword_search(keyword, top_k=3)
+        query = os.environ.get("ADB_TEST_KEYWORD", "test")
+        results = adb_store.hybrid_search_documents(query, top_k=3)
 
         assert len(results) > 0
 

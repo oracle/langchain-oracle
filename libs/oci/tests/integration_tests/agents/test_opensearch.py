@@ -109,9 +109,9 @@ class TestDatastoreToolsWithOpenSearch:
             embedding_model=embedding_model,
         )
 
-        assert len(tools) == 4
+        assert len(tools) == 3
         tool_names = {t.name for t in tools}
-        assert tool_names == {"search", "keyword_search", "get_document", "stats"}
+        assert tool_names == {"search", "get_document", "stats"}
 
     def test_search_tool(self, stores, embedding_model) -> None:
         """Test search tool with real OpenSearch."""
@@ -146,8 +146,8 @@ class TestDatastoreToolsWithOpenSearch:
 
         assert "diagnostics" in result
 
-    def test_keyword_search_tool(self, stores, embedding_model) -> None:
-        """Test keyword search tool."""
+    def test_hybrid_search_tool(self, stores, embedding_model) -> None:
+        """Test hybrid search tool combines semantic and keyword results."""
         from langchain_oci import create_datastore_tools
 
         tools = create_datastore_tools(
@@ -156,9 +156,9 @@ class TestDatastoreToolsWithOpenSearch:
             top_k=3,
         )
 
-        keyword_tool = next(t for t in tools if t.name == "keyword_search")
+        search_tool = next(t for t in tools if t.name == "search")
         keyword = os.environ.get("OPENSEARCH_TEST_KEYWORD", "test")
-        result = keyword_tool._run(query=keyword)
+        result = search_tool._run(query=keyword)
 
         assert result is not None
 
