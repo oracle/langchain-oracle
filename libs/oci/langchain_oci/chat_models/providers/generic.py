@@ -22,10 +22,9 @@ Currently, Google Gemini models have the broadest multimodal support on OCI.
 """
 
 import json
-import re
 import uuid
 import warnings
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from langchain_core.messages import (
     AIMessage,
@@ -41,131 +40,11 @@ from pydantic import BaseModel
 
 from langchain_oci.chat_models.providers.base import Provider
 from langchain_oci.common.utils import OCIUtils
-
-# Hermes/Llama/Qwen-style inline tool-call format. Some fine-tuned models
-# hosted on OCI Dedicated AI Clusters return tool calls inside the assistant
-# message text using one of two equivalent tag pairs:
-#
-#   <tool_call>{"name": ..., "arguments": {...}}</tool_call>
-#   <tool_calling>{"name": ..., "arguments": {...}}</tool_calling>
-#
-# (Qwen3 has been observed emitting either form — see
-# https://github.com/oracle/langchain-oracle/issues/207.) We extract both
-# variants here so callers see normal structured tool calls in `_generate`
-# and `_stream`.
-_XML_TOOL_TAG_NAMES = ("tool_call", "tool_calling")
-_XML_TOOL_BLOCK_RE = re.compile(
-    r"<(?P<tag>" + "|".join(_XML_TOOL_TAG_NAMES) + r")>\s*(?P<body>.*?)\s*</(?P=tag)>",
-    re.DOTALL,
+from langchain_oci.common.xml_tool_call_parser import (
+    XmlStreamBuffer,
+    XmlToolCall,
+    extract_xml_tool_calls,
 )
-# Used by the streaming buffer to detect that the trailing portion of the
-# buffer could still be the start of an opening tag for either variant.
-_XML_TOOL_OPENERS = tuple(f"<{name}>" for name in _XML_TOOL_TAG_NAMES)
-
-
-def _parse_xml_tool_call_payload(payload: str) -> Optional[Dict[str, Any]]:
-    """Parse the JSON payload of a single ``<tool_call>...</tool_call>`` block.
-
-    Returns ``{"name": str, "arguments": str}`` (arguments serialised as JSON)
-    on success, or ``None`` if the payload is not parseable / not in the
-    expected ``{"name": ..., "arguments": ...}`` shape — which lets callers
-    leave the original text alone instead of silently dropping it.
-    """
-    try:
-        decoded = json.loads(payload)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(decoded, dict):
-        return None
-    name = decoded.get("name")
-    if not isinstance(name, str) or not name:
-        return None
-    arguments = decoded.get("arguments", {})
-    if isinstance(arguments, str):
-        # Some models double-encode arguments as a JSON string. Keep it as-is —
-        # downstream parsers already handle both shapes.
-        arguments_str = arguments
-    else:
-        arguments_str = json.dumps(arguments)
-    return {"name": name, "arguments": arguments_str}
-
-
-def _extract_xml_tool_calls(text: str) -> Tuple[str, List[Dict[str, Any]]]:
-    """Strip ``<tool_call>``/``<tool_calling>`` blocks and return parsed calls.
-
-    Returns ``(cleaned_text, [{"id", "name", "arguments"}, ...])``. Blocks
-    whose JSON payload doesn't parse are left intact in ``cleaned_text`` so
-    no information is silently lost.
-    """
-    # Cheap pre-check: skip the regex scan entirely when the text doesn't
-    # contain either opener — the common case for plain assistant turns.
-    if not any(opener in text for opener in _XML_TOOL_OPENERS):
-        return text, []
-
-    parsed: List[Dict[str, Any]] = []
-    cleaned_parts: List[str] = []
-    cursor = 0
-    for match in _XML_TOOL_BLOCK_RE.finditer(text):
-        payload = _parse_xml_tool_call_payload(match.group("body"))
-        if payload is None:
-            # Malformed block — leave it in the text and continue scanning.
-            continue
-        cleaned_parts.append(text[cursor : match.start()])
-        cursor = match.end()
-        parsed.append(
-            {
-                "id": str(uuid.uuid4()),
-                "name": payload["name"],
-                "arguments": payload["arguments"],
-            }
-        )
-    cleaned_parts.append(text[cursor:])
-    cleaned = "".join(cleaned_parts).strip()
-    return cleaned, parsed
-
-
-class _XmlToolCall:
-    """Stand-in for ``oci.generative_ai_inference.models.FunctionCall``.
-
-    Provides the attributes (``id``, ``name``, ``arguments``) and the
-    ``attribute_map`` that ``OCIUtils.convert_oci_tool_call_to_langchain``
-    inspects, so calls parsed out of inline ``<tool_call>`` text flow through
-    the same downstream conversion code as the structured ones.
-    """
-
-    attribute_map = {"id": "id", "name": "name", "arguments": "arguments"}
-
-    def __init__(self, *, id: str, name: str, arguments: str) -> None:
-        self.id = id
-        self.name = name
-        self.arguments = arguments
-
-
-def _safe_emit_split(buffer: str) -> Tuple[str, str]:
-    """Split a streaming buffer into (safe_to_emit, hold_back).
-
-    ``hold_back`` covers any trailing portion that could still be the start of
-    a ``<tool_call>`` / ``<tool_calling>`` opening tag, or a
-    complete-but-not-yet-closed tag whose closing marker hasn't arrived.
-    Everything before the earliest such ``<`` is safe to forward as text.
-    """
-    earliest_hold = len(buffer)
-    pos = 0
-    while True:
-        idx = buffer.find("<", pos)
-        if idx == -1:
-            break
-        rem = buffer[idx:]
-        # Either rem is a strict prefix of an opener (still arriving) or
-        # rem already starts with one (full opener, body in flight).
-        if any(
-            opener.startswith(rem) or rem.startswith(opener)
-            for opener in _XML_TOOL_OPENERS
-        ):
-            earliest_hold = idx
-            break
-        pos = idx + 1
-    return buffer[:earliest_hold], buffer[earliest_hold:]
 
 
 def _should_allow_more_tool_calls(
@@ -255,12 +134,10 @@ class GenericProvider(Provider):
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
 
-        # Per-stream state for incremental <tool_call>...</tool_call> parsing.
-        # Reset by `reset_stream_state()` at the start of each `_stream` call.
-        self._xml_stream_state: Dict[str, Any] = {
-            "buffer": "",
-            "pending_tool_calls": [],
-        }
+        # Per-stream incremental parser for inline <tool_call>...</tool_call>
+        # blocks emitted by Hermes/Llama/Qwen-style fine-tunes. Reset by
+        # `reset_stream_state()` at the start of each `_stream` call.
+        self._xml_buffer = XmlStreamBuffer()
 
         # Chat request and message models
         self.oci_chat_request = models.GenericChatRequest
@@ -321,7 +198,7 @@ class GenericProvider(Provider):
                 text = "".join(
                     part.text for part in msg.content if getattr(part, "text", None)
                 )
-        cleaned, _ = _extract_xml_tool_calls(text)
+        cleaned, _ = extract_xml_tool_calls(text)
         if cleaned == "" and text == "":
             warnings.warn(
                 "GenericProvider could not extract text and returned an empty "
@@ -353,7 +230,7 @@ class GenericProvider(Provider):
                     )
                 else:
                     text = str(content)
-        cleaned, _ = _extract_xml_tool_calls(text)
+        cleaned, _ = extract_xml_tool_calls(text)
         if cleaned == "" and text == "":
             warnings.warn(
                 "GenericProvider could not extract text and returned an empty "
@@ -368,10 +245,10 @@ class GenericProvider(Provider):
     def chat_stream_to_text(self, event_data: Dict) -> str:
         """Extract text from Meta chat stream event.
 
-        Routes the raw delta through an incremental ``<tool_call>`` parser:
-        text inside a tool-call block is buffered and surfaced via
-        :meth:`process_stream_tool_calls`; everything else is forwarded as
-        normal token-stream content.
+        Routes the raw delta through :class:`XmlStreamBuffer` so inline
+        ``<tool_call>``/``<tool_calling>`` blocks (Hermes/Llama/Qwen-style
+        fine-tunes) are surfaced via :meth:`process_stream_tool_calls`
+        instead of leaking into normal token-stream content.
         """
         content = event_data.get("message", {}).get("content", None)
         if not content:
@@ -380,7 +257,7 @@ class GenericProvider(Provider):
             raw_delta = "".join(
                 part.get("text", "") for part in content if part.get("text")
             )
-        return self._feed_xml_stream(raw_delta)
+        return self._xml_buffer.feed(raw_delta)
 
     def reset_stream_state(self) -> None:
         """Clear per-stream ``<tool_call>`` parsing state.
@@ -389,8 +266,7 @@ class GenericProvider(Provider):
         new stream so a previous, possibly-aborted stream's leftover buffer
         doesn't leak into the next one.
         """
-        self._xml_stream_state["buffer"] = ""
-        self._xml_stream_state["pending_tool_calls"] = []
+        self._xml_buffer.reset()
 
     def flush_stream_state(self) -> str:
         """Return any held-back text and reset the per-stream buffer.
@@ -399,32 +275,7 @@ class GenericProvider(Provider):
         back as a possible ``<tool_call>`` prefix don't get dropped if the
         opener never actually arrived.
         """
-        tail = self._xml_stream_state.get("buffer", "")
-        self._xml_stream_state["buffer"] = ""
-        self._xml_stream_state["pending_tool_calls"] = []
-        return tail
-
-    def _feed_xml_stream(self, delta: str) -> str:
-        """Append ``delta`` to the buffer and return the safe-to-emit prefix.
-
-        Side effect: when one or more ``<tool_call>...</tool_call>`` blocks
-        complete inside the buffer, parses them and stashes them on
-        ``self._xml_stream_state["pending_tool_calls"]`` for
-        :meth:`process_stream_tool_calls` to drain on the same event.
-        """
-        state = self._xml_stream_state
-        state["buffer"] += delta
-
-        # Drain any complete <tool_call>...</tool_call> blocks present in
-        # the buffer, leaving partial / incomplete blocks in place.
-        cleaned, parsed = _extract_xml_tool_calls(state["buffer"])
-        if parsed:
-            state["pending_tool_calls"].extend(parsed)
-            state["buffer"] = cleaned
-
-        safe, hold_back = _safe_emit_split(state["buffer"])
-        state["buffer"] = hold_back
-        return safe
+        return self._xml_buffer.flush()
 
     def is_chat_stream_end(self, event_data: Dict) -> bool:
         """Determine if Meta chat stream event indicates the end."""
@@ -479,12 +330,12 @@ class GenericProvider(Provider):
         text = "".join(
             part.text for part in (message.content or []) if getattr(part, "text", None)
         )
-        _, parsed = _extract_xml_tool_calls(text)
+        _, parsed = extract_xml_tool_calls(text)
         if not parsed:
             return []
         # Synthesise objects shaped like OCI FunctionCall so the downstream
         # `format_response_tool_calls` path keeps working unchanged.
-        return [_XmlToolCall(**tc) for tc in parsed]
+        return [XmlToolCall(**tc) for tc in parsed]
 
     def chat_stream_tool_calls(self, event_data: Dict) -> List[Any]:
         """Retrieve tool calls from Meta stream event."""
@@ -1052,20 +903,17 @@ class GenericProvider(Provider):
         tool_call_chunks: List[ToolCallChunk] = []
 
         # Drain XML tool calls that completed during this event.
-        pending = self._xml_stream_state.get("pending_tool_calls", [])
-        if pending:
-            for parsed in pending:
-                index = len(tool_call_ids)
-                tool_call_ids[index] = parsed["id"]
-                tool_call_chunks.append(
-                    tool_call_chunk(
-                        name=parsed["name"],
-                        args=parsed["arguments"],
-                        id=parsed["id"],
-                        index=index,
-                    )
+        for parsed in self._xml_buffer.drain_completed():
+            index = len(tool_call_ids)
+            tool_call_ids[index] = parsed["id"]
+            tool_call_chunks.append(
+                tool_call_chunk(
+                    name=parsed["name"],
+                    args=parsed["arguments"],
+                    id=parsed["id"],
+                    index=index,
                 )
-            self._xml_stream_state["pending_tool_calls"] = []
+            )
 
         tool_call_response = self.chat_stream_tool_calls(event_data)
 

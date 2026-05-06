@@ -13,21 +13,22 @@ import json
 
 import pytest
 
-from langchain_oci.chat_models.providers.generic import (
-    GenericProvider,
-    _extract_xml_tool_calls,
-    _parse_xml_tool_call_payload,
-    _safe_emit_split,
+from langchain_oci.chat_models.providers.generic import GenericProvider
+from langchain_oci.common.xml_tool_call_parser import (
+    XmlStreamBuffer,
+    extract_xml_tool_calls,
+    parse_xml_tool_call_payload,
+    safe_emit_split,
 )
 
 # ---------------------------------------------------------------------------
-# _parse_xml_tool_call_payload
+# parse_xml_tool_call_payload
 # ---------------------------------------------------------------------------
 
 
 def test_parse_payload_happy_path() -> None:
     payload = '{"name": "add", "arguments": {"a": 1, "b": 2}}'
-    parsed = _parse_xml_tool_call_payload(payload)
+    parsed = parse_xml_tool_call_payload(payload)
     assert parsed is not None
     assert parsed["name"] == "add"
     assert json.loads(parsed["arguments"]) == {"a": 1, "b": 2}
@@ -36,13 +37,13 @@ def test_parse_payload_happy_path() -> None:
 def test_parse_payload_string_arguments_preserved() -> None:
     """Some models double-encode args; we leave the string for downstream parsers."""
     payload = '{"name": "add", "arguments": "{\\"a\\": 1}"}'
-    parsed = _parse_xml_tool_call_payload(payload)
+    parsed = parse_xml_tool_call_payload(payload)
     assert parsed is not None
     assert parsed["arguments"] == '{"a": 1}'
 
 
 def test_parse_payload_missing_arguments_defaults_to_empty_object() -> None:
-    parsed = _parse_xml_tool_call_payload('{"name": "ping"}')
+    parsed = parse_xml_tool_call_payload('{"name": "ping"}')
     assert parsed == {"name": "ping", "arguments": "{}"}
 
 
@@ -57,17 +58,17 @@ def test_parse_payload_missing_arguments_defaults_to_empty_object() -> None:
     ],
 )
 def test_parse_payload_returns_none_on_invalid(payload: str) -> None:
-    assert _parse_xml_tool_call_payload(payload) is None
+    assert parse_xml_tool_call_payload(payload) is None
 
 
 # ---------------------------------------------------------------------------
-# _extract_xml_tool_calls
+# extract_xml_tool_calls
 # ---------------------------------------------------------------------------
 
 
 def test_extract_no_markers_returns_text_unchanged() -> None:
     text = "Just a normal response with < and > characters."
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert cleaned == text
     assert calls == []
 
@@ -77,7 +78,7 @@ def test_extract_single_block() -> None:
         "Sure, calling the tool now.\n"
         '<tool_call>{"name": "add", "arguments": {"a": 1, "b": 2}}</tool_call>'
     )
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert cleaned == "Sure, calling the tool now."
     assert len(calls) == 1
     assert calls[0]["name"] == "add"
@@ -93,7 +94,7 @@ def test_extract_multiple_blocks_preserves_order_and_strips_text() -> None:
         '<tool_call>{"name": "second", "arguments": {"y": 2}}</tool_call>\n'
         "All done."
     )
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert "tool_call" not in cleaned
     assert "Step 1." in cleaned and "Step 2." in cleaned and "All done." in cleaned
     assert [c["name"] for c in calls] == ["first", "second"]
@@ -104,7 +105,7 @@ def test_extract_malformed_block_left_in_text() -> None:
         "<tool_call>not valid json</tool_call>"
         ' <tool_call>{"name": "ok", "arguments": {}}</tool_call>'
     )
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert "<tool_call>not valid json</tool_call>" in cleaned
     assert len(calls) == 1
     assert calls[0]["name"] == "ok"
@@ -112,7 +113,7 @@ def test_extract_malformed_block_left_in_text() -> None:
 
 def test_extract_handles_whitespace_around_payload() -> None:
     text = '<tool_call>\n  {"name": "ws", "arguments": {"a": 1}}\n  </tool_call>'
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert cleaned == ""
     assert len(calls) == 1
     assert calls[0]["name"] == "ws"
@@ -127,7 +128,7 @@ def test_extract_supports_tool_calling_variant() -> None:
         "Calling now.\n"
         '<tool_calling>{"name": "ping", "arguments": {"x": 1}}</tool_calling>'
     )
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert cleaned == "Calling now."
     assert len(calls) == 1
     assert calls[0]["name"] == "ping"
@@ -141,7 +142,7 @@ def test_extract_mixed_tag_variants_in_one_response() -> None:
         " then "
         '<tool_calling>{"name": "second", "arguments": {"b": 2}}</tool_calling>'
     )
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert "tool_call" not in cleaned
     assert "tool_calling" not in cleaned
     assert [c["name"] for c in calls] == ["first", "second"]
@@ -150,7 +151,7 @@ def test_extract_mixed_tag_variants_in_one_response() -> None:
 def test_extract_does_not_match_mismatched_open_close() -> None:
     """``<tool_call>...</tool_calling>`` is malformed — must NOT be parsed."""
     text = '<tool_call>{"name": "x", "arguments": {}}</tool_calling>'
-    cleaned, calls = _extract_xml_tool_calls(text)
+    cleaned, calls = extract_xml_tool_calls(text)
     assert calls == []
     # The text comes back unchanged so the caller can see what happened.
     assert "<tool_call>" in cleaned
@@ -158,18 +159,18 @@ def test_extract_does_not_match_mismatched_open_close() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _safe_emit_split
+# safe_emit_split
 # ---------------------------------------------------------------------------
 
 
 def test_safe_emit_no_lt_emits_everything() -> None:
-    safe, hold = _safe_emit_split("hello world")
+    safe, hold = safe_emit_split("hello world")
     assert safe == "hello world"
     assert hold == ""
 
 
 def test_safe_emit_unrelated_lt_emits_everything() -> None:
-    safe, hold = _safe_emit_split("use < to compare")
+    safe, hold = safe_emit_split("use < to compare")
     assert safe == "use < to compare"
     assert hold == ""
 
@@ -196,9 +197,72 @@ def test_safe_emit_unrelated_lt_emits_everything() -> None:
     ],
 )
 def test_safe_emit_holds_back_partial_or_open_tag(tail: str) -> None:
-    safe, hold = _safe_emit_split("text " + tail)
+    safe, hold = safe_emit_split("text " + tail)
     assert safe == "text "
     assert hold == tail
+
+
+# ---------------------------------------------------------------------------
+# XmlStreamBuffer (direct unit tests of the lifted class)
+# ---------------------------------------------------------------------------
+
+
+def test_xml_stream_buffer_plain_text_passes_through() -> None:
+    buf = XmlStreamBuffer()
+    assert buf.feed("hello ") == "hello "
+    assert buf.feed("world") == "world"
+    assert buf.drain_completed() == []
+    assert buf.flush() == ""
+
+
+def test_xml_stream_buffer_holds_back_partial_opener() -> None:
+    buf = XmlStreamBuffer()
+    safe = buf.feed("see <")
+    assert safe == "see "
+    safe = buf.feed("nope")
+    # '<n' is no longer a possible opener — held-back '<' is released.
+    assert safe == "<nope"
+
+
+def test_xml_stream_buffer_drains_completed_block() -> None:
+    buf = XmlStreamBuffer()
+    safe = buf.feed("Calling: ")
+    safe += buf.feed('<tool_call>{"name": "add", "arguments": {"a": 1}}</tool_call>')
+    safe += buf.feed(" done")
+    completed = buf.drain_completed()
+    assert "<tool_call>" not in safe
+    assert safe.startswith("Calling: ")
+    assert safe.endswith(" done")
+    assert len(completed) == 1
+    assert completed[0]["name"] == "add"
+    assert json.loads(completed[0]["arguments"]) == {"a": 1}
+
+
+def test_xml_stream_buffer_flush_releases_unclosed_block() -> None:
+    buf = XmlStreamBuffer()
+    buf.feed('<tool_call>{"name": "incompl')
+    flushed = buf.flush()
+    assert flushed.startswith("<tool_call>")
+    # After flush the buffer is reset.
+    assert buf.feed("fresh") == "fresh"
+
+
+def test_xml_stream_buffer_reset_clears_state() -> None:
+    buf = XmlStreamBuffer()
+    buf.feed("leftover <tool_call>{")
+    buf.reset()
+    assert buf.feed("fresh") == "fresh"
+    assert buf.drain_completed() == []
+    assert buf.flush() == ""
+
+
+def test_xml_stream_buffer_drain_completed_is_idempotent() -> None:
+    buf = XmlStreamBuffer()
+    buf.feed('<tool_call>{"name": "ping", "arguments": {}}</tool_call>')
+    first = buf.drain_completed()
+    second = buf.drain_completed()
+    assert len(first) == 1
+    assert second == []
 
 
 # ---------------------------------------------------------------------------
