@@ -1,6 +1,7 @@
 """Oracle test configuration."""
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import oracledb
@@ -34,7 +35,29 @@ else:
     }
 
 
+_ORACLE_REQUIRED_MODULES = {
+    "test_async_store.py",
+    "test_checkpoint_async.py",
+    "test_checkpoint_storage_async.py",
+    "test_checkpoint_storage_sync.py",
+    "test_checkpoint_sync.py",
+    "test_checkpoint_with_multiple_sessions.py",
+    "test_concurrent_setup_race_condition.py",
+    "test_connection.py",
+    "test_readme_checkpoint_async.py",
+    "test_search_where_async.py",
+    "test_search_where_sync.py",
+    "test_store_persistence_with_multiple_sessions.py",
+    "test_store_search_async.py",
+    "test_store_search_combinations.py",
+    "test_store_search_key_combinations.py",
+    "test_store_search_parameter_combinations.py",
+    "test_store_search_sync.py",
+}
+
+
 # Check if Oracle is available
+@lru_cache(maxsize=1)
 def is_oracle_available() -> bool:
     """Check if Oracle database is available for testing."""
     import queue
@@ -75,6 +98,28 @@ def skip_if_no_oracle():
     )
 
 
+def _item_requires_oracle(item: pytest.Item) -> bool:
+    module_name = item.path.name
+    if module_name in _ORACLE_REQUIRED_MODULES:
+        return True
+
+    if module_name == "test_store.py":
+        return item.cls is not None and item.cls.__name__ == "TestStoreSearchSync"
+
+    return "oracle" in item.keywords
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip Oracle-dependent tests when no Oracle database is reachable."""
+    if is_oracle_available():
+        return
+
+    skip_oracle = pytest.mark.skip(reason="Oracle database not available")
+    for item in items:
+        if _item_requires_oracle(item):
+            item.add_marker(skip_oracle)
+
+
 def create_connection_string(conn_info: dict) -> str:
     """Create Oracle connection string from connection info dict."""
     return f"{conn_info['user']}/{conn_info['password']}@{conn_info['dsn']}"
@@ -84,8 +129,8 @@ def create_connection_string(conn_info: dict) -> str:
 from tests.conftest_checkpointer import test_data  # noqa: E402, F401
 
 # Import store fixtures so they are available to tests
-from tests.conftest_store import (
-    ORACLE_DISTANCE_TYPES,
-    ORACLE_INDEX_TYPES,
-    fake_embeddings,
-)  # noqa: E402, F401
+from tests.conftest_store import (  # noqa: E402
+    ORACLE_DISTANCE_TYPES,  # noqa: F401
+    ORACLE_INDEX_TYPES,  # noqa: F401
+    fake_embeddings,  # noqa: F401
+)
