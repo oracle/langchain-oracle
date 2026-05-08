@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 oracleai.py
@@ -67,6 +67,7 @@ class OracleEmbeddings(BaseModel, Embeddings):
             model_name: Name of the model.
         """
 
+        cursor = None
         try:
             if conn is None or dir is None or onnx_file is None or model_name is None:
                 raise Exception("Invalid input")
@@ -75,7 +76,8 @@ class OracleEmbeddings(BaseModel, Embeddings):
             cursor.execute(
                 """
                 begin
-                    dbms_data_mining.drop_model(model_name => :model, force => true);
+                    sys.dbms_data_mining.drop_model(
+                        model_name => :model, force => true);
                     SYS.DBMS_VECTOR.load_onnx_model(:path, :filename, :model, 
                         json('{"function" : "embedding", 
                             "embeddingOutput" : "embedding", 
@@ -91,7 +93,8 @@ class OracleEmbeddings(BaseModel, Embeddings):
         except Exception as ex:
             logger.info(f"An exception occurred :: {ex}")
             traceback.print_exc()
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
             raise
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -103,47 +106,79 @@ class OracleEmbeddings(BaseModel, Embeddings):
         """
 
         embeddings: List[List[float]] = []
+        cursor = None
         try:
             # returns strings or bytes instead of a locator
             oracledb.defaults.fetch_lobs = False
             cursor = self.conn.cursor()
+            proxy_was_set = False
 
             if self.proxy:
                 cursor.execute(
                     "begin utl_http.set_proxy(:proxy); end;", proxy=self.proxy
                 )
+                proxy_was_set = True
 
-            chunks = []
-            for i, text in enumerate(texts, start=1):
-                chunk = {"chunk_id": i, "chunk_data": text}
-                chunks.append(json.dumps(chunk))
+            try:
+                chunks = []
+                for i, text in enumerate(texts, start=1):
+                    chunk = {"chunk_id": i, "chunk_data": text}
+                    chunks.append(json.dumps(chunk))
 
-            vector_array_type = self.conn.gettype("SYS.VECTOR_ARRAY_T")
-            inputs = vector_array_type.newobject(chunks)
-            cursor.setinputsizes(None, oracledb.DB_TYPE_JSON)
-            cursor.execute(
-                "select t.* "
-                + "from dbms_vector_chain.utl_to_embeddings(:1, "
-                + "json(:2)) t",
-                [inputs, self.params],
-            )
+                vector_array_type = self.conn.gettype("SYS.VECTOR_ARRAY_T")
+                inputs = vector_array_type.newobject(chunks)
+                cursor.setinputsizes(None, oracledb.DB_TYPE_JSON)
+                cursor.execute(
+                    "select t.* "
+                    + "from dbms_vector_chain.utl_to_embeddings(:1, "
+                    + "json(:2)) t",
+                    [inputs, self.params],
+                )
 
-            for row in cursor:
-                if row is None:
-                    embeddings.append([])
-                else:
-                    rdata = json.loads(row[0])
-                    # dereference string as array
-                    vec = json.loads(rdata["embed_vector"])
-                    embeddings.append(vec)
+                for row in cursor:
+                    if row is None:
+                        embeddings.append([])
+                    else:
+                        rdata = json.loads(row[0])
+                        # dereference string as array
+                        vec = json.loads(rdata["embed_vector"])
+                        embeddings.append(vec)
+            except BaseException:
+                if proxy_was_set:
+                    try:
+                        cursor.execute(
+                            "begin utl_http.set_proxy(:proxy); end;", proxy=None
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to clear Oracle session proxy after "
+                            "embed_documents failed"
+                        )
+                raise
+            else:
+                if proxy_was_set:
+                    try:
+                        cursor.execute(
+                            "begin utl_http.set_proxy(:proxy); end;", proxy=None
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to clear Oracle session proxy after "
+                            "embed_documents succeeded",
+                            exc_info=True,
+                        )
 
-            cursor.close()
             return embeddings
         except Exception as ex:
             logger.info(f"An exception occurred :: {ex}")
             traceback.print_exc()
-            cursor.close()
             raise
+        finally:
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception:
+                    logger.exception("Failed to close Oracle embedding cursor")
 
     def embed_query(self, text: str) -> List[float]:
         """Compute query embedding using an OracleEmbeddings.
@@ -160,12 +195,11 @@ class OracleEmbeddings(BaseModel, Embeddings):
 """
 # A sample unit test.
 
+import os
 import oracledb
-# get the Oracle connection 
+# get the Oracle connection
 conn = oracledb.connect(
-    user="<user>",
-    password="<password>",
-    dsn="<hostname>/<service_name>",
+    dsn=os.environ["VECDB_HOST"]
 )
 print("Oracle connection is established...")
 

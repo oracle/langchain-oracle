@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 oraclevs.py
@@ -53,10 +53,12 @@ from langchain_core.vectorstores import VectorStore
 
 from ..embeddings import OracleEmbeddings
 from .utils import (
+    _aclear_session_proxy,
     _aget_connection,
     _ahandle_exceptions,
     _aindex_exists,
     _atable_exists,
+    _clear_session_proxy,
     _get_connection,
     _get_index_name,
     _handle_exceptions,
@@ -71,6 +73,8 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 INTERNAL_ID_KEY = "__orcl_internal_doc_id"
+
+_SIMPLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
 
 
 LOGICAL_MAP = {
@@ -193,6 +197,40 @@ def _validate_metadata_key(metadata_key: str) -> None:
             "Only letters, numbers, underscores, nesting via '.', "
             "and array wildcards '[*]' are allowed."
         )
+
+
+def _validate_int_param(
+    config: dict[str, Any],
+    key: str,
+    min_value: int,
+    max_value: Optional[int] = None,
+) -> None:
+    if key not in config:
+        return
+
+    value = config[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer.")
+    if value < min_value:
+        raise ValueError(f"{key} must be at least {min_value}.")
+    if max_value is not None and value > max_value:
+        raise ValueError(f"{key} must be at most {max_value}.")
+
+
+def _validate_index_type(config: dict[str, Any], expected_type: str) -> None:
+    if "idx_type" not in config:
+        return
+
+    idx_type = config["idx_type"]
+    if not isinstance(idx_type, str) or idx_type.upper() != expected_type:
+        raise ValueError(f"idx_type must be {expected_type}.")
+    config["idx_type"] = expected_type
+
+
+def _validate_vector_index_common(config: dict[str, Any]) -> None:
+    config["idx_name"] = _quote_indentifier(config["idx_name"])
+    _validate_int_param(config, "accuracy", 1, 100)
+    _validate_int_param(config, "parallel", 1)
 
 
 def _generate_condition(
@@ -491,8 +529,17 @@ def _get_hnsw_index_ddl(
             if key not in defaults:
                 raise ValueError(f"Invalid parameter: {key}")
     else:
-        config = defaults
+        config = defaults.copy()
         config["idx_name"] = _get_index_name(str(config["idx_name"]))
+
+    if (
+        "neighbors" in config or "efConstruction" in config
+    ) and "idx_type" not in config:
+        config["idx_type"] = defaults["idx_type"]
+    _validate_index_type(config, "HNSW")
+    _validate_int_param(config, "neighbors", 2, 2048)
+    _validate_int_param(config, "efConstruction", 1, 65535)
+    _validate_vector_index_common(config)
 
     # base SQL statement
     idx_name = config["idx_name"]
@@ -586,8 +633,14 @@ def _get_ivf_index_ddl(
             if key not in defaults:
                 raise ValueError(f"Invalid parameter: {key}")
     else:
-        config = defaults
+        config = defaults.copy()
         config["idx_name"] = _get_index_name(str(config["idx_name"]))
+
+    if "neighbor_part" in config and "idx_type" not in config:
+        config["idx_type"] = defaults["idx_type"]
+    _validate_index_type(config, "IVF")
+    _validate_int_param(config, "neighbor_part", 1, 10000000)
+    _validate_vector_index_common(config)
 
     # base SQL statement
     idx_name = config["idx_name"]
@@ -987,11 +1040,11 @@ class OracleVS(VectorStore):
 
             from langchain_oracledb.vectorstores import OracleVS
             from langchain.embeddings.openai import OpenAIEmbeddings
+            import os
             import oracledb
 
-            with oracledb.connect(user = user, password = pwd, dsn = dsn) as
-            connection:
-                print ("Database version:", connection.version)
+            with oracledb.connect(dsn=os.environ["ORACLE_DB_DSN"]) as connection:
+                print("Database version:", connection.version)
                 embeddings = OpenAIEmbeddings()
                 query = ""
                 vectors = OracleVS(connection, embeddings, table_name, query)
@@ -1441,31 +1494,56 @@ class OracleVS(VectorStore):
                             docs,
                             batcherrors=True,
                         )
+                        batch_errors = cursor.getbatcherrors() or []
 
                     else:
-                        if self.embeddings.proxy:
-                            cursor.execute(
-                                "begin utl_http.set_proxy(:proxy); end;",
-                                proxy=self.embeddings.proxy,
+                        proxy_was_set = False
+                        try:
+                            if self.embeddings.proxy:
+                                cursor.execute(
+                                    "begin utl_http.set_proxy(:proxy); end;",
+                                    proxy=self.embeddings.proxy,
+                                )
+                                proxy_was_set = True
+
+                            cursor.setinputsizes(
+                                meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                             )
 
-                        cursor.setinputsizes(
-                            meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                        )
-
-                        cursor.executemany(
-                            selected_query.format(
-                                table_name=self.table_name,
-                                values=(
-                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                    ":meta, :text"
+                            cursor.executemany(
+                                selected_query.format(
+                                    table_name=self.table_name,
+                                    values=(
+                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                        ":meta, :text"
+                                    ),
                                 ),
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
+                                docs,
+                                batcherrors=True,
+                            )
+                            batch_errors = cursor.getbatcherrors() or []
+                        except BaseException:
+                            if proxy_was_set:
+                                try:
+                                    _clear_session_proxy(cursor)
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to clear Oracle session proxy after "
+                                        "add_texts failed"
+                                    )
+                            raise
+                        else:
+                            if proxy_was_set:
+                                try:
+                                    _clear_session_proxy(cursor)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to clear Oracle session proxy after "
+                                        "add_texts succeeded",
+                                        exc_info=True,
+                                    )
 
-                    for error in cursor.getbatcherrors():
+                    for error in batch_errors:
                         error_indices.append(error.offset)
                         logger.warning(
                             "Could not insert row at offset %s due to error: %s",
@@ -1585,30 +1663,55 @@ class OracleVS(VectorStore):
                             docs,
                             batcherrors=True,
                         )
+                        batch_errors = cursor.getbatcherrors() or []
                     else:
-                        if self.embeddings.proxy:
-                            await cursor.execute(
-                                "begin utl_http.set_proxy(:proxy); end;",
-                                proxy=self.embeddings.proxy,
+                        proxy_was_set = False
+                        try:
+                            if self.embeddings.proxy:
+                                await cursor.execute(
+                                    "begin utl_http.set_proxy(:proxy); end;",
+                                    proxy=self.embeddings.proxy,
+                                )
+                                proxy_was_set = True
+
+                            cursor.setinputsizes(
+                                meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                             )
 
-                        cursor.setinputsizes(
-                            meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                        )
-
-                        await cursor.executemany(
-                            selected_query.format(
-                                table_name=self.table_name,
-                                values=(
-                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                    ":meta, :text"
+                            await cursor.executemany(
+                                selected_query.format(
+                                    table_name=self.table_name,
+                                    values=(
+                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                        ":meta, :text"
+                                    ),
                                 ),
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
+                                docs,
+                                batcherrors=True,
+                            )
+                            batch_errors = cursor.getbatcherrors() or []
+                        except BaseException:
+                            if proxy_was_set:
+                                try:
+                                    await _aclear_session_proxy(cursor)
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to clear Oracle session proxy after "
+                                        "aadd_texts failed"
+                                    )
+                            raise
+                        else:
+                            if proxy_was_set:
+                                try:
+                                    await _aclear_session_proxy(cursor)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to clear Oracle session proxy after "
+                                        "aadd_texts succeeded",
+                                        exc_info=True,
+                                    )
 
-                    for error in cursor.getbatcherrors():
+                    for error in batch_errors:
                         error_indices.append(error.offset)
                         logger.warning(
                             "Could not insert row at offset %s due to error: %s",

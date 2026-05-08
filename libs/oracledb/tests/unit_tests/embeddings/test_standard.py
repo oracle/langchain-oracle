@@ -1,3 +1,4 @@
+import os
 from typing import Type
 
 import oracledb
@@ -6,9 +7,9 @@ from langchain_tests.unit_tests import EmbeddingsUnitTests
 
 from langchain_oracledb import OracleEmbeddings
 
-username = ""
-password = ""
-dsn = ""
+username = os.environ.get("VECDB_USER")
+password = os.environ.get("VECDB_PASS")
+dsn = os.environ.get("VECDB_HOST")
 
 try:
     oracledb.connect(user=username, password=password, dsn=dsn)
