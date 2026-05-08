@@ -262,7 +262,10 @@ def test_oraclevs_add_texts_warns_if_success_cleanup_fails(
     assert inserted_ids == ["doc-1"]
     connection.commit.assert_called_once()
     assert _proxy_bind_values(cursor) == [PROXY, None]
-    assert "Failed to clear Oracle session proxy after add_texts succeeded" in caplog.text
+    assert (
+        "Failed to clear Oracle session proxy after add_texts succeeded"
+        in caplog.text
+    )
 
 
 @pytest.mark.asyncio
@@ -344,7 +347,10 @@ async def test_oraclevs_aadd_texts_warns_if_success_cleanup_fails(
         if "utl_http.set_proxy" in call.args[0]
     ]
     assert proxy_values == [PROXY, None]
-    assert "Failed to clear Oracle session proxy after aadd_texts succeeded" in caplog.text
+    assert (
+        "Failed to clear Oracle session proxy after aadd_texts succeeded"
+        in caplog.text
+    )
 
 
 @pytest.mark.asyncio
