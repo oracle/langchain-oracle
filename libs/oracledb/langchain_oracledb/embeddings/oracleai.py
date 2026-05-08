@@ -157,7 +157,16 @@ class OracleEmbeddings(BaseModel, Embeddings):
                 raise
             else:
                 if proxy_was_set:
-                    cursor.execute("begin utl_http.set_proxy(:proxy); end;", proxy=None)
+                    try:
+                        cursor.execute(
+                            "begin utl_http.set_proxy(:proxy); end;", proxy=None
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to clear Oracle session proxy after "
+                            "embed_documents succeeded",
+                            exc_info=True,
+                        )
 
             return embeddings
         except Exception as ex:

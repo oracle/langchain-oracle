@@ -1536,15 +1536,12 @@ class OracleVS(VectorStore):
                             if proxy_was_set:
                                 try:
                                     _clear_session_proxy(cursor)
-                                except Exception as exc:
-                                    logger.exception(
+                                except Exception:
+                                    logger.warning(
                                         "Failed to clear Oracle session proxy after "
-                                        "add_texts succeeded"
+                                        "add_texts succeeded",
+                                        exc_info=True,
                                     )
-                                    raise RuntimeError(
-                                        "proxy cleanup failed after "
-                                        "successful add_texts"
-                                    ) from exc
 
                     for error in batch_errors:
                         error_indices.append(error.offset)
@@ -1707,15 +1704,12 @@ class OracleVS(VectorStore):
                             if proxy_was_set:
                                 try:
                                     await _aclear_session_proxy(cursor)
-                                except Exception as exc:
-                                    logger.exception(
+                                except Exception:
+                                    logger.warning(
                                         "Failed to clear Oracle session proxy after "
-                                        "aadd_texts succeeded"
+                                        "aadd_texts succeeded",
+                                        exc_info=True,
                                     )
-                                    raise RuntimeError(
-                                        "proxy cleanup failed after "
-                                        "successful aadd_texts"
-                                    ) from exc
 
                     for error in batch_errors:
                         error_indices.append(error.offset)

@@ -79,7 +79,10 @@ def _has_tool_calls(generations: RETURN_VAL_TYPE) -> bool:
 def _loads_generations(generations_str: str) -> Union[RETURN_VAL_TYPE, None]:
     """Deserialize a sequence of `Generation` objects."""
     try:
-        return [loads(item_str) for item_str in json.loads(generations_str)]
+        return [
+            loads(item_str, allowed_objects="core")
+            for item_str in json.loads(generations_str)
+        ]
     except (json.JSONDecodeError, TypeError):
         pass
 

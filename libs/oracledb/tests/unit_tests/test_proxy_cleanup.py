@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -77,6 +78,33 @@ def test_embed_documents_preserves_original_failure_if_proxy_cleanup_fails() -> 
     cursor.close.assert_called_once()
 
 
+def test_embed_documents_warns_if_success_cleanup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+    conn.gettype.return_value.newobject.return_value = MagicMock()
+    cursor.execute.side_effect = [None, None, RuntimeError("cleanup failed")]
+
+    embeddings = OracleEmbeddings(
+        conn=conn,
+        params={"provider": "database", "model": "demo"},
+        proxy=PROXY,
+    )
+
+    with patch("oracledb.defaults"):
+        with caplog.at_level(logging.WARNING):
+            assert embeddings.embed_documents(["text"]) == []
+
+    assert _proxy_bind_values(cursor) == [PROXY, None]
+    cursor.close.assert_called_once()
+    assert (
+        "Failed to clear Oracle session proxy after embed_documents succeeded"
+        in caplog.text
+    )
+
+
 def test_get_summary_clears_session_proxy_after_failure() -> None:
     conn = MagicMock()
     cursor = MagicMock()
@@ -114,6 +142,30 @@ def test_get_summary_preserves_original_failure_if_proxy_cleanup_fails() -> None
 
     assert _proxy_bind_values(cursor) == [PROXY, None]
     cursor.close.assert_called_once()
+
+
+def test_get_summary_warns_if_success_cleanup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+    summary_var = MagicMock()
+    summary_var.getvalue.return_value = "summary"
+    cursor.var.return_value = summary_var
+    cursor.execute.side_effect = [None, None, RuntimeError("cleanup failed")]
+
+    summary = OracleSummary(conn=conn, params={"provider": "database"}, proxy=PROXY)
+
+    with caplog.at_level(logging.WARNING):
+        assert summary.get_summary("text") == ["summary"]
+
+    assert _proxy_bind_values(cursor) == [PROXY, None]
+    cursor.close.assert_called_once()
+    assert (
+        "Failed to clear Oracle session proxy after get_summary succeeded"
+        in caplog.text
+    )
 
 
 def test_oraclevs_add_texts_clears_session_proxy_after_failure() -> None:
@@ -177,7 +229,9 @@ def test_oraclevs_add_texts_preserves_original_failure_if_proxy_cleanup_fails() 
     assert _proxy_bind_values(cursor) == [PROXY, None]
 
 
-def test_oraclevs_add_texts_fails_explicitly_if_success_cleanup_fails() -> None:
+def test_oraclevs_add_texts_warns_if_success_cleanup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     connection = MagicMock()
     cursor = MagicMock()
     connection.cursor.return_value.__enter__.return_value = cursor
@@ -202,14 +256,13 @@ def test_oraclevs_add_texts_fails_explicitly_if_success_cleanup_fails() -> None:
         "langchain_oracledb.vectorstores.oraclevs._get_connection",
         fake_get_connection,
     ):
-        with pytest.raises(
-            RuntimeError,
-            match="proxy cleanup failed after successful add_texts",
-        ):
-            store.add_texts(["text"], ids=["doc-1"])
+        with caplog.at_level(logging.WARNING):
+            inserted_ids = store.add_texts(["text"], ids=["doc-1"])
 
-    connection.commit.assert_not_called()
+    assert inserted_ids == ["doc-1"]
+    connection.commit.assert_called_once()
     assert _proxy_bind_values(cursor) == [PROXY, None]
+    assert "Failed to clear Oracle session proxy after add_texts succeeded" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -251,7 +304,9 @@ async def test_oraclevs_aadd_texts_clears_session_proxy_after_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_oraclevs_aadd_texts_fails_explicitly_if_success_cleanup_fails() -> None:
+async def test_oraclevs_aadd_texts_warns_if_success_cleanup_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     connection = MagicMock()
     connection.commit = AsyncMock()
     cursor = MagicMock()
@@ -278,19 +333,18 @@ async def test_oraclevs_aadd_texts_fails_explicitly_if_success_cleanup_fails() -
         "langchain_oracledb.vectorstores.oraclevs._aget_connection",
         fake_aget_connection,
     ):
-        with pytest.raises(
-            RuntimeError,
-            match="proxy cleanup failed after successful aadd_texts",
-        ):
-            await store.aadd_texts(["text"], ids=["doc-1"])
+        with caplog.at_level(logging.WARNING):
+            inserted_ids = await store.aadd_texts(["text"], ids=["doc-1"])
 
-    connection.commit.assert_not_awaited()
+    assert inserted_ids == ["doc-1"]
+    connection.commit.assert_awaited_once()
     proxy_values = [
         call.kwargs.get("proxy")
         for call in cursor.execute.await_args_list
         if "utl_http.set_proxy" in call.args[0]
     ]
     assert proxy_values == [PROXY, None]
+    assert "Failed to clear Oracle session proxy after aadd_texts succeeded" in caplog.text
 
 
 @pytest.mark.asyncio

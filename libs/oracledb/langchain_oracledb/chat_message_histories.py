@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TABLE_NAME = "langchain_message_store"
 DEFAULT_SESSION_ID_KEY = "session_id"
 DEFAULT_HISTORY_KEY = "message"
-DEFAULT_ID_KEY = "id"
+DEFAULT_ID_KEY = _quote_indentifier("id")
 
 
 def _unqualified_identifier(name: str) -> str:
