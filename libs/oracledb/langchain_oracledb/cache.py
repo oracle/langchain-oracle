@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 from typing import Any, Optional, Union
@@ -26,6 +27,9 @@ from langchain_oracledb.vectorstores.utils import (
 )
 
 logger = logging.getLogger(__name__)
+_LOADS_SUPPORTS_ALLOWED_OBJECTS = (
+    "allowed_objects" in inspect.signature(loads).parameters
+)
 _DISTANCE_EPSILON = 1e-12
 DEFAULT_TABLE_NAME = "langchain_semantic_cache"
 
@@ -76,13 +80,16 @@ def _has_tool_calls(generations: RETURN_VAL_TYPE) -> bool:
     return False
 
 
+def _load_generation(item_str: str) -> Any:
+    if _LOADS_SUPPORTS_ALLOWED_OBJECTS:
+        return loads(item_str, allowed_objects="core")
+    return loads(item_str)
+
+
 def _loads_generations(generations_str: str) -> Union[RETURN_VAL_TYPE, None]:
     """Deserialize a sequence of `Generation` objects."""
     try:
-        return [
-            loads(item_str, allowed_objects="core")
-            for item_str in json.loads(generations_str)
-        ]
+        return [_load_generation(item_str) for item_str in json.loads(generations_str)]
     except (json.JSONDecodeError, TypeError):
         pass
 
