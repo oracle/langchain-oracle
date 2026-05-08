@@ -21,8 +21,10 @@ Example:
 
 from langchain_oci.datastores.vectorstores.adb import ADB
 from langchain_oci.datastores.vectorstores.base import VectorDataStore
+from langchain_oci.datastores.vectorstores.opensearch import OpenSearch
 
 __all__ = [
     "VectorDataStore",
     "ADB",
+    "OpenSearch",
 ]

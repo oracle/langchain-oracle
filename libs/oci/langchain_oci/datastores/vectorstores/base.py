@@ -109,6 +109,43 @@ class VectorDataStore(ABC):
             if original_k is not None:
                 setattr(retriever, "k", original_k)
 
+    def hybrid_search_documents(
+        self, query: str, top_k: int
+    ) -> list[tuple[Document, float]]:
+        """Combine semantic and keyword results via Reciprocal Rank Fusion (RRF).
+
+        Falls back to semantic-only when the store has no keyword retriever.
+        """
+        fetch_k = top_k * 2
+        semantic = self.search_documents_with_scores(query, top_k=fetch_k)
+
+        try:
+            keyword = self.keyword_search_documents(query, top_k=fetch_k)
+        except NotImplementedError:
+            return semantic[:top_k]
+
+        # RRF: score(d) = sum( 1 / (60 + rank) ) across both lists
+        _K = 60
+        rrf: dict[str, float] = {}
+        docs: dict[str, Document] = {}
+
+        for rank, (doc, _) in enumerate(semantic):
+            doc_id = str(
+                getattr(doc, "id", None) or (doc.metadata or {}).get("id") or f"s{rank}"
+            )
+            rrf[doc_id] = rrf.get(doc_id, 0.0) + 1.0 / (_K + rank + 1)
+            docs[doc_id] = doc
+
+        for rank, doc in enumerate(keyword):
+            doc_id = str(
+                getattr(doc, "id", None) or (doc.metadata or {}).get("id") or f"k{rank}"
+            )
+            rrf[doc_id] = rrf.get(doc_id, 0.0) + 1.0 / (_K + rank + 1)
+            docs.setdefault(doc_id, doc)
+
+        ranked = sorted(rrf.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        return [(docs[doc_id], score) for doc_id, score in ranked]
+
     @abstractmethod
     def get(self, document_id: str | int) -> Optional[dict]:
         """Get a document by ID."""
