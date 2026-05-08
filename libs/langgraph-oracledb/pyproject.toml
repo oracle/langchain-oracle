@@ -1,0 +1,126 @@
+[project]
+name = "langgraph-oracledb"
+version = "1.0.0"
+description = "An integration package connecting Oracle Database and LangGraph"
+readme = "README.md"
+license = "UPL-1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph-checkpoint>=2.1.2,<5.0.0",
+    "orjson>=3.11.5",
+    "oracledb>=2.2.0",
+]
+
+[project.urls]
+"Source Code" = "https://github.com/oracle/langchain-oracle/tree/main/libs/langgraph-oracledb"
+Repository = "https://github.com/oracle/langchain-oracle"
+
+[tool.poetry]
+package-mode = true
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.0.0"
+anyio = "^4.0.0"
+pytest-asyncio = "^0.23.2"
+pytest-mock = "^3.15.0"
+pytest-dotenv = "^0.5.2"
+python-dotenv = "^1.0.0"
+oracledb = ">=2.2.0"
+langgraph-checkpoint = ">=2.1.2,<5.0.0"
+pytest-watcher = "^0.3.4"
+pytest-cov = "^4.1.0"
+
+[tool.poetry.group.codespell]
+optional = true
+
+[tool.poetry.group.codespell.dependencies]
+codespell = "^2.2.6"
+
+[tool.poetry.group.test_integration]
+optional = true
+
+[tool.poetry.group.test_integration.dependencies]
+
+[tool.poetry.group.lint]
+optional = true
+
+[tool.poetry.group.lint.dependencies]
+ruff = "^0.13.1"
+
+[tool.poetry.group.typing.dependencies]
+mypy = "^1.7"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+
+[tool.ruff]
+exclude = [
+  "tests",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle
+  "F",    # pyflakes
+  "I",    # isort
+]
+ignore = [
+  "E501",
+  "B008",
+  "COM812",  # Messes with the formatter
+]
+exclude = [
+  "tests",
+]
+
+[tool.mypy]
+check_untyped_defs = true
+error_summary = false
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+disable_error_code = "typeddict-item, return-value"
+
+[[tool.mypy.overrides]]
+module = [
+    "oracledb.*",
+]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+# --strict-markers will raise errors on unknown marks.
+# https://docs.pytest.org/en/7.1.x/how-to/mark.html#raising-errors-on-unknown-marks
+#
+# https://docs.pytest.org/en/7.1.x/reference/reference.html
+# --strict-config       any warnings encountered while parsing the `pytest`
+#                       section of the configuration file raise errors.
+addopts = "--strict-markers --strict-config --durations=5 --cov=langgraph_oracledb"
+# Registering custom markers.
+# https://docs.pytest.org/en/7.1.x/example/markers.html#registering-markers
+markers = [
+  "requires: mark tests as requiring a specific library",
+  "asyncio: mark tests as requiring asyncio",
+  "compile: mark tests as import/compile checks",
+  "scheduled: mark tests to run in scheduled testing",
+]
+asyncio_mode = "auto"
