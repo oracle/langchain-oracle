@@ -82,7 +82,8 @@ def _has_tool_calls(generations: RETURN_VAL_TYPE) -> bool:
 
 def _load_generation(item_str: str) -> Any:
     if _LOADS_SUPPORTS_ALLOWED_OBJECTS:
-        return loads(item_str, allowed_objects="core")
+        loads_with_options: Any = loads
+        return loads_with_options(item_str, allowed_objects="core")
     return loads(item_str)
 
 
