@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "An integration package connecting Oracle Database and LangGraph"
 readme = "README.md"
 license = "UPL-1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<4.0"
 dependencies = [
     "langgraph-checkpoint>=2.1.2,<5.0.0",
     "orjson>=3.11.5",
