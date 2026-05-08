@@ -1,6 +1,6 @@
 [project]
 name = "langchain-oracledb"
-version = "1.3.0"
+version = "1.4.0"
 description = "An integration package connecting Oracle Database and LangChain"
 readme = "README.md"
 license = "UPL-1.0"
@@ -90,6 +90,10 @@ warn_redundant_casts = true
 warn_unreachable = true
 warn_unused_configs = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
 
 [tool.coverage.run]
 omit = ["tests/*"]

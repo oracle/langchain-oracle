@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 oracleai.py
@@ -64,108 +64,133 @@ class OracleSummary:
 
         if docs is None:
             return []
+        if isinstance(docs, list) and not docs:
+            return []
 
         results: List[str] = []
+        cursor = None
         try:
             cursor = self.conn.cursor()
             cursor.outputtypehandler = output_type_handler
+            proxy_was_set = False
 
             if self.proxy:
                 cursor.execute(
                     "begin utl_http.set_proxy(:proxy); end;", proxy=self.proxy
                 )
+                proxy_was_set = True
 
-            if isinstance(docs, str):
-                results = []
+            try:
+                if isinstance(docs, str):
+                    results = []
 
-                summary = cursor.var(oracledb.DB_TYPE_CLOB)
-                cursor.execute(
-                    """
-                    declare
-                        input clob;
-                    begin
-                        input := :data;
-                        :summ := dbms_vector_chain.utl_to_summary(input, json(:params));
-                    end;""",
-                    data=docs,
-                    params=json.dumps(self.summary_params),
-                    summ=summary,
-                )
+                    summary = cursor.var(oracledb.DB_TYPE_CLOB)
+                    cursor.execute(
+                        """
+                        declare
+                            input clob;
+                        begin
+                            input := :data;
+                            :summ := dbms_vector_chain.utl_to_summary(
+                                input, json(:params));
+                        end;""",
+                        data=docs,
+                        params=json.dumps(self.summary_params),
+                        summ=summary,
+                    )
 
-                if summary.getvalue() is None:
-                    results.append("")
-                else:
-                    results.append(str(summary.getvalue()))
-
-            elif isinstance(docs, Document):
-                results = []
-
-                summary = cursor.var(oracledb.DB_TYPE_CLOB)
-                cursor.execute(
-                    """
-                    declare
-                        input clob;
-                    begin
-                        input := :data;
-                        :summ := dbms_vector_chain.utl_to_summary(input, json(:params));
-                    end;""",
-                    data=docs.page_content,
-                    params=json.dumps(self.summary_params),
-                    summ=summary,
-                )
-
-                if summary.getvalue() is None:
-                    results.append("")
-                else:
-                    results.append(str(summary.getvalue()))
-
-            elif isinstance(docs, List):
-                docs_input = []
-                params = json.dumps(self.summary_params)
-                summary = cursor.var(oracledb.DB_TYPE_CLOB, arraysize=len(docs))
-
-                for i, doc in enumerate(docs):
-                    if isinstance(doc, str):
-                        docs_input.append((doc, params))
-                    elif isinstance(doc, Document):
-                        docs_input.append((doc.page_content, params))
+                    if summary.getvalue() is None:
+                        results.append("")
                     else:
-                        raise Exception("Invalid input type")
+                        results.append(str(summary.getvalue()))
 
-                cursor.setinputsizes(None, None, summary)
+                elif isinstance(docs, Document):
+                    results = []
 
-                cursor.executemany(
-                    """
-                    declare
-                        input clob;
-                        summ clob;
-                    begin
-                        input := :1;
-                        summ := dbms_vector_chain.utl_to_summary(input, 
-                                    json(:2));
-                        :3 := summ;
-                    end;""",
-                    docs_input,
-                )
+                    summary = cursor.var(oracledb.DB_TYPE_CLOB)
+                    cursor.execute(
+                        """
+                        declare
+                            input clob;
+                        begin
+                            input := :data;
+                            :summ := dbms_vector_chain.utl_to_summary(
+                                input, json(:params));
+                        end;""",
+                        data=docs.page_content,
+                        params=json.dumps(self.summary_params),
+                        summ=summary,
+                    )
 
-                value = summary.getvalue(i)
+                    if summary.getvalue() is None:
+                        results.append("")
+                    else:
+                        results.append(str(summary.getvalue()))
 
-                results = [
-                    "" if value is None else str(value)
-                    for i in range(summary.actual_elements)
-                ]
+                elif isinstance(docs, List):
+                    docs_input = []
+                    params = json.dumps(self.summary_params)
+                    summary = cursor.var(oracledb.DB_TYPE_CLOB, arraysize=len(docs))
 
+                    for doc in docs:
+                        if isinstance(doc, str):
+                            docs_input.append((doc, params))
+                        elif isinstance(doc, Document):
+                            docs_input.append((doc.page_content, params))
+                        else:
+                            raise Exception("Invalid input type")
+
+                    cursor.setinputsizes(None, None, summary)
+
+                    cursor.executemany(
+                        """
+                        declare
+                            input clob;
+                            summ clob;
+                        begin
+                            input := :1;
+                            summ := dbms_vector_chain.utl_to_summary(input, 
+                                        json(:2));
+                            :3 := summ;
+                        end;""",
+                        docs_input,
+                    )
+
+                    results = [
+                        "" if summary.getvalue(i) is None else str(summary.getvalue(i))
+                        for i in range(summary.actual_elements)
+                    ]
+
+                else:
+                    raise Exception("Invalid input type")
+            except BaseException:
+                if proxy_was_set:
+                    try:
+                        cursor.execute(
+                            "begin utl_http.set_proxy(:proxy); end;", proxy=None
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to clear Oracle session proxy after "
+                            "get_summary failed"
+                        )
+                raise
             else:
-                raise Exception("Invalid input type")
+                if proxy_was_set:
+                    cursor.execute("begin utl_http.set_proxy(:proxy); end;", proxy=None)
 
-            cursor.close()
             return results
 
         except Exception as ex:
             logger.info(f"An exception occurred :: {ex}")
             traceback.print_exc()
-            cursor.close()
             raise
+        finally:
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception:
+                    logger.exception("Failed to close Oracle summary cursor")
 
 
 # uncomment the following code block to run the test
@@ -173,11 +198,10 @@ class OracleSummary:
 """
 # A sample unit test.
 
+import os
+
 ''' get the Oracle connection '''
-conn = oracledb.connect(
-    user="",
-    password="",
-    dsn="")
+conn = oracledb.connect(dsn=os.environ["ORACLE_DB_DSN"])
 print("Oracle connection is established...")
 
 ''' params '''

@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 test_oraclevs.py
@@ -10,6 +10,7 @@ with OracleVS.
 # import required modules
 import asyncio
 import logging
+import os
 import sys
 import threading
 from typing import Union
@@ -39,9 +40,9 @@ from langchain_oracledb.vectorstores.oraclevs import (
     drop_table_purge,
 )
 
-username = ""
-password = ""
-dsn = ""
+username = os.environ.get("VECDB_USER")
+password = os.environ.get("VECDB_PASS")
+dsn = os.environ.get("VECDB_HOST")
 
 try:
     oracledb.connect(user=username, password=password, dsn=dsn)
@@ -473,10 +474,10 @@ def test_create_hnsw_index_test() -> None:
     drop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
-    # Expectation:Index created
+    # Expectation: Rejected instead of falling back to untyped DDL construction
     vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
-    drop_index_if_exists(connection, "Hello")
+    with pytest.raises(ValueError, match="idx_type must be HNSW"):
+        create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
     drop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
@@ -533,7 +534,7 @@ def test_create_hnsw_index_test() -> None:
     drop_index_if_exists(connection, "idx11")
     drop_table_purge(connection, "TB9")
     # index not created:
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -548,7 +549,7 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "idx11")
     # index not created:
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -563,7 +564,7 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -578,7 +579,7 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -593,9 +594,9 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    # with negative values/out-of-bound values for all 4 of them, we get the same errors
+    # With negative or out-of-bound values for all 4 of them, we get the same errors.
     # Expectation:Index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -738,12 +739,14 @@ async def test_create_hnsw_index_test_async() -> None:
     await adrop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
-    # Expectation:Index created
+    # Expectation: Rejected instead of falling back to untyped DDL construction
     vs = await OracleVS.acreate(
         connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
     )
-    await acreate_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
-    await adrop_index_if_exists(connection, "Hello")
+    with pytest.raises(ValueError, match="idx_type must be HNSW"):
+        await acreate_index(
+            connection, vs, params={"idx_name": "Hello", "idx_type": ""}
+        )
     await adrop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
@@ -806,7 +809,7 @@ async def test_create_hnsw_index_test_async() -> None:
     await adrop_index_if_exists(connection, "idx11")
     await adrop_table_purge(connection, "TB9")
     # index not created:
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -824,7 +827,7 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
 
     # index not created:
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -841,7 +844,7 @@ async def test_create_hnsw_index_test_async() -> None:
         )
         await adrop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -858,7 +861,7 @@ async def test_create_hnsw_index_test_async() -> None:
         )
         await adrop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -875,9 +878,9 @@ async def test_create_hnsw_index_test_async() -> None:
             },
         )
         await adrop_index_if_exists(connection, "idx11")
-    # with negative values/out-of-bound values for all 4 of them, we get the same errors
+    # With negative or out-of-bound values for all 4 of them, we get the same errors.
     # Expectation:Index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
         )

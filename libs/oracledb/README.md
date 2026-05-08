@@ -28,12 +28,14 @@ Some examples below require a connection with Oracle Database through [`python-o
 Check your database connectivity:
 
 ```python
+import os
+
 import oracledb
 
 # Please update with your username, password, hostname, port and service_name
-username = "<username>"
-password = "<password>"
-dsn = "<hostname>:<port>/<service_name>"
+username = os.environ["ORACLE_DB_USERNAME"]
+password = os.environ["ORACLE_DB_PASSWORD"]
+dsn = os.environ["ORACLE_DB_DSN"]
 
 connection = oracledb.connect(user=username, password=password, dsn=dsn)
 print("Connection successful!")

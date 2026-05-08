@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 test_oracleadb.py
@@ -8,6 +8,7 @@ Unit tests for OracleAutonomousDatabaseLoader.
 
 from typing import Dict, List
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from langchain_core.documents import Document
 
@@ -60,7 +61,7 @@ def test_oracle_loader_load(mock_query: MagicMock) -> None:
     loader = OracleAutonomousDatabaseLoader(
         query="Test query",
         user="Test user",
-        password="Test password",
+        password=uuid4().hex,
         dsn="Test connection string",
         metadata=["FIELD1"],
     )
