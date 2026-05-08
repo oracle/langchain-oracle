@@ -263,8 +263,7 @@ def test_oraclevs_add_texts_warns_if_success_cleanup_fails(
     connection.commit.assert_called_once()
     assert _proxy_bind_values(cursor) == [PROXY, None]
     assert (
-        "Failed to clear Oracle session proxy after add_texts succeeded"
-        in caplog.text
+        "Failed to clear Oracle session proxy after add_texts succeeded" in caplog.text
     )
 
 
@@ -348,8 +347,7 @@ async def test_oraclevs_aadd_texts_warns_if_success_cleanup_fails(
     ]
     assert proxy_values == [PROXY, None]
     assert (
-        "Failed to clear Oracle session proxy after aadd_texts succeeded"
-        in caplog.text
+        "Failed to clear Oracle session proxy after aadd_texts succeeded" in caplog.text
     )
 
 
