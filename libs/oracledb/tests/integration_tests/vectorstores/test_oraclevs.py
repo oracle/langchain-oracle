@@ -1193,13 +1193,9 @@ def test_add_texts_test() -> None:
 
     # PyTorch + Transformers are NOT thread-safe during initialization
     # Unitialize model creation OUTSIDE threads
-    model = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
-    )
+    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
     # Create ONCE (this creates the table safely)
-    vs_obj = OracleVS(
-        connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
+    vs_obj = OracleVS(connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
 
     # 6. Add 2 different record concurrently
     # Expectation:Successful
