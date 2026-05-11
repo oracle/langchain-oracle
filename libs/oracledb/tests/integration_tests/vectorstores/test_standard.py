@@ -90,7 +90,10 @@ class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        try:
+            yield store
+        finally:
+            await conn.close()
 
 
 class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
@@ -118,4 +121,8 @@ class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        try:
+            yield store
+        finally:
+            conn_syn.close()
+            await conn.close()

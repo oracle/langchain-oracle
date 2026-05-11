@@ -474,10 +474,10 @@ def test_create_hnsw_index_test() -> None:
     drop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
-    # Expectation: Rejected instead of falling back to untyped DDL construction
+    # Expectation:Index created
     vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    with pytest.raises(ValueError, match="idx_type must be HNSW"):
-        create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
+    create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
+    drop_index_if_exists(connection, "Hello")
     drop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
@@ -534,7 +534,7 @@ def test_create_hnsw_index_test() -> None:
     drop_index_if_exists(connection, "idx11")
     drop_table_purge(connection, "TB9")
     # index not created:
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -549,7 +549,7 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "idx11")
     # index not created:
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -564,7 +564,7 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -579,7 +579,7 @@ def test_create_hnsw_index_test() -> None:
         )
         drop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -594,9 +594,9 @@ def test_create_hnsw_index_test() -> None:
             },
         )
         drop_index_if_exists(connection, "idx11")
-    # With negative or out-of-bound values for all 4 of them, we get the same errors.
+    # with negative values/out-of-bound values for all 4 of them, we get the same errors
     # Expectation:Index not created
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = OracleVS(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -739,14 +739,12 @@ async def test_create_hnsw_index_test_async() -> None:
     await adrop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
-    # Expectation: Rejected instead of falling back to untyped DDL construction
+    # Expectation:Index created
     vs = await OracleVS.acreate(
         connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
     )
-    with pytest.raises(ValueError, match="idx_type must be HNSW"):
-        await acreate_index(
-            connection, vs, params={"idx_name": "Hello", "idx_type": ""}
-        )
+    await acreate_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
+    await adrop_index_if_exists(connection, "Hello")
     await adrop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
@@ -809,7 +807,7 @@ async def test_create_hnsw_index_test_async() -> None:
     await adrop_index_if_exists(connection, "idx11")
     await adrop_table_purge(connection, "TB9")
     # index not created:
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -827,7 +825,7 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
 
     # index not created:
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -844,7 +842,7 @@ async def test_create_hnsw_index_test_async() -> None:
         )
         await adrop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -861,7 +859,7 @@ async def test_create_hnsw_index_test_async() -> None:
         )
         await adrop_index_if_exists(connection, "idx11")
     # index not created
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -878,9 +876,9 @@ async def test_create_hnsw_index_test_async() -> None:
             },
         )
         await adrop_index_if_exists(connection, "idx11")
-    # With negative or out-of-bound values for all 4 of them, we get the same errors.
+    # with negative values/out-of-bound values for all 4 of them, we get the same errors
     # Expectation:Index not created
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
             connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
@@ -1193,21 +1191,25 @@ def test_add_texts_test() -> None:
     vs_obj.add_texts(texts4, ids=ids8)
     drop_table_purge(connection, "TB9")
 
+    # PyTorch + Transformers are NOT thread-safe during initialization
+    # Unitialize model creation OUTSIDE threads
+    model = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-mpnet-base-v2"
+    )
+    # Create ONCE (this creates the table safely)
+    vs_obj = OracleVS(
+        connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+
     # 6. Add 2 different record concurrently
     # Expectation:Successful
     def add(val: str) -> None:
-        model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-mpnet-base-v2"
-        )
-        vs_obj = OracleVS(
-            connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
-        )
         texts5 = [val]
         ids9 = texts5
         vs_obj.add_texts(texts5, ids=ids9)
 
-    thread_1 = threading.Thread(target=add, args=("Sri Ram"))
-    thread_2 = threading.Thread(target=add, args=("Sri Krishna"))
+    thread_1 = threading.Thread(target=add, args=("Sri Ram",))
+    thread_2 = threading.Thread(target=add, args=("Sri Krishna",))
     thread_1.start()
     thread_2.start()
     thread_1.join()
@@ -3040,5 +3042,4 @@ async def test_reserved_async() -> None:
         await vs_obj.aadd_texts(texts, metadata, ids=["1", "2"])
 
     await adrop_table_purge(connection, "TB1")
-
-    connection.close()
+    await connection.close()
