@@ -19,6 +19,9 @@ on:
         type: string
         default: 'libs/oci'
 
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.11"
   POETRY_VERSION: "2.2.1"
