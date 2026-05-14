@@ -20,6 +20,7 @@ from langgraph.checkpoint.base import (
 from langgraph.checkpoint.serde.base import SerializerProtocol
 
 from langgraph_oracledb.checkpoint.oracle import _ainternal
+from langgraph_oracledb.checkpoint.oracle._lob import awith_blob_lobs
 from langgraph_oracledb.checkpoint.oracle.base import BaseOracleSaver
 
 from .sync import _validate_conn_string
@@ -385,8 +386,10 @@ class AsyncOracleSaver(BaseOracleSaver):
                     blob_versions,
                 )
 
-                cur.setinputsizes(blob=oracledb.DB_TYPE_BLOB)
-                await cur.executemany(self.UPSERT_CHECKPOINT_BLOBS_SQL, blob_data)
+                await cur.executemany(
+                    self.UPSERT_CHECKPOINT_BLOBS_SQL,
+                    await awith_blob_lobs(cur.connection, blob_data),
+                )
 
             if "channel_versions" not in copy:
                 copy["channel_versions"] = {}
@@ -432,10 +435,10 @@ class AsyncOracleSaver(BaseOracleSaver):
             writes,
         )
         async with self._cursor() as cur:
-            # See sync.put_writes: without this hint oracledb maps b"" -> NULL
-            # and the NOT NULL `blob` column rejects the row with ORA-01400.
-            cur.setinputsizes(blob=oracledb.DB_TYPE_BLOB)
-            await cur.executemany(query, params)
+            await cur.executemany(
+                query,
+                await awith_blob_lobs(cur.connection, params),
+            )
             await cur.connection.commit()
 
     async def adelete_thread(self, thread_id: str) -> None:
