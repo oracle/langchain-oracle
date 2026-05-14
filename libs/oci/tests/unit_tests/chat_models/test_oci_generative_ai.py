@@ -1451,7 +1451,12 @@ def test_retry_converts_max_tokens_to_max_completion_tokens() -> None:
     request = llm._prepare_request(
         [HumanMessage(content="hi")], stop=None, stream=False
     )
-    assert request.chat_request.max_tokens == 512
+    # OpenAIProvider.normalize_params rewrites max_tokens -> max_completion_tokens
+    # eagerly at prep time, so this handler is the fallback for cases the lookup
+    # misses (unknown params, unstructured error messages). Reset to the "param
+    # reached the wire" state to exercise the handler path itself.
+    request.chat_request.max_completion_tokens = None
+    request.chat_request.max_tokens = 512
 
     error_msg = (
         "Invalid 'maxTokens': Unsupported parameter: "
