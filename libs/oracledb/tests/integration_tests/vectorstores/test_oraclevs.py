@@ -596,7 +596,7 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # With negative or out-of-bound values for all 4 of them, we get the same errors.
     # Expectation:Index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = OracleVS(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
         create_index(
             connection,
@@ -879,7 +879,7 @@ async def test_create_hnsw_index_test_async() -> None:
         await adrop_index_if_exists(connection, "idx11")
     # with negative values/out-of-bound values for all 4 of them, we get the same errors
     # Expectation:Index not created
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
             connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
         )
