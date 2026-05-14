@@ -142,6 +142,35 @@ def test_large_json_objects_go_to_blobs(saver_name: str) -> None:
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+def test_checkpoint_blobs_preserve_empty_and_large_bytes(saver_name: str) -> None:
+    with _sync_saver(saver_name) as saver:
+        config = {
+            "configurable": {
+                "thread_id": "thread-byte-blob-test",
+                "checkpoint_ns": "",
+            }
+        }
+        large_bytes = b"x" * 32768
+        checkpoint = empty_checkpoint()
+        checkpoint["channel_values"] = {
+            "empty_bytes": b"",
+            "large_bytes": large_bytes,
+        }
+
+        new_config = saver.put(
+            config,
+            checkpoint,
+            {},
+            {"empty_bytes": "v1", "large_bytes": "v2"},
+        )
+
+        result = saver.get_tuple(new_config)
+        assert result is not None
+        assert result.checkpoint["channel_values"]["empty_bytes"] == b""
+        assert result.checkpoint["channel_values"]["large_bytes"] == large_bytes
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
 def test_non_serializable_objects_go_to_blobs(saver_name: str) -> None:
     """Test that non-JSON-serializable objects always go to blobs."""
     serde = JsonPlusSerializer(pickle_fallback=True)

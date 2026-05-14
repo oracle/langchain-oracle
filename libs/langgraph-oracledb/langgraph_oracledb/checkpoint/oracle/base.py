@@ -308,8 +308,13 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
         if not blob_values:
             return {}
         return {
-            k: self.serde.loads_typed((t, v)) for k, t, v in blob_values if t != "empty"
+            k: self._load_typed_blob(t, v) for k, t, v in blob_values if t != "empty"
         }
+
+    def _load_typed_blob(self, type_: str, blob: bytes | None) -> Any:
+        if blob is None:
+            blob = b""
+        return self.serde.loads_typed((type_, blob))
 
     def _dump_blobs(
         self,
@@ -345,7 +350,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                 (
                     tid,
                     channel,
-                    self.serde.loads_typed((t, v)),
+                    self._load_typed_blob(t, v),
                 )
                 for tid, channel, t, v in writes
             ]

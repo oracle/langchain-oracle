@@ -1,6 +1,6 @@
 [project]
 name = "langgraph-oracledb"
-version = "1.0.0"
+version = "1.0.1"
 description = "An integration package connecting Oracle Database and LangGraph"
 readme = "README.md"
 license = "UPL-1.0"

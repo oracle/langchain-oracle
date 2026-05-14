@@ -21,6 +21,7 @@ from langgraph.checkpoint.base import (
 from langgraph.checkpoint.serde.base import SerializerProtocol
 
 from langgraph_oracledb.checkpoint.oracle import _internal
+from langgraph_oracledb.checkpoint.oracle._lob import with_blob_lobs
 from langgraph_oracledb.checkpoint.oracle.base import BaseOracleSaver
 
 Conn = _internal.Conn  # For backward compatibility
@@ -406,8 +407,10 @@ class OracleSaver(BaseOracleSaver):
                     blob_values,
                     blob_versions,
                 )
-                cur.setinputsizes(blob=oracledb.DB_TYPE_BLOB)
-                cur.executemany(self.UPSERT_CHECKPOINT_BLOBS_SQL, blob_data)
+                cur.executemany(
+                    self.UPSERT_CHECKPOINT_BLOBS_SQL,
+                    with_blob_lobs(cur.connection, blob_data),
+                )
 
             if "channel_versions" not in copy:
                 copy["channel_versions"] = {}
@@ -452,11 +455,7 @@ class OracleSaver(BaseOracleSaver):
             writes,
         )
         with self._cursor() as cur:
-            # Declare `blob` as BLOB so oracledb doesn't silently map b"" to NULL;
-            # the column is NOT NULL and empty writes (interrupts, sentinels) would
-            # otherwise raise ORA-01400. Mirrors what `put()` does for checkpoint_blobs.
-            cur.setinputsizes(blob=oracledb.DB_TYPE_BLOB)
-            cur.executemany(query, params)
+            cur.executemany(query, with_blob_lobs(cur.connection, params))
             cur.connection.commit()
 
     def delete_thread(self, thread_id: str) -> None:

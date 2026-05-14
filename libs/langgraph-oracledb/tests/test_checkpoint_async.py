@@ -1183,6 +1183,37 @@ async def test_put_writes_basic(saver_name: str) -> None:
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+async def test_put_writes_preserves_empty_and_large_bytes(saver_name: str) -> None:
+    async with _async_saver(saver_name) as saver:
+        stored = await saver.aput(
+            generate_config(str(uuid4())),
+            generate_checkpoint(),
+            generate_metadata(),
+            {},
+        )
+        task_id = str(uuid4())
+        large_bytes = b"x" * 32768
+
+        await saver.aput_writes(
+            stored,
+            [("empty_bytes", b""), ("large_bytes", large_bytes)],
+            task_id,
+        )
+
+        loaded = await saver.aget_tuple(stored)
+        assert loaded is not None
+        pending_writes = {
+            channel: value
+            for write_task_id, channel, value in (loaded.pending_writes or [])
+            if write_task_id == task_id
+        }
+        assert pending_writes == {
+            "empty_bytes": b"",
+            "large_bytes": large_bytes,
+        }
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
 async def test_put_writes_multiple_writes_same_task(saver_name: str) -> None:
     async with _async_saver(saver_name) as saver:
         stored = await saver.aput(
