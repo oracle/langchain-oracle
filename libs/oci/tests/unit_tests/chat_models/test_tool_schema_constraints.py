@@ -416,9 +416,10 @@ def test_13_multi_optional():
 
 @pytest.mark.requires("oci")
 def test_14_const_extra():
-    """json_schema_extra const must be preserved."""
+    """String const should be lowered to enum for OCI compatibility."""
     p = _props(const_tool)
-    assert p["version"]["const"] == "v1"
+    assert "const" not in p["version"]
+    assert p["version"]["enum"] == ["v1"]
 
 
 def test_sanitize_schema_prunes_missing_required_fields():
@@ -479,6 +480,98 @@ def test_sanitize_schema_adds_default_array_items():
     sanitized = OCIUtils.sanitize_schema(schema)
 
     assert sanitized["properties"]["tags"]["items"] == {"type": "object"}
+
+
+def test_sanitize_schema_removes_extensions_and_const_recursively():
+    """OCI-incompatible x-* keys and non-string const should be stripped."""
+    schema = {
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "const": True,
+                            "x-visible": False,
+                        }
+                    },
+                },
+            },
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert "x-visible" not in sanitized
+    assert "const" not in sanitized["properties"]["version"]
+    assert sanitized["properties"]["version"]["enum"] == ["v1"]
+    assert "x-in" not in sanitized["properties"]["version"]
+    enabled = sanitized["properties"]["items"]["items"]["properties"]["enabled"]
+    assert "const" not in enabled
+    assert "enum" not in enabled
+    assert "x-visible" not in enabled
+
+
+@pytest.mark.requires("oci")
+def test_generic_json_schema_dict_strips_extensions_and_const():
+    """GenericProvider dict schemas should preserve string const as enum."""
+    provider = GenericProvider()
+    schema = {
+        "title": "Request",
+        "description": "Request schema",
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            }
+        },
+        "required": ["version"],
+    }
+
+    result = provider.convert_to_oci_tool(schema)
+    version = result.parameters["properties"]["version"]  # type: ignore[attr-defined]
+
+    assert "const" not in version
+    assert version["enum"] == ["v1"]
+    assert "x-in" not in version
+    assert "x-visible" not in str(result.parameters)  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires("oci")
+def test_cohere_json_schema_dict_strips_extensions_and_const():
+    """CohereProvider dict schemas should preserve string const as enum."""
+    provider = CohereProvider()
+    schema = {
+        "title": "Request",
+        "description": "Request schema",
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            }
+        },
+    }
+
+    result = provider.convert_to_oci_tool(schema)
+    version = result.parameter_definitions["version"]  # type: ignore[attr-defined]
+
+    assert "Allowed values: ['v1']" in version.description
+    assert "x-in" not in version.description
 
 
 def test_resolve_schema_refs_handles_circular_refs():

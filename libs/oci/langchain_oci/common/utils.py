@@ -168,9 +168,14 @@ class OCIUtils:
         if not isinstance(schema, dict):
             return schema
 
+        const_value = schema.get("const")
         sanitized: Dict[str, Any] = {}
         for key, value in schema.items():
             if key == "title":
+                continue
+            if key == "const":
+                continue
+            if isinstance(key, str) and key.startswith("x-"):
                 continue
             if key == "default" and value is None:
                 continue
@@ -185,6 +190,9 @@ class OCIUtils:
                     continue
 
             sanitized[key] = OCIUtils.sanitize_schema(value)
+
+        if isinstance(const_value, str):
+            sanitized["enum"] = [const_value]
 
         if sanitized.get("type") == "array" and "items" not in sanitized:
             sanitized["items"] = {"type": "object"}

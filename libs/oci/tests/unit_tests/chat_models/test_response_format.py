@@ -126,6 +126,59 @@ def test_with_structured_output_json_schema():
 
 
 @pytest.mark.requires("oci")
+def test_generic_provider_converts_json_schema_dict_tool():
+    """GenericProvider should accept JSON schema dicts as tool schemas."""
+    from langchain_oci.chat_models.providers.generic import GenericProvider
+
+    provider = GenericProvider()
+    schema = {
+        "title": "ToolSelectionResponse",
+        "description": "Tools selected for a request.",
+        "type": "object",
+        "properties": {
+            "selected_tool_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["selected_tool_names"],
+    }
+
+    tool = provider.convert_to_oci_tool(schema)
+
+    assert getattr(tool, "name") == "ToolSelectionResponse"
+    assert getattr(tool, "description") == "Tools selected for a request."
+    assert tool.parameters == {
+        "type": "object",
+        "properties": schema["properties"],
+        "required": ["selected_tool_names"],
+    }
+
+
+@pytest.mark.requires("oci")
+def test_generic_structured_output_accepts_json_schema_dict_default_method():
+    """Generic structured output should accept middleware-style JSON schemas."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+    schema = {
+        "title": "ToolSelectionResponse",
+        "description": "Tools selected for a request.",
+        "type": "object",
+        "properties": {
+            "selected_tool_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["selected_tool_names"],
+    }
+
+    structured_llm = llm.with_structured_output(schema)
+
+    assert structured_llm is not None
+
+
+@pytest.mark.requires("oci")
 def test_with_structured_output_json_schema_nested_refs():
     """Test with_structured_output with json_schema method and nested refs."""
     oci_gen_ai_client = MagicMock()
