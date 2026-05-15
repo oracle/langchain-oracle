@@ -1,5 +1,6 @@
 """Unit tests for response_format feature."""
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,8 +38,8 @@ def test_response_format_via_bind():
     # Should not raise TypeError anymore
     llm_with_format = llm.bind(response_format={"type": "JSON_OBJECT"})
 
-    assert "response_format" in llm_with_format.kwargs  # type: ignore
-    assert llm_with_format.kwargs["response_format"] == {"type": "JSON_OBJECT"}  # type: ignore
+    assert "response_format" in llm_with_format.kwargs
+    assert llm_with_format.kwargs["response_format"] == {"type": "JSON_OBJECT"}
 
 
 @pytest.mark.requires("oci")
@@ -51,11 +52,11 @@ def test_response_format_passed_to_api_generic():
     llm_with_format = llm.bind(response_format={"type": "JSON_OBJECT"})
 
     # Prepare a request
-    request = llm_with_format._prepare_request(  # type: ignore
+    request = llm_with_format._prepare_request(
         [HumanMessage(content="Hello")],
         stop=None,
         stream=False,
-        **llm_with_format.kwargs,  # type: ignore
+        **llm_with_format.kwargs,
     )
 
     # Verify response_format is in the request
@@ -73,11 +74,11 @@ def test_response_format_passed_to_api_cohere():
     llm_with_format = llm.bind(response_format={"type": "JSON_OBJECT"})
 
     # Prepare a request
-    request = llm_with_format._prepare_request(  # type: ignore
+    request = llm_with_format._prepare_request(
         [HumanMessage(content="Hello")],
         stop=None,
         stream=False,
-        **llm_with_format.kwargs,  # type: ignore
+        **llm_with_format.kwargs,
     )
 
     # Verify response_format is in the request
@@ -148,7 +149,7 @@ def test_generic_provider_converts_json_schema_dict_tool():
 
     assert getattr(tool, "name") == "ToolSelectionResponse"
     assert getattr(tool, "description") == "Tools selected for a request."
-    assert tool.parameters == {
+    assert cast(Any, tool).parameters == {
         "type": "object",
         "properties": schema["properties"],
         "required": ["selected_tool_names"],
@@ -285,8 +286,8 @@ def test_response_format_json_schema_object():
     llm_with_format = llm.bind(response_format=response_format_obj)
 
     # Verify it's stored in kwargs
-    assert "response_format" in llm_with_format.kwargs  # type: ignore
-    assert llm_with_format.kwargs["response_format"] == response_format_obj  # type: ignore
+    assert "response_format" in llm_with_format.kwargs
+    assert llm_with_format.kwargs["response_format"] == response_format_obj
 
 
 @pytest.mark.requires("oci")
