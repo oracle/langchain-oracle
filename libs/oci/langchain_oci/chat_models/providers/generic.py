@@ -968,6 +968,18 @@ class OpenAIProvider(GenericProvider):
     - max_tokens → max_completion_tokens (OpenAI rejects max_tokens on GPT-5
       family and reasoning models; max_completion_tokens is the forward-compatible
       name).
+
+    Transport note:
+      This provider routes through OCI's native chat endpoint
+      (``/20231130/actions/chat``), whose schema for OpenAI-family models
+      only accepts ``text`` and ``image_url`` content blocks. For any
+      OpenAI feature not exposed on that schema — most notably
+      ``input_audio`` against audio-capable models such as
+      ``openai.gpt-audio``, but also any other Chat-Completions-only
+      OpenAI feature surfaced through ``langchain-openai`` — use
+      :class:`langchain_oci.ChatOCIOpenAI` with
+      ``use_responses_api=False``, which targets OCI's OpenAI Chat
+      Completions passthrough at ``/openai/v1/chat/completions``.
     """
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
