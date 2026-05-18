@@ -184,7 +184,8 @@ class TestDeepAgentCompatibilityIntegration:
             model_id="google.gemini-2.5-pro",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             compartment_id="ocid1.compartment.oc1..example",
-            auth_type="API_KEY",
+            auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+            auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
             model_kwargs={"temperature": 0.1},
         )
 
@@ -195,6 +196,16 @@ class TestDeepAgentCompatibilityIntegration:
         assert "path" in converted.parameters["properties"]
         assert "runtime" not in converted.parameters["properties"]
 
+    @pytest.mark.xfail(
+        reason=(
+            "Upstream bug: langchain.agents.middleware.todo.PlanningState declares "
+            "`todos: Annotated[NotRequired[list[Todo]], OmitFromInput]`. Pydantic "
+            ">=2.11 rejects NotRequired inside Annotated (PydanticForbiddenQualifier), "
+            "so accessing `agent.output_schema` raises. Re-enable when langchain "
+            "ships a fix that moves NotRequired outside Annotated."
+        ),
+        strict=False,
+    )
     def test_helper_output_schema_is_available_without_network(self) -> None:
         """create_deepagents_agent should expose output_schema safely."""
         agent = create_deepagents_agent(
@@ -202,7 +213,8 @@ class TestDeepAgentCompatibilityIntegration:
             model_id="google.gemini-2.5-pro",
             compartment_id="ocid1.compartment.oc1..example",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
-            auth_type="API_KEY",
+            auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+            auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         )
 
         schema = agent.output_schema
@@ -210,6 +222,17 @@ class TestDeepAgentCompatibilityIntegration:
         assert "messages" in schema.model_fields
         assert "structured_response" in schema.model_fields
 
+    @pytest.mark.xfail(
+        reason=(
+            "Upstream bug: langchain.agents.middleware.todo.PlanningState declares "
+            "`todos: Annotated[NotRequired[list[Todo]], OmitFromInput]`. Pydantic "
+            ">=2.11 rejects NotRequired inside Annotated (PydanticForbiddenQualifier), "
+            "so accessing `agent.output_schema` raises. Agent runtime is unaffected "
+            "(invoke + response_format both work) — only this introspection path "
+            "fails. Re-enable when langchain ships a fix."
+        ),
+        strict=False,
+    )
     def test_direct_deepagents_output_schema_is_available(self) -> None:
         """Direct deepagents usage with ChatOCIGenAI should expose output_schema."""
         from deepagents import create_deep_agent
@@ -218,7 +241,8 @@ class TestDeepAgentCompatibilityIntegration:
             model_id="google.gemini-2.5-pro",
             service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
             compartment_id="ocid1.compartment.oc1..example",
-            auth_type="API_KEY",
+            auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
+            auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
             model_kwargs={"temperature": 0.1},
         )
 
@@ -679,8 +703,8 @@ def _make_oci_kwargs() -> dict:
             f"https://inference.generativeai.{region}.oci.oraclecloud.com"
         ),
         "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
-        "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "API_KEY_AUTH"),
-        "model_id": "google.gemini-2.5-flash",
+        "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+        "model_id": os.environ.get("OCI_DEEPAGENTS_MODEL", "google.gemini-2.5-flash"),
         "temperature": 0.0,
         "max_tokens": 1024,
     }
