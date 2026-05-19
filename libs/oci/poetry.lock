@@ -5497,4 +5497,4 @@ deepagents = ["deepagents", "langchain-oracledb", "opensearch-py"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4.0"
-content-hash = "c805eb0d453f5e68afb2d88ccab42203ef92cb864a7ccb64470d83a30c3581ab"
+content-hash = "04ea36b6ae81adf4e659d3886decc4a1f51a6cb33bfc30dd1ee367fe962d789e"
