@@ -132,6 +132,7 @@ module = [
     "PIL.*",
     "langchain_community.vectorstores.utils",
     "langchain_oracledb.*",
+    "langgraph_oracledb.*",
     "langchain_oci.tools",
     "langchain_oci.tools.*",
 ]
