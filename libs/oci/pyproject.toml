@@ -28,6 +28,11 @@ deepagents = [
     # TODO: bump to >=1.3.0 once langchain-oracledb 1.3.0 is published to PyPI.
     # The chunk_text/extract_doc_id APIs from langchain-oracledb #191 ship in 1.3.0.
     "langchain-oracledb>=1.2.0",
+    # Oracle-backed LangGraph checkpointer (OracleSaver / AsyncOracleSaver),
+    # so create_deepagents_agent(checkpointer=...) can persist thread state
+    # to Oracle ADB out of the box. Requires Python 3.10+ (matches the
+    # deepagents floor anyway via the marker above).
+    "langgraph-oracledb>=1.0.1; python_version >= '3.10'",
     "opensearch-py>=2.4.0",
 ]
 
