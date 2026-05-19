@@ -38,8 +38,8 @@ def test_response_format_via_bind():
     # Should not raise TypeError anymore
     llm_with_format = llm.bind(response_format={"type": "JSON_OBJECT"})
 
-    assert "response_format" in llm_with_format.kwargs
-    assert llm_with_format.kwargs["response_format"] == {"type": "JSON_OBJECT"}
+    assert "response_format" in llm_with_format.kwargs  # type: ignore
+    assert llm_with_format.kwargs["response_format"] == {"type": "JSON_OBJECT"}  # type: ignore
 
 
 @pytest.mark.requires("oci")
@@ -52,11 +52,11 @@ def test_response_format_passed_to_api_generic():
     llm_with_format = llm.bind(response_format={"type": "JSON_OBJECT"})
 
     # Prepare a request
-    request = llm_with_format._prepare_request(
+    request = llm_with_format._prepare_request(  # type: ignore
         [HumanMessage(content="Hello")],
         stop=None,
         stream=False,
-        **llm_with_format.kwargs,
+        **llm_with_format.kwargs,  # type: ignore
     )
 
     # Verify response_format is in the request
@@ -74,11 +74,11 @@ def test_response_format_passed_to_api_cohere():
     llm_with_format = llm.bind(response_format={"type": "JSON_OBJECT"})
 
     # Prepare a request
-    request = llm_with_format._prepare_request(
+    request = llm_with_format._prepare_request(  # type: ignore
         [HumanMessage(content="Hello")],
         stop=None,
         stream=False,
-        **llm_with_format.kwargs,
+        **llm_with_format.kwargs,  # type: ignore
     )
 
     # Verify response_format is in the request
@@ -286,8 +286,8 @@ def test_response_format_json_schema_object():
     llm_with_format = llm.bind(response_format=response_format_obj)
 
     # Verify it's stored in kwargs
-    assert "response_format" in llm_with_format.kwargs
-    assert llm_with_format.kwargs["response_format"] == response_format_obj
+    assert "response_format" in llm_with_format.kwargs  # type: ignore
+    assert llm_with_format.kwargs["response_format"] == response_format_obj  # type: ignore
 
 
 @pytest.mark.requires("oci")
