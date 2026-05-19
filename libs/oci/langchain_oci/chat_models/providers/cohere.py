@@ -665,6 +665,9 @@ class CohereProvider(Provider):
                     "Unsupported dict type. Tool must be a BaseTool instance, "
                     "JSON schema dict, or Pydantic model."
                 )
+            schema = OCIUtils.resolve_schema_refs(tool)
+            schema = OCIUtils.resolve_anyof(schema)
+            schema = OCIUtils.sanitize_schema(schema)
             return self.oci_tool(
                 name=tool.get("title"),
                 description=tool.get("description"),
@@ -679,12 +682,15 @@ class CohereProvider(Provider):
                         ),
                         is_required="default" not in p_def,
                     )
-                    for p_name, p_def in tool.get("properties", {}).items()
+                    for p_name, p_def in schema.get("properties", {}).items()
                 },
             )
         elif (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
             as_json_schema_function = convert_to_openai_function(tool)
             parameters = as_json_schema_function.get("parameters", {})
+            parameters = OCIUtils.resolve_schema_refs(parameters)
+            parameters = OCIUtils.resolve_anyof(parameters)
+            parameters = OCIUtils.sanitize_schema(parameters)
             properties = parameters.get("properties", {})
             fn_name = as_json_schema_function.get("name", "")
             return self.oci_tool(

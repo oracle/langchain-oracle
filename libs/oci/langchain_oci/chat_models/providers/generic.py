@@ -778,12 +778,11 @@ class GenericProvider(Provider):
         self,
         tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
     ) -> Dict[str, Any]:
-        """Convert a BaseTool instance, TypedDict or BaseModel type
-        to a OCI tool in Meta's format.
+        """Convert a tool definition to an OCI tool in Meta's format.
 
         Args:
-            tool: The tool to convert, can be a BaseTool instance, TypedDict,
-                or BaseModel type.
+            tool: The tool to convert, can be a BaseTool instance, JSON schema
+                dictionary, TypedDict, callable, or BaseModel type.
 
         Returns:
             Dict containing the tool definition in Meta's format.
@@ -814,23 +813,48 @@ class GenericProvider(Provider):
                     "required": resolved_params.get("required", []),
                 },
             )
+        if isinstance(tool, dict):
+            name = tool.get("title") or tool.get("name")
+            properties = tool.get("properties")
+            if not isinstance(name, str) or not isinstance(properties, dict):
+                raise ValueError(
+                    "Unsupported dict type. Tool must be a BaseTool instance, "
+                    "JSON schema dict, TypedDict class, or BaseModel type."
+                )
+
+            resolved_params = OCIUtils.resolve_schema_refs(tool)
+            resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            resolved_params = OCIUtils.sanitize_schema(resolved_params)
+
+            return self.oci_function_definition(
+                name=name,
+                description=resolved_params.get("description") or name,
+                parameters={
+                    "type": "object",
+                    "properties": resolved_params.get("properties", {}),
+                    "required": resolved_params.get("required", []),
+                },
+            )
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
             as_json_schema_function = convert_to_openai_function(tool)
             parameters = as_json_schema_function.get("parameters", {})
+            resolved_params = OCIUtils.resolve_schema_refs(parameters)
+            resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            resolved_params = OCIUtils.sanitize_schema(resolved_params)
             fn_name = as_json_schema_function.get("name", "")
             return self.oci_function_definition(
                 name=fn_name,
                 description=as_json_schema_function.get("description") or fn_name,
                 parameters={
                     "type": "object",
-                    "properties": parameters.get("properties", {}),
-                    "required": parameters.get("required", []),
+                    "properties": resolved_params.get("properties", {}),
+                    "required": resolved_params.get("required", []),
                 },
             )
         raise ValueError(
             f"Unsupported tool type {type(tool)}. "
             "Tool must be passed in as a BaseTool "
-            "instance, TypedDict class, or BaseModel type."
+            "instance, JSON schema dict, TypedDict class, or BaseModel type."
         )
 
     def process_tool_choice(

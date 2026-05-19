@@ -161,16 +161,37 @@ class OCIUtils:
 
     @staticmethod
     def sanitize_schema(schema: Any) -> Any:
-        """Recursively sanitize a schema for OCI tool compatibility."""
+        """Recursively sanitize a schema for OCI tool compatibility.
+
+        Strips JSON-Schema metadata keys (``title``, ``const``, ``x-*``,
+        ``default: None``) that the OCI tool API doesn't accept, and
+        normalises a couple of OpenAI/Pydantic conventions OCI doesn't
+        understand (``type: any`` → ``object``, ``type: ["string","null"]``
+        → ``"string"``, etc.).
+
+        ``properties`` / ``$defs`` / ``definitions`` need special handling:
+        their dict keys are *user-defined* names (field names, definition
+        names), not JSON-Schema metadata. Without the exemption, a Pydantic
+        model with a field literally called ``title`` (or ``const``, or any
+        ``x-…`` prefix) would have that field silently dropped from the
+        outgoing OCI tool definition — which leaves the LLM unable to fill
+        it and causes a Pydantic ``ValidationError`` once the response is
+        parsed back into the original model.
+        """
         if isinstance(schema, list):
             return [OCIUtils.sanitize_schema(item) for item in schema]
 
         if not isinstance(schema, dict):
             return schema
 
+        const_value = schema.get("const")
         sanitized: Dict[str, Any] = {}
         for key, value in schema.items():
             if key == "title":
+                continue
+            if key == "const":
+                continue
+            if isinstance(key, str) and key.startswith("x-"):
                 continue
             if key == "default" and value is None:
                 continue
@@ -184,7 +205,24 @@ class OCIUtils:
                     sanitized[key] = non_null_types[0] if non_null_types else "string"
                     continue
 
+            # `properties`, `$defs`, and `definitions` are dicts whose keys
+            # are user-defined names (field names, definition names) — not
+            # JSON-Schema metadata. Recurse into each value as an independent
+            # schema, but DON'T apply the metadata-key skips above to the
+            # user-defined keys themselves.
+            if key in ("properties", "$defs", "definitions") and isinstance(
+                value, dict
+            ):
+                sanitized[key] = {
+                    name: OCIUtils.sanitize_schema(sub_schema)
+                    for name, sub_schema in value.items()
+                }
+                continue
+
             sanitized[key] = OCIUtils.sanitize_schema(value)
+
+        if isinstance(const_value, str):
+            sanitized["enum"] = [const_value]
 
         if sanitized.get("type") == "array" and "items" not in sanitized:
             sanitized["items"] = {"type": "object"}

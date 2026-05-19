@@ -416,9 +416,10 @@ def test_13_multi_optional():
 
 @pytest.mark.requires("oci")
 def test_14_const_extra():
-    """json_schema_extra const must be preserved."""
+    """String const should be lowered to enum for OCI compatibility."""
     p = _props(const_tool)
-    assert p["version"]["const"] == "v1"
+    assert "const" not in p["version"]
+    assert p["version"]["enum"] == ["v1"]
 
 
 def test_sanitize_schema_prunes_missing_required_fields():
@@ -467,6 +468,92 @@ def test_sanitize_schema_removes_title_and_null_defaults_recursively():
     assert sanitized["properties"]["child"]["properties"]["age"]["type"] == "integer"
 
 
+def test_sanitize_schema_preserves_user_fields_named_title():
+    """A property literally named ``title`` (or other JSON-Schema metadata
+    keys) must survive sanitization. Without this guarantee, a Pydantic
+    model with a ``title: str`` field would be silently stripped of that
+    field before being sent to the OCI tool API — the LLM never sees it,
+    the response comes back without it, and the original Pydantic class
+    raises ``ValidationError`` because ``title`` is still ``required``.
+    Regression for ``test_structured_output_no_docstring[*]`` which
+    parametrizes over 8 models and uses a ``BugReport`` model whose first
+    field is ``title``.
+    """
+    schema = {
+        "type": "object",
+        "title": "BugReport",  # JSON-Schema metadata — should be stripped
+        "properties": {
+            # Field literally named "title" — must survive.
+            "title": {
+                "type": "string",
+                "title": "Bug Title",  # nested metadata — should be stripped
+                "description": "Short bug title",
+            },
+            # Field literally named "const" — must also survive.
+            "const": {
+                "type": "string",
+                "description": "Whether the value is constant",
+            },
+            # Field with an x-prefix name — must also survive.
+            "x-flag": {
+                "type": "boolean",
+                "description": "A custom flag",
+            },
+            "severity": {
+                "type": "string",
+                "description": "low, medium, high, or critical",
+            },
+        },
+        "required": ["title", "const", "x-flag", "severity"],
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    # User-defined properties survive (they're keys inside `properties`,
+    # not JSON-Schema metadata on the schema itself).
+    assert set(sanitized["properties"].keys()) == {
+        "title",
+        "const",
+        "x-flag",
+        "severity",
+    }
+    assert sanitized["properties"]["title"]["type"] == "string"
+    assert sanitized["properties"]["title"]["description"] == "Short bug title"
+
+    # JSON-Schema metadata `title` inside the property's value still gets
+    # stripped — it's metadata there, not a user-defined key.
+    assert "title" not in sanitized["properties"]["title"]
+
+    # Top-level JSON-Schema metadata `title` is stripped.
+    assert sanitized.get("title") != "BugReport"
+
+    # `required` is preserved for all properties that survived.
+    assert set(sanitized["required"]) == {"title", "const", "x-flag", "severity"}
+
+
+def test_sanitize_schema_preserves_user_defined_definition_names():
+    """Definitions / $defs keyed by user-defined names must survive
+    sanitization — same logic as `properties` keys."""
+    schema = {
+        "type": "object",
+        "$defs": {
+            "title": {"type": "string"},  # user-defined definition name
+            "const": {"type": "string"},  # user-defined definition name
+        },
+        "definitions": {
+            "x-thing": {"type": "object"},  # user-defined definition name
+        },
+        "properties": {
+            "ref_a": {"$ref": "#/$defs/title"},
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert set(sanitized["$defs"].keys()) == {"title", "const"}
+    assert set(sanitized["definitions"].keys()) == {"x-thing"}
+
+
 def test_sanitize_schema_adds_default_array_items():
     """Arrays without items should get a default object items schema."""
     schema = {
@@ -479,6 +566,98 @@ def test_sanitize_schema_adds_default_array_items():
     sanitized = OCIUtils.sanitize_schema(schema)
 
     assert sanitized["properties"]["tags"]["items"] == {"type": "object"}
+
+
+def test_sanitize_schema_removes_extensions_and_const_recursively():
+    """OCI-incompatible x-* keys and non-string const should be stripped."""
+    schema = {
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "const": True,
+                            "x-visible": False,
+                        }
+                    },
+                },
+            },
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert "x-visible" not in sanitized
+    assert "const" not in sanitized["properties"]["version"]
+    assert sanitized["properties"]["version"]["enum"] == ["v1"]
+    assert "x-in" not in sanitized["properties"]["version"]
+    enabled = sanitized["properties"]["items"]["items"]["properties"]["enabled"]
+    assert "const" not in enabled
+    assert "enum" not in enabled
+    assert "x-visible" not in enabled
+
+
+@pytest.mark.requires("oci")
+def test_generic_json_schema_dict_strips_extensions_and_const():
+    """GenericProvider dict schemas should preserve string const as enum."""
+    provider = GenericProvider()
+    schema = {
+        "title": "Request",
+        "description": "Request schema",
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            }
+        },
+        "required": ["version"],
+    }
+
+    result = provider.convert_to_oci_tool(schema)
+    version = result.parameters["properties"]["version"]  # type: ignore[attr-defined]
+
+    assert "const" not in version
+    assert version["enum"] == ["v1"]
+    assert "x-in" not in version
+    assert "x-visible" not in str(result.parameters)  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires("oci")
+def test_cohere_json_schema_dict_strips_extensions_and_const():
+    """CohereProvider dict schemas should preserve string const as enum."""
+    provider = CohereProvider()
+    schema = {
+        "title": "Request",
+        "description": "Request schema",
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            }
+        },
+    }
+
+    result = provider.convert_to_oci_tool(schema)
+    version = result.parameter_definitions["version"]  # type: ignore[attr-defined]
+
+    assert "Allowed values: ['v1']" in version.description
+    assert "x-in" not in version.description
 
 
 def test_resolve_schema_refs_handles_circular_refs():

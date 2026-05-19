@@ -1,5 +1,6 @@
 """Unit tests for response_format feature."""
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -122,6 +123,59 @@ def test_with_structured_output_json_schema():
     structured_llm = llm.with_structured_output(schema=TestSchema, method="json_schema")
 
     # The structured LLM should be created without errors
+    assert structured_llm is not None
+
+
+@pytest.mark.requires("oci")
+def test_generic_provider_converts_json_schema_dict_tool():
+    """GenericProvider should accept JSON schema dicts as tool schemas."""
+    from langchain_oci.chat_models.providers.generic import GenericProvider
+
+    provider = GenericProvider()
+    schema = {
+        "title": "ToolSelectionResponse",
+        "description": "Tools selected for a request.",
+        "type": "object",
+        "properties": {
+            "selected_tool_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["selected_tool_names"],
+    }
+
+    tool = provider.convert_to_oci_tool(schema)
+
+    assert getattr(tool, "name") == "ToolSelectionResponse"
+    assert getattr(tool, "description") == "Tools selected for a request."
+    assert cast(Any, tool).parameters == {
+        "type": "object",
+        "properties": schema["properties"],
+        "required": ["selected_tool_names"],
+    }
+
+
+@pytest.mark.requires("oci")
+def test_generic_structured_output_accepts_json_schema_dict_default_method():
+    """Generic structured output should accept middleware-style JSON schemas."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+    schema = {
+        "title": "ToolSelectionResponse",
+        "description": "Tools selected for a request.",
+        "type": "object",
+        "properties": {
+            "selected_tool_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["selected_tool_names"],
+    }
+
+    structured_llm = llm.with_structured_output(schema)
+
     assert structured_llm is not None
 
 
