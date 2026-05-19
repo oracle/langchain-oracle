@@ -132,6 +132,17 @@ module = [
 ]
 ignore_missing_imports = true
 
+# `# type: ignore` markers in the chat_models test suites are needed under
+# langchain-core 0.3.x (the floor for Python 3.9) but become unused under
+# langchain-core 1.4+ on Python 3.10+. Disabling warn_unused_ignores for those
+# test modules lets both Python versions lint cleanly with the same source.
+[[tool.mypy.overrides]]
+module = [
+    "tests.unit_tests.chat_models.*",
+    "tests.integration_tests.chat_models.*",
+]
+warn_unused_ignores = false
+
 [tool.coverage.run]
 omit = ["tests/*"]
 
