@@ -50,6 +50,8 @@ from langchain_core.tools import tool
 
 from langchain_oci import ChatOCIGenAI, create_deepagents_agent
 
+from .conftest import adb_is_reachable, get_adb_config
+
 
 # Sample research tools for testing
 @tool
@@ -422,6 +424,79 @@ class TestOCIDeepAgentIntegration:
         )
         # Second invocation should include previous messages
         assert len(result2["messages"]) > len(result1["messages"])
+
+    @pytest.mark.skipif(
+        not adb_is_reachable(),
+        reason="ADB not configured/reachable; OracleSaver requires a live DB",
+    )
+    def test_research_with_oracle_checkpointer(
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
+    ) -> None:
+        """Deepagents persists state via the Oracle-backed LangGraph checkpointer.
+
+        Verifies that ``create_deepagents_agent(checkpointer=OracleSaver(...))``
+        round-trips thread state through Oracle ADB — i.e. that Elif Sema
+        Balcioglu's ``langgraph-oracledb`` ``OracleSaver`` plugs into the
+        deepagents helper end-to-end, so the same conversation continues
+        across separate ``invoke`` calls keyed by thread id.
+        """
+        import oracledb
+        from langgraph_oracledb.checkpoint.oracle import OracleSaver
+
+        from langchain_oci import create_deepagents_agent
+
+        adb = get_adb_config()
+        conn = oracledb.connect(
+            user=adb["user"],
+            password=adb["password"],
+            dsn=adb["dsn"],
+            config_dir=adb["wallet_location"],
+            wallet_location=adb["wallet_location"],
+            wallet_password=os.environ.get("ADB_WALLET_PASSWORD", adb["password"]),
+        )
+        try:
+            checkpointer = OracleSaver(conn)
+            checkpointer.setup()  # idempotent — creates checkpoint tables once
+
+            agent = create_deepagents_agent(
+                tools=[search_knowledge_base],
+                compartment_id=compartment_id,
+                service_endpoint=service_endpoint,
+                auth_type=auth_type,
+                auth_profile=auth_profile,
+                middleware=[],
+                checkpointer=checkpointer,
+                temperature=0.3,
+                max_tokens=1024,
+            )
+
+            # Use a unique thread id so this test can run in parallel against
+            # the shared ADB without colliding with prior runs.
+            thread_id = f"oracle_checkpointer_{os.getpid()}_{id(agent)}"
+            config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
+            result1 = agent.invoke(
+                {"messages": [HumanMessage(content="Search for quantum computing.")]},
+                config=config,
+            )
+            assert len(result1["messages"]) > 1
+
+            # Second invoke on the same thread_id should pick up the Oracle-
+            # persisted history rather than starting fresh.
+            result2 = agent.invoke(
+                {"messages": [HumanMessage(content="What did I just ask about?")]},
+                config=config,
+            )
+            assert len(result2["messages"]) > len(result1["messages"])
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # Sample research tasks for evaluation (based on Deepagents Bench patterns)
