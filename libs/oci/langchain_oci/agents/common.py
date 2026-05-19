@@ -225,6 +225,6 @@ def _langgraph_schema_fallback() -> Iterator[None]:
     try:
         yield
     finally:
-        lg_pydantic.create_model = original  # type: ignore[assignment]
+        lg_pydantic.create_model = original
         for mod in rebound:
             mod.create_model = original  # type: ignore[attr-defined]
