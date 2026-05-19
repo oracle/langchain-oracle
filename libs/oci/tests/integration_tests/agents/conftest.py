@@ -313,7 +313,6 @@ def _seed_adb_test_table():
 
     try:
         import oracledb
-
         from langchain_oracledb.vectorstores.oraclevs import (
             DistanceStrategy,
             OracleVS,
@@ -373,8 +372,7 @@ def _seed_adb_test_table():
     idx_name = f"{table}_TEXT_IDX"[:30]
     try:
         cur.execute(
-            f"CREATE INDEX {idx_name} ON {table} (TEXT) "
-            f"INDEXTYPE IS CTXSYS.CONTEXT"
+            f"CREATE INDEX {idx_name} ON {table} (TEXT) INDEXTYPE IS CTXSYS.CONTEXT"
         )
         conn.commit()
     except oracledb.DatabaseError:
