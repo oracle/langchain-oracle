@@ -24,19 +24,17 @@ from PIL import Image
 
 from langchain_oci import ChatOCIGenAI, encode_image
 
+# Vision model list is env-driven via conftest so deployments can swap
+# models without editing this test module. See conftest.py for env vars.
+from .conftest import vision_models
+
 # Test configuration
 COMPARTMENT_ID = os.environ.get("OCI_COMPARTMENT_ID")
 AUTH_PROFILE = os.environ.get("OCI_CONFIG_PROFILE", "API_KEY_AUTH")
 AUTH_TYPE = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
 SERVICE_ENDPOINT = "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
 
-# Vision models to test
-VISION_MODELS = [
-    "meta.llama-3.2-90b-vision-instruct",
-    "meta.llama-4-scout-17b-16e-instruct",
-    "google.gemini-2.5-flash",
-    "xai.grok-4",
-]
+VISION_MODELS = vision_models()
 
 
 def download_image(url: str) -> bytes:

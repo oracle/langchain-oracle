@@ -29,34 +29,14 @@ from langchain_oci.chat_models import ChatOCIGenAI
 # =============================================================================
 # Model Configurations
 # =============================================================================
+# Model lists are env-driven via conftest so deployments can swap models
+# without editing test source. See conftest.py for env-var documentation.
+from .conftest import cohere_models, grok_models, llama_models, openai_models
 
-# Meta Llama models
-LLAMA_MODELS = [
-    "meta.llama-4-maverick-17b-128e-instruct-fp8",
-    "meta.llama-4-scout-17b-16e-instruct",
-    "meta.llama-3.3-70b-instruct",
-    "meta.llama-3.1-70b-instruct",
-]
-
-# Cohere models
-COHERE_MODELS = [
-    "cohere.command-a-03-2025",
-    "cohere.command-r-plus-08-2024",
-    "cohere.command-r-08-2024",
-]
-
-# xAI Grok models
-GROK_MODELS = [
-    "xai.grok-4-fast-non-reasoning",
-    "xai.grok-3-fast",
-    "xai.grok-3-mini-fast",
-]
-
-# OpenAI models on OCI
-OPENAI_MODELS = [
-    "openai.gpt-oss-20b",
-    "openai.gpt-oss-120b",
-]
+LLAMA_MODELS = llama_models()
+COHERE_MODELS = cohere_models()
+GROK_MODELS = grok_models()
+OPENAI_MODELS = openai_models()
 
 # All models for comprehensive testing
 ALL_MODELS = LLAMA_MODELS[:2] + COHERE_MODELS[:1] + GROK_MODELS[:1]

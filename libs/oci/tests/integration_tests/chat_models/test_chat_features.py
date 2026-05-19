@@ -27,6 +27,10 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+# Model lists are env-driven via conftest so deployments can swap models
+# without editing this test module. See conftest.py for the env vars.
+from .conftest import reasoning_models, standard_models
+
 
 def get_config():
     """Get test configuration."""
@@ -436,11 +440,8 @@ def test_long_context_handling(llm):
 # Reasoning Content Extraction Tests
 # =============================================================================
 
-# Models known to return reasoning_content
-REASONING_MODELS = ["xai.grok-3-mini-fast", "openai.gpt-oss-120b"]
-
-# Models that do NOT return reasoning_content
-STANDARD_MODELS = ["meta.llama-3.3-70b-instruct", "cohere.command-r-08-2024"]
+REASONING_MODELS = reasoning_models()
+STANDARD_MODELS = standard_models()
 
 
 def _make_reasoning_llm(model_id: str) -> ChatOCIGenAI:
