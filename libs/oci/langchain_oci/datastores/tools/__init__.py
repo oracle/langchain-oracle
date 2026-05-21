@@ -32,6 +32,7 @@ from langchain_oci.datastores.tools.factory import create_datastore_tools
 
 # Tool implementations
 from langchain_oci.datastores.tools.get_document import GetDocumentTool
+from langchain_oci.datastores.tools.hybrid_search import HybridSearchTool
 from langchain_oci.datastores.tools.keyword_search import KeywordSearchTool
 
 # Input schemas
@@ -60,7 +61,8 @@ __all__ = [
     "StatsInput",
     # Tool implementations
     "SearchTool",
-    "KeywordSearchTool",
+    "HybridSearchTool",
+    "KeywordSearchTool",  # backwards compat
     "GetDocumentTool",
     "StatsTool",
     # Factory

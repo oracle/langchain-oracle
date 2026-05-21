@@ -460,6 +460,69 @@ class TestStoreSelector:
         assert "hr" in selector.stores
         assert "sales" in selector.stores
 
+    def test_default_store_used_as_fallback_when_no_store_beats_threshold(
+        self,
+    ) -> None:
+        """default_store wins when no store's cosine similarity beats the threshold.
+
+        Regression test for the routing bug where ``best_score`` started at
+        ``-1.0``, so the first store with any non-negative cosine similarity
+        replaced ``default_store`` — making the fallback unreachable in
+        practice. With ``score_threshold=0.0`` (the new default), every
+        non-positive score falls through and ``default_store`` is returned.
+        """
+        from langchain_oci.datastores.tools import StoreSelector
+
+        mock_embedding = MagicMock()
+        # Query embedding is orthogonal to both description embeddings,
+        # so cosine similarity is 0 for both stores. Neither beats the
+        # default threshold of 0.0 → fallback to default_store.
+        mock_embedding.embed_query.side_effect = [
+            [1.0, 0.0, 0.0],  # hr description
+            [0.0, 1.0, 0.0],  # sales description
+            [0.0, 0.0, 1.0],  # query — orthogonal to both
+        ]
+
+        hr_store = MagicMock()
+        hr_store.datastore_description = "hr"
+        sales_store = MagicMock()
+        sales_store.datastore_description = "sales"
+
+        selector = StoreSelector(
+            stores={"hr": hr_store, "sales": sales_store},
+            embedding_model=mock_embedding,
+            default_store="sales",
+        )
+
+        assert selector.route("unrelated query") == "sales"
+
+    def test_custom_score_threshold_overrides_fallback(self) -> None:
+        """A higher threshold can force the fallback even when scores are positive."""
+        from langchain_oci.datastores.tools import StoreSelector
+
+        mock_embedding = MagicMock()
+        # Both stores get a positive but modest similarity (~0.5).
+        mock_embedding.embed_query.side_effect = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.5, 0.5, 0.0],
+        ]
+
+        a = MagicMock()
+        a.datastore_description = "a"
+        b = MagicMock()
+        b.datastore_description = "b"
+
+        selector = StoreSelector(
+            stores={"a": a, "b": b},
+            embedding_model=mock_embedding,
+            default_store="a",
+            score_threshold=0.9,
+        )
+
+        # 0.5 < 0.9 → no store beats the threshold → fall back to default.
+        assert selector.route("ambiguous query") == "a"
+
 
 @pytest.mark.requires("oci")
 class TestCreateDatastoreTools:

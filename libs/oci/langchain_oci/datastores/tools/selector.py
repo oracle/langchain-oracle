@@ -18,7 +18,9 @@ class StoreSelector:
 
     When multiple datastores are available, the selector compares the query
     embedding against pre-computed embeddings of each store's description
-    to find the most relevant store.
+    to find the most relevant store. ``default_store`` is used as a fallback
+    when no store's cosine similarity to the query exceeds ``score_threshold``
+    (i.e., routing confidence is too low to commit to a specific store).
     """
 
     def __init__(
@@ -26,10 +28,12 @@ class StoreSelector:
         stores: dict[str, VectorDataStore],
         embedding_model: Any,
         default_store: str,
+        score_threshold: float = 0.0,
     ) -> None:
         self.stores = stores
         self.embedding_model = embedding_model
         self.default_store = default_store
+        self.score_threshold = score_threshold
         self._description_embeddings: dict[str, np.ndarray] = {}
         self._precompute_embeddings()
 
@@ -49,13 +53,19 @@ class StoreSelector:
         return float(np.dot(a, b) / (norm_a * norm_b))
 
     def route(self, query: str) -> str:
-        """Route a query to the most relevant store."""
+        """Route a query to the most relevant store.
+
+        Returns ``default_store`` when no store's similarity to the query
+        exceeds ``score_threshold`` (default ``0.0`` — i.e., any positive
+        cosine similarity wins; non-positive scores fall through to the
+        configured default).
+        """
         if len(self.stores) == 1:
             return next(iter(self.stores.keys()))
 
         query_embedding = np.array(self.embedding_model.embed_query(query))
         best_store = self.default_store
-        best_score = -1.0
+        best_score = self.score_threshold
 
         for name, description_embedding in self._description_embeddings.items():
             score = self._cosine_similarity(query_embedding, description_embedding)
