@@ -36,6 +36,7 @@ Example:
 # Tools
 from langchain_oci.datastores.tools import (
     GetDocumentTool,
+    HybridSearchTool,
     KeywordSearchTool,
     ResultFormatter,
     SearchResult,
@@ -60,7 +61,8 @@ __all__ = [
     "create_datastore_tools",
     # Tools - classes
     "SearchTool",
-    "KeywordSearchTool",
+    "HybridSearchTool",
+    "KeywordSearchTool",  # backwards compat
     "GetDocumentTool",
     "StatsTool",
     # Tool internals
