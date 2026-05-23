@@ -558,27 +558,17 @@ class TestOCIDeepAgentIntegration:
                 max_tokens=1024,
             )
 
-            thread_id = (
-                f"oracle_checkpointer_full_{os.getpid()}_{id(agent)}"
-            )
+            thread_id = f"oracle_checkpointer_full_{os.getpid()}_{id(agent)}"
             config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
             result1 = agent.invoke(
-                {
-                    "messages": [
-                        HumanMessage(content="Search for quantum computing.")
-                    ]
-                },
+                {"messages": [HumanMessage(content="Search for quantum computing.")]},
                 config=config,
             )
             assert len(result1["messages"]) > 1
 
             result2 = agent.invoke(
-                {
-                    "messages": [
-                        HumanMessage(content="What did I just ask about?")
-                    ]
-                },
+                {"messages": [HumanMessage(content="What did I just ask about?")]},
                 config=config,
             )
             assert len(result2["messages"]) > len(result1["messages"])
