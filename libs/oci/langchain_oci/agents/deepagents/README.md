@@ -88,7 +88,7 @@ How it works:
 1. The SDK embeds each store description once at initialization (for example, "SRE runbooks, incidents").
 2. For each query, it embeds the query and compares similarity with description
    embeddings using cosine similarity.
-3. The best-matching store is selected for `search`/`keyword_search`.
+3. The best-matching store is selected for the `search` (hybrid) tool.
 
 Guidance:
 - Keep descriptions short and content-focused (domain, document types, topics).
@@ -180,11 +180,10 @@ result = agent.invoke(
 print(result["messages"][-1].content)
 ```
 
-When `datastores=...` is provided, the agent gets:
-- `stats`
-- `search` (semantic)
-- `keyword_search`
-- `get_document`
+When `datastores=...` is provided, the agent gets three datastore tools:
+- `stats` — sizes and per-store metadata
+- `search` — `HybridSearchTool` (hybrid semantic + keyword retrieval)
+- `get_document` — fetch a full document by id
 
 ## Example: ADB Datastore + Custom Embeddings
 

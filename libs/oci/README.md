@@ -333,7 +333,7 @@ llm_with_tools = llm.bind_tools(
 
 ## Deepagents + Datastores (Integration Points)
 
-The deepagents integration in `langchain-oci` is built around datastore adapters (`ADB`, `OpenSearch`) and auto-generated tools (`stats`, `search`, `keyword_search`, `get_document`).
+The deepagents integration in `langchain-oci` is built around datastore adapters (`ADB`, `OpenSearch`) and auto-generated tools (`stats`, hybrid `search`, `get_document`).
 
 Full deepagents guide with embedded examples:
 `langchain_oci/agents/deepagents/README.md`
