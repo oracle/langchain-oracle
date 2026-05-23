@@ -1912,15 +1912,15 @@ tiktoken = ">=0.7.0,<1.0.0"
 
 [[package]]
 name = "langchain-oracledb"
-version = "1.2.0"
+version = "1.4.0"
 description = "An integration package connecting Oracle Database and LangChain"
 optional = true
 python-versions = "<4.0,>=3.9"
 groups = ["main"]
 markers = "extra == \"deepagents\""
 files = [
-    {file = "langchain_oracledb-1.2.0-py3-none-any.whl", hash = "sha256:bf17efec0047b81642390a653166ad82e41c57430d6ac2d7768da68cbe4b332b"},
-    {file = "langchain_oracledb-1.2.0.tar.gz", hash = "sha256:f6f08a67ae9bfadc5729bef125295948128230420745a693a86d10ac123811f5"},
+    {file = "langchain_oracledb-1.4.0-py3-none-any.whl", hash = "sha256:6261cbb12d50f21dbe9b8b186655d8db5bef2b66f81095131b5d135531d1ad12"},
+    {file = "langchain_oracledb-1.4.0.tar.gz", hash = "sha256:9e19938a853bb74f242a9b5117ded7bfec140947c9381f3cf52edde42f431d0e"},
 ]
 
 [package.dependencies]
@@ -2558,6 +2558,7 @@ description = "Fundamental package for array computing in Python"
 optional = false
 python-versions = ">=3.9"
 groups = ["main", "test"]
+markers = "python_version == \"3.9\""
 files = [
     {file = "numpy-2.0.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:51129a29dbe56f9ca83438b706e2e69a39892b5eda6cedcb6b0c9fdc9b0d3ece"},
     {file = "numpy-2.0.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:f15975dfec0cf2239224d80e32c3170b1d168335eaedee69da84fbe9f1f9cd04"},
@@ -2605,7 +2606,6 @@ files = [
     {file = "numpy-2.0.2-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:a46288ec55ebbd58947d31d72be2c63cbf839f0a63b49cb755022310792a3385"},
     {file = "numpy-2.0.2.tar.gz", hash = "sha256:883c987dee1880e2a864ab0dc9892292582510604156762362d9326444636e78"},
 ]
-markers = {main = "python_version == \"3.9\" and extra == \"deepagents\"", test = "python_version == \"3.9\""}
 
 [[package]]
 name = "numpy"
@@ -2614,6 +2614,7 @@ description = "Fundamental package for array computing in Python"
 optional = false
 python-versions = ">=3.10"
 groups = ["main", "test"]
+markers = "python_version >= \"3.10\" and python_version < \"3.13\""
 files = [
     {file = "numpy-2.2.6-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:b412caa66f72040e6d268491a59f2c43bf03eb6c96dd8f0307829feb7fa2b6fb"},
     {file = "numpy-2.2.6-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:8e41fd67c52b86603a91c1a505ebaef50b3314de0213461c7a6e99c9a3beff90"},
@@ -2671,7 +2672,6 @@ files = [
     {file = "numpy-2.2.6-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:d042d24c90c41b54fd506da306759e06e568864df8ec17ccc17e9e884634fd00"},
     {file = "numpy-2.2.6.tar.gz", hash = "sha256:e29554e2bef54a90aa5cc07da6ce955accb83f21ab5de01a62c8478897b264fd"},
 ]
-markers = {main = "python_version < \"3.13\" and extra == \"deepagents\" and python_version >= \"3.10\"", test = "python_version >= \"3.10\" and python_version < \"3.13\""}
 
 [[package]]
 name = "numpy"
@@ -2680,6 +2680,7 @@ description = "Fundamental package for array computing in Python"
 optional = false
 python-versions = ">=3.11"
 groups = ["main", "test"]
+markers = "python_version >= \"3.13\""
 files = [
     {file = "numpy-2.3.4-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:e78aecd2800b32e8347ce49316d3eaf04aed849cd5b38e0af39f829a4e59f5eb"},
     {file = "numpy-2.3.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:7fd09cc5d65bda1e79432859c40978010622112e9194e581e3415a3eccc7f43f"},
@@ -2756,7 +2757,6 @@ files = [
     {file = "numpy-2.3.4-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:81b3a59793523e552c4a96109dde028aa4448ae06ccac5a76ff6532a85558a7f"},
     {file = "numpy-2.3.4.tar.gz", hash = "sha256:a7d018bfedb375a8d979ac758b120ba846a7fe764911a64465fd87b8729f4a6a"},
 ]
-markers = {main = "python_version >= \"3.13\" and extra == \"deepagents\"", test = "python_version >= \"3.13\""}
 
 [[package]]
 name = "oci"
@@ -5601,4 +5601,4 @@ deepagents = ["deepagents", "langchain-oracledb", "langgraph-oracledb", "opensea
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4.0"
-content-hash = "309a91b9710410a0709945877a87e43ddf49c782493509b8a1e745b0bda6750f"
+content-hash = "9aebd96c8d65d23baf65a40c26d2bc17cf75bf1d54b412ba04afc32fb5a557b6"

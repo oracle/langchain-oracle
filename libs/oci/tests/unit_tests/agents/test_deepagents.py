@@ -121,6 +121,37 @@ class TestCreateDeepagentsAgent:
 
                     mock_create_agent.assert_called_once()
 
+    def test_lightweight_path_does_not_require_deepagents_installed(self) -> None:
+        """The lightweight (datastore / middleware=[]) path must work without
+        the ``deepagents`` package installed. The prerequisite check is only
+        relevant when we actually route to ``create_deep_agent``.
+        """
+        from langchain_oci.agents.deepagents.agent import create_deepagents_agent
+
+        original_deepagents = sys.modules.get("deepagents")
+        # Force ImportError on `import deepagents` for the duration of the call.
+        sys.modules["deepagents"] = None  # type: ignore[assignment]
+        try:
+            with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test-compartment"}):
+                with patch(
+                    "langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"
+                ) as mock_llm_class:
+                    with patch("langchain.agents.create_agent") as mock_create_agent:
+                        mock_llm_class.return_value = MagicMock()
+                        mock_create_agent.return_value = MagicMock()
+
+                        create_deepagents_agent(
+                            tools=[dummy_tool],
+                            middleware=[],
+                        )
+
+                        mock_create_agent.assert_called_once()
+        finally:
+            if original_deepagents is not None:
+                sys.modules["deepagents"] = original_deepagents
+            else:
+                sys.modules.pop("deepagents", None)
+
     def test_backend_forces_deep_agent_path(self) -> None:
         """Backend param should force deep agent path even with datastores."""
         from langchain_oci.agents.deepagents.agent import create_deepagents_agent
@@ -185,26 +216,33 @@ class TestCreateDeepagentsAgent:
                     create_deepagents_agent(tools=[dummy_tool])
 
     def test_raises_without_deepagents_installed(self) -> None:
-        """Test that ImportError is raised when deepagents not installed."""
+        """Test that ImportError is raised when deepagents not installed and the
+        full deep-agent path is requested. The prerequisite check now runs
+        inside ``_build_deep`` rather than at the top of
+        ``create_deepagents_agent``, so we have to drive the call into that
+        path (no ``middleware=[]`` and no datastores) for the import to be
+        attempted.
+        """
         from langchain_oci.agents.deepagents.agent import create_deepagents_agent
 
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
-            # Remove deepagents from sys.modules to simulate not installed
-            original = sys.modules.get("deepagents")
-            if "deepagents" in sys.modules:
-                del sys.modules["deepagents"]
-
-            # Make import fail by setting to None (intentional for testing)
-            sys.modules["deepagents"] = None  # type: ignore[assignment]
-
-            try:
-                with pytest.raises(ImportError, match="deepagents"):
-                    create_deepagents_agent(tools=[dummy_tool])
-            finally:
-                if original is not None:
-                    sys.modules["deepagents"] = original
-                elif "deepagents" in sys.modules:
+            with patch("langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"):
+                # Remove deepagents from sys.modules to simulate not installed
+                original = sys.modules.get("deepagents")
+                if "deepagents" in sys.modules:
                     del sys.modules["deepagents"]
+
+                # Make import fail by setting to None (intentional for testing)
+                sys.modules["deepagents"] = None  # type: ignore[assignment]
+
+                try:
+                    with pytest.raises(ImportError, match="deepagents"):
+                        create_deepagents_agent(tools=[dummy_tool])
+                finally:
+                    if original is not None:
+                        sys.modules["deepagents"] = original
+                    elif "deepagents" in sys.modules:
+                        del sys.modules["deepagents"]
 
     def test_passes_system_prompt(self) -> None:
         """Test that system_prompt is passed through as-is."""
