@@ -213,8 +213,6 @@ def create_deepagents_agent(
         ...     compartment_id="ocid1.compartment...",
         ... )
     """
-    _check_deepagents_prerequisites()
-
     config = DeepagentsConfig(
         model_id=model_id,
         compartment_id=compartment_id,
@@ -325,12 +323,11 @@ def _build_deep(
     tools: list[Any],
 ) -> Any:
     """Build a full deep agent."""
-    try:
-        from deepagents import create_deep_agent
-    except ImportError as ex:
-        raise ImportError(
-            "deepagents required. Install with: pip install deepagents"
-        ) from ex
+    # The deepagents package is only required for the full path; the
+    # lightweight (datastore / empty-middleware) path uses langchain's
+    # create_agent and does not need it installed.
+    _check_deepagents_prerequisites()
+    from deepagents import create_deep_agent
 
     agent_kwargs = {
         "model": llm,
