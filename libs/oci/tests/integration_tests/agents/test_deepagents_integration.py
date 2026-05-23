@@ -498,6 +498,96 @@ class TestOCIDeepAgentIntegration:
             except Exception:
                 pass
 
+    @pytest.mark.skipif(
+        not adb_is_reachable(),
+        reason="ADB not configured/reachable; OracleSaver requires a live DB",
+    )
+    @pytest.mark.skipif(
+        skip_if_no_deepagents(),
+        reason="deepagents package not installed",
+    )
+    def test_research_with_oracle_checkpointer_full_deep_path(
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
+    ) -> None:
+        """OracleSaver checkpointer on the *full* ``deepagents.create_deep_agent``
+        path.
+
+        ``test_research_with_oracle_checkpointer`` exercises the lightweight
+        path (it passes ``middleware=[]``, which routes through
+        ``langchain.agents.create_agent``). That confirms LangGraph's generic
+        checkpointer wiring, but it does NOT prove that Oracle-backed
+        checkpointing works through the deepagents-specific graph (planning
+        middleware, filesystem state, subagent fan-out, etc.).
+
+        This variant omits ``middleware=`` so ``create_deepagents_agent``
+        routes through ``deepagents.create_deep_agent`` and the OracleSaver
+        has to checkpoint the full deepagents state graph between turns.
+        """
+        import oracledb
+        from langgraph_oracledb.checkpoint.oracle import OracleSaver
+
+        from langchain_oci import create_deepagents_agent
+
+        adb = get_adb_config()
+        conn = oracledb.connect(
+            user=adb["user"],
+            password=adb["password"],
+            dsn=adb["dsn"],
+            config_dir=adb["wallet_location"],
+            wallet_location=adb["wallet_location"],
+            wallet_password=os.environ.get("ADB_WALLET_PASSWORD", adb["password"]),
+        )
+        try:
+            checkpointer = OracleSaver(conn)
+            checkpointer.setup()  # idempotent
+
+            # No ``middleware=[]`` -> full deepagents path
+            # (deepagents.create_deep_agent).
+            agent = create_deepagents_agent(
+                tools=[search_knowledge_base],
+                compartment_id=compartment_id,
+                service_endpoint=service_endpoint,
+                auth_type=auth_type,
+                auth_profile=auth_profile,
+                checkpointer=checkpointer,
+                temperature=0.3,
+                max_tokens=1024,
+            )
+
+            thread_id = (
+                f"oracle_checkpointer_full_{os.getpid()}_{id(agent)}"
+            )
+            config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
+            result1 = agent.invoke(
+                {
+                    "messages": [
+                        HumanMessage(content="Search for quantum computing.")
+                    ]
+                },
+                config=config,
+            )
+            assert len(result1["messages"]) > 1
+
+            result2 = agent.invoke(
+                {
+                    "messages": [
+                        HumanMessage(content="What did I just ask about?")
+                    ]
+                },
+                config=config,
+            )
+            assert len(result2["messages"]) > len(result1["messages"])
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 
 # Sample research tasks for evaluation (based on Deepagents Bench patterns)
 RESEARCH_TASKS = [
