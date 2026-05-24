@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 oraclevs.py
@@ -53,10 +53,12 @@ from langchain_core.vectorstores import VectorStore
 
 from ..embeddings import OracleEmbeddings
 from .utils import (
+    _aclear_session_proxy,
     _aget_connection,
     _ahandle_exceptions,
     _aindex_exists,
     _atable_exists,
+    _clear_session_proxy,
     _get_connection,
     _get_index_name,
     _handle_exceptions,
@@ -71,6 +73,8 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 INTERNAL_ID_KEY = "__orcl_internal_doc_id"
+
+_SIMPLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
 
 
 LOGICAL_MAP = {
@@ -193,6 +197,40 @@ def _validate_metadata_key(metadata_key: str) -> None:
             "Only letters, numbers, underscores, nesting via '.', "
             "and array wildcards '[*]' are allowed."
         )
+
+
+def _validate_int_param(
+    config: dict[str, Any],
+    key: str,
+    min_value: int,
+    max_value: Optional[int] = None,
+) -> None:
+    if key not in config:
+        return
+
+    value = config[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer.")
+    if value < min_value:
+        raise ValueError(f"{key} must be at least {min_value}.")
+    if max_value is not None and value > max_value:
+        raise ValueError(f"{key} must be at most {max_value}.")
+
+
+def _validate_index_type(config: dict[str, Any], expected_type: str) -> None:
+    if "idx_type" not in config:
+        return
+
+    idx_type = config["idx_type"]
+    if not isinstance(idx_type, str) or idx_type.upper() != expected_type:
+        raise ValueError(f"idx_type must be {expected_type}.")
+    config["idx_type"] = expected_type
+
+
+def _validate_vector_index_common(config: dict[str, Any]) -> None:
+    config["idx_name"] = _quote_indentifier(config["idx_name"])
+    _validate_int_param(config, "accuracy", 1, 100)
+    _validate_int_param(config, "parallel", 1)
 
 
 def _generate_condition(
@@ -491,8 +529,17 @@ def _get_hnsw_index_ddl(
             if key not in defaults:
                 raise ValueError(f"Invalid parameter: {key}")
     else:
-        config = defaults
+        config = defaults.copy()
         config["idx_name"] = _get_index_name(str(config["idx_name"]))
+
+    if (
+        "neighbors" in config or "efConstruction" in config
+    ) and "idx_type" not in config:
+        config["idx_type"] = defaults["idx_type"]
+    _validate_index_type(config, "HNSW")
+    _validate_int_param(config, "neighbors", 2, 2048)
+    _validate_int_param(config, "efConstruction", 1, 65535)
+    _validate_vector_index_common(config)
 
     # base SQL statement
     idx_name = config["idx_name"]
@@ -586,8 +633,14 @@ def _get_ivf_index_ddl(
             if key not in defaults:
                 raise ValueError(f"Invalid parameter: {key}")
     else:
-        config = defaults
+        config = defaults.copy()
         config["idx_name"] = _get_index_name(str(config["idx_name"]))
+
+    if "neighbor_part" in config and "idx_type" not in config:
+        config["idx_type"] = defaults["idx_type"]
+    _validate_index_type(config, "IVF")
+    _validate_int_param(config, "neighbor_part", 1, 10000000)
+    _validate_vector_index_common(config)
 
     # base SQL statement
     idx_name = config["idx_name"]
@@ -874,8 +927,13 @@ def _get_similarity_search_query(
     if filter:
         where_clause = _generate_where_clause(filter, bind_variables)
 
+    # `VECTOR_INDEX_TRANSFORM` keeps the vector index in the plan even when a
+    # JSON Search Index is also defined on the table. Without the hint, when
+    # both indexes exist the optimizer picks the JSON Search Index for the
+    # `JSON_EXISTS` filter and skips the vector index entirely, which kills
+    # similarity-search latency. See issue #130.
     query = f"""
-    SELECT 
+    SELECT /*+ VECTOR_INDEX_TRANSFORM({table_name}) */
         text,
         metadata,
         vector_distance(embedding, :embedding,
@@ -987,11 +1045,11 @@ class OracleVS(VectorStore):
 
             from langchain_oracledb.vectorstores import OracleVS
             from langchain.embeddings.openai import OpenAIEmbeddings
+            import os
             import oracledb
 
-            with oracledb.connect(user = user, password = pwd, dsn = dsn) as
-            connection:
-                print ("Database version:", connection.version)
+            with oracledb.connect(dsn=os.environ["ORACLE_DB_DSN"]) as connection:
+                print("Database version:", connection.version)
                 embeddings = OpenAIEmbeddings()
                 query = ""
                 vectors = OracleVS(connection, embeddings, table_name, query)
@@ -1183,6 +1241,150 @@ class OracleVS(VectorStore):
         else:
             return self.embedding_function(text)
 
+    @staticmethod
+    def _prepare_texts_from_documents(
+        documents: List[Document],
+        text_splitter: Optional[Any] = None,
+        add_chunk_metadata: bool = True,
+    ) -> Tuple[List[str], List[dict], List[int]]:
+        """Prepare texts and metadatas for insertion.
+
+        If `text_splitter` is provided, each document is split and every chunk
+        is returned as a separate text row.
+        """
+        if text_splitter is not None and not hasattr(text_splitter, "split_text"):
+            raise ValueError(
+                "text_splitter must provide a split_text(text: str) method."
+            )
+
+        texts: List[str] = []
+        metadatas: List[dict] = []
+        source_doc_indices: List[int] = []
+
+        for doc_index, doc in enumerate(documents):
+            base_metadata = dict(doc.metadata) if doc.metadata else {}
+
+            if text_splitter is None:
+                texts.append(doc.page_content)
+                metadatas.append(base_metadata)
+                source_doc_indices.append(doc_index)
+                continue
+
+            chunks = text_splitter.split_text(doc.page_content)
+            for chunk_index, chunk in enumerate(chunks):
+                chunk_metadata = dict(base_metadata)
+                if add_chunk_metadata:
+                    chunk_metadata["source_doc_index"] = doc_index
+                    chunk_metadata["chunk_index"] = chunk_index
+                texts.append(chunk)
+                metadatas.append(chunk_metadata)
+                source_doc_indices.append(doc_index)
+
+        return texts, metadatas, source_doc_indices
+
+    @_handle_exceptions
+    def add_documents(self, documents: List[Document], **kwargs: Any) -> List[str]:
+        """Add documents to the vector store.
+
+        Optional kwargs:
+            text_splitter: splitter object with split_text(str) -> List[str]
+            add_chunk_metadata: when splitting, adds source_doc_index/chunk_index
+            ids: optional IDs aligned to the input documents
+        """
+        text_splitter = kwargs.pop("text_splitter", None)
+        add_chunk_metadata = kwargs.pop("add_chunk_metadata", True)
+        ids = kwargs.pop("ids", None)
+
+        if ids is None:
+            doc_ids = [doc.id for doc in documents]
+            if any(doc_ids):
+                ids = doc_ids
+
+        if ids is not None and len(ids) != len(documents):
+            raise ValueError(
+                f"Length mismatch: 'ids' has {len(ids)} items, "
+                f"but 'documents' has {len(documents)} items."
+            )
+
+        texts, metadatas, source_doc_indices = self._prepare_texts_from_documents(
+            documents,
+            text_splitter=text_splitter,
+            add_chunk_metadata=add_chunk_metadata,
+        )
+
+        if ids is not None:
+            if text_splitter is None:
+                return self.add_texts(
+                    texts=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                    **kwargs,
+                )
+
+            id_counts: Dict[int, int] = {}
+            chunk_ids: List[str] = []
+            for doc_index in source_doc_indices:
+                current_idx = id_counts.get(doc_index, 0)
+                chunk_ids.append(f"{ids[doc_index]}#chunk-{current_idx}")
+                id_counts[doc_index] = current_idx + 1
+
+            return self.add_texts(
+                texts=texts,
+                metadatas=metadatas,
+                ids=chunk_ids,
+                **kwargs,
+            )
+
+        return self.add_texts(texts=texts, metadatas=metadatas, **kwargs)
+
+    @_ahandle_exceptions
+    async def aadd_documents(
+        self, documents: List[Document], **kwargs: Any
+    ) -> List[str]:
+        """Async version of add_documents with optional chunking."""
+        text_splitter = kwargs.pop("text_splitter", None)
+        add_chunk_metadata = kwargs.pop("add_chunk_metadata", True)
+        ids = kwargs.pop("ids", None)
+
+        if ids is None:
+            doc_ids = [doc.id for doc in documents]
+            if any(doc_ids):
+                ids = doc_ids
+
+        if ids is not None and len(ids) != len(documents):
+            raise ValueError(
+                f"Length mismatch: 'ids' has {len(ids)} items, "
+                f"but 'documents' has {len(documents)} items."
+            )
+
+        texts, metadatas, source_doc_indices = self._prepare_texts_from_documents(
+            documents,
+            text_splitter=text_splitter,
+            add_chunk_metadata=add_chunk_metadata,
+        )
+
+        if ids is not None:
+            if text_splitter is None:
+                return await self.aadd_texts(
+                    texts=texts, metadatas=metadatas, ids=ids, **kwargs
+                )
+
+            id_counts: Dict[int, int] = {}
+            chunk_ids: List[str] = []
+            for doc_index in source_doc_indices:
+                current_idx = id_counts.get(doc_index, 0)
+                chunk_ids.append(f"{ids[doc_index]}#chunk-{current_idx}")
+                id_counts[doc_index] = current_idx + 1
+
+            return await self.aadd_texts(
+                texts=texts,
+                metadatas=metadatas,
+                ids=chunk_ids,
+                **kwargs,
+            )
+
+        return await self.aadd_texts(texts=texts, metadatas=metadatas, **kwargs)
+
     @_handle_exceptions
     def add_texts(
         self,
@@ -1297,31 +1499,56 @@ class OracleVS(VectorStore):
                             docs,
                             batcherrors=True,
                         )
+                        batch_errors = cursor.getbatcherrors() or []
 
                     else:
-                        if self.embeddings.proxy:
-                            cursor.execute(
-                                "begin utl_http.set_proxy(:proxy); end;",
-                                proxy=self.embeddings.proxy,
+                        proxy_was_set = False
+                        try:
+                            if self.embeddings.proxy:
+                                cursor.execute(
+                                    "begin utl_http.set_proxy(:proxy); end;",
+                                    proxy=self.embeddings.proxy,
+                                )
+                                proxy_was_set = True
+
+                            cursor.setinputsizes(
+                                meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                             )
 
-                        cursor.setinputsizes(
-                            meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                        )
-
-                        cursor.executemany(
-                            selected_query.format(
-                                table_name=self.table_name,
-                                values=(
-                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                    ":meta, :text"
+                            cursor.executemany(
+                                selected_query.format(
+                                    table_name=self.table_name,
+                                    values=(
+                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                        ":meta, :text"
+                                    ),
                                 ),
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
+                                docs,
+                                batcherrors=True,
+                            )
+                            batch_errors = cursor.getbatcherrors() or []
+                        except BaseException:
+                            if proxy_was_set:
+                                try:
+                                    _clear_session_proxy(cursor)
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to clear Oracle session proxy after "
+                                        "add_texts failed"
+                                    )
+                            raise
+                        else:
+                            if proxy_was_set:
+                                try:
+                                    _clear_session_proxy(cursor)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to clear Oracle session proxy after "
+                                        "add_texts succeeded",
+                                        exc_info=True,
+                                    )
 
-                    for error in cursor.getbatcherrors():
+                    for error in batch_errors:
                         error_indices.append(error.offset)
                         logger.warning(
                             "Could not insert row at offset %s due to error: %s",
@@ -1441,30 +1668,55 @@ class OracleVS(VectorStore):
                             docs,
                             batcherrors=True,
                         )
+                        batch_errors = cursor.getbatcherrors() or []
                     else:
-                        if self.embeddings.proxy:
-                            await cursor.execute(
-                                "begin utl_http.set_proxy(:proxy); end;",
-                                proxy=self.embeddings.proxy,
+                        proxy_was_set = False
+                        try:
+                            if self.embeddings.proxy:
+                                await cursor.execute(
+                                    "begin utl_http.set_proxy(:proxy); end;",
+                                    proxy=self.embeddings.proxy,
+                                )
+                                proxy_was_set = True
+
+                            cursor.setinputsizes(
+                                meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
                             )
 
-                        cursor.setinputsizes(
-                            meta=oracledb.DB_TYPE_JSON, param=oracledb.DB_TYPE_JSON
-                        )
-
-                        await cursor.executemany(
-                            selected_query.format(
-                                table_name=self.table_name,
-                                values=(
-                                    ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                    ":meta, :text"
+                            await cursor.executemany(
+                                selected_query.format(
+                                    table_name=self.table_name,
+                                    values=(
+                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
+                                        ":meta, :text"
+                                    ),
                                 ),
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
+                                docs,
+                                batcherrors=True,
+                            )
+                            batch_errors = cursor.getbatcherrors() or []
+                        except BaseException:
+                            if proxy_was_set:
+                                try:
+                                    await _aclear_session_proxy(cursor)
+                                except Exception:
+                                    logger.exception(
+                                        "Failed to clear Oracle session proxy after "
+                                        "aadd_texts failed"
+                                    )
+                            raise
+                        else:
+                            if proxy_was_set:
+                                try:
+                                    await _aclear_session_proxy(cursor)
+                                except Exception:
+                                    logger.warning(
+                                        "Failed to clear Oracle session proxy after "
+                                        "aadd_texts succeeded",
+                                        exc_info=True,
+                                    )
 
-                    for error in cursor.getbatcherrors():
+                    for error in batch_errors:
                         error_indices.append(error.offset)
                         logger.warning(
                             "Could not insert row at offset %s due to error: %s",

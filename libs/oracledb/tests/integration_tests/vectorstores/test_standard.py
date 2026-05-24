@@ -1,3 +1,4 @@
+import os
 from collections.abc import Generator
 from typing import AsyncGenerator
 
@@ -11,9 +12,9 @@ from langchain_oracledb import OracleVS
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.vectorstores.oraclevs import adrop_table_purge, drop_table_purge
 
-username = ""
-password = ""
-dsn = ""
+username = os.environ.get("VECDB_USER")
+password = os.environ.get("VECDB_PASS")
+dsn = os.environ.get("VECDB_HOST")
 
 try:
     oracledb.connect(user=username, password=password, dsn=dsn)
@@ -31,7 +32,7 @@ class TestOracleVSStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:  # type: ignore[override]
+    def vectorstore(self) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore for unit tests."""
         conn = oracledb.connect(user=username, password=password, dsn=dsn)
         drop_table_purge(conn, "standard_tests")
@@ -51,7 +52,7 @@ class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:  # type: ignore[override]
+    def vectorstore(self) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore for unit tests."""
         conn = oracledb.connect(user=username, password=password, dsn=dsn)
         drop_table_purge(conn, "standard_tests")
@@ -89,7 +90,10 @@ class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        try:
+            yield store
+        finally:
+            await conn.close()
 
 
 class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
@@ -117,4 +121,8 @@ class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
             table_name="standard_tests",
             mutate_on_duplicate=True,
         )
-        yield store
+        try:
+            yield store
+        finally:
+            conn_syn.close()
+            await conn.close()

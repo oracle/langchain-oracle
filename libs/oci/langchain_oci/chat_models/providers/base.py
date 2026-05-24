@@ -125,6 +125,11 @@ class Provider(ABC):
         ...
 
     @property
+    def supports_tool_choice(self) -> bool:
+        """Whether this provider supports the tool_choice parameter."""
+        return False
+
+    @property
     def supports_parallel_tool_calls(self) -> bool:
         """Whether this provider supports parallel tool calling.
 

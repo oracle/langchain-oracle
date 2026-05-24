@@ -32,13 +32,27 @@ def mock_signer():
     return signer
 
 
-@pytest.fixture
-def llm(mock_oci_client, mock_signer):
-    """Create a ChatOCIGenAI instance with mocked dependencies."""
-    # Set up base_client with signer (as accessed by async mixin)
+def _setup_base_client(mock_oci_client, mock_signer):
+    """Wire up a mock base_client with real sanitize_for_serialization."""
+    from oci.base_client import BaseClient
+
     mock_oci_client.base_client = MagicMock()
     mock_oci_client.base_client.signer = mock_signer
     mock_oci_client.base_client.config = {}
+    # Use the real serializer so unit tests catch serialization bugs
+    mock_oci_client.base_client.sanitize_for_serialization = (
+        BaseClient.sanitize_for_serialization.__get__(
+            mock_oci_client.base_client, type(mock_oci_client.base_client)
+        )
+    )
+    # Required by sanitize_for_serialization for type resolution
+    mock_oci_client.base_client.complex_type_mappings = {}
+
+
+@pytest.fixture
+def llm(mock_oci_client, mock_signer):
+    """Create a ChatOCIGenAI instance with mocked dependencies."""
+    _setup_base_client(mock_oci_client, mock_signer)
 
     llm = ChatOCIGenAI(
         model_id="meta.llama-3-70b-instruct",
@@ -52,9 +66,7 @@ def llm(mock_oci_client, mock_signer):
 @pytest.fixture
 def llm_cohere(mock_oci_client, mock_signer):
     """Create a Cohere ChatOCIGenAI instance with mocked dependencies."""
-    mock_oci_client.base_client = MagicMock()
-    mock_oci_client.base_client.signer = mock_signer
-    mock_oci_client.base_client.config = {}
+    _setup_base_client(mock_oci_client, mock_signer)
 
     llm = ChatOCIGenAI(
         model_id="cohere.command-r-plus",
@@ -391,63 +403,98 @@ class TestAsyncResponseParsing:
         assert usage["total_tokens"] == 150
 
 
-class TestAsyncSupportHelpers:
-    """Tests for async support helper functions."""
+class TestAsyncSerializationPreservesToolSchemas:
+    """Tests that async serialization preserves user-defined tool parameter names.
 
-    def test_snake_to_camel_simple(self):
-        """Test snake_case to camelCase conversion."""
-        from langchain_oci.common.async_support import _snake_to_camel
+    Regression tests for issue #188: the previous approach (to_dict +
+    _convert_keys_to_camel) converted snake_case tool argument names to
+    camelCase, breaking tool execution.  The fix uses the SDK's own
+    ``sanitize_for_serialization`` so sync and async serialize identically.
+    """
 
-        assert _snake_to_camel("hello_world") == "helloWorld"
-        assert _snake_to_camel("model_id") == "modelId"
-        assert _snake_to_camel("is_stream") == "isStream"
+    def test_generic_tool_parameters_preserved(self, llm):
+        """JSON Schema property names inside tool 'parameters' are preserved."""
+        from langchain_core.tools import StructuredTool
 
-    def test_snake_to_camel_single_word(self):
-        """Test conversion with single word (no underscore)."""
-        from langchain_oci.common.async_support import _snake_to_camel
+        def websearch(query_web: str, max_results: int = 5) -> str:
+            """Do websearch."""
+            return "ok"
 
-        assert _snake_to_camel("hello") == "hello"
-        assert _snake_to_camel("model") == "model"
+        tool = StructuredTool.from_function(
+            func=websearch, name="websearch", description="do websearch"
+        )
+        oci_tool = llm._provider.convert_to_oci_tool(tool)
+        request_data = llm._prepare_async_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
+        props = request_data["chat_request_dict"]["tools"][0]["parameters"][
+            "properties"
+        ]
+        assert "query_web" in props, f"got {list(props.keys())}"
+        assert "max_results" in props
+        assert "queryWeb" not in props
+        # OCI structural keys must be camelCase
+        assert "apiFormat" in request_data["chat_request_dict"]
 
-    def test_snake_to_camel_multiple_underscores(self):
-        """Test conversion with multiple underscores."""
-        from langchain_oci.common.async_support import _snake_to_camel
+    def test_cohere_v1_parameter_definitions_preserved(self, llm_cohere):
+        """Cohere V1: user-defined parameter names preserved."""
+        from langchain_core.tools import StructuredTool
 
-        assert _snake_to_camel("max_output_tokens") == "maxOutputTokens"
-        assert _snake_to_camel("a_b_c_d") == "aBCD"
+        def websearch(query_web: str) -> str:
+            """Do websearch."""
+            return "ok"
 
-    def test_convert_keys_to_camel_dict(self):
-        """Test recursive key conversion in dicts."""
-        from langchain_oci.common.async_support import _convert_keys_to_camel
+        tool = StructuredTool.from_function(
+            func=websearch, name="websearch", description="do websearch"
+        )
+        oci_tool = llm_cohere._provider.convert_to_oci_tool(tool)
+        request_data = llm_cohere._prepare_async_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
+        pd = request_data["chat_request_dict"]["tools"][0]["parameterDefinitions"]
+        assert "query_web" in pd
+        assert "queryWeb" not in pd
 
-        input_dict = {
-            "model_id": "test",
-            "is_stream": True,
-            "nested_object": {"inner_key": "value"},
-        }
-        expected = {
-            "modelId": "test",
-            "isStream": True,
-            "nestedObject": {"innerKey": "value"},
-        }
-        assert _convert_keys_to_camel(input_dict) == expected
+    def test_sync_async_produce_identical_json(self, llm):
+        """Sync and async paths produce the same serialized request."""
+        from langchain_core.tools import StructuredTool
 
-    def test_convert_keys_to_camel_list(self):
-        """Test key conversion in lists."""
-        from langchain_oci.common.async_support import _convert_keys_to_camel
+        def lookup(departure_city: str, arrival_city: str) -> str:
+            """Lookup flights."""
+            return "ok"
 
-        input_list = [{"item_one": 1}, {"item_two": 2}]
-        expected = [{"itemOne": 1}, {"itemTwo": 2}]
-        assert _convert_keys_to_camel(input_list) == expected
+        tool = StructuredTool.from_function(
+            func=lookup, name="lookup", description="lookup"
+        )
+        oci_tool = llm._provider.convert_to_oci_tool(tool)
 
-    def test_convert_keys_to_camel_primitives(self):
-        """Test that primitives are returned unchanged."""
-        from langchain_oci.common.async_support import _convert_keys_to_camel
+        # Async path: _prepare_async_request
+        async_data = llm._prepare_async_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
 
-        assert _convert_keys_to_camel("hello") == "hello"
-        assert _convert_keys_to_camel(42) == 42
-        assert _convert_keys_to_camel(None) is None
-        assert _convert_keys_to_camel(True) is True
+        # Sync path: SDK's sanitize_for_serialization on same objects
+        chat_details = llm._prepare_request(
+            messages=[HumanMessage(content="test")],
+            stop=None,
+            stream=False,
+            tools=[oci_tool],
+        )
+        serialize = llm.client.base_client.sanitize_for_serialization
+        sync_chat = serialize(chat_details.chat_request)
+        sync_serving = serialize(chat_details.serving_mode)
+
+        assert async_data["chat_request_dict"] == sync_chat
+        assert async_data["serving_mode_dict"] == sync_serving
 
 
 class TestAsyncClientErrorHandling:

@@ -6,7 +6,7 @@
 import json
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from pydantic import BaseModel
@@ -135,17 +135,63 @@ class OCIUtils:
         return obj
 
     @staticmethod
+    def overlay_schema_extras(
+        schema: Dict[str, Any],
+        args_schema: Union[type, Dict[str, Any]],
+    ) -> None:
+        """Overlay ``json_schema_extra`` constraints from ``args_schema`` onto a schema.
+
+        ``tool_call_schema.model_json_schema()`` drops ``json_schema_extra`` (enum,
+        format, pattern, etc.). This restores those constraints from the original
+        ``args_schema`` field definitions for fields present in both.
+
+        Mutates ``schema`` in place.
+        """
+        properties = schema.get("properties", {})
+        if not properties:
+            return
+        fields = getattr(args_schema, "model_fields", {})
+        for field_name, prop in properties.items():
+            field_info = fields.get(field_name)
+            if field_info is None:
+                continue
+            extras = getattr(field_info, "json_schema_extra", None)
+            if extras and isinstance(extras, dict):
+                prop.update(extras)
+
+    @staticmethod
     def sanitize_schema(schema: Any) -> Any:
-        """Recursively sanitize a schema for OCI tool compatibility."""
+        """Recursively sanitize a schema for OCI tool compatibility.
+
+        Strips JSON-Schema metadata keys (``title``, ``const``, ``x-*``,
+        ``default: None``) that the OCI tool API doesn't accept, and
+        normalises a couple of OpenAI/Pydantic conventions OCI doesn't
+        understand (``type: any`` → ``object``, ``type: ["string","null"]``
+        → ``"string"``, etc.).
+
+        ``properties`` / ``$defs`` / ``definitions`` need special handling:
+        their dict keys are *user-defined* names (field names, definition
+        names), not JSON-Schema metadata. Without the exemption, a Pydantic
+        model with a field literally called ``title`` (or ``const``, or any
+        ``x-…`` prefix) would have that field silently dropped from the
+        outgoing OCI tool definition — which leaves the LLM unable to fill
+        it and causes a Pydantic ``ValidationError`` once the response is
+        parsed back into the original model.
+        """
         if isinstance(schema, list):
             return [OCIUtils.sanitize_schema(item) for item in schema]
 
         if not isinstance(schema, dict):
             return schema
 
+        const_value = schema.get("const")
         sanitized: Dict[str, Any] = {}
         for key, value in schema.items():
             if key == "title":
+                continue
+            if key == "const":
+                continue
+            if isinstance(key, str) and key.startswith("x-"):
                 continue
             if key == "default" and value is None:
                 continue
@@ -159,7 +205,24 @@ class OCIUtils:
                     sanitized[key] = non_null_types[0] if non_null_types else "string"
                     continue
 
+            # `properties`, `$defs`, and `definitions` are dicts whose keys
+            # are user-defined names (field names, definition names) — not
+            # JSON-Schema metadata. Recurse into each value as an independent
+            # schema, but DON'T apply the metadata-key skips above to the
+            # user-defined keys themselves.
+            if key in ("properties", "$defs", "definitions") and isinstance(
+                value, dict
+            ):
+                sanitized[key] = {
+                    name: OCIUtils.sanitize_schema(sub_schema)
+                    for name, sub_schema in value.items()
+                }
+                continue
+
             sanitized[key] = OCIUtils.sanitize_schema(value)
+
+        if isinstance(const_value, str):
+            sanitized["enum"] = [const_value]
 
         if sanitized.get("type") == "array" and "items" not in sanitized:
             sanitized["items"] = {"type": "object"}

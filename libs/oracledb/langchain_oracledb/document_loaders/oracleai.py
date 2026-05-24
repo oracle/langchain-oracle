@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 oracleai.py
@@ -17,7 +17,8 @@ import hashlib
 import json
 import logging
 import os
-import random
+import re
+import secrets
 import struct
 import time
 import traceback
@@ -34,6 +35,30 @@ if TYPE_CHECKING:
 import oracledb
 
 logger = logging.getLogger(__name__)
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
+_QUOTED_IDENTIFIER_RE = re.compile(r'^"([A-Za-z][A-Za-z0-9_$#]*)"$')
+
+
+def _normalize_identifier(name: str, field_name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError(f"{field_name} must be a string.")
+
+    name = name.strip()
+    quoted_match = _QUOTED_IDENTIFIER_RE.fullmatch(name)
+    if quoted_match:
+        return quoted_match.group(1)
+
+    if _IDENTIFIER_RE.fullmatch(name):
+        return name.upper()
+
+    raise ValueError(f"{field_name} is not a valid Oracle identifier.")
+
+
+def _quote_identifier(name: str, field_name: str) -> str:
+    """Validate and quote a simple Oracle identifier for SQL construction."""
+    return f'"{_normalize_identifier(name, field_name)}"'
+
 
 """ParseOracleDocMetadata class"""
 
@@ -80,12 +105,7 @@ class OracleDocReader:
         hash_len = 8  # hash value length
 
         if input_string is None:
-            input_string = "".join(
-                random.choices(
-                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-                    k=16,
-                )
-            )
+            input_string = secrets.token_hex(8)
 
         # timestamp
         timestamp = int(time.time())
@@ -96,7 +116,7 @@ class OracleDocReader:
         hashval_bin = hashval_bin[:hash_len]  # 8 bytes
 
         # counter
-        counter_bin = struct.pack(">I", random.getrandbits(32))  # 4 bytes
+        counter_bin = struct.pack(">I", secrets.randbits(32))  # 4 bytes
 
         # binary object id
         object_id = timestamp_bin + hashval_bin + counter_bin  # 16 bytes
@@ -235,17 +255,32 @@ class OracleDocLoader(BaseLoader):
                             results.append(doc)
 
             if self.tablename:
+                cursor = None
                 try:
                     if self.owner is None or self.colname is None:
                         raise Exception("Missing owner or column name or both.")
 
+                    quoted_owner = _quote_identifier(self.owner, "owner")
+                    quoted_tablename = _quote_identifier(self.tablename, "table name")
+                    quoted_colname = _quote_identifier(self.colname, "column name")
+
                     cursor = self.conn.cursor()
                     self.mdata_cols = self.params.get("mdata_cols")
+                    quoted_mdata_cols = []
                     if self.mdata_cols is not None:
                         if len(self.mdata_cols) > 3:
                             raise Exception(
                                 "Exceeds the max number of columns "
                                 + "you can request for metadata."
+                            )
+
+                        requested_mdata_cols = []
+                        for col in self.mdata_cols:
+                            quoted_mdata_cols.append(
+                                _quote_identifier(col, "metadata column")
+                            )
+                            requested_mdata_cols.append(
+                                _normalize_identifier(col, "metadata column")
                             )
 
                         # execute a query to get column data types
@@ -256,14 +291,16 @@ class OracleDocLoader(BaseLoader):
                         )
                         cursor.execute(
                             sql,
-                            ownername=self.owner.upper(),
-                            tablename=self.tablename.upper(),
+                            ownername=_normalize_identifier(self.owner, "owner"),
+                            tablename=_normalize_identifier(
+                                self.tablename, "table name"
+                            ),
                         )
 
                         # cursor.execute(sql)
                         rows = cursor.fetchall()
                         for row in rows:
-                            if row[0] in self.mdata_cols:
+                            if row[0] in requested_mdata_cols:
                                 if row[1] not in [
                                     "NUMBER",
                                     "BINARY_DOUBLE",
@@ -278,29 +315,25 @@ class OracleDocLoader(BaseLoader):
                                         + "for metadata is not supported."
                                     )
 
-                    self.mdata_cols_sql = ", rowid"
-                    if self.mdata_cols is not None:
-                        for col in self.mdata_cols:
-                            self.mdata_cols_sql = self.mdata_cols_sql + ", " + col
+                    self.mdata_cols_sql = ", t.ROWID"
+                    for col in quoted_mdata_cols:
+                        self.mdata_cols_sql = self.mdata_cols_sql + ", t." + col
 
-                    # [TODO] use bind variables
                     sql = (
                         "select dbms_vector_chain.utl_to_text(t."
-                        + self.colname
-                        + ", json('"
-                        + json.dumps(m_params)
-                        + "')) mdata, dbms_vector_chain.utl_to_text(t."
-                        + self.colname
+                        + quoted_colname
+                        + ", json(:m_params)) mdata, dbms_vector_chain.utl_to_text(t."
+                        + quoted_colname
                         + ") text"
                         + self.mdata_cols_sql
                         + " from "
-                        + self.owner
+                        + quoted_owner
                         + "."
-                        + self.tablename
+                        + quoted_tablename
                         + " t"
                     )
 
-                    cursor.execute(sql)
+                    cursor.execute(sql, m_params=json.dumps(m_params))
                     for row in cursor:
                         metadata = {}
 
@@ -345,7 +378,7 @@ class OracleDocLoader(BaseLoader):
                                 ncols = len(self.mdata_cols)
 
                             for i in range(0, ncols):
-                                metadata[self.mdata_cols[i]] = row[i + 2]
+                                metadata[self.mdata_cols[i]] = row[i + 3]
 
                             if row[1] is None:
                                 results.append(
@@ -360,7 +393,8 @@ class OracleDocLoader(BaseLoader):
                 except Exception as ex:
                     logger.info(f"An exception occurred :: {ex}")
                     traceback.print_exc()
-                    cursor.close()
+                    if cursor is not None:
+                        cursor.close()
                     raise
 
             return results

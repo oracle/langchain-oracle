@@ -64,18 +64,21 @@ class ChatOCIGenAIAsyncMixin:
 
         Returns dict with compartment_id, chat_request_dict, serving_mode_dict.
 
-        Reuses _prepare_request from the main class and converts OCI model
-        objects to dicts for JSON serialization in async HTTP requests.
+        Reuses _prepare_request from the main class and serializes OCI model
+        objects using the SDK's own ``sanitize_for_serialization`` — the same
+        serializer the sync client uses internally.  This guarantees sync and
+        async produce identical JSON, and user-defined content (e.g. JSON
+        Schema property names inside tool definitions) is preserved.
         """
-        from oci.util import to_dict
-
         # Reuse the sync _prepare_request which returns a ChatDetails object
         chat_details = self._prepare_request(messages, stop, stream, **kwargs)  # type: ignore[attr-defined]
 
+        serialize = self.client.base_client.sanitize_for_serialization  # type: ignore[attr-defined]
+
         return {
             "compartment_id": chat_details.compartment_id,
-            "chat_request_dict": to_dict(chat_details.chat_request),
-            "serving_mode_dict": to_dict(chat_details.serving_mode),
+            "chat_request_dict": serialize(chat_details.chat_request),
+            "serving_mode_dict": serialize(chat_details.serving_mode),
         }
 
     async def _agenerate(
@@ -180,6 +183,11 @@ class ChatOCIGenAIAsyncMixin:
         )
         tool_call_ids: Dict[int, str] = {}
 
+        # Reset per-stream provider state (see _stream's note).
+        reset = getattr(self._provider, "reset_stream_state", None)  # type: ignore[attr-defined]
+        if reset is not None:
+            reset()
+
         async for event_data in client.chat_async(
             compartment_id=request_data["compartment_id"],
             chat_request_dict=request_data["chat_request_dict"],
@@ -203,6 +211,13 @@ class ChatOCIGenAIAsyncMixin:
                     await run_manager.on_llm_new_token(delta, chunk=chunk)
                 yield chunk
             else:
+                # Flush any held-back text from the provider's <tool_call>
+                # buffer so trailing characters don't disappear.
+                flush = getattr(self._provider, "flush_stream_state", None)  # type: ignore[attr-defined]
+                tail = flush() if flush is not None else ""
+                if tail:
+                    yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
+
                 generation_info = self._provider.chat_stream_generation_info(event_data)  # type: ignore[attr-defined]
                 yield ChatGenerationChunk(
                     message=AIMessageChunk(

@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Hybrid search utilities for Oracle Database.
 
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union, cast
 
@@ -124,11 +125,15 @@ class OracleVectorizerPreference:
             create_hybrid_index,
             OracleHybridSearchRetriever,
         )
+        import os
         import oracledb
 
         # Connect and prepare embeddings and vector store
-        client = oracledb.connect(user="scott", password="tiger", dsn="dbhost/service")
+        client = oracledb.connect(
+            dsn=os.environ["ORACLE_DB_DSN"]
+        )
         embeddings = OracleEmbeddings(
+            conn=client,
             params={
                 "provider": "database",
                 "model": "DB_MODEL"
@@ -156,26 +161,6 @@ class OracleVectorizerPreference:
 
         # Cleanup when needed
         pref.drop_preference()
-
-    Example:
-        Async usage
-
-        import asyncio
-
-        async def main():
-            async_client = dict(user="scott", password="tiger", dsn="dbhost/service")  # accepted by _aget_connection
-            embeddings = OracleEmbeddings(params={"provider": "database", "model": "YOUR_DB_MODEL"})
-            vs = OracleVS(client=async_client, table_name="DOCS", embedding_function=embeddings)
-
-            pref = await OracleVectorizerPreference.acreate_preference(vs, preference_name="PREF_DOCS_A")
-            await acreate_hybrid_index(async_client, "IDX_DOCS_HYB_A", pref)
-
-            retriever = OracleHybridSearchRetriever(vector_store=vs, idx_name="IDX_DOCS_HYB_A", k=3)
-            results = await retriever.ainvoke("latest SLA")
-
-            await pref.adrop_preference()
-
-        asyncio.run(main())
     """  # noqa E501
 
     params: Optional[dict[str, Any]]
@@ -184,7 +169,7 @@ class OracleVectorizerPreference:
 
     PREFERENCE_STR = """
     begin
-    DBMS_VECTOR_CHAIN.CREATE_PREFERENCE(
+    dbms_vector_chain.CREATE_PREFERENCE(
         :1,
         dbms_vector_chain.vectorizer,
         json(:2));
@@ -364,6 +349,34 @@ def _get_hybrid_index_ddl(
 
     Reference: https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/create-hybrid-vector-index.html
     """
+
+    def quote_filter_order_identifier(value: str, field_name: str) -> str:
+        value = value.strip()
+        simple_identifier = r"[A-Za-z][A-Za-z0-9_$#]*"
+        reg = (
+            rf'^(?:"{simple_identifier}"|{simple_identifier})'
+            rf'(?:\.(?:"{simple_identifier}"|{simple_identifier}))*$'
+        )
+        if not re.fullmatch(reg, value):
+            raise ValueError(f"{field_name} contains an invalid identifier")
+
+        pattern_match = rf'"({simple_identifier})"|({simple_identifier})'
+        groups = re.findall(pattern_match, value)
+        quoted_groups = [
+            f'"{quoted}"' if quoted else f'"{unquoted.upper()}"'
+            for quoted, unquoted in groups
+        ]
+        return ".".join(quoted_groups)
+
+    def quote_identifier_list(values: Any, field_name: str) -> str:
+        if not isinstance(values, (list, tuple)):
+            raise ValueError(f"{field_name} must be a list of column names")
+        if not all(isinstance(value, str) for value in values):
+            raise ValueError(f"{field_name} must contain only column names")
+        return ",".join(
+            quote_filter_order_identifier(value, field_name) for value in values
+        )
+
     index_parameters = params.get("parameters", {}).copy()
     if any(
         key.lower() in ["model", "embedder_spec", "vector_idxtype", "vectorizer"]
@@ -383,19 +396,25 @@ def _get_hybrid_index_ddl(
 
     filter_by = params.get("filter_by", None)
     if filter_by:
-        filter_by_str = "FILTER BY " + ",".join(filter_by) + " "
+        filter_by_str = (
+            "FILTER BY " + quote_identifier_list(filter_by, "filter_by") + " "
+        )
 
     order_by = params.get("order_by", None)
     order_by_asc = params.get("order_by_asc", True)
+    if not isinstance(order_by_asc, bool):
+        raise ValueError("order_by_asc must be a boolean")
     if order_by:
         order_by_str = (
-            "ORDER BY " + ",".join(order_by) + f" {'ASC' if order_by_asc else 'DESC'} "
+            "ORDER BY "
+            + quote_identifier_list(order_by, "order_by")
+            + f" {'ASC' if order_by_asc else 'DESC'} "
         )
 
     parallel = params.get("parallel", None)
-    if parallel:
-        if not isinstance(parallel, int):
-            raise ValueError("parallel must be int")
+    if parallel is not None:
+        if isinstance(parallel, bool) or not isinstance(parallel, int) or parallel <= 0:
+            raise ValueError("parallel must be a positive integer")
         parallel_str = f"PARALLEL {parallel} "
 
     def oracle_string_literal(value: str) -> str:
@@ -490,8 +509,7 @@ async def acreate_hybrid_index(
     Creates the HYBRID VECTOR INDEX if it does not exist, using async APIs.
 
     Args:
-        client: oracledb async connection or connection parameters
-            accepted by _aget_connection.
+        client: oracledb async connection or async connection pool.
         idx_name: Index name to create (quoted automatically).
         vectorizer_preference: Existing OracleVectorizerPreference to reference in the
             index. Mutually exclusive with vector_store.
@@ -569,7 +587,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
             k=5,
             return_scores=True,
         )
-        docs = retriever.invoke("how do I reset my password?")
+        docs = retriever.invoke("how do I rotate my database credentials?")
         for d in docs:
             print(d.page_content, d.metadata.get("score"))
 

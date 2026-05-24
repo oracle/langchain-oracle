@@ -40,6 +40,11 @@ from pydantic import BaseModel
 
 from langchain_oci.chat_models.providers.base import Provider
 from langchain_oci.common.utils import OCIUtils
+from langchain_oci.common.xml_tool_call_parser import (
+    XmlStreamBuffer,
+    XmlToolCall,
+    extract_xml_tool_calls,
+)
 
 
 def _should_allow_more_tool_calls(
@@ -48,8 +53,12 @@ def _should_allow_more_tool_calls(
     """
     Determine if the model should be allowed to call more tools.
 
+    Only counts tool calls in the **current turn** (since the last HumanMessage),
+    so multi-turn conversations don't accumulate a stale count that blocks
+    legitimate tool use on subsequent user prompts.
+
     Returns False (force stop) if:
-    - Tool call limit exceeded
+    - Tool call limit exceeded in the current turn
     - Infinite loop detected (same tool called repeatedly with same args)
 
     Returns True otherwise to allow multi-step tool orchestration.
@@ -58,8 +67,17 @@ def _should_allow_more_tool_calls(
         messages: Conversation history
         max_tool_calls: Maximum number of tool calls before forcing stop
     """
-    # Count total tool calls made so far
-    tool_call_count = sum(1 for msg in messages if isinstance(msg, ToolMessage))
+    # Find the start of the current turn (last HumanMessage)
+    current_turn_start = 0
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage):
+            current_turn_start = i
+            break
+
+    current_turn = messages[current_turn_start:]
+
+    # Count tool calls in the current turn only
+    tool_call_count = sum(1 for msg in current_turn if isinstance(msg, ToolMessage))
 
     # Safety limit: prevent runaway tool calling
     if tool_call_count >= max_tool_calls:
@@ -67,7 +85,7 @@ def _should_allow_more_tool_calls(
 
     # Detect infinite loop: same tool called with same arguments in succession
     recent_calls: list = []
-    for msg in reversed(messages):
+    for msg in reversed(current_turn):
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 # Create signature: (tool_name, sorted_args)
@@ -104,12 +122,22 @@ class GenericProvider(Provider):
         return params
 
     @property
+    def supports_tool_choice(self) -> bool:
+        """GenericProvider models support tool_choice."""
+        return True
+
+    @property
     def supports_parallel_tool_calls(self) -> bool:
         """GenericProvider models support parallel tool calling."""
         return True
 
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
+
+        # Per-stream incremental parser for inline <tool_call>...</tool_call>
+        # blocks emitted by Hermes/Llama/Qwen-style fine-tunes. Reset by
+        # `reset_stream_state()` at the start of each `_stream` call.
+        self._xml_buffer = XmlStreamBuffer()
 
         # Chat request and message models
         self.oci_chat_request = models.GenericChatRequest
@@ -154,7 +182,12 @@ class GenericProvider(Provider):
         self.chat_api_format = models.BaseChatRequest.API_FORMAT_GENERIC
 
     def chat_response_to_text(self, response: Any) -> str:
-        """Extract text from chat response, or '' if unavailable."""
+        """Extract text from chat response, or '' if unavailable.
+
+        Strips any ``<tool_call>...</tool_call>`` blocks emitted inline by
+        Hermes/Llama-style fine-tunes — those are surfaced as structured
+        ``tool_calls`` by ``chat_tool_calls`` instead.
+        """
         chat_resp = getattr(response.data, "chat_response", None)
         choices = getattr(chat_resp, "choices", None)
         text = ""
@@ -165,7 +198,8 @@ class GenericProvider(Provider):
                 text = "".join(
                     part.text for part in msg.content if getattr(part, "text", None)
                 )
-        if text == "":
+        cleaned, _ = extract_xml_tool_calls(text)
+        if cleaned == "" and text == "":
             warnings.warn(
                 "GenericProvider could not extract text and returned an empty "
                 "string. Ensure the selected provider matches the response "
@@ -174,10 +208,14 @@ class GenericProvider(Provider):
                 UserWarning,
                 stacklevel=2,
             )
-        return text
+        return cleaned
 
     def chat_response_to_text_from_dict(self, response_data: Dict[str, Any]) -> str:
-        """Extract text from chat response dict (async path)."""
+        """Extract text from chat response dict (async path).
+
+        Strips inline ``<tool_call>...</tool_call>`` blocks for the same reason
+        as :meth:`chat_response_to_text`.
+        """
         chat_response = response_data.get("chatResponse", {})
         choices = chat_response.get("choices", [])
         text = ""
@@ -192,7 +230,8 @@ class GenericProvider(Provider):
                     )
                 else:
                     text = str(content)
-        if text == "":
+        cleaned, _ = extract_xml_tool_calls(text)
+        if cleaned == "" and text == "":
             warnings.warn(
                 "GenericProvider could not extract text and returned an empty "
                 "string. Ensure the selected provider matches the response "
@@ -201,14 +240,42 @@ class GenericProvider(Provider):
                 UserWarning,
                 stacklevel=2,
             )
-        return text
+        return cleaned
 
     def chat_stream_to_text(self, event_data: Dict) -> str:
-        """Extract text from Meta chat stream event."""
+        """Extract text from Meta chat stream event.
+
+        Routes the raw delta through :class:`XmlStreamBuffer` so inline
+        ``<tool_call>``/``<tool_calling>`` blocks (Hermes/Llama/Qwen-style
+        fine-tunes) are surfaced via :meth:`process_stream_tool_calls`
+        instead of leaking into normal token-stream content.
+        """
         content = event_data.get("message", {}).get("content", None)
         if not content:
-            return ""
-        return "".join(part.get("text", "") for part in content if part.get("text"))
+            raw_delta = ""
+        else:
+            raw_delta = "".join(
+                part.get("text", "") for part in content if part.get("text")
+            )
+        return self._xml_buffer.feed(raw_delta)
+
+    def reset_stream_state(self) -> None:
+        """Clear per-stream ``<tool_call>`` parsing state.
+
+        Called by ``ChatOCIGenAI._stream`` / ``_astream`` at the start of each
+        new stream so a previous, possibly-aborted stream's leftover buffer
+        doesn't leak into the next one.
+        """
+        self._xml_buffer.reset()
+
+    def flush_stream_state(self) -> str:
+        """Return any held-back text and reset the per-stream buffer.
+
+        Called once at end-of-stream so trailing characters that were held
+        back as a possible ``<tool_call>`` prefix don't get dropped if the
+        opener never actually arrived.
+        """
+        return self._xml_buffer.flush()
 
     def is_chat_stream_end(self, event_data: Dict) -> bool:
         """Determine if Meta chat stream event indicates the end."""
@@ -245,11 +312,30 @@ class GenericProvider(Provider):
         return {"finish_reason": event_data["finishReason"]}
 
     def chat_tool_calls(self, response: Any) -> List[Any]:
-        """Retrieve tool calls from chat response."""
+        """Retrieve tool calls from chat response.
+
+        Falls back to parsing inline ``<tool_call>...</tool_call>`` blocks out
+        of the assistant message text when the model didn't populate the
+        structured ``tool_calls`` field — typical for Hermes/Llama-style
+        fine-tunes hosted on OCI Dedicated AI Clusters.
+        """
         choices = response.data.chat_response.choices
         if not choices or choices[0].message is None:
             return []
-        return choices[0].message.tool_calls
+        message = choices[0].message
+        native = message.tool_calls or []
+        if native:
+            return native
+        # Fallback: parse <tool_call>...</tool_call> blocks from the text.
+        text = "".join(
+            part.text for part in (message.content or []) if getattr(part, "text", None)
+        )
+        _, parsed = extract_xml_tool_calls(text)
+        if not parsed:
+            return []
+        # Synthesise objects shaped like OCI FunctionCall so the downstream
+        # `format_response_tool_calls` path keeps working unchanged.
+        return [XmlToolCall(**tc) for tc in parsed]
 
     def chat_stream_tool_calls(self, event_data: Dict) -> List[Any]:
         """Retrieve tool calls from Meta stream event."""
@@ -658,16 +744,45 @@ class GenericProvider(Provider):
                 )
         return processed_content
 
+    def _get_tool_parameters(self, tool: BaseTool) -> Dict[str, Any]:
+        """Extract parameters from a BaseTool for OCI tool conversion.
+
+        Uses tool_call_schema (the model-facing schema) as the primary source.
+        This correctly excludes injected runtime parameters (e.g., ToolRuntime
+        with Callable types from Deep Agents middleware) that args_schema
+        includes and that Pydantic cannot serialize to JSON schema.
+
+        After building the base schema from tool_call_schema, overlays any
+        json_schema_extra constraints (enum, format, pattern, etc.) from the
+        original args_schema field definitions, since tool_call_schema does
+        not carry those forward.
+
+        Args:
+            tool: The BaseTool to extract parameters from.
+
+        Returns:
+            Dict containing the tool parameters schema.
+        """
+        tool_call_schema = getattr(tool, "tool_call_schema", None)
+        if tool_call_schema and hasattr(tool_call_schema, "model_json_schema"):
+            schema = tool_call_schema.model_json_schema()
+            # Overlay json_schema_extra constraints from args_schema when present
+            if tool.args_schema:
+                OCIUtils.overlay_schema_extras(schema, tool.args_schema)
+            return schema
+        # Final fallback for tools without tool_call_schema
+        as_json_schema_function = convert_to_openai_function(tool)
+        return as_json_schema_function.get("parameters", {})
+
     def convert_to_oci_tool(
         self,
         tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
     ) -> Dict[str, Any]:
-        """Convert a BaseTool instance, TypedDict or BaseModel type
-        to a OCI tool in Meta's format.
+        """Convert a tool definition to an OCI tool in Meta's format.
 
         Args:
-            tool: The tool to convert, can be a BaseTool instance, TypedDict,
-                or BaseModel type.
+            tool: The tool to convert, can be a BaseTool instance, JSON schema
+                dictionary, TypedDict, callable, or BaseModel type.
 
         Returns:
             Dict containing the tool definition in Meta's format.
@@ -679,12 +794,7 @@ class GenericProvider(Provider):
         if isinstance(tool, BaseTool):
             # Use model_json_schema() if available to preserve json_schema_extra
             # constraints (enum, format, etc.) that convert_to_openai_function strips
-            if tool.args_schema and hasattr(tool.args_schema, "model_json_schema"):
-                schema = tool.args_schema.model_json_schema()
-                parameters = schema
-            else:
-                as_json_schema_function = convert_to_openai_function(tool)
-                parameters = as_json_schema_function.get("parameters", {})
+            parameters = self._get_tool_parameters(tool)
 
             # Resolve $ref/$defs and anyOf — OCI doesn't support them
             resolved_params = OCIUtils.resolve_schema_refs(parameters)
@@ -703,25 +813,48 @@ class GenericProvider(Provider):
                     "required": resolved_params.get("required", []),
                 },
             )
+        if isinstance(tool, dict):
+            name = tool.get("title") or tool.get("name")
+            properties = tool.get("properties")
+            if not isinstance(name, str) or not isinstance(properties, dict):
+                raise ValueError(
+                    "Unsupported dict type. Tool must be a BaseTool instance, "
+                    "JSON schema dict, TypedDict class, or BaseModel type."
+                )
+
+            resolved_params = OCIUtils.resolve_schema_refs(tool)
+            resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            resolved_params = OCIUtils.sanitize_schema(resolved_params)
+
+            return self.oci_function_definition(
+                name=name,
+                description=resolved_params.get("description") or name,
+                parameters={
+                    "type": "object",
+                    "properties": resolved_params.get("properties", {}),
+                    "required": resolved_params.get("required", []),
+                },
+            )
         if (isinstance(tool, type) and issubclass(tool, BaseModel)) or callable(tool):
             as_json_schema_function = convert_to_openai_function(tool)
             parameters = as_json_schema_function.get("parameters", {})
+            resolved_params = OCIUtils.resolve_schema_refs(parameters)
+            resolved_params = OCIUtils.resolve_anyof(resolved_params)
+            resolved_params = OCIUtils.sanitize_schema(resolved_params)
+            fn_name = as_json_schema_function.get("name", "")
             return self.oci_function_definition(
-                name=as_json_schema_function.get("name"),
-                description=as_json_schema_function.get(
-                    "description",
-                    as_json_schema_function.get("name"),
-                ),
+                name=fn_name,
+                description=as_json_schema_function.get("description") or fn_name,
                 parameters={
                     "type": "object",
-                    "properties": parameters.get("properties", {}),
-                    "required": parameters.get("required", []),
+                    "properties": resolved_params.get("properties", {}),
+                    "required": resolved_params.get("required", []),
                 },
             )
         raise ValueError(
             f"Unsupported tool type {type(tool)}. "
             "Tool must be passed in as a BaseTool "
-            "instance, TypedDict class, or BaseModel type."
+            "instance, JSON schema dict, TypedDict class, or BaseModel type."
         )
 
     def process_tool_choice(
@@ -780,6 +913,10 @@ class GenericProvider(Provider):
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
 
+        Drains any inline ``<tool_call>...</tool_call>`` blocks parsed by
+        :meth:`chat_stream_to_text` first, then falls through to the standard
+        OCI structured tool-call path.
+
         Args:
             event_data: The event data from the stream
             tool_call_ids: Dict mapping tool call index to ID for aggregation
@@ -788,6 +925,20 @@ class GenericProvider(Provider):
             List of ToolCallChunk objects
         """
         tool_call_chunks: List[ToolCallChunk] = []
+
+        # Drain XML tool calls that completed during this event.
+        for parsed in self._xml_buffer.drain_completed():
+            index = len(tool_call_ids)
+            tool_call_ids[index] = parsed["id"]
+            tool_call_chunks.append(
+                tool_call_chunk(
+                    name=parsed["name"],
+                    args=parsed["arguments"],
+                    id=parsed["id"],
+                    index=index,
+                )
+            )
+
         tool_call_response = self.chat_stream_tool_calls(event_data)
 
         if not tool_call_response:
@@ -832,6 +983,26 @@ class MetaProvider(GenericProvider):
     """Provider for Meta models. This provider is for backward compatibility."""
 
     pass
+
+
+class OpenAIProvider(GenericProvider):
+    """Provider for OpenAI models served via OCI GenAI.
+
+    Handles OpenAI-specific parameter requirements:
+    - max_tokens → max_completion_tokens (OpenAI rejects max_tokens on GPT-5
+      family and reasoning models; max_completion_tokens is the forward-compatible
+      name).
+    """
+
+    def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize OpenAI parameters, mapping legacy max_tokens."""
+        result = params.copy()
+        if "max_tokens" in result and "max_completion_tokens" not in result:
+            result["max_completion_tokens"] = result.pop("max_tokens")
+        elif "max_tokens" in result and "max_completion_tokens" in result:
+            # Both provided - prefer the OpenAI-native key and drop the legacy one
+            result.pop("max_tokens")
+        return result
 
 
 class GeminiProvider(GenericProvider):

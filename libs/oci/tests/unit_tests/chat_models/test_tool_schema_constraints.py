@@ -1,22 +1,24 @@
 # Copyright (c) 2023 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-"""Unit tests for tool schema conversion — all 14 scenarios.
+"""Unit tests for tool schema conversion.
 
 Covers nested schemas, anyOf resolution, json_schema_extra constraints,
 Pydantic-native constraints, Python Enums, and backward compatibility
-for both GenericProvider and CohereProvider.
+for both GenericProvider and CohereProvider, including tools with injected
+runtime arguments that cannot be serialized via args_schema.model_json_schema().
 
 See: https://github.com/oracle/langchain-oracle/issues/103
      https://github.com/oracle/langchain-oracle/pull/109#issuecomment-3837468732
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import Annotated, Callable, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.tools import BaseTool, tool
+from langchain_core.tools.base import InjectedToolArg
 from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models.providers.cohere import CohereProvider
@@ -239,6 +241,43 @@ def const_tool(version: str) -> str:
     return version
 
 
+# 15: injected runtime field should be excluded from tool-call schema fallback
+class RuntimeInjectedInput(BaseModel):
+    query: str = Field(description="User query")
+    runtime: Annotated[Callable[..., str], InjectedToolArg]
+
+
+class RuntimeInjectedTool(BaseTool):
+    name: str = "runtime_injected_tool"
+    description: str = "Tool with runtime-only injected argument"
+    args_schema: type[BaseModel] = RuntimeInjectedInput
+
+    def _run(self, query: str, runtime=None) -> str:
+        return query
+
+
+# 16: injected runtime field + json_schema_extra on non-injected fields
+class RuntimeWithConstraintsInput(BaseModel):
+    query: str = Field(
+        description="Search query",
+        json_schema_extra={"enum": ["alpha", "beta", "gamma"]},
+    )
+    limit: int = Field(
+        description="Max results",
+        json_schema_extra={"minimum": 1, "maximum": 100},
+    )
+    runtime: Annotated[Callable[..., str], InjectedToolArg]
+
+
+class RuntimeWithConstraintsTool(BaseTool):
+    name: str = "runtime_with_constraints_tool"
+    description: str = "Tool with injected runtime and json_schema_extra constraints"
+    args_schema: type[BaseModel] = RuntimeWithConstraintsInput
+
+    def _run(self, query: str, limit: int = 10, runtime=None) -> str:
+        return query
+
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -377,9 +416,10 @@ def test_13_multi_optional():
 
 @pytest.mark.requires("oci")
 def test_14_const_extra():
-    """json_schema_extra const must be preserved."""
+    """String const should be lowered to enum for OCI compatibility."""
     p = _props(const_tool)
-    assert p["version"]["const"] == "v1"
+    assert "const" not in p["version"]
+    assert p["version"]["enum"] == ["v1"]
 
 
 def test_sanitize_schema_prunes_missing_required_fields():
@@ -428,6 +468,92 @@ def test_sanitize_schema_removes_title_and_null_defaults_recursively():
     assert sanitized["properties"]["child"]["properties"]["age"]["type"] == "integer"
 
 
+def test_sanitize_schema_preserves_user_fields_named_title():
+    """A property literally named ``title`` (or other JSON-Schema metadata
+    keys) must survive sanitization. Without this guarantee, a Pydantic
+    model with a ``title: str`` field would be silently stripped of that
+    field before being sent to the OCI tool API — the LLM never sees it,
+    the response comes back without it, and the original Pydantic class
+    raises ``ValidationError`` because ``title`` is still ``required``.
+    Regression for ``test_structured_output_no_docstring[*]`` which
+    parametrizes over 8 models and uses a ``BugReport`` model whose first
+    field is ``title``.
+    """
+    schema = {
+        "type": "object",
+        "title": "BugReport",  # JSON-Schema metadata — should be stripped
+        "properties": {
+            # Field literally named "title" — must survive.
+            "title": {
+                "type": "string",
+                "title": "Bug Title",  # nested metadata — should be stripped
+                "description": "Short bug title",
+            },
+            # Field literally named "const" — must also survive.
+            "const": {
+                "type": "string",
+                "description": "Whether the value is constant",
+            },
+            # Field with an x-prefix name — must also survive.
+            "x-flag": {
+                "type": "boolean",
+                "description": "A custom flag",
+            },
+            "severity": {
+                "type": "string",
+                "description": "low, medium, high, or critical",
+            },
+        },
+        "required": ["title", "const", "x-flag", "severity"],
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    # User-defined properties survive (they're keys inside `properties`,
+    # not JSON-Schema metadata on the schema itself).
+    assert set(sanitized["properties"].keys()) == {
+        "title",
+        "const",
+        "x-flag",
+        "severity",
+    }
+    assert sanitized["properties"]["title"]["type"] == "string"
+    assert sanitized["properties"]["title"]["description"] == "Short bug title"
+
+    # JSON-Schema metadata `title` inside the property's value still gets
+    # stripped — it's metadata there, not a user-defined key.
+    assert "title" not in sanitized["properties"]["title"]
+
+    # Top-level JSON-Schema metadata `title` is stripped.
+    assert sanitized.get("title") != "BugReport"
+
+    # `required` is preserved for all properties that survived.
+    assert set(sanitized["required"]) == {"title", "const", "x-flag", "severity"}
+
+
+def test_sanitize_schema_preserves_user_defined_definition_names():
+    """Definitions / $defs keyed by user-defined names must survive
+    sanitization — same logic as `properties` keys."""
+    schema = {
+        "type": "object",
+        "$defs": {
+            "title": {"type": "string"},  # user-defined definition name
+            "const": {"type": "string"},  # user-defined definition name
+        },
+        "definitions": {
+            "x-thing": {"type": "object"},  # user-defined definition name
+        },
+        "properties": {
+            "ref_a": {"$ref": "#/$defs/title"},
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert set(sanitized["$defs"].keys()) == {"title", "const"}
+    assert set(sanitized["definitions"].keys()) == {"x-thing"}
+
+
 def test_sanitize_schema_adds_default_array_items():
     """Arrays without items should get a default object items schema."""
     schema = {
@@ -440,6 +566,98 @@ def test_sanitize_schema_adds_default_array_items():
     sanitized = OCIUtils.sanitize_schema(schema)
 
     assert sanitized["properties"]["tags"]["items"] == {"type": "object"}
+
+
+def test_sanitize_schema_removes_extensions_and_const_recursively():
+    """OCI-incompatible x-* keys and non-string const should be stripped."""
+    schema = {
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            },
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "const": True,
+                            "x-visible": False,
+                        }
+                    },
+                },
+            },
+        },
+    }
+
+    sanitized = OCIUtils.sanitize_schema(schema)
+
+    assert "x-visible" not in sanitized
+    assert "const" not in sanitized["properties"]["version"]
+    assert sanitized["properties"]["version"]["enum"] == ["v1"]
+    assert "x-in" not in sanitized["properties"]["version"]
+    enabled = sanitized["properties"]["items"]["items"]["properties"]["enabled"]
+    assert "const" not in enabled
+    assert "enum" not in enabled
+    assert "x-visible" not in enabled
+
+
+@pytest.mark.requires("oci")
+def test_generic_json_schema_dict_strips_extensions_and_const():
+    """GenericProvider dict schemas should preserve string const as enum."""
+    provider = GenericProvider()
+    schema = {
+        "title": "Request",
+        "description": "Request schema",
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            }
+        },
+        "required": ["version"],
+    }
+
+    result = provider.convert_to_oci_tool(schema)
+    version = result.parameters["properties"]["version"]  # type: ignore[attr-defined]
+
+    assert "const" not in version
+    assert version["enum"] == ["v1"]
+    assert "x-in" not in version
+    assert "x-visible" not in str(result.parameters)  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires("oci")
+def test_cohere_json_schema_dict_strips_extensions_and_const():
+    """CohereProvider dict schemas should preserve string const as enum."""
+    provider = CohereProvider()
+    schema = {
+        "title": "Request",
+        "description": "Request schema",
+        "type": "object",
+        "x-visible": True,
+        "properties": {
+            "version": {
+                "type": "string",
+                "const": "v1",
+                "x-in": "header",
+            }
+        },
+    }
+
+    result = provider.convert_to_oci_tool(schema)
+    version = result.parameter_definitions["version"]  # type: ignore[attr-defined]
+
+    assert "Allowed values: ['v1']" in version.description
+    assert "x-in" not in version.description
 
 
 def test_resolve_schema_refs_handles_circular_refs():
@@ -589,6 +807,40 @@ def test_backward_compat_simple_tool():
     assert p["count"]["type"] == "integer"
 
 
+@pytest.mark.requires("oci")
+def test_runtime_injected_field_falls_back_to_tool_call_schema():
+    """GenericProvider should ignore runtime-only injected fields."""
+    provider = GenericProvider()
+
+    result = provider.convert_to_oci_tool(RuntimeInjectedTool())
+
+    assert result.name == "runtime_injected_tool"  # type: ignore[attr-defined]
+    properties = result.parameters["properties"]  # type: ignore[attr-defined]
+    assert "query" in properties
+    assert "runtime" not in properties
+    assert result.parameters["required"] == ["query"]  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires("oci")
+def test_runtime_injected_with_schema_extras_preserved():
+    """GenericProvider should exclude runtime fields AND preserve json_schema_extra."""
+    provider = GenericProvider()
+
+    result = provider.convert_to_oci_tool(RuntimeWithConstraintsTool())
+
+    properties = result.parameters["properties"]  # type: ignore[attr-defined]
+    assert "runtime" not in properties, "runtime field must be excluded"
+    assert "query" in properties
+    assert "limit" in properties
+    assert properties["query"].get("enum") == [
+        "alpha",
+        "beta",
+        "gamma",
+    ], "json_schema_extra enum must be preserved"
+    assert properties["limit"].get("minimum") == 1, "minimum must be preserved"
+    assert properties["limit"].get("maximum") == 100, "maximum must be preserved"
+
+
 # ---------------------------------------------------------------------------
 # CohereProvider tests
 # ---------------------------------------------------------------------------
@@ -628,6 +880,32 @@ def test_cohere_range_in_description():
     desc = params["duration_hours"].description
     assert "min=1" in desc
     assert "max=168" in desc
+
+
+@pytest.mark.requires("oci")
+def test_cohere_runtime_injected_field_falls_back_to_tool_args():
+    """CohereProvider should ignore runtime-only injected fields."""
+    params = _cohere_params(RuntimeInjectedTool())
+
+    assert "query" in params
+    assert "runtime" not in params
+    assert params["query"].type == "str"
+
+
+@pytest.mark.requires("oci")
+def test_cohere_runtime_injected_with_schema_extras_preserved():
+    """CohereProvider should exclude runtime fields AND preserve json_schema_extra."""
+    params = _cohere_params(RuntimeWithConstraintsTool())
+
+    assert "runtime" not in params, "runtime field must be excluded"
+    assert "query" in params
+    assert "limit" in params
+    # Cohere embeds enum/range in description text
+    assert "alpha" in params["query"].description
+    assert "beta" in params["query"].description
+    assert "gamma" in params["query"].description
+    assert "min=1" in params["limit"].description
+    assert "max=100" in params["limit"].description
 
 
 @pytest.mark.requires("oci")

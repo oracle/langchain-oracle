@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Full-text search utilities for Oracle Database (Oracle Text).
 
@@ -50,7 +50,6 @@ from langchain_oracledb.vectorstores.utils import (
     _handle_exceptions,
     _index_exists,
     _quote_indentifier,
-    _validate_indentifier,
     output_type_string_handler,
 )
 
@@ -63,6 +62,53 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+_SIMPLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
+_IDENTIFIER_PATH_RE = re.compile(r'^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$')
+_IDENTIFIER_PART_RE = re.compile(r'"([^"]+)"|([^".]+)')
+
+
+def _quote_simple_identifier(
+    name: str,
+    field_name: str,
+    allow_qualified: bool = False,
+    preserve_case: bool = False,
+) -> str:
+    if not isinstance(name, str):
+        raise ValueError(f"{field_name} must be a string.")
+
+    value = name.strip()
+    if not value:
+        raise ValueError(f"{field_name} must not be empty.")
+
+    if not _IDENTIFIER_PATH_RE.fullmatch(value):
+        raise ValueError(f"{field_name} contains an invalid identifier.")
+
+    quoted_parts = []
+    matches = _IDENTIFIER_PART_RE.findall(value)
+    if not allow_qualified and len(matches) != 1:
+        raise ValueError(f"{field_name} must be a simple identifier.")
+
+    for quoted_part, unquoted_part in matches:
+        is_quoted = bool(quoted_part)
+        part = quoted_part if is_quoted else unquoted_part.strip()
+        if not _SIMPLE_IDENTIFIER_RE.fullmatch(part):
+            raise ValueError(f"{field_name} contains an invalid identifier.")
+        quoted_parts.append(f'"{part if preserve_case or is_quoted else part.upper()}"')
+
+    return ".".join(quoted_parts)
+
+
+def _result_key(identifier: str) -> str:
+    return identifier.split(".")[-1].strip('"').lower()
+
+
+def _positive_int(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if value < 1:
+        raise ValueError(f"{field_name} must be a positive integer.")
+    return value
 
 
 def _get_text_index_ddl(
@@ -94,6 +140,10 @@ def _get_text_index_ddl(
     if not vector_store and not table_name:
         raise ValueError("Provide either vector_store or table_name.")
 
+    idx_name = _quote_simple_identifier(
+        idx_name, "idx_name", allow_qualified=True, preserve_case=True
+    )
+
     # Resolve table name and validate column
     if vector_store is not None:
         # For OracleVS we only allow the "text" column
@@ -111,12 +161,10 @@ def _get_text_index_ddl(
             )
         if not column_name:
             raise ValueError("column_name must be provided when table_name is used.")
-        _validate_indentifier(table_name)
-        resolved_table = table_name
-        # Intentionally do not quote the column_name to avoid case-sensitive mismatches.
-        # It must be a simple identifier known to the caller; no SQL is interpolated.
-        _validate_indentifier(column_name)
-        resolved_column = column_name
+        resolved_table = _quote_simple_identifier(
+            table_name, "table_name", allow_qualified=True
+        )
+        resolved_column = _quote_simple_identifier(column_name, "column_name")
 
     ddl = f"CREATE SEARCH INDEX {idx_name} ON {resolved_table}({resolved_column})"
     return ddl, resolved_table
@@ -322,18 +370,21 @@ class OracleTextSearchRetriever(BaseRetriever):
                     "column_name must be provided when table_name is used."
                 )
             tbl = cast(str, tbl)
-            _validate_indentifier(tbl)
-            _validate_indentifier(col)
-            resolved_table = tbl  # already quoted by validator
-            resolved_column = col  # leave unquoted to avoid case-sensitive mismatches
+            resolved_table = _quote_simple_identifier(
+                tbl, "table_name", allow_qualified=True
+            )
+            resolved_column = _quote_simple_identifier(col, "column_name")
 
         # Compute returned_columns
         rc = self.returned_columns or []
         if self.returned_columns is None and vs:
             rc = ["metadata"]
+        rc = [
+            _quote_simple_identifier(c, "returned column") for c in rc if c is not None
+        ]
 
         # De-duplicate and ensure we don't include the main column twice
-        rc = [c for c in rc if c and c.lower() != resolved_column.lower()]
+        rc = [c for c in rc if c and _result_key(c) != _result_key(resolved_column)]
 
         self.table_name = resolved_table
         self.column_name = resolved_column
@@ -369,9 +420,10 @@ class OracleTextSearchRetriever(BaseRetriever):
 
                 doc = Document(**result_dict)
             else:
-                content = cast(str, row.get(self.column_name))
+                content_key = _result_key(self.column_name)
+                content = cast(str, row.get(content_key))
                 metadata = {
-                    ret_col: row.get(ret_col)
+                    _result_key(ret_col): row.get(_result_key(ret_col))
                     for ret_col in (self.returned_columns or [])
                 }
                 if self.return_scores and score is not None:
@@ -401,6 +453,11 @@ class OracleTextSearchRetriever(BaseRetriever):
         if not query:
             return []
 
+        row_limit = _positive_int(
+            kwargs["k"] if kwargs.get("k") is not None else (self.k or 4),
+            "k",
+        )
+
         # Build select column list: primary column + optional returned columns
         self.column_name = cast(str, self.column_name)
         select_cols = [self.column_name]
@@ -409,7 +466,7 @@ class OracleTextSearchRetriever(BaseRetriever):
                 [
                     c
                     for c in self.returned_columns
-                    if c.lower() != self.column_name.lower()
+                    if _result_key(c) != _result_key(self.column_name)
                 ]
             )
         select_cols_str = ", ".join(select_cols)
@@ -417,7 +474,7 @@ class OracleTextSearchRetriever(BaseRetriever):
         search_query = f"""
         SELECT SCORE(1) score, {select_cols_str} FROM {self.table_name}
         WHERE CONTAINS({self.column_name}, :query, 1) > 0
-        ORDER BY score DESC FETCH FIRST {kwargs.get("k", None) or self.k or 4} ROWS ONLY
+        ORDER BY score DESC FETCH FIRST {row_limit} ROWS ONLY
         """
 
         # Pick connection source
@@ -456,6 +513,11 @@ class OracleTextSearchRetriever(BaseRetriever):
         if not query:
             return []
 
+        row_limit = _positive_int(
+            kwargs["k"] if kwargs.get("k") is not None else (self.k or 4),
+            "k",
+        )
+
         self.column_name = cast(str, self.column_name)
         select_cols = [self.column_name]
         if self.returned_columns:
@@ -463,7 +525,7 @@ class OracleTextSearchRetriever(BaseRetriever):
                 [
                     c
                     for c in self.returned_columns
-                    if c.lower() != self.column_name.lower()
+                    if _result_key(c) != _result_key(self.column_name)
                 ]
             )
         select_cols_str = ", ".join(select_cols)
@@ -471,7 +533,7 @@ class OracleTextSearchRetriever(BaseRetriever):
         search_query = f"""
         SELECT SCORE(1) score, {select_cols_str} FROM {self.table_name}
         WHERE CONTAINS({self.column_name}, :query, 1) > 0
-        ORDER BY score DESC FETCH FIRST {kwargs.get("k", None) or self.k or 4} ROWS ONLY
+        ORDER BY score DESC FETCH FIRST {row_limit} ROWS ONLY
         """
 
         conn_src = self.vector_store.client if self.vector_store else self.client

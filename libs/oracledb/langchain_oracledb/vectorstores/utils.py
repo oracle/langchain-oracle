@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=Callable[..., Any])
 
 
+def _clear_session_proxy(cursor: Any) -> None:
+    cursor.execute("begin utl_http.set_proxy(:proxy); end;", proxy=None)
+
+
+async def _aclear_session_proxy(cursor: Any) -> None:
+    await cursor.execute("begin utl_http.set_proxy(:proxy); end;", proxy=None)
+
+
 @contextmanager
 def _get_connection(client: Any) -> Iterator[Connection]:
     # check if ConnectionPool exists

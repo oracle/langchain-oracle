@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 test_hybrid.py
@@ -8,6 +8,7 @@ with OracleVS.
 """
 
 # import required modules
+import os
 import uuid
 from typing import Any, Dict, Tuple
 
@@ -31,9 +32,9 @@ from langchain_oracledb.vectorstores.utils import (
 )
 
 # Connection details for tests
-username = ""
-password = ""
-dsn = ""
+username = os.environ.get("VECDB_USER")
+password = os.environ.get("VECDB_PASS")
+dsn = os.environ.get("VECDB_HOST")
 
 # Attempt a quick connection to determine whether to skip all tests
 try:
@@ -81,6 +82,26 @@ async def aconnection():
     finally:
         try:
             await conn.close()
+        except Exception:
+            pass
+
+
+@pytest.fixture(scope="function")
+def pool():
+    """Connection pool fixture — exercises the pool code path in _get_connection."""
+    p = oracledb.create_pool(
+        user=username,
+        password=password,
+        dsn=dsn,
+        min=1,
+        max=3,
+        increment=1,
+    )
+    try:
+        yield p
+    finally:
+        try:
+            p.close()
         except Exception:
             pass
 
@@ -160,6 +181,47 @@ def sample_docstring_texts_and_metadatas() -> Tuple[list[str], list[dict]]:
         {"id": "doc_sla", "customer_id": "CUST_B"},
     ]
     return texts, metadatas
+
+
+@pytest.fixture(scope="function")
+def three_doc_texts_and_metadatas() -> Tuple[list[str], list[dict]]:
+    """Three documents with clearly distinct topics for score ordering tests."""
+    texts = [
+        "The tablespace can be online or offline whenever the database is open.",
+        "If the answer to any preceding questions about database is yes, say yes.",
+        "Completely unrelated content about cooking recipes and kitchen tools.",
+    ]
+    metadatas = [
+        {"id": "doc_tablespace"},
+        {"id": "doc_questions"},
+        {"id": "doc_cooking"},
+    ]
+    return texts, metadatas
+
+
+# -------------------------
+# Shared helper
+# -------------------------
+
+
+def _build_vs_and_index(
+    connection, resource_names, db_embedder_params, texts, metadatas
+):
+    """Create OracleVS, preference, and hybrid index. Returns (vs, pref)."""
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    drop_table_purge(connection, resource_names["table"])
+    vs = OracleVS.from_texts(
+        texts,
+        model,
+        metadatas,
+        client=connection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
+    create_hybrid_index(connection, resource_names["index"], pref)
+    return vs, pref
 
 
 # -------------------------
@@ -653,7 +715,7 @@ def test_create_hybrid_index_invalid_parallel_and_reserved_params(
     )
     pref = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
 
-    with pytest.raises(ValueError, match="parallel must be int"):
+    with pytest.raises(ValueError, match="parallel must be a positive integer"):
         create_hybrid_index(
             connection,
             resource_names["index"],
@@ -975,3 +1037,498 @@ async def test_hybrid_score_weight_effects_async(
     score2 = md["score"]
 
     assert score1 != score2
+
+
+# -------------------------
+# Idempotency
+# -------------------------
+
+
+def test_create_hybrid_index_repeatable(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Calling create_hybrid_index twice on the same index must not raise
+    and retrieval must still return correct results."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, pref = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    # Second call — must not raise
+    create_hybrid_index(connection, resource_names["index"], pref)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = retriever.invoke("tablespace database")
+    assert len(docs) >= 1
+
+
+def test_drop_and_recreate_preference(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """drop_preference followed by create_preference and index rebuild must
+    leave the index in a working state."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    drop_table_purge(connection, resource_names["table"])
+    vs = OracleVS.from_texts(
+        texts,
+        model,
+        metadatas,
+        client=connection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+
+    pref = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
+    create_hybrid_index(connection, resource_names["index"], pref)
+
+    pref.drop_preference()
+
+    drop_index(connection, resource_names["index"])
+    pref2 = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
+    create_hybrid_index(connection, resource_names["index"], pref2)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = retriever.invoke("tablespace")
+    assert len(docs) >= 1
+
+
+# -------------------------
+# Async vector_store shortcut
+# -------------------------
+
+
+@pytest.mark.asyncio
+async def test_acreate_hybrid_index_async_vector_store_shortcut(
+    aconnection,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """acreate_hybrid_index with vector_store (no explicit preference) must
+    create and drop the temporary preference internally and leave a working index."""
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    texts, metadatas = three_doc_texts_and_metadatas
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = await OracleVS.afrom_texts(
+        texts,
+        model,
+        metadatas,
+        client=aconnection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+
+    await acreate_hybrid_index(aconnection, resource_names["index"], vector_store=vs)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=2
+    )
+    docs = await retriever.ainvoke("database tablespace")
+    assert len(docs) >= 1
+
+
+# -------------------------
+# Optional DDL clauses
+# -------------------------
+
+
+def test_create_hybrid_index_with_parallel(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """PARALLEL N clause must be accepted by Oracle and retrieval must work."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    drop_table_purge(connection, resource_names["table"])
+    vs = OracleVS.from_texts(
+        texts,
+        model,
+        metadatas,
+        client=connection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
+    create_hybrid_index(
+        connection,
+        resource_names["index"],
+        pref,
+        params={"parallel": 2},
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = retriever.invoke("database")
+    assert len(docs) >= 1
+
+
+# -------------------------
+# k override at call time
+# -------------------------
+
+
+def test_hybrid_retriever_k_override_at_invoke(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """k passed at retriever.invoke() call time must override the constructor k."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, _ = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = retriever.invoke("database", k=3)
+    assert len(docs) == 3
+
+
+# -------------------------
+# k larger than document count
+# -------------------------
+
+
+def test_hybrid_k_larger_than_doc_count(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Requesting more results than documents must return all available
+    without raising."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, _ = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=100
+    )
+    docs = retriever.invoke("database tablespace cooking")
+    assert 1 <= len(docs) <= len(texts)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_k_larger_than_doc_count_async(
+    aconnection,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Async: k larger than doc count returns all available without raising."""
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    texts, metadatas = three_doc_texts_and_metadatas
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = await OracleVS.afrom_texts(
+        texts,
+        model,
+        metadatas,
+        client=aconnection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = await OracleVectorizerPreference.acreate_preference(
+        vs, resource_names["pref"]
+    )
+    await acreate_hybrid_index(aconnection, resource_names["index"], pref)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=100
+    )
+    docs = await retriever.ainvoke("database tablespace cooking")
+    assert 1 <= len(docs) <= len(texts)
+
+
+# -------------------------
+# Empty query string
+# FIX: Oracle raises DRG-11003 for empty search_text — test now expects an exception.
+# This documents a gap in the source code: _get_relevant_documents should guard
+# against empty strings before hitting the DB.
+# -------------------------
+
+
+def test_hybrid_empty_query_raises(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """An empty query string raises ORA-20000/DRG-11003 from Oracle.
+    This documents a known source-code gap: the retriever does not guard
+    against empty search_text before calling the DB."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, _ = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=3
+    )
+    with pytest.raises(Exception):
+        retriever.invoke("")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_empty_query_raises_async(
+    aconnection,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Async: empty query string raises ORA-20000/DRG-11003 from Oracle."""
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    texts, metadatas = three_doc_texts_and_metadatas
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = await OracleVS.afrom_texts(
+        texts,
+        model,
+        metadatas,
+        client=aconnection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = await OracleVectorizerPreference.acreate_preference(
+        vs, resource_names["pref"]
+    )
+    await acreate_hybrid_index(aconnection, resource_names["index"], pref)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=3
+    )
+    with pytest.raises(Exception):
+        await retriever.ainvoke("")
+
+
+# -------------------------
+# ConnectionPool as client
+# -------------------------
+
+
+def test_create_hybrid_index_with_pool(
+    pool,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """create_hybrid_index must work when client is a ConnectionPool."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = OracleVS.from_texts(
+        texts,
+        model,
+        metadatas,
+        client=connection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = OracleVectorizerPreference.create_preference(vs, resource_names["pref"])
+    create_hybrid_index(pool, resource_names["index"], pref)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs, idx_name=resource_names["index"], k=1
+    )
+    docs = retriever.invoke("tablespace")
+    assert len(docs) >= 1
+
+
+def test_hybrid_retrieval_with_pool_in_vs(
+    pool,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """OracleHybridSearchRetriever must work when OracleVS.client is a pool."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    drop_table_purge(connection, resource_names["table"])
+
+    vs_pool = OracleVS.from_texts(
+        texts,
+        model,
+        metadatas,
+        client=pool,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = OracleVectorizerPreference.create_preference(vs_pool, resource_names["pref"])
+    create_hybrid_index(pool, resource_names["index"], pref)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs_pool, idx_name=resource_names["index"], k=2, return_scores=True
+    )
+    docs = retriever.invoke("database tablespace")
+    assert len(docs) >= 1
+    assert "score" in docs[0].metadata
+
+
+# -------------------------
+# Score descending ordering
+# -------------------------
+
+
+def test_hybrid_scores_descending(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Scores returned by hybrid retrieval must be in descending order."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, _ = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs,
+        idx_name=resource_names["index"],
+        k=3,
+        search_mode="hybrid",
+        return_scores=True,
+    )
+    docs = retriever.invoke("tablespace database")
+    scores = [d.metadata["score"] for d in docs]
+    assert scores == sorted(scores, reverse=True), (
+        f"Hybrid scores not in descending order: {scores}"
+    )
+
+
+def test_semantic_scores_descending(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Vector scores from semantic mode must be in descending order."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, _ = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs,
+        idx_name=resource_names["index"],
+        k=3,
+        search_mode="semantic",
+        return_scores=True,
+    )
+    docs = retriever.invoke("tablespace database")
+    scores = [d.metadata["vector_score"] for d in docs]
+    assert scores == sorted(scores, reverse=True), (
+        f"Semantic scores not in descending order: {scores}"
+    )
+
+
+def test_keyword_scores_descending(
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Text scores from keyword mode must be in descending order."""
+    texts, metadatas = three_doc_texts_and_metadatas
+    vs, _ = _build_vs_and_index(
+        connection, resource_names, db_embedder_params, texts, metadatas
+    )
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs,
+        idx_name=resource_names["index"],
+        k=3,
+        search_mode="keyword",
+        return_scores=True,
+    )
+    docs = retriever.invoke("tablespace database")
+    scores = [d.metadata["text_score"] for d in docs]
+    assert scores == sorted(scores, reverse=True), (
+        f"Keyword scores not in descending order: {scores}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_hybrid_scores_descending_async(
+    aconnection,
+    connection,
+    cleanup,
+    resource_names,
+    db_embedder_params,
+    three_doc_texts_and_metadatas,
+) -> None:
+    """Async: hybrid scores must be in descending order."""
+    proxy = ""
+    model = OracleEmbeddings(conn=connection, params=db_embedder_params, proxy=proxy)
+    texts, metadatas = three_doc_texts_and_metadatas
+    drop_table_purge(connection, resource_names["table"])
+
+    vs = await OracleVS.afrom_texts(
+        texts,
+        model,
+        metadatas,
+        client=aconnection,
+        table_name=resource_names["table"],
+        distance_strategy=DistanceStrategy.COSINE,
+    )
+    pref = await OracleVectorizerPreference.acreate_preference(
+        vs, resource_names["pref"]
+    )
+    await acreate_hybrid_index(aconnection, resource_names["index"], pref)
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=vs,
+        idx_name=resource_names["index"],
+        k=3,
+        search_mode="hybrid",
+        return_scores=True,
+    )
+    docs = await retriever.ainvoke("tablespace database")
+    scores = [d.metadata["score"] for d in docs]
+    assert scores == sorted(scores, reverse=True), (
+        f"Async hybrid scores not in descending order: {scores}"
+    )

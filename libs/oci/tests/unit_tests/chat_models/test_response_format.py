@@ -1,5 +1,6 @@
 """Unit tests for response_format feature."""
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -122,6 +123,59 @@ def test_with_structured_output_json_schema():
     structured_llm = llm.with_structured_output(schema=TestSchema, method="json_schema")
 
     # The structured LLM should be created without errors
+    assert structured_llm is not None
+
+
+@pytest.mark.requires("oci")
+def test_generic_provider_converts_json_schema_dict_tool():
+    """GenericProvider should accept JSON schema dicts as tool schemas."""
+    from langchain_oci.chat_models.providers.generic import GenericProvider
+
+    provider = GenericProvider()
+    schema = {
+        "title": "ToolSelectionResponse",
+        "description": "Tools selected for a request.",
+        "type": "object",
+        "properties": {
+            "selected_tool_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["selected_tool_names"],
+    }
+
+    tool = provider.convert_to_oci_tool(schema)
+
+    assert getattr(tool, "name") == "ToolSelectionResponse"
+    assert getattr(tool, "description") == "Tools selected for a request."
+    assert cast(Any, tool).parameters == {
+        "type": "object",
+        "properties": schema["properties"],
+        "required": ["selected_tool_names"],
+    }
+
+
+@pytest.mark.requires("oci")
+def test_generic_structured_output_accepts_json_schema_dict_default_method():
+    """Generic structured output should accept middleware-style JSON schemas."""
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+    schema = {
+        "title": "ToolSelectionResponse",
+        "description": "Tools selected for a request.",
+        "type": "object",
+        "properties": {
+            "selected_tool_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["selected_tool_names"],
+    }
+
+    structured_llm = llm.with_structured_output(schema)
+
     assert structured_llm is not None
 
 
@@ -253,3 +307,56 @@ def test_response_format_model_kwargs():
     # Verify response_format is in the request
     assert hasattr(request.chat_request, "response_format")
     assert request.chat_request.response_format == {"type": "JSON_OBJECT"}
+
+
+# ---------------------------------------------------------------------------
+# Structured output: tool_choice and empty description fixes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.requires("oci")
+def test_structured_output_sets_tool_choice_for_generic():
+    """with_structured_output should set tool_choice='required' for Generic models."""
+    from pydantic import BaseModel, Field
+
+    oci_gen_ai_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_gen_ai_client)
+
+    class Review(BaseModel):
+        title: str = Field(description="Title")
+        rating: int = Field(description="Rating")
+
+    structured = llm.with_structured_output(Review)
+    assert structured is not None
+
+
+@pytest.mark.requires("oci")
+def test_empty_description_falls_back_to_name_generic():
+    """GenericProvider should use function name when description is empty."""
+    from pydantic import BaseModel
+
+    from langchain_oci.chat_models.providers.generic import GenericProvider
+
+    provider = GenericProvider()
+
+    class NoDocModel(BaseModel):
+        name: str
+
+    tool = provider.convert_to_oci_tool(NoDocModel)
+    assert getattr(tool, "description", ""), "Tool description should not be empty"
+
+
+@pytest.mark.requires("oci")
+def test_empty_description_falls_back_to_name_cohere():
+    """CohereProvider should use function name when description is empty."""
+    from pydantic import BaseModel
+
+    from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+    provider = CohereProvider()
+
+    class NoDocModel(BaseModel):
+        name: str
+
+    tool = provider.convert_to_oci_tool(NoDocModel)
+    assert getattr(tool, "description", ""), "Tool description should not be empty"

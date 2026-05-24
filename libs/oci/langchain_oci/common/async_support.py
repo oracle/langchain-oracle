@@ -38,21 +38,6 @@ def _get_oci_genai_api_version() -> str:
 OCI_GENAI_API_VERSION = _get_oci_genai_api_version()
 
 
-def _snake_to_camel(name: str) -> str:
-    """Convert snake_case to camelCase."""
-    components = name.split("_")
-    return components[0] + "".join(x.title() for x in components[1:])
-
-
-def _convert_keys_to_camel(obj: Any) -> Any:
-    """Recursively convert dict keys from snake_case to camelCase."""
-    if isinstance(obj, dict):
-        return {_snake_to_camel(k): _convert_keys_to_camel(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_convert_keys_to_camel(item) for item in obj]
-    return obj
-
-
 class OCIAsyncClient:
     """Async HTTP client for OCI Generative AI services.
 
@@ -245,11 +230,10 @@ class OCIAsyncClient:
         """
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/chat"
 
-        # Convert snake_case keys to camelCase for OCI REST API
         body = {
             "compartmentId": compartment_id,
-            "servingMode": _convert_keys_to_camel(serving_mode_dict),
-            "chatRequest": _convert_keys_to_camel(chat_request_dict),
+            "servingMode": serving_mode_dict,
+            "chatRequest": chat_request_dict,
         }
 
         headers = self._sign_headers("POST", url, body, stream=stream)

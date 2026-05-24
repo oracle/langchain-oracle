@@ -9,6 +9,7 @@ from langchain_oci.chat_models.providers.generic import (
     GeminiProvider,
     GenericProvider,
     MetaProvider,
+    OpenAIProvider,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "GeminiProvider",
     "GenericProvider",
     "MetaProvider",
+    "OpenAIProvider",
 ]

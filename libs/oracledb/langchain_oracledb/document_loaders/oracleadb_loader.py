@@ -1,4 +1,4 @@
-# Copyright (c) 2024, 2025 Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 oracleadb_loader.py
@@ -15,16 +15,14 @@ from langchain_core.documents import Document
 
 
 class OracleAutonomousDatabaseLoader(BaseLoader):
-    """
-    Load from Oracle ADB
+    """Load rows from Oracle Autonomous Database.
 
-    Autonomous Database connection can be made by connection_string
-    or tns alias. wallet_location and wallet_password are required
-    for TLS connection.
-    Each document will represent one row of the query result.
-    Columns are written into the `page_content` and 'metadata' in
-    constructor is written into 'metadata' of document,
-    by default, the 'metadata' is None.
+    The loader executes a SQL query and converts each returned row into a
+    LangChain document. Row content is written to `page_content`, and selected
+    columns can be copied into document metadata.
+
+    Connections can use a DSN directly or client configuration files, including
+    wallet-based setups when required by a TLS configuration.
     """
 
     def __init__(
@@ -41,19 +39,7 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
         metadata: Optional[List[str]] = None,
         parameter: Optional[Union[list, tuple, dict]] = None,
     ):
-        """
-        init method
-        :param query: sql query to execute
-        :param user: username
-        :param password: user password
-        :param schema: schema to run in database
-        :param dsn: data source name used to identify the oracle database to connect to
-        :param config_dir: directory of config files(tnsname.ora, ewallet.pem)
-        :param wallet_location: location of ewallet.pem, not required for TLS
-        :param wallet_password: password of wallet, not required for TLS connections
-        :param metadata: metadata used in document
-        :param parameter: bind variable to use in query
-        """
+        """Initialize the loader."""
         # Mandatory required arguments.
         self.query = query
         self.user = user
@@ -86,6 +72,8 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
             connect_param["wallet_location"] = self.wallet_location
             connect_param["wallet_password"] = self.wallet_password
 
+        connection = None
+        cursor = None
         try:
             connection = oracledb.connect(**connect_param)
             cursor = connection.cursor()
@@ -109,10 +97,12 @@ class OracleAutonomousDatabaseLoader(BaseLoader):
             ]
         except oracledb.DatabaseError as e:
             print("Got error while connecting: " + str(e))  # noqa: T201
-            data = []
+            raise
         finally:
-            cursor.close()
-            connection.close()
+            if cursor is not None:
+                cursor.close()
+            if connection is not None:
+                connection.close()
 
         return data
 

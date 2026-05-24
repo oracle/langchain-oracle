@@ -92,7 +92,7 @@ def get_config() -> dict:
         ),
         "compartment_id": compartment_id,
         "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
-        "auth_type": os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+        "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
     }
 
 

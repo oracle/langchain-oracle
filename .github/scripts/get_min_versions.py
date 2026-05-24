@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     import pip._vendor.tomli as tomllib
 
-MIN_VERSION_LIBS = ["langchain-core"]
+MIN_VERSION_LIBS = ["langchain-core", "langgraph-checkpoint"]
 
 
 def get_min_version(version: str) -> str:
