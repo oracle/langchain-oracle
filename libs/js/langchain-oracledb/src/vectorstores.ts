@@ -155,6 +155,8 @@ export type VectorElementFormat =
 
 export type OracleDBClient = oracledb.Pool | oracledb.Connection;
 
+// Allows callers to resolve the OracleDB client lazily, for example when the
+// pool/connection is created asynchronously or managed outside OracleVS.
 export type OracleDBClientProvider = () => Promise<OracleDBClient>;
 
 export interface OracleDBVSArgs {
