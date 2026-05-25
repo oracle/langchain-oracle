@@ -85,4 +85,17 @@ describe("OracleVS client provider", () => {
     expect(connection.execute).toHaveBeenCalledTimes(1);
     expect(connection.close).not.toHaveBeenCalled();
   });
+
+  test("does not close concrete direct connections after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const vectorStore = new OracleVS(embeddings, createConfig(connection));
+
+    await vectorStore.initialize();
+
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).not.toHaveBeenCalled();
+  });
 });
