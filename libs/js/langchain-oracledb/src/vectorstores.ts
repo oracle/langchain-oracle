@@ -605,6 +605,8 @@ export class OracleVS extends VectorStore {
 
   readonly client: OracleDBClient | OracleDBClientProvider;
 
+  private readonly poolConnections = new WeakSet<oracledb.Connection>();
+
   embeddingDimension: number | undefined;
 
   readonly tableName: string;
@@ -808,7 +810,9 @@ export class OracleVS extends VectorStore {
     try {
       const client = await this.resolveClient();
       if (isPool(client)) {
-        return await client.getConnection();
+        const connection = await client.getConnection();
+        this.poolConnections.add(connection);
+        return connection;
       }
       return client;
     } catch (error: unknown) {
@@ -819,9 +823,10 @@ export class OracleVS extends VectorStore {
   // Close connection or return it to the pool
   public async retConnection(connection: oracledb.Connection): Promise<void> {
     try {
-      // If a concrete pool owns this store, close the connection to return it to the pool.
-      if (!isClientProvider(this.client) && isPool(this.client)) {
+      // If this public connection came from any pool, close it to return it to the pool.
+      if (this.poolConnections.has(connection)) {
         await connection.close();
+        this.poolConnections.delete(connection);
       }
     } catch (error) {
       console.error("Error in retConnection:", error);
