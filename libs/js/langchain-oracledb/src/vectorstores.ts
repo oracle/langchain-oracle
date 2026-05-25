@@ -770,18 +770,20 @@ export class OracleVS extends VectorStore {
   }
 
   async initialize(): Promise<void> {
+    let connection: oracledb.Connection | null = null;
     try {
       this.embeddingDimension = await this.getEmbeddingDimension(this.query);
-      await this.withConnection(async (connection) => {
-        await createTable(connection, this.tableName, this.embeddingDimension, {
-          description: this.description,
-          annotations: this.annotations,
-          vectorType: this.vectorType,
-          format: this.vectorFormat
-        });
+      connection = await this.getConnection();
+      await createTable(connection, this.tableName, this.embeddingDimension, {
+        description: this.description,
+        annotations: this.annotations,
+        vectorType: this.vectorType,
+        format: this.vectorFormat
       });
     } catch (error: unknown) {
       handleError(error);
+    } finally {
+      if (connection) await this.retConnection(connection);
     }
   }
 
@@ -789,23 +791,6 @@ export class OracleVS extends VectorStore {
     return isClientProvider(this.client)
       ? await this.client()
       : this.client;
-  }
-
-  private async withConnection<T>(
-    run: (connection: oracledb.Connection) => Promise<T>,
-  ): Promise<T> {
-    const client = await this.resolveClient();
-
-    if (isPool(client)) {
-      const connection = await client.getConnection();
-      try {
-        return await run(connection);
-      } finally {
-        await connection.close();
-      }
-    }
-
-    return await run(client);
   }
 
   public async getConnection(): Promise<oracledb.Connection> {
@@ -855,6 +840,7 @@ export class OracleVS extends VectorStore {
 
     const inputIds = options?.ids;
 
+    let connection: oracledb.Connection | null = null;
     try {
       // Ensure there are IDs for all documents
       if (inputIds !== undefined && inputIds.length !== vectors.length) {
@@ -916,15 +902,16 @@ export class OracleVS extends VectorStore {
         autoCommit: false,
       };
 
-      await this.withConnection(async (connection) => {
-        await connection.executeMany(sql, binds, executeOptions);
+      connection = await this.getConnection();
+      await connection.executeMany(sql, binds, executeOptions);
 
-        // Commit once all inserts are queued up
-        await connection.commit();
-      });
+      // Commit once all inserts are queued up
+      await connection.commit();
       return finalIds;
     } catch (error: unknown) {
       return handleError(error);
+    } finally {
+      if (connection) await this.retConnection(connection);
     }
   }
 
@@ -957,49 +944,53 @@ export class OracleVS extends VectorStore {
       [Document, number, ReturnedEmbedding]
     > = [];
 
-    const bindValues: unknown[] = [this.prepareQueryVector(query)];
+    let connection: oracledb.Connection | null = null;
+    try {
+      const bindValues: unknown[] = [this.prepareQueryVector(query)];
 
-    let sqlQuery = `
+      let sqlQuery = `
       SELECT external_id,
         text,
         metadata,
       vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
         embedding
       FROM ${this.tableName} `;
-    if (filter && Object.keys(filter).length > 0) {
-      sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
-    }
-    bindValues.push(k);
-    sqlQuery += ` ORDER BY distance FETCH APPROX FIRST :${bindValues.length} ROWS ONLY `;
+      if (filter && Object.keys(filter).length > 0) {
+        sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
+      }
+      bindValues.push(k);
+      sqlQuery += ` ORDER BY distance FETCH APPROX FIRST :${bindValues.length} ROWS ONLY `;
 
-    // Execute the query
-    const resultSet = await this.withConnection(async (connection) =>
-      connection.execute(sqlQuery, bindValues, {
+      // Execute the query
+      connection = await this.getConnection();
+      const resultSet = await connection.execute(sqlQuery, bindValues, {
         fetchInfo: {
           TEXT: { type: oracledb.STRING },
         },
-      } as unknown as oracledb.ExecuteOptions)
-    );
+      } as unknown as oracledb.ExecuteOptions);
 
-    if (Array.isArray(resultSet.rows) && resultSet.rows.length > 0) {
-      const rows = resultSet.rows as unknown[][];
+      if (Array.isArray(resultSet.rows) && resultSet.rows.length > 0) {
+        const rows = resultSet.rows as unknown[][];
 
-      for (let idx = 0; idx < resultSet.rows.length; idx += 1) {
-        const row = rows[idx];
-        const text = row[1] as string;
-        const metadata = row[2] as Metadata;
-        const distance = row[3] as number;
-        const embedding = this.normalizeReturnedEmbedding(row[4]);
-        const document = new Document({
-          pageContent: text || "",
-          metadata: metadata || {},
-          id: row[0] as string,
-        });
-        docsScoresAndEmbeddings.push([document, distance, embedding]);
+        for (let idx = 0; idx < resultSet.rows.length; idx += 1) {
+          const row = rows[idx];
+          const text = row[1] as string;
+          const metadata = row[2] as Metadata;
+          const distance = row[3] as number;
+          const embedding = this.normalizeReturnedEmbedding(row[4]);
+          const document = new Document({
+            pageContent: text || "",
+            metadata: metadata || {},
+            id: row[0] as string,
+          });
+          docsScoresAndEmbeddings.push([document, distance, embedding]);
+        }
+      } else {
+        // Throw an exception if no rows are found
+        throw new Error("No rows found.");
       }
-    } else {
-      // Throw an exception if no rows are found
-      throw new Error("No rows found.");
+    } finally {
+      if (connection) await this.retConnection(connection);
     }
     return docsScoresAndEmbeddings;
   }
@@ -1102,28 +1093,30 @@ export class OracleVS extends VectorStore {
     ids?: Buffer[];
     deleteAll?: boolean;
   }): Promise<void> {
+    let connection: oracledb.Connection | null = null;
     try {
-      await this.withConnection(async (connection) => {
-        const options = { autoCommit: true };
-        if (params.ids && params.ids.length > 0) {
-          // Dynamically create placeholders
-          const placeholders = params.ids
-            .map((_, index) => `:${index + 1}`)
-            .join(",");
-          // Prepare the query
-          const query = `DELETE FROM ${this.tableName} WHERE id IN (${placeholders})`;
-          // Execute the query with the IDs as bind parameters
-          await connection.execute(query, [...params.ids], options);
-        } else if (params.deleteAll) {
-          await connection.execute(
-            `TRUNCATE TABLE ${this.tableName}`,
-            [],
-            options
-          );
-        }
-      });
+      connection = await this.getConnection();
+      const options = { autoCommit: true };
+      if (params.ids && params.ids.length > 0) {
+        // Dynamically create placeholders
+        const placeholders = params.ids
+          .map((_, index) => `:${index + 1}`)
+          .join(",");
+        // Prepare the query
+        const query = `DELETE FROM ${this.tableName} WHERE id IN (${placeholders})`;
+        // Execute the query with the IDs as bind parameters
+        await connection.execute(query, [...params.ids], options);
+      } else if (params.deleteAll) {
+        await connection.execute(
+          `TRUNCATE TABLE ${this.tableName}`,
+          [],
+          options
+        );
+      }
     } catch (error: unknown) {
       handleError(error);
+    } finally {
+      if (connection) await this.retConnection(connection);
     }
   }
 
