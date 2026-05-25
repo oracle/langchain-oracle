@@ -155,6 +155,7 @@ class DatastoreTool(BaseTool, ABC):
     # Injected dependencies
     selector: Any = Field(default=None, exclude=True)
     formatter: Any = Field(default_factory=ResultFormatter, exclude=True)
+    store_list: str = Field(default="", exclude=True)
     _logger: logging.Logger = PrivateAttr()
 
     def __init__(self, **data: Any) -> None:

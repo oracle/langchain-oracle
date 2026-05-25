@@ -1,7 +1,17 @@
 # Copyright (c) 2025 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-from langchain_oci.agents.react import create_oci_agent
+from typing import TYPE_CHECKING, Any
+
+from langchain_oci.agents.react.agent import create_oci_agent
+
+if TYPE_CHECKING:
+    from langchain_oci.datastores import (
+        ADB,
+        OpenSearch,
+        VectorDataStore,
+        create_datastore_tools,
+    )
 from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeployment,
     ChatOCIModelDeploymentTGI,
@@ -29,6 +39,20 @@ from langchain_oci.utils.vision import (
     to_data_uri,
 )
 
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for optional dependencies."""
+    if name == "create_datastore_tools":
+        from langchain_oci.datastores import create_datastore_tools
+
+        return create_datastore_tools
+    if name in ("VectorDataStore", "OpenSearch", "ADB"):
+        from langchain_oci import datastores
+
+        return getattr(datastores, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "ChatOCIGenAI",
     "ChatOCIModelDeployment",
@@ -45,6 +69,11 @@ __all__ = [
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
     "create_oci_agent",
+    # Datastores
+    "VectorDataStore",
+    "OpenSearch",
+    "ADB",
+    "create_datastore_tools",
     # Vision / image utilities
     "load_image",
     "encode_image",
