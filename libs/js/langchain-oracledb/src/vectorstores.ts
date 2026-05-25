@@ -607,6 +607,8 @@ export class OracleVS extends VectorStore {
 
   readonly client: OracleDBClient | OracleDBClientProvider;
 
+  // Tracks connections borrowed from a pool so retConnection() can return them
+  // without closing direct connections owned by the caller.
   private readonly poolConnections = new WeakSet<oracledb.Connection>();
 
   embeddingDimension: number | undefined;
@@ -911,7 +913,9 @@ export class OracleVS extends VectorStore {
     } catch (error: unknown) {
       return handleError(error);
     } finally {
-      if (connection) await this.retConnection(connection);
+      if (connection) {
+        await this.retConnection(connection);
+      }
     }
   }
 
@@ -952,7 +956,7 @@ export class OracleVS extends VectorStore {
       SELECT external_id,
         text,
         metadata,
-      vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
+        vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
         embedding
       FROM ${this.tableName} `;
       if (filter && Object.keys(filter).length > 0) {
@@ -990,7 +994,9 @@ export class OracleVS extends VectorStore {
         throw new Error("No rows found.");
       }
     } finally {
-      if (connection) await this.retConnection(connection);
+      if (connection) {
+        await this.retConnection(connection);
+      }
     }
     return docsScoresAndEmbeddings;
   }
@@ -1116,7 +1122,9 @@ export class OracleVS extends VectorStore {
     } catch (error: unknown) {
       handleError(error);
     } finally {
-      if (connection) await this.retConnection(connection);
+      if (connection) {
+        await this.retConnection(connection);
+      }
     }
   }
 
