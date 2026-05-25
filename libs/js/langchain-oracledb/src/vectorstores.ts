@@ -153,10 +153,14 @@ export const VectorElementFormat = {
 export type VectorElementFormat =
   (typeof VectorElementFormat)[keyof typeof VectorElementFormat];
 
+export type OracleDBClient = oracledb.Pool | oracledb.Connection;
+
+export type OracleDBClientProvider = () => Promise<OracleDBClient>;
+
 export interface OracleDBVSArgs {
   tableName: string;
   schemaName?: string | null;
-  client: oracledb.Pool | oracledb.Connection;
+  client: OracleDBClient | OracleDBClientProvider;
   query: string;
   distanceStrategy?: DistanceStrategy;
   filter?: Metadata;
@@ -204,9 +208,15 @@ function handleError(error: unknown): never {
 }
 
 function isPool(
-  client: oracledb.Connection | oracledb.Pool
+  client: OracleDBClient
 ): client is oracledb.Pool {
   return "getConnection" in client;
+}
+
+function isClientProvider(
+  client: OracleDBClient | OracleDBClientProvider
+): client is OracleDBClientProvider {
+  return typeof client === "function";
 }
 
 function quoteIdentifier(identifier: string) {
@@ -593,7 +603,7 @@ export async function dropTablePurge(
 export class OracleVS extends VectorStore {
   declare FilterType: Metadata;
 
-  readonly client: oracledb.Pool | oracledb.Connection;
+  readonly client: OracleDBClient | OracleDBClientProvider;
 
   embeddingDimension: number | undefined;
 
@@ -756,29 +766,51 @@ export class OracleVS extends VectorStore {
   }
 
   async initialize(): Promise<void> {
-    let connection: oracledb.Connection | null = null;
     try {
       this.embeddingDimension = await this.getEmbeddingDimension(this.query);
-      connection = await this.getConnection();
-      await createTable(connection, this.tableName, this.embeddingDimension, {
-        description: this.description,
-        annotations: this.annotations,
-        vectorType: this.vectorType,
-        format: this.vectorFormat
+      await this.withConnection(async (connection) => {
+        await createTable(connection, this.tableName, this.embeddingDimension, {
+          description: this.description,
+          annotations: this.annotations,
+          vectorType: this.vectorType,
+          format: this.vectorFormat
+        });
       });
     } catch (error: unknown) {
       handleError(error);
-    } finally {
-      if (connection) await this.retConnection(connection);
     }
+  }
+
+  private async resolveClient(): Promise<OracleDBClient> {
+    return isClientProvider(this.client)
+      ? await this.client()
+      : this.client;
+  }
+
+  private async withConnection<T>(
+    run: (connection: oracledb.Connection) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.resolveClient();
+
+    if (isPool(client)) {
+      const connection = await client.getConnection();
+      try {
+        return await run(connection);
+      } finally {
+        await connection.close();
+      }
+    }
+
+    return await run(client);
   }
 
   public async getConnection(): Promise<oracledb.Connection> {
     try {
-      if (isPool(this.client)) {
-        return await (this.client as oracledb.Pool).getConnection();
+      const client = await this.resolveClient();
+      if (isPool(client)) {
+        return await client.getConnection();
       }
-      return this.client as oracledb.Connection;
+      return client;
     } catch (error: unknown) {
       handleError(error);
     }
@@ -787,8 +819,8 @@ export class OracleVS extends VectorStore {
   // Close connection or return it to the pool
   public async retConnection(connection: oracledb.Connection): Promise<void> {
     try {
-      // If the client is a pool, close the connection (return it to the pool)
-      if (isPool(this.client)) {
+      // If a concrete pool owns this store, close the connection to return it to the pool.
+      if (!isClientProvider(this.client) && isPool(this.client)) {
         await connection.close();
       }
     } catch (error) {
@@ -815,7 +847,6 @@ export class OracleVS extends VectorStore {
     }
 
     const inputIds = options?.ids;
-    let connection: oracledb.Connection | null = null;
 
     try {
       // Ensure there are IDs for all documents
@@ -825,7 +856,6 @@ export class OracleVS extends VectorStore {
         );
       }
 
-      connection = await this.getConnection();
       const finalIds: string[] = [];
       const binds: oracledb.BindParameters[] = [];
 
@@ -879,17 +909,15 @@ export class OracleVS extends VectorStore {
         autoCommit: false,
       };
 
-      await connection.executeMany(sql, binds, executeOptions);
+      await this.withConnection(async (connection) => {
+        await connection.executeMany(sql, binds, executeOptions);
 
-      // Commit once all inserts are queued up
-      await connection.commit();
+        // Commit once all inserts are queued up
+        await connection.commit();
+      });
       return finalIds;
     } catch (error: unknown) {
       return handleError(error);
-    } finally {
-      if (connection) {
-        await this.retConnection(connection);
-      }
     }
   }
 
@@ -922,56 +950,49 @@ export class OracleVS extends VectorStore {
       [Document, number, ReturnedEmbedding]
     > = [];
 
-    let connection: oracledb.Connection | null = null;
+    const bindValues: unknown[] = [this.prepareQueryVector(query)];
 
-    try {
-      const bindValues: unknown[] = [this.prepareQueryVector(query)];
-
-      let sqlQuery = `
+    let sqlQuery = `
       SELECT external_id,
         text,
         metadata,
-        vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
+      vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
         embedding
       FROM ${this.tableName} `;
-      if (filter && Object.keys(filter).length > 0) {
-        sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
-      }
-      bindValues.push(k);
-      sqlQuery += ` ORDER BY distance FETCH APPROX FIRST :${bindValues.length} ROWS ONLY `;
+    if (filter && Object.keys(filter).length > 0) {
+      sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
+    }
+    bindValues.push(k);
+    sqlQuery += ` ORDER BY distance FETCH APPROX FIRST :${bindValues.length} ROWS ONLY `;
 
-      // Execute the query
-      connection = await this.getConnection();
-      const resultSet = await connection.execute(sqlQuery, bindValues, {
+    // Execute the query
+    const resultSet = await this.withConnection(async (connection) =>
+      connection.execute(sqlQuery, bindValues, {
         fetchInfo: {
           TEXT: { type: oracledb.STRING },
         },
-      } as unknown as oracledb.ExecuteOptions);
+      } as unknown as oracledb.ExecuteOptions)
+    );
 
-      if (Array.isArray(resultSet.rows) && resultSet.rows.length > 0) {
-        const rows = resultSet.rows as unknown[][];
+    if (Array.isArray(resultSet.rows) && resultSet.rows.length > 0) {
+      const rows = resultSet.rows as unknown[][];
 
-        for (let idx = 0; idx < resultSet.rows.length; idx += 1) {
-          const row = rows[idx];
-          const text = row[1] as string;
-          const metadata = row[2] as Metadata;
-          const distance = row[3] as number;
-          const embedding = this.normalizeReturnedEmbedding(row[4]);
-          const document = new Document({
-            pageContent: text || "",
-            metadata: metadata || {},
-            id: row[0] as string,
-          });
-          docsScoresAndEmbeddings.push([document, distance, embedding]);
-        }
-      } else {
-        // Throw an exception if no rows are found
-        throw new Error("No rows found.");
+      for (let idx = 0; idx < resultSet.rows.length; idx += 1) {
+        const row = rows[idx];
+        const text = row[1] as string;
+        const metadata = row[2] as Metadata;
+        const distance = row[3] as number;
+        const embedding = this.normalizeReturnedEmbedding(row[4]);
+        const document = new Document({
+          pageContent: text || "",
+          metadata: metadata || {},
+          id: row[0] as string,
+        });
+        docsScoresAndEmbeddings.push([document, distance, embedding]);
       }
-    } finally {
-      if (connection) {
-        await connection.close();
-      }
+    } else {
+      // Throw an exception if no rows are found
+      throw new Error("No rows found.");
     }
     return docsScoresAndEmbeddings;
   }
@@ -1074,30 +1095,28 @@ export class OracleVS extends VectorStore {
     ids?: Buffer[];
     deleteAll?: boolean;
   }): Promise<void> {
-    let connection: oracledb.Connection | null = null;
     try {
-      connection = await this.getConnection();
-      const options = { autoCommit: true };
-      if (params.ids && params.ids.length > 0) {
-        // Dynamically create placeholders
-        const placeholders = params.ids
-          .map((_, index) => `:${index + 1}`)
-          .join(",");
-        // Prepare the query
-        const query = `DELETE FROM ${this.tableName} WHERE id IN (${placeholders})`;
-        // Execute the query with the IDs as bind parameters
-        await connection.execute(query, [...params.ids], options);
-      } else if (params.deleteAll) {
-        await connection.execute(
-          `TRUNCATE TABLE ${this.tableName}`,
-          [],
-          options
-        );
-      }
+      await this.withConnection(async (connection) => {
+        const options = { autoCommit: true };
+        if (params.ids && params.ids.length > 0) {
+          // Dynamically create placeholders
+          const placeholders = params.ids
+            .map((_, index) => `:${index + 1}`)
+            .join(",");
+          // Prepare the query
+          const query = `DELETE FROM ${this.tableName} WHERE id IN (${placeholders})`;
+          // Execute the query with the IDs as bind parameters
+          await connection.execute(query, [...params.ids], options);
+        } else if (params.deleteAll) {
+          await connection.execute(
+            `TRUNCATE TABLE ${this.tableName}`,
+            [],
+            options
+          );
+        }
+      });
     } catch (error: unknown) {
       handleError(error);
-    } finally {
-      if (connection) await connection.close();
     }
   }
 
@@ -1132,8 +1151,8 @@ export class OracleVS extends VectorStore {
    * inside the pool are terminated.
    */
   async end(): Promise<void> {
-    if (isPool(this.client)) {
-      await this.client?.close();
+    if (!isClientProvider(this.client) && isPool(this.client)) {
+      await this.client.close();
     }
   }
 }
