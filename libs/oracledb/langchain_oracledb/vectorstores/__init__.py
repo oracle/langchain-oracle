@@ -2,5 +2,6 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
 from langchain_oracledb.vectorstores.oraclevs import OracleVS
+from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
-__all__ = ["OracleVS"]
+__all__ = ["DistanceStrategy", "OracleVS"]
