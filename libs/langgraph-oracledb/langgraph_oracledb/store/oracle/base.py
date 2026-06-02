@@ -389,6 +389,22 @@ def _validate_table_suffix(suffix: str) -> None:
         )
 
 
+def _schema_inconsistency_error(
+    *,
+    table_suffix: str,
+    migration_table: str,
+    migration_version: int,
+    missing_table: str,
+) -> RuntimeError:
+    return RuntimeError(
+        "OracleStore schema is inconsistent for "
+        f"table_suffix='{table_suffix}': {migration_table.upper()} records "
+        f"migration {migration_version}, but {missing_table.upper()} is missing. "
+        "Call teardown()/ateardown() on this store instance, then call setup() again, "
+        "or use a new table_suffix."
+    )
+
+
 def _validate_int_range(
     name: str,
     value: Any,
@@ -1278,6 +1294,33 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             with conn.cursor() as cur:
                 yield cur
 
+    def _table_exists(self, cur: oracledb.Cursor, table_name: str) -> bool:
+        cur.execute(
+            """
+            SELECT 1
+            FROM user_tables
+            WHERE table_name = :1
+            """,
+            (table_name.upper(),),
+        )
+        return cur.fetchone() is not None
+
+    def _raise_if_schema_inconsistent(
+        self,
+        cur: oracledb.Cursor,
+        *,
+        migration_table: str,
+        migration_version: int,
+        required_table: str,
+    ) -> None:
+        if migration_version >= 0 and not self._table_exists(cur, required_table):
+            raise _schema_inconsistency_error(
+                table_suffix=self.table_suffix or "",
+                migration_table=migration_table,
+                migration_version=migration_version,
+                missing_table=required_table,
+            )
+
     def setup(self) -> None:
         """Set up the store database.
 
@@ -1328,6 +1371,19 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             # First ensure global migrations are run (including store_configs table)
             # These use hardcoded table names and should only run once per database
             version = _get_version(cur, table=self.table_names["store_migrations"])
+            self._raise_if_schema_inconsistent(
+                cur,
+                migration_table=self.table_names["store_migrations"],
+                migration_version=version,
+                required_table=self.table_names["store"],
+            )
+            if version >= 3:
+                self._raise_if_schema_inconsistent(
+                    cur,
+                    migration_table=self.table_names["store_migrations"],
+                    migration_version=version,
+                    required_table="store_configs",
+                )
             for v, sql in enumerate(self.MIGRATIONS[version + 1 :], start=version + 1):
                 try:
                     sql_formatted = sql.format(**self.table_names)
@@ -1347,6 +1403,12 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             if self.index_config:
                 vector_migration_table_name = self.table_names["vector_migrations"]
                 version = _get_version(cur, table=vector_migration_table_name)
+                self._raise_if_schema_inconsistent(
+                    cur,
+                    migration_table=vector_migration_table_name,
+                    migration_version=version,
+                    required_table=self.table_names["store_vectors"],
+                )
 
                 for v, migration in enumerate(
                     self.VECTOR_MIGRATIONS[version + 1 :], start=version + 1
