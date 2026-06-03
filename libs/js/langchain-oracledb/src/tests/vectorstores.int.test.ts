@@ -1245,6 +1245,14 @@ describe("OracleVectorStore", () => {
     oraclevs = new OracleVS(embedder, dbConfig);
     await oraclevs.initialize();
 
+    // create Index so that vector index is being used.
+    await createIndex(connection as oracledb.Connection, oraclevs, {
+      idxName: "embeddings_idx",
+      idxType: "IVF",
+      neighborPart: 64,
+      accuracy: 90,
+    });
+
     // Sample documents
     const docs = [
       new Document({
@@ -1348,6 +1356,102 @@ describe("OracleVectorStore", () => {
     await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
       "No rows found"
     );
+  });
+
+  test("uses vector index transform with JSON search index in the plan", async () => {
+    oraclevs = new OracleVS(embedder, dbConfig);
+    await oraclevs.initialize();
+
+    const docs = [
+      new Document({
+        pageContent: "A thrilling fantasy novel with dragons and magic.",
+        metadata: { category: "books", price: 15 },
+      }),
+      new Document({
+        pageContent: "A guide to healthy cooking with fresh vegetables.",
+        metadata: { category: "books", price: 25 },
+      }),
+      new Document({
+        pageContent: "A strategy board game with medieval warfare theme.",
+        metadata: { category: "games", price: 40 },
+      }),
+      new Document({
+        pageContent: "A suspense narrative in Paris.",
+        metadata: { category: "books", price: 10 },
+      }),
+    ];
+
+    await oraclevs.addDocuments(docs);
+
+    await createIndex(connection as oracledb.Connection, oraclevs, {
+      idxName: "embeddings_idx",
+      idxType: "IVF",
+      neighborPart: 64,
+      accuracy: 90,
+    });
+    await connection?.execute(
+      `CREATE SEARCH INDEX "metadata_search_idx" ON ${oraclevs.tableName}(metadata) FOR JSON`
+    );
+
+    const queryVector = new Float32Array(await embedder.embedQuery("test"));
+    const statementId = `VEC_HINT_${Date.now() % 1000000000}`;
+
+    try {
+      await connection?.execute(
+        `DELETE FROM PLAN_TABLE WHERE statement_id = :statementId`,
+        { statementId }
+      );
+      await connection?.execute(
+        `
+        EXPLAIN PLAN SET STATEMENT_ID = '${statementId}' FOR
+        SELECT /*+ VECTOR_INDEX_TRANSFORM(${oraclevs.tableName}) */
+          external_id,
+          text,
+          metadata,
+          vector_distance(embedding, :embedding, ${oraclevs.distanceStrategy}) as distance,
+          embedding
+        FROM ${oraclevs.tableName}
+        WHERE JSON_EXISTS(metadata, '$.category?(@ == "books")')
+        ORDER BY distance
+        FETCH APPROX FIRST 4 ROWS ONLY
+        `,
+        { embedding: queryVector }
+      );
+
+      const planResult = await connection?.execute(
+        `SELECT plan_table_output
+         FROM TABLE(DBMS_XPLAN.DISPLAY(NULL, :statementId, 'BASIC'))`,
+        { statementId },
+        {
+          outFormat: oracledb.OUT_FORMAT_OBJECT,
+          fetchInfo: {
+            PLAN_TABLE_OUTPUT: { type: oracledb.STRING },
+          },
+        }
+      );
+      const planText =
+        planResult?.rows
+          ?.map((row) => {
+            const output = row as
+              | { PLAN_TABLE_OUTPUT?: string; plan_table_output?: string }
+              | [string];
+            return Array.isArray(output)
+              ? output[0]
+              : output.PLAN_TABLE_OUTPUT ?? output.plan_table_output ?? "";
+          })
+          .join("\n") ?? "";
+
+      expect(planText).toContain("VECTOR$embeddings_idx");
+      expect(planText).toMatch(/IVF_FLAT_(CENTROIDS|CENTROID_PARTITIONS)/);
+      expect(planText).toMatch(
+        /TABLE ACCESS BY USER ROWID\s+\|\s+testlangchain_1/i
+      );
+    } finally {
+      await connection?.execute(
+        `DELETE FROM PLAN_TABLE WHERE statement_id = :statementId`,
+        { statementId }
+      );
+    }
   });
 
   test("should handle a simple _or clause", async () => {
