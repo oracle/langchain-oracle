@@ -1,0 +1,15 @@
+# Copyright (c) 2026 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+
+import pytest
+
+
+@pytest.mark.compile
+def test_compile_imports() -> None:
+    """CI compile check: imports should succeed without running real integrations."""
+    from langchain_oci import OCIGenAIEmbeddings
+    from langchain_oci.datastores.vectorstores import ADB, OpenSearch
+
+    assert OCIGenAIEmbeddings is not None
+    assert ADB is not None
+    assert OpenSearch is not None

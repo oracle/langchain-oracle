@@ -56,7 +56,7 @@ def create_oci_agent(
     binds the provided tools, and creates an agent using langchain.agents.
 
     For advanced capabilities (planning, file operations, subagent spawning),
-    see :func:`create_deep_research_agent`.
+    see :func:`create_deepagents_agent`.
 
     Args:
         model_id: OCI model identifier (e.g., "meta.llama-4-scout-17b-16e-instruct")

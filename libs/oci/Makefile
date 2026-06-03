@@ -1,4 +1,4 @@
-.PHONY: all format lint test tests integration_tests docker_tests help extended_tests
+.PHONY: all format lint test tests integration_tests docker_tests help extended_tests agents_integration_tests
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -9,6 +9,13 @@ integration_test integration_tests: TEST_FILE = tests/integration_tests/
 
 test tests integration_test integration_tests:
 	poetry run pytest $(TEST_FILE)
+
+# Real-network deepagents integration tests. Requires env vars listed in
+# tests/integration_tests/agents/conftest.py (OCI_*, ADB_*, OPENSEARCH_*).
+# The conftest auto-bootstraps the ADB test table on first run, so no manual
+# setup is needed beyond providing credentials.
+agents_integration_tests:
+	poetry run pytest tests/integration_tests/agents --no-cov --timeout=300 -ra
 
 test_watch:
 	poetry run ptw --snapshot-update --now . -- -vv $(TEST_FILE)

@@ -1,13 +1,13 @@
 [project]
 name = "langchain-oci"
-version = "0.2.6"
+version = "0.2.7"
 description = "An integration package connecting OCI and LangChain"
 readme = "README.md"
 license = "UPL-1.0"
 requires-python = ">=3.9,<4.0"
 dependencies = [
     "langchain-core>=0.3.78,<1.0.0; python_version < '3.10'",
-    "langchain-core>=1.1.0,<2.0.0; python_version >= '3.10'",
+    "langchain-core>=1.4.0,<2.0.0; python_version >= '3.10'",
     "langchain>=0.3.20,<1.0.0; python_version < '3.10'",
     "langchain>=1.0.0,<2.0.0; python_version >= '3.10'",
     "oci>=2.173.0",
@@ -18,16 +18,22 @@ dependencies = [
     "langchain-openai>=0.3.35,<1.0.0; python_version < '3.10'",
     "langchain-openai>=1.1.0,<2.0.0; python_version >= '3.10'",
     "langgraph>=0.2.0,<2.0.0",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
-# Deep research agent with all datastores
-deep-research = [
+# Deepagents agent with all datastores
+deepagents = [
     # deepagents requires Python 3.11+; Python 3.14 not yet tested
-    "deepagents>=0.4.0; python_version >= '3.11' and python_version < '3.14'",
-    # TODO: bump to >=1.3.0 once langchain-oracledb 1.3.0 is published to PyPI.
-    # The chunk_text/extract_doc_id APIs from langchain-oracledb #191 ship in 1.3.0.
-    "langchain-oracledb>=1.2.0",
+    "deepagents>=0.6.1; python_version >= '3.11' and python_version < '3.14'",
+    # 1.3.0 ships chunk_text/extract_doc_id and the OracleVS.add_documents
+    # text_splitter kwarg used by the ADB chunk_on_write path.
+    "langchain-oracledb>=1.3.0",
+    # Oracle-backed LangGraph checkpointer (OracleSaver / AsyncOracleSaver),
+    # so create_deepagents_agent(checkpointer=...) can persist thread state
+    # to Oracle ADB out of the box. Requires Python 3.10+ (matches the
+    # deepagents floor anyway via the marker above).
+    "langgraph-oracledb>=1.0.1; python_version >= '3.10'",
     "opensearch-py>=2.4.0",
 ]
 
@@ -127,10 +133,22 @@ module = [
     "PIL.*",
     "langchain_community.vectorstores.utils",
     "langchain_oracledb.*",
+    "langgraph_oracledb.*",
     "langchain_oci.tools",
     "langchain_oci.tools.*",
 ]
 ignore_missing_imports = true
+
+# `# type: ignore` markers in the chat_models test suites are needed under
+# langchain-core 0.3.x (the floor for Python 3.9) but become unused under
+# langchain-core 1.4+ on Python 3.10+. Disabling warn_unused_ignores for those
+# test modules lets both Python versions lint cleanly with the same source.
+[[tool.mypy.overrides]]
+module = [
+    "tests.unit_tests.chat_models.*",
+    "tests.integration_tests.chat_models.*",
+]
+warn_unused_ignores = false
 
 [tool.coverage.run]
 omit = ["tests/*"]
