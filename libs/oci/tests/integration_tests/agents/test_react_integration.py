@@ -362,14 +362,16 @@ def test_openai_gpt5_tool_calling() -> None:
     )
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     service_endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
+    auth_type = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
+    auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
 
     agent = create_oci_agent(
         model_id="openai.gpt-5",
         tools=[get_weather],
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
-        auth_type="API_KEY",
-        auth_profile="API_KEY_AUTH",
+        auth_type=auth_type,
+        auth_profile=auth_profile,
         system_prompt="You are a weather assistant. Always use the get_weather tool.",
         temperature=0.3,
         max_tokens=512,
