@@ -928,7 +928,8 @@ export class OracleVS extends VectorStore {
       const bindValues: unknown[] = [this.prepareQueryVector(query)];
 
       let sqlQuery = `
-      SELECT external_id,
+      SELECT /*+ VECTOR_INDEX_TRANSFORM(${this.tableName}) */
+        external_id,
         text,
         metadata,
         vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
