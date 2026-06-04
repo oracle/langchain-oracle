@@ -5,6 +5,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager, contextmanager
+from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -22,6 +23,21 @@ if TYPE_CHECKING:
     from oracledb import AsyncConnection, Connection
 
 logger = logging.getLogger(__name__)
+
+
+class DistanceStrategy(str, Enum):
+    """Enumerator of the distance strategies for calculating distances
+    between vectors.
+
+    Vendored from ``langchain_community.vectorstores.utils`` so that this
+    package does not depend on ``langchain-community``.
+    """
+
+    EUCLIDEAN_DISTANCE = "EUCLIDEAN_DISTANCE"
+    MAX_INNER_PRODUCT = "MAX_INNER_PRODUCT"
+    DOT_PRODUCT = "DOT_PRODUCT"
+    JACCARD = "JACCARD"
+    COSINE = "COSINE"
 
 
 # define a type variable that can be any kind of function

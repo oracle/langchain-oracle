@@ -28,7 +28,6 @@ from typing import (
     Tuple,
     Type,
     Union,
-    cast,
 )
 
 from numpy.typing import NDArray
@@ -43,16 +42,14 @@ if TYPE_CHECKING:
 
 import numpy as np
 import oracledb
-from langchain_community.vectorstores.utils import (
-    DistanceStrategy,
-    maximal_marginal_relevance,
-)
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
+from langchain_core.vectorstores.utils import maximal_marginal_relevance
 
 from ..embeddings import OracleEmbeddings
 from .utils import (
+    DistanceStrategy,
     _aclear_session_proxy,
     _aget_connection,
     _ahandle_exceptions,
@@ -2371,13 +2368,17 @@ class OracleVS(VectorStore):
 
         table_name = str(kwargs.get("table_name", "langchain"))
 
-        distance_strategy = cast(
-            DistanceStrategy, kwargs.get("distance_strategy", None)
-        )
+        distance_strategy = kwargs.get("distance_strategy", None)
         if not isinstance(distance_strategy, DistanceStrategy):
-            raise TypeError(
-                f"Expected DistanceStrategy got {type(distance_strategy).__name__} "
-            )
+            try:
+                # Accept an equivalent value (e.g. a DistanceStrategy from
+                # another package or its string value) for backwards
+                # compatibility now that the enum is vendored locally.
+                distance_strategy = DistanceStrategy(distance_strategy)
+            except (ValueError, TypeError):
+                raise TypeError(
+                    f"Expected DistanceStrategy got {type(distance_strategy).__name__} "
+                )
 
         query = kwargs.get("query", "What is a Oracle database")
 

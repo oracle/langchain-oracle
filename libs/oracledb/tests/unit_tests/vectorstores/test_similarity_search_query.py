@@ -11,8 +11,7 @@ skips the vector index entirely, regressing similarity-search latency.
 
 from __future__ import annotations
 
-from langchain_community.vectorstores.utils import DistanceStrategy
-
+from langchain_oracledb.vectorstores import DistanceStrategy
 from langchain_oracledb.vectorstores.oraclevs import _get_similarity_search_query
 
 _TABLE = "ORAVS_DOCUMENTS"

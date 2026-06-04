@@ -18,10 +18,10 @@ from typing import Union
 import numpy as np
 import oracledb
 import pytest
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_oracledb.embeddings import OracleEmbeddings
+from langchain_oracledb.vectorstores import DistanceStrategy
 from langchain_oracledb.vectorstores.oraclevs import (
     INTERNAL_ID_KEY,
     OracleVS,

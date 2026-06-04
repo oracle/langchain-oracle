@@ -36,7 +36,6 @@ Authors:
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_community.vectorstores.utils import DistanceStrategy
 
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.retrievers.hybrid_search import (
@@ -45,6 +44,7 @@ from langchain_oracledb.retrievers.hybrid_search import (
     _get_hybrid_index_ddl,
     _validate_parameters,
 )
+from langchain_oracledb.vectorstores import DistanceStrategy
 from langchain_oracledb.vectorstores.oraclevs import (
     OracleVS,
     _get_hnsw_index_ddl,

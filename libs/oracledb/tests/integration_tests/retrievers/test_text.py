@@ -18,7 +18,6 @@ from typing import Any, Dict, Tuple
 
 import oracledb
 import pytest
-from langchain_community.vectorstores.utils import DistanceStrategy
 
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.retrievers.text_search import (
@@ -26,7 +25,7 @@ from langchain_oracledb.retrievers.text_search import (
     acreate_text_index,
     create_text_index,
 )
-from langchain_oracledb.vectorstores import OracleVS
+from langchain_oracledb.vectorstores import DistanceStrategy, OracleVS
 from langchain_oracledb.vectorstores.utils import (
     drop_index,
     drop_table_purge,

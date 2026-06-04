@@ -14,8 +14,7 @@ from typing import Any, Dict, Tuple
 
 import oracledb
 import pytest
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.retrievers.hybrid_search import (
@@ -25,7 +24,7 @@ from langchain_oracledb.retrievers.hybrid_search import (
     create_hybrid_index,
     drop_preference,
 )
-from langchain_oracledb.vectorstores import OracleVS
+from langchain_oracledb.vectorstores import DistanceStrategy, OracleVS
 from langchain_oracledb.vectorstores.utils import (
     drop_index,
     drop_table_purge,

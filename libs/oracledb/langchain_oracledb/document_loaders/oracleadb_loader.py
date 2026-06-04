@@ -10,7 +10,7 @@ Oracle Autonomous Database (ADB).
 from typing import Any, Dict, List, Optional, Union
 
 import oracledb
-from langchain_community.document_loaders.base import BaseLoader
+from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 
 
