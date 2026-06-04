@@ -54,8 +54,8 @@ from langchain_oracledb.vectorstores.oraclevs import create_index
 from langchain_oracledb.document_loaders.oracleai import OracleTextSplitter
 from langchain_core.documents import Document
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_oracledb.vectorstores import DistanceStrategy
 
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/paraphrase-mpnet-base-v2"

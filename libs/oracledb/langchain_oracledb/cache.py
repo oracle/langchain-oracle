@@ -11,7 +11,6 @@ import json
 import logging
 from typing import Any, Optional, Union
 
-from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.caches import RETURN_VAL_TYPE, BaseCache
 from langchain_core.embeddings import Embeddings
 from langchain_core.load.dump import dumps
@@ -20,6 +19,7 @@ from langchain_core.outputs import Generation
 
 from langchain_oracledb.vectorstores.oraclevs import OracleVS, create_index
 from langchain_oracledb.vectorstores.utils import (
+    DistanceStrategy,
     _get_connection,
     _quote_indentifier,
     _validate_indentifier,
