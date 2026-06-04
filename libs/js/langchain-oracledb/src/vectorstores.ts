@@ -927,6 +927,10 @@ export class OracleVS extends VectorStore {
     try {
       const bindValues: unknown[] = [this.prepareQueryVector(query)];
 
+      // VECTOR_INDEX_TRANSFORM keeps the vector index in the plan even when a
+      // JSON Search Index is also defined on the table. Without the hint, when
+      // both indexes exist, the optimizer can pick the JSON Search Index for a
+      // JSON_EXISTS filter and skip the vector index, hurting search latency.
       let sqlQuery = `
       SELECT /*+ VECTOR_INDEX_TRANSFORM(${this.tableName}) */
         external_id,
