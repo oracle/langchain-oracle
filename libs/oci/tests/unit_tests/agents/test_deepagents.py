@@ -569,6 +569,37 @@ class TestCreateDeepagentsAgent:
                     call_kwargs = mock_llm_class.call_args.kwargs
                     assert call_kwargs["model_id"] == "google.gemini-2.5-flash"
 
+    def test_custom_model_used_as_is(self) -> None:
+        """A pre-built ``model`` is passed straight to create_deep_agent and
+        ChatOCIGenAI is never constructed."""
+        from langchain_oci.agents.deepagents.agent import create_deepagents_agent
+
+        custom_model = MagicMock()
+        with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
+            with patch(
+                "langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"
+            ) as mock_llm_class:
+                with mock_deepagents() as mock_create:
+                    create_deepagents_agent(tools=[dummy_tool], model=custom_model)
+
+                    mock_llm_class.assert_not_called()
+                    assert mock_create.call_args.kwargs["model"] is custom_model
+
+    def test_custom_model_skips_compartment_requirement(self) -> None:
+        """With a pre-built ``model`` no compartment_id/env is required."""
+        from langchain_oci.agents.deepagents.agent import create_deepagents_agent
+
+        custom_model = MagicMock()
+        with patch.dict("os.environ", {}, clear=True):
+            with patch(
+                "langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"
+            ) as mock_llm_class:
+                with mock_deepagents() as mock_create:
+                    create_deepagents_agent(tools=[dummy_tool], model=custom_model)
+
+                    mock_llm_class.assert_not_called()
+                    assert mock_create.call_args.kwargs["model"] is custom_model
+
     def test_openai_models_pass_max_tokens_through(self) -> None:
         """OpenAI-compatible models receive ``max_tokens`` from the agent layer.
 

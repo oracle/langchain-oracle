@@ -82,6 +82,24 @@ class TestCreateOCIReactAgent:
                         tools=[dummy_tool],
                     )
 
+    def test_custom_model_used_as_is(self) -> None:
+        """A pre-built ``model`` drives the agent and ChatOCIGenAI is not built,
+        even without a compartment_id."""
+        custom_model = MagicMock()
+        with patch.dict("os.environ", {}, clear=True):
+            with patch(
+                "langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"
+            ) as mock_llm_class:
+                with mock_create_agent() as mock_create:
+                    create_oci_agent(
+                        model_id="meta.llama-4-scout-17b-16e-instruct",
+                        tools=[dummy_tool],
+                        model=custom_model,
+                    )
+
+                    mock_llm_class.assert_not_called()
+                    assert mock_create.call_args.kwargs["model"] is custom_model
+
     def test_passes_system_prompt(self) -> None:
         """Test that system_prompt is passed to the agent creation function."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
