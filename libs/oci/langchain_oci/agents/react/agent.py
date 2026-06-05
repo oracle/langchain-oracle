@@ -19,6 +19,7 @@ from langchain_oci.agents.common import (
 from langchain_oci.common.auth import OCIAuthType
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
     from langgraph.graph.state import CompiledStateGraph
 
 
@@ -26,6 +27,8 @@ def create_oci_agent(
     model_id: str,
     tools: Sequence[BaseTool | Callable[..., Any]],
     *,
+    # Model
+    model: "BaseChatModel | None" = None,
     # OCI-specific options
     compartment_id: str | None = None,
     service_endpoint: str | None = None,
@@ -59,8 +62,13 @@ def create_oci_agent(
     see :func:`create_deepagents_agent`.
 
     Args:
-        model_id: OCI model identifier (e.g., "meta.llama-4-scout-17b-16e-instruct")
+        model_id: OCI model identifier (e.g., "meta.llama-4-scout-17b-16e-instruct").
+            Ignored when ``model`` is provided.
         tools: List of tools the agent can use.
+        model: Pre-built LangChain chat model to drive the agent. When set, it
+            is used as-is and ``model_id`` plus the OCI auth options (and the
+            OCI-specific ``max_sequential_tool_calls`` / ``tool_result_guidance``
+            tuning) are ignored. Use this to run on any provider.
         compartment_id: OCI compartment OCID.
         service_endpoint: OCI GenAI service endpoint.
         auth_type: OCI authentication type.
@@ -104,6 +112,7 @@ def create_oci_agent(
     create_agent_func, use_legacy_api = _get_agent_factory()
 
     config = AgentConfig(
+        model=model,
         model_id=model_id,
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
