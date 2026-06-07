@@ -14,6 +14,16 @@ interface AddDocumentOptions {
   mutateOnDuplicate?: boolean;
 }
 
+function validateMetadataKey(column: string): void {
+  const pattern = /^[a-zA-Z0-9_.[\],\s*]*$/;
+
+  if (!column || !pattern.test(column)) {
+    throw new Error(
+      `Invalid metadata key '${column}'. Only letters, numbers, underscores, nesting via '.', and array wildcards '[*]' are allowed.`
+    );
+  }
+}
+
 export function generateWhereClause(
   dbFilter: Metadata,
   bindValues: unknown[]
@@ -64,6 +74,8 @@ function generateOperatorCondition(
   value: unknown,
   bindValues: unknown[]
 ): string {
+  validateMetadataKey(column);
+
   switch (operator) {
     case "$eq":
       return jsonCompare(column, "=", value, bindValues);
