@@ -43,10 +43,41 @@ export function createOracleError(
   return new OracleError(code, message, cause);
 }
 
+const errorMessageFactories: Record<OracleErrorCode, (...args: unknown[]) => string> = {
+  [OracleErrorCode.NO_ROWS_FOUND]: () => "No rows found.",
+  [OracleErrorCode.RUNTIME_ERROR]: () =>
+    "Database operation failed due to a runtime error.",
+  [OracleErrorCode.VALIDATION_ERROR]: () =>
+    "Operation failed due to a validation error.",
+  [OracleErrorCode.UNEXPECTED_ERROR]: (error) =>
+    `An unexpected error occurred during the operation. ${String(error)}`,
+  [OracleErrorCode.UNKNOWN_ERROR]: (error) =>
+    `An unknown and unexpected error occurred. ${String(error)}`,
+  [OracleErrorCode.INVALID_METADATA_KEY]: (column) =>
+    `Invalid metadata key '${String(column)}'. Only letters, numbers, underscores, nesting via '.', and array wildcards '[*]' are allowed.`,
+  [OracleErrorCode.INVALID_FILTER_VALUE]: (message) => String(message),
+  [OracleErrorCode.UNSUPPORTED_FILTER_OPERATOR]: (operator) =>
+    `Unsupported operator: ${String(operator)}`,
+  [OracleErrorCode.INVALID_IDENTIFIER]: (identifier) =>
+    `Identifier name ${String(identifier)} is not valid.`,
+  [OracleErrorCode.INVALID_VECTOR_CONFIGURATION]: (message) => String(message),
+  [OracleErrorCode.INVALID_VECTOR_VALUE]: (message) => String(message),
+  [OracleErrorCode.INVALID_INDEX_PARAMETERS]: (invalidKeys) =>
+    `Invalid parameter(s): ${Array.isArray(invalidKeys) ? invalidKeys.join(", ") : String(invalidKeys)}`,
+  [OracleErrorCode.INVALID_STATE]: (message) => String(message),
+  [OracleErrorCode.UNSUPPORTED_VECTOR_REPRESENTATION]: (message) =>
+    String(message),
+  [OracleErrorCode.INVALID_INPUT]: (message) => String(message),
+  [OracleErrorCode.MISSING_REQUIRED_PARAMETER]: (parameter) =>
+    `${String(parameter)} parameter is required...`,
+  [OracleErrorCode.INVALID_PREFERENCES]: (message) => String(message),
+  [OracleErrorCode.INVALID_SQL_IDENTIFIER]: () =>
+    "Invalid owner, table, or column name",
+};
+
 export function throwOracleError(
   code: OracleErrorCode,
-  message: string,
-  cause?: unknown
+  ...args: unknown[]
 ): never {
-  throw createOracleError(code, message, cause);
+  throw createOracleError(code, errorMessageFactories[code](...args));
 }
