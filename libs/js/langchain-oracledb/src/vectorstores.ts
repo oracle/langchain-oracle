@@ -10,7 +10,7 @@ import { maximalMarginalRelevance } from "@langchain/core/utils/math";
 import {
   OracleError,
   OracleErrorCode,
-  createOracleError,
+  createOracleErrorFromCode,
   throwOracleError,
 } from "./errors.js";
 
@@ -27,7 +27,7 @@ function validateMetadataKey(column: string): void {
   const pattern = /^[a-zA-Z0-9_.[\],\s*]*$/;
 
   if (!column || !pattern.test(column)) {
-    throwOracleError(OracleErrorCode.INVALID_METADATA_KEY, column);
+    throwOracleError(OracleErrorCode.FILTER_INVALID_METADATA_KEY, column);
   }
 }
 
@@ -104,7 +104,7 @@ function generateOperatorCondition(
 
     case "$in": {
       if (!Array.isArray(value)) {
-        throwOracleError(OracleErrorCode.INVALID_FILTER_VALUE, "$in requires array");
+        throwOracleError(OracleErrorCode.FILTER_INVALID_VALUE, "$in requires array");
       }
       const inClauses = value.map((v) =>
         jsonCompare(column, "=", v, bindValues)
@@ -114,7 +114,7 @@ function generateOperatorCondition(
 
     case "$nin": {
       if (!Array.isArray(value)) {
-        throwOracleError(OracleErrorCode.INVALID_FILTER_VALUE, "$nin requires array");
+        throwOracleError(OracleErrorCode.FILTER_INVALID_VALUE, "$nin requires array");
       }
       const ninClauses = value.map((v) =>
         jsonCompare(column, "!=", v, bindValues)
@@ -124,7 +124,7 @@ function generateOperatorCondition(
 
     case "$between": {
       if (!Array.isArray(value) || value.length !== 2) {
-        throwOracleError(OracleErrorCode.INVALID_FILTER_VALUE, "$between requires [low, high]");
+        throwOracleError(OracleErrorCode.FILTER_INVALID_VALUE, "$between requires [low, high]");
       }
       const [low, high] = value;
       bindValues.push(low, high);
@@ -141,7 +141,7 @@ function generateOperatorCondition(
       }
 
     default:
-      throwOracleError(OracleErrorCode.UNSUPPORTED_FILTER_OPERATOR, operator);
+      throwOracleError(OracleErrorCode.FILTER_UNSUPPORTED_OPERATOR, operator);
   }
 }
 
@@ -230,28 +230,28 @@ function handleError(error: unknown): never {
     // Handle specific error types based on the name property
     switch (err.name) {
       case "RuntimeError":
-        throw createOracleError(
-          OracleErrorCode.RUNTIME_ERROR,
-          "Database operation failed due to a runtime error.",
+        throw createOracleErrorFromCode(
+          OracleErrorCode.SYSTEM_ERROR,
+          ["Database operation failed due to a runtime error."],
           error
         );
       case "ValidationError":
-        throw createOracleError(
-          OracleErrorCode.VALIDATION_ERROR,
-          "Operation failed due to a validation error.",
+        throw createOracleErrorFromCode(
+          OracleErrorCode.SYSTEM_ERROR,
+          ["Operation failed due to a validation error."],
           error
         );
       default:
-        throw createOracleError(
-          OracleErrorCode.UNEXPECTED_ERROR,
-          `An unexpected error occurred during the operation. ${error}`,
+        throw createOracleErrorFromCode(
+          OracleErrorCode.SYSTEM_ERROR,
+          [`An unexpected error occurred during the operation. ${error}`],
           error
         );
     }
   }
-  throw createOracleError(
-    OracleErrorCode.UNKNOWN_ERROR,
-    `An unknown and unexpected error occurred. ${error}`,
+  throw createOracleErrorFromCode(
+    OracleErrorCode.SYSTEM_ERROR,
+    [`An unknown and unexpected error occurred. ${error}`],
     error
   );
 }
@@ -267,7 +267,7 @@ function quoteIdentifier(identifier: string) {
 
   const validateRegex = /^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$/;
   if (!validateRegex.test(name)) {
-    throwOracleError(OracleErrorCode.INVALID_IDENTIFIER, identifier);
+    throwOracleError(OracleErrorCode.VALIDATION_INVALID_IDENTIFIER, identifier);
   }
 
   // extracts parts of the identifier with quoted and unquoted.
@@ -367,7 +367,7 @@ function normalizeVectorFormat(
     : VectorElementFormat.FLOAT32;
 
   if (vectorType === VectorType.SPARSE && format === VectorElementFormat.BINARY) {
-    throwOracleError(OracleErrorCode.INVALID_VECTOR_CONFIGURATION, "BINARY format is not supported for SPARSE vectors.");
+    throwOracleError(OracleErrorCode.VECTOR_INVALID_CONFIGURATION, "BINARY format is not supported for SPARSE vectors.");
   }
 
   return format;
@@ -378,22 +378,22 @@ function buildVectorColumnDefinition(
   customization?: TableCustomization,
 ): string {
   if (embeddingDim === undefined || embeddingDim === null) {
-    throwOracleError(OracleErrorCode.INVALID_VECTOR_CONFIGURATION, "Embedding dimension is required to create the vector column.");
+    throwOracleError(OracleErrorCode.VECTOR_INVALID_CONFIGURATION, "Embedding dimension is required to create the vector column.");
   }
   if (!Number.isInteger(embeddingDim) || embeddingDim <= 0) {
-    throwOracleError(OracleErrorCode.INVALID_VECTOR_CONFIGURATION, "Embedding dimension must be a positive integer.");
+    throwOracleError(OracleErrorCode.VECTOR_INVALID_CONFIGURATION, "Embedding dimension must be a positive integer.");
   }
 
   const vectorType = normalizeVectorTypeValue(customization?.vectorType);
 
   if (vectorType === VectorType.SPARSE && customization?.format === undefined) {
-    throwOracleError(OracleErrorCode.INVALID_VECTOR_CONFIGURATION, "Sparse vector type requires a vector format to be specified.");
+    throwOracleError(OracleErrorCode.VECTOR_INVALID_CONFIGURATION, "Sparse vector type requires a vector format to be specified.");
   }
 
   const format = normalizeVectorFormat(customization?.format, vectorType);
 
   if (format === VectorElementFormat.BINARY && embeddingDim % 8 !== 0) {
-    throwOracleError(OracleErrorCode.INVALID_VECTOR_CONFIGURATION, "BINARY vector format requires dimensions to be a multiple of 8.");
+    throwOracleError(OracleErrorCode.VECTOR_INVALID_CONFIGURATION, "BINARY vector format requires dimensions to be a multiple of 8.");
   }
 
   const dimensionSegment = String(embeddingDim);
@@ -510,7 +510,7 @@ function convertDenseVectorForFormat(
       for (let i = 0; i < values.length; i += 1) {
         const rounded = Math.round(values[i]);
         if (rounded < -128 || rounded > 127) {
-          throwOracleError(OracleErrorCode.INVALID_VECTOR_VALUE, "INT8 vector values must be within [-128, 127].");
+          throwOracleError(OracleErrorCode.VECTOR_INVALID_VALUE, "INT8 vector values must be within [-128, 127].");
         }
         clamped[i] = rounded;
       }
@@ -572,7 +572,7 @@ async function createHNSWIndex(
 
     const invalidKeys = Object.keys(extra);
     if (invalidKeys.length > 0) {
-      throwOracleError(OracleErrorCode.INVALID_INDEX_PARAMETERS, invalidKeys);
+      throwOracleError(OracleErrorCode.VECTOR_INVALID_INDEX_PARAMETERS, invalidKeys);
     }
 
     const ddl = `
@@ -610,7 +610,7 @@ async function createIVFIndex(
 
     const invalidKeys = Object.keys(extra);
     if (invalidKeys.length > 0) {
-      throwOracleError(OracleErrorCode.INVALID_INDEX_PARAMETERS, invalidKeys);
+      throwOracleError(OracleErrorCode.VECTOR_INVALID_INDEX_PARAMETERS, invalidKeys);
     }
 
     const ddl = `
@@ -697,7 +697,7 @@ export class OracleVS extends VectorStore {
 
   private ensureEmbeddingDimension(): number {
     if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
-      throwOracleError(OracleErrorCode.INVALID_STATE, "Embedding dimension is not initialized for this vector store.");
+      throwOracleError(OracleErrorCode.STATE_INVALID, "Embedding dimension is not initialized for this vector store.");
     }
     return this.embeddingDimension;
   }
@@ -714,7 +714,7 @@ export class OracleVS extends VectorStore {
 
     if (vectorType === VectorType.SPARSE) {
       if (vector.length !== dimension) {
-        throwOracleError(OracleErrorCode.INVALID_VECTOR_VALUE, "Sparse vectors must supply full-dimension arrays for conversion.");
+        throwOracleError(OracleErrorCode.VECTOR_INVALID_VALUE, "Sparse vectors must supply full-dimension arrays for conversion.");
       }
 
       let sparseInput: number[] | Float32Array | Float64Array | Int8Array = vector;
@@ -723,7 +723,7 @@ export class OracleVS extends VectorStore {
         for (let i = 0; i < vector.length; i += 1) {
           const rounded = Math.round(vector[i]);
           if (rounded < -128 || rounded > 127) {
-            throwOracleError(OracleErrorCode.INVALID_VECTOR_VALUE, "INT8 sparse vector values must be within [-128, 127].");
+            throwOracleError(OracleErrorCode.VECTOR_INVALID_VALUE, "INT8 sparse vector values must be within [-128, 127].");
           }
           clamped[i] = rounded;
         }
@@ -738,7 +738,7 @@ export class OracleVS extends VectorStore {
     }
 
     if (vector.length !== dimension) {
-      throwOracleError(OracleErrorCode.INVALID_VECTOR_VALUE, "Vector length does not match the embedding dimension.");
+      throwOracleError(OracleErrorCode.VECTOR_INVALID_VALUE, "Vector length does not match the embedding dimension.");
     }
 
     return convertDenseVectorForFormat(vector, format);
@@ -754,7 +754,7 @@ export class OracleVS extends VectorStore {
     if (isSparseVector(value)) {
       const dense = value.dense?.();
       if (!dense) {
-        throwOracleError(OracleErrorCode.UNSUPPORTED_VECTOR_REPRESENTATION, "Unable to expand sparse vector to dense representation.");
+        throwOracleError(OracleErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION, "Unable to expand sparse vector to dense representation.");
       }
       if (isFloat32Array(dense)) {
         return dense;
@@ -776,7 +776,7 @@ export class OracleVS extends VectorStore {
     if (Array.isArray(value)) {
       return value as number[];
     }
-    throwOracleError(OracleErrorCode.UNSUPPORTED_VECTOR_REPRESENTATION, "Received unsupported vector representation from the database.");
+    throwOracleError(OracleErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION, "Received unsupported vector representation from the database.");
   }
 
   // Normalizes any supported vector representation into Float32Array so downstream math
@@ -864,7 +864,7 @@ export class OracleVS extends VectorStore {
     options?: AddDocumentOptions
   ): Promise<string[] | undefined> {
     if (vectors.length === 0) {
-      throwOracleError(OracleErrorCode.INVALID_INPUT, "Vectors input null. Nothing to add...");
+      throwOracleError(OracleErrorCode.VALIDATION_INVALID_INPUT, "Vectors input null. Nothing to add...");
     }
 
     const inputIds = options?.ids;
@@ -873,7 +873,7 @@ export class OracleVS extends VectorStore {
     try {
       // Ensure there are IDs for all documents
       if (inputIds !== undefined && inputIds.length !== vectors.length) {
-        throwOracleError(OracleErrorCode.INVALID_INPUT, "The number of ids must match the number of vectors provided.");
+        throwOracleError(OracleErrorCode.VALIDATION_INVALID_INPUT, "The number of ids must match the number of vectors provided.");
       }
 
       connection = await this.getConnection();
@@ -1017,7 +1017,7 @@ export class OracleVS extends VectorStore {
         }
       } else {
         // Throw an exception if no rows are found
-        throwOracleError(OracleErrorCode.NO_ROWS_FOUND);
+        throwOracleError(OracleErrorCode.QUERY_NO_ROWS_FOUND);
       }
     } finally {
       if (connection) {
@@ -1160,7 +1160,7 @@ export class OracleVS extends VectorStore {
   ): Promise<OracleVS> {
     const { client } = dbConfig;
     if (!client) {
-      throwOracleError(OracleErrorCode.MISSING_REQUIRED_PARAMETER, "client");
+      throwOracleError(OracleErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER, "client");
     }
 
     try {

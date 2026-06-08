@@ -68,15 +68,15 @@ describe("generateWhereClause", () => {
   test("covers filter validation error codes", async () => {
     await expectOracleErrorCode(
       () => generateWhereClause({ tags: { $in: "bad" } }, []),
-      OracleErrorCode.INVALID_FILTER_VALUE,
+      OracleErrorCode.FILTER_INVALID_VALUE,
     );
     await expectOracleErrorCode(
       () => generateWhereClause({ score: { $between: [1] } }, []),
-      OracleErrorCode.INVALID_FILTER_VALUE,
+      OracleErrorCode.FILTER_INVALID_VALUE,
     );
     await expectOracleErrorCode(
       () => generateWhereClause({ score: { $weird: 1 } }, []),
-      OracleErrorCode.UNSUPPORTED_FILTER_OPERATOR,
+      OracleErrorCode.FILTER_UNSUPPORTED_OPERATOR,
     );
   });
 });
@@ -84,18 +84,18 @@ describe("generateWhereClause", () => {
 describe("OracleError", () => {
   test("preserves the no rows found message while exposing a stable code", () => {
     const error = new OracleError(
-      OracleErrorCode.NO_ROWS_FOUND,
+      OracleErrorCode.QUERY_NO_ROWS_FOUND,
       "No rows found."
     );
 
     expect(error.message).toBe("No rows found.");
-    expect(error.code).toBe(OracleErrorCode.NO_ROWS_FOUND);
+    expect(error.code).toBe(OracleErrorCode.QUERY_NO_ROWS_FOUND);
     expect(error.name).toBe("OracleError");
   });
 });
 
 describe("Oracle error codes", () => {
-  test("covers identifier and missing parameter errors", async () => {
+  test("covers validation identifier and missing parameter errors", async () => {
     await expectOracleErrorCode(
       () =>
         new OracleVS(embeddings as never, {
@@ -103,7 +103,7 @@ describe("Oracle error codes", () => {
           tableName: 'bad"name',
           query: "q",
         }),
-      OracleErrorCode.INVALID_IDENTIFIER,
+      OracleErrorCode.VALIDATION_INVALID_IDENTIFIER,
     );
 
     await expectOracleErrorCode(
@@ -111,18 +111,18 @@ describe("Oracle error codes", () => {
         tableName: "docs",
         query: "q",
       } as never),
-      OracleErrorCode.MISSING_REQUIRED_PARAMETER,
+      OracleErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER,
     );
   });
 
   test("covers vector configuration and index parameter errors", async () => {
     await expectOracleErrorCode(
       createTable({} as never, "docs", null),
-      OracleErrorCode.INVALID_VECTOR_CONFIGURATION,
+      OracleErrorCode.VECTOR_INVALID_CONFIGURATION,
     );
     await expectOracleErrorCode(
       createTable({} as never, "docs", 7, { format: "BINARY" as never }),
-      OracleErrorCode.INVALID_VECTOR_CONFIGURATION,
+      OracleErrorCode.VECTOR_INVALID_CONFIGURATION,
     );
     await expectOracleErrorCode(
       createIndex(
@@ -130,7 +130,7 @@ describe("Oracle error codes", () => {
         { tableName: '"DOCS"', distanceStrategy: "COSINE" } as OracleVS,
         { bogus: true } as never,
       ),
-      OracleErrorCode.INVALID_INDEX_PARAMETERS,
+      OracleErrorCode.VECTOR_INVALID_INDEX_PARAMETERS,
     );
   });
 
@@ -149,21 +149,21 @@ describe("Oracle error codes", () => {
 
     await expectOracleErrorCode(
       () => storeInternals.ensureEmbeddingDimension(),
-      OracleErrorCode.INVALID_STATE,
+      OracleErrorCode.STATE_INVALID,
     );
 
     store.embeddingDimension = 2;
     await expectOracleErrorCode(
       store.addVectors([[300, 1]], [new Document({ pageContent: "x", metadata: {} })]),
-      OracleErrorCode.INVALID_VECTOR_VALUE,
+      OracleErrorCode.VECTOR_INVALID_VALUE,
     );
     await expectOracleErrorCode(
       () => storeInternals.normalizeReturnedEmbedding({ bad: true }),
-      OracleErrorCode.UNSUPPORTED_VECTOR_REPRESENTATION,
+      OracleErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION,
     );
   });
 
-  test("covers invalid input and no rows found errors", async () => {
+  test("covers validation input and query no rows errors", async () => {
     const store = new OracleVS(embeddings as never, {
       client: {
         execute: async () => ({ rows: [] }),
@@ -175,7 +175,7 @@ describe("Oracle error codes", () => {
 
     await expectOracleErrorCode(
       store.addVectors([], []),
-      OracleErrorCode.INVALID_INPUT,
+      OracleErrorCode.VALIDATION_INVALID_INPUT,
     );
     await expectOracleErrorCode(
       store.addVectors(
@@ -183,19 +183,24 @@ describe("Oracle error codes", () => {
         [new Document({ pageContent: "x", metadata: {} })],
         { ids: ["a", "b"] },
       ),
-      OracleErrorCode.INVALID_INPUT,
+      OracleErrorCode.VALIDATION_INVALID_INPUT,
     );
     await expectOracleErrorCode(
       store.similaritySearchByVectorReturningEmbeddings([1, 2], 1),
-      OracleErrorCode.NO_ROWS_FOUND,
+      OracleErrorCode.QUERY_NO_ROWS_FOUND,
     );
   });
 
-  test("covers document loader error codes", async () => {
+  test("covers metadata key and document loader validation error codes", async () => {
+    await expectOracleErrorCode(
+      () => generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, []),
+      OracleErrorCode.FILTER_INVALID_METADATA_KEY,
+    );
+
     const loader = new OracleDocLoader({} as never, {});
     await expectOracleErrorCode(
       loader.load(),
-      OracleErrorCode.INVALID_PREFERENCES,
+      OracleErrorCode.VALIDATION_INVALID_INPUT,
     );
 
     const sqlLoader = new OracleDocLoader(
@@ -209,11 +214,11 @@ describe("Oracle error codes", () => {
     const sqlLoaderInternals = sqlLoader as unknown as OracleDocLoaderInternals;
     await expectOracleErrorCode(
       sqlLoaderInternals._loadFromTable("OWNER", "DOCS", "CONTENT"),
-      OracleErrorCode.INVALID_SQL_IDENTIFIER,
+      OracleErrorCode.VALIDATION_INVALID_IDENTIFIER,
     );
   });
 
-  test("covers wrapped runtime, validation, unexpected, and unknown errors", async () => {
+  test("covers system fallback error code", async () => {
     await expectOracleErrorCode(
       createTable(
         {
@@ -224,7 +229,7 @@ describe("Oracle error codes", () => {
         "docs",
         2,
       ),
-      OracleErrorCode.RUNTIME_ERROR,
+      OracleErrorCode.SYSTEM_ERROR,
     );
 
     await expectOracleErrorCode(
@@ -236,7 +241,7 @@ describe("Oracle error codes", () => {
         } as never,
         "docs",
       ),
-      OracleErrorCode.VALIDATION_ERROR,
+      OracleErrorCode.SYSTEM_ERROR,
     );
 
     await expectOracleErrorCode(
@@ -248,7 +253,7 @@ describe("Oracle error codes", () => {
         } as never,
         { tableName: '"DOCS"', distanceStrategy: "COSINE" } as OracleVS,
       ),
-      OracleErrorCode.UNEXPECTED_ERROR,
+      OracleErrorCode.SYSTEM_ERROR,
     );
 
     await expectOracleErrorCode(
@@ -260,7 +265,7 @@ describe("Oracle error codes", () => {
         } as never,
         "docs",
       ),
-      OracleErrorCode.UNKNOWN_ERROR,
+      OracleErrorCode.SYSTEM_ERROR,
     );
   });
 });

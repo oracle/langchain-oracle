@@ -69,7 +69,10 @@ export class OracleDocLoader extends BaseDocumentLoader {
       }
     } else if ("tablename" in this.pref) {
       if (!("owner" in this.pref) || !("colname" in this.pref)) {
-        throwOracleError(OracleErrorCode.INVALID_PREFERENCES, "Invalid preferences: missing owner or colname");
+        throwOracleError(
+          OracleErrorCode.VALIDATION_INVALID_INPUT,
+          "Invalid preferences: missing owner or colname"
+        );
       }
       docs.push(
         ...(await this._loadFromTable(
@@ -79,7 +82,10 @@ export class OracleDocLoader extends BaseDocumentLoader {
         ))
       );
     } else {
-      throwOracleError(OracleErrorCode.INVALID_PREFERENCES, "Invalid preferences: missing file, dir, or tablename");
+      throwOracleError(
+        OracleErrorCode.VALIDATION_INVALID_INPUT,
+        "Invalid preferences: missing file, dir, or tablename"
+      );
     }
 
     return docs;
@@ -143,7 +149,10 @@ export class OracleDocLoader extends BaseDocumentLoader {
       const binds = [col, qn];
       await this.conn.execute(sql, binds);
     } catch {
-      throwOracleError(OracleErrorCode.INVALID_SQL_IDENTIFIER);
+      throwOracleError(
+        OracleErrorCode.VALIDATION_INVALID_IDENTIFIER,
+        `${owner}.${table}.${col}`
+      );
     }
 
     const result = await this.conn.execute(
