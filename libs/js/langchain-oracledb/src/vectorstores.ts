@@ -10,7 +10,8 @@ import { maximalMarginalRelevance } from "@langchain/core/utils/math";
 import {
   OracleError,
   OracleErrorCode,
-  createOracleErrorFromCode,
+  createOracleErrorFromCodeWithCause,
+  isOracleError,
   throwOracleError,
 } from "./errors.js";
 
@@ -22,6 +23,7 @@ interface AddDocumentOptions {
 
 export { OracleError, OracleErrorCode };
 export { OracleError as OracleVSError, OracleErrorCode as OracleVSErrorCode };
+export { isOracleError };
 
 function validateMetadataKey(column: string): void {
   const pattern = /^[a-zA-Z0-9_.[\],\s*]*$/;
@@ -202,17 +204,6 @@ export const DistanceStrategy = {
 export type DistanceStrategy =
   (typeof DistanceStrategy)[keyof typeof DistanceStrategy];
 
-function isOracleError(error: unknown): error is OracleError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    "message" in error &&
-    "code" in error &&
-    error.name === "OracleError"
-  );
-}
-
 function handleError(error: unknown): never {
   // Type guard to check if the error is an object and has 'name' and 'message' properties
   if (isOracleError(error)) {
@@ -230,29 +221,29 @@ function handleError(error: unknown): never {
     // Handle specific error types based on the name property
     switch (err.name) {
       case "RuntimeError":
-        throw createOracleErrorFromCode(
+        throw createOracleErrorFromCodeWithCause(
           OracleErrorCode.SYSTEM_ERROR,
-          ["Database operation failed due to a runtime error."],
-          error
+          error,
+          "Database operation failed due to a runtime error."
         );
       case "ValidationError":
-        throw createOracleErrorFromCode(
+        throw createOracleErrorFromCodeWithCause(
           OracleErrorCode.SYSTEM_ERROR,
-          ["Operation failed due to a validation error."],
-          error
+          error,
+          "Operation failed due to a validation error."
         );
       default:
-        throw createOracleErrorFromCode(
+        throw createOracleErrorFromCodeWithCause(
           OracleErrorCode.SYSTEM_ERROR,
-          [`An unexpected error occurred during the operation. ${error}`],
-          error
+          error,
+          `An unexpected error occurred during the operation. ${error}`
         );
     }
   }
-  throw createOracleErrorFromCode(
+  throw createOracleErrorFromCodeWithCause(
     OracleErrorCode.SYSTEM_ERROR,
-    [`An unknown and unexpected error occurred. ${error}`],
-    error
+    error,
+    `An unknown and unexpected error occurred. ${error}`
   );
 }
 

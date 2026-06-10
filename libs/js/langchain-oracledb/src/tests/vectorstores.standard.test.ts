@@ -9,6 +9,7 @@ import {
   createTable,
   dropTablePurge,
   generateWhereClause,
+  isOracleError,
 } from "../vectorstores.js";
 import { OracleDocLoader } from "../document_loaders.js";
 
@@ -91,6 +92,26 @@ describe("OracleError", () => {
     expect(error.message).toBe("No rows found.");
     expect(error.code).toBe(OracleErrorCode.QUERY_NO_ROWS_FOUND);
     expect(error.name).toBe("OracleError");
+  });
+
+  test("preserves Error subclassing semantics", () => {
+    const error = new OracleError(
+      OracleErrorCode.SYSTEM_ERROR,
+      "system failure"
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(OracleError);
+  });
+
+  test("identifies package errors via the shared guard", () => {
+    const error = new OracleError(
+      OracleErrorCode.SYSTEM_ERROR,
+      "system failure"
+    );
+
+    expect(isOracleError(error)).toBe(true);
+    expect(isOracleError(new Error("system failure"))).toBe(false);
   });
 });
 
