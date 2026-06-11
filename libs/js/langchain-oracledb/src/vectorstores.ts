@@ -926,20 +926,23 @@ export class OracleVS extends VectorStore {
 
     try {
       const bindValues: unknown[] = [this.prepareQueryVector(query)];
+      const hasFilter = !!filter && Object.keys(filter).length > 0;
 
-      // VECTOR_INDEX_TRANSFORM keeps the vector index in the plan even when a
-      // JSON Search Index is also defined on the table. Without the hint, when
-      // both indexes exist, the optimizer can pick the JSON Search Index for a
-      // JSON_EXISTS filter and skip the vector index, hurting search latency.
+      // Keep the vector index hint for unfiltered searches. When a JSON filter
+      // is present, forcing VECTOR_INDEX_TRANSFORM can change result semantics
+      // by doing approximate top-k before the filter is applied.
+      const selectClause = hasFilter
+        ? "SELECT"
+        : `SELECT /*+ VECTOR_INDEX_TRANSFORM(${this.tableName}) */`;
       let sqlQuery = `
-      SELECT /*+ VECTOR_INDEX_TRANSFORM(${this.tableName}) */
+      ${selectClause}
         external_id,
         text,
         metadata,
         vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
         embedding
       FROM ${this.tableName} `;
-      if (filter && Object.keys(filter).length > 0) {
+      if (hasFilter) {
         sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
       }
       bindValues.push(k);
@@ -969,9 +972,6 @@ export class OracleVS extends VectorStore {
           });
           docsScoresAndEmbeddings.push([document, distance, embedding]);
         }
-      } else {
-        // Throw an exception if no rows are found
-        throw new Error("No rows found.");
       }
     } finally {
       if (connection) {

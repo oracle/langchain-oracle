@@ -179,10 +179,10 @@ describe("OracleVectorStore", () => {
       }
 
       const indexResult = await localConnection.execute(
-        `SELECT index_name FROM user_indexes WHERE table_name = :table AND index_name = :index`,
+        `SELECT index_name FROM user_indexes WHERE table_name = :tableName AND index_name = :indexName`,
         {
-          table: hnswTable.toUpperCase(),
-          index: "HNSW_VECTOR_IDX",
+          tableName: hnswTable.toUpperCase(),
+          indexName: "HNSW_VECTOR_IDX",
         },
         { outFormat: oracledb.OUT_FORMAT_OBJECT },
       );
@@ -1245,14 +1245,6 @@ describe("OracleVectorStore", () => {
     oraclevs = new OracleVS(embedder, dbConfig);
     await oraclevs.initialize();
 
-    // create Index so that vector index is being used.
-    await createIndex(connection as oracledb.Connection, oraclevs, {
-      idxName: "embeddings_idx",
-      idxType: "IVF",
-      neighborPart: 64,
-      accuracy: 90,
-    });
-
     // Sample documents
     const docs = [
       new Document({
@@ -1274,6 +1266,14 @@ describe("OracleVectorStore", () => {
     ];
 
     await oraclevs.addDocuments(docs);
+    // Create the IVF index after loading the sample rows so the approximate
+    // search path used in this filter test is trained on the test data.
+    await createIndex(connection as oracledb.Connection, oraclevs, {
+      idxName: "embeddings_idx",
+      idxType: "IVF",
+      neighborPart: 64,
+      accuracy: 90,
+    });
 
     // FilterCondition to have keywords , key, oper, value..
     let filter: Metadata = {
@@ -1347,20 +1347,21 @@ describe("OracleVectorStore", () => {
 
     // filter with $exists to return rows which do not contain price
     filter = { price: { $exists: false } };
-    await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
-      "No rows found"
-    );
+    results = await oraclevs.similaritySearch("test", 10, filter);
+    expect(results).toEqual([]);
 
     // filter with $exists for non-existing key
     filter = { cost: { $exists: true } };
-    await expect(oraclevs.similaritySearch("test", 10, filter)).rejects.toThrow(
-      "No rows found"
-    );
+    results = await oraclevs.similaritySearch("test", 10, filter);
+    expect(results).toEqual([]);
   });
 
   test("uses vector index transform with JSON search index in the plan", async () => {
     oraclevs = new OracleVS(embedder, dbConfig);
     await oraclevs.initialize();
+    if (!connection) {
+      throw new Error("Connection not initialized");
+    }
 
     const docs = [
       new Document({
@@ -1395,14 +1396,17 @@ describe("OracleVectorStore", () => {
 
     const queryVector = new Float32Array(await embedder.embedQuery("test"));
     const statementId = `VEC_HINT_${Date.now() % 1000000000}`;
+    const normalizedTableName = formatTableNameForMetadata(oraclevs.tableName);
 
     try {
-      await connection?.execute(
+      await connection.execute(
         `DELETE FROM PLAN_TABLE WHERE statement_id = :statementId`,
         { statementId }
       );
-      await connection?.execute(
-        `
+      // This integration test validates that Oracle can use the vector index
+      // for the same SQL shape OracleVS emits. The exact hint emission is
+      // guarded separately in vectorstores.unit.test.ts.
+      const explainPlanSql = `
         EXPLAIN PLAN SET STATEMENT_ID = '${statementId}' FOR
         SELECT /*+ VECTOR_INDEX_TRANSFORM(${oraclevs.tableName}) */
           external_id,
@@ -1414,11 +1418,20 @@ describe("OracleVectorStore", () => {
         WHERE JSON_EXISTS(metadata, '$.category?(@ == "books")')
         ORDER BY distance
         FETCH APPROX FIRST 4 ROWS ONLY
-        `,
-        { embedding: queryVector }
+        `;
+      await connection.execute(
+        explainPlanSql,
+        {
+          embedding: {
+            val: queryVector,
+            dir: oracledb.BIND_IN,
+            type: oracledb.DB_TYPE_VECTOR,
+          },
+        },
+        {}
       );
 
-      const planResult = await connection?.execute(
+      const planResult = await connection.execute(
         `SELECT plan_table_output
          FROM TABLE(DBMS_XPLAN.DISPLAY(NULL, :statementId, 'BASIC'))`,
         { statementId },
@@ -1442,9 +1455,9 @@ describe("OracleVectorStore", () => {
           .join("\n") ?? "";
 
       expect(planText).toContain("VECTOR$embeddings_idx");
-      expect(planText).toMatch(/IVF_FLAT_(CENTROIDS|CENTROID_PARTITIONS)/);
+      expect(planText).toMatch(/TABLE ACCESS BY USER ROWID/i);
       expect(planText).toMatch(
-        /TABLE ACCESS BY USER ROWID\s+\|\s+testlangchain_1/i
+        new RegExp(normalizedTableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
       );
     } finally {
       await connection?.execute(

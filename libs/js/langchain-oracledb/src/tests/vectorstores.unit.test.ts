@@ -57,14 +57,13 @@ describe("OracleVS SQL generation", () => {
     expect(sql).not.toContain("JSON_EXISTS");
   });
 
-  test("filtered similarity search keeps vector index hint in executed query", async () => {
+  test("filtered similarity search omits vector index hint in executed query", async () => {
     const sql = await getSimilaritySearchSql("ORAVS_DOCUMENTS", {
       category: "research",
     });
 
-    expect(sql).toContain(
-      'SELECT /*+ VECTOR_INDEX_TRANSFORM("ORAVS_DOCUMENTS") */'
-    );
+    expect(sql).toContain("SELECT");
+    expect(sql).not.toContain("VECTOR_INDEX_TRANSFORM");
     expect(sql).toContain('FROM "ORAVS_DOCUMENTS"');
     expect(sql).toContain("JSON_EXISTS");
     expect(sql).toMatch(/ORDER BY distance FETCH APPROX FIRST :\d+ ROWS ONLY/);
