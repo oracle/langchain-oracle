@@ -13,6 +13,10 @@ if TYPE_CHECKING:
         VectorDataStore,
         create_datastore_tools,
     )
+    from langchain_oci.guardrails import (
+        OCIGuardrailsMiddleware,
+        OCIGuardrailsViolationError,
+    )
 from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeployment,
     ChatOCIModelDeploymentTGI,
@@ -24,6 +28,7 @@ from langchain_oci.embeddings.oci_data_science_model_deployment_endpoint import 
     OCIModelDeploymentEndpointEmbeddings,
 )
 from langchain_oci.embeddings.oci_generative_ai import OCIGenAIEmbeddings
+from langchain_oci.guardrails import OCIGuardrails
 from langchain_oci.llms.oci_data_science_model_deployment_endpoint import (
     BaseOCIModelDeployment,
     OCIModelDeploymentLLM,
@@ -55,6 +60,10 @@ def __getattr__(name: str) -> Any:
         from langchain_oci import datastores
 
         return getattr(datastores, name)
+    if name in ("OCIGuardrailsMiddleware", "OCIGuardrailsViolationError"):
+        from langchain_oci import guardrails
+
+        return getattr(guardrails, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -66,6 +75,7 @@ __all__ = [
     "ChatOCIOpenAI",
     "OCIAuthType",
     "OCIGenAIEmbeddings",
+    "OCIGuardrails",
     "OCIModelDeploymentEndpointEmbeddings",
     "OCIGenAIBase",
     "OCIGenAI",
@@ -74,6 +84,9 @@ __all__ = [
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
     "create_oci_agent",
+    # Guardrails agent middleware (langchain >= 1.0)
+    "OCIGuardrailsMiddleware",
+    "OCIGuardrailsViolationError",
     # Deepagents agent
     "create_deepagents_agent",
     # Datastores
