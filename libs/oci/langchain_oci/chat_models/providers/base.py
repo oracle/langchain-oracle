@@ -68,6 +68,21 @@ class Provider(ABC):
         """Extract generation metadata from a chat stream event."""
         ...
 
+    def chat_stream_to_reasoning(self, event_data: Dict) -> str:
+        """Extract incremental reasoning text from a streaming event.
+
+        Reasoning models (e.g. xAI Grok, OpenAI o-series) emit a separate
+        ``reasoning_content`` channel alongside the visible answer. Returning
+        it per-delta here lets ``ChatOCIGenAI._stream`` / ``_astream`` accumulate
+        it into ``AIMessageChunk.additional_kwargs["reasoning_content"]`` so the
+        merged message exposes a standard ``reasoning`` content block — at parity
+        with the non-streaming path.
+
+        The default returns ``""`` (no reasoning), so providers that do not
+        surface reasoning are unaffected.
+        """
+        return ""
+
     @abstractmethod
     def chat_tool_calls(self, response: Any) -> List[Any]:
         """Extract tool calls from a provider's response."""

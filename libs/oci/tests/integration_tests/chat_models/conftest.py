@@ -17,11 +17,12 @@ fresh checkout.
   Default: ``xai.grok-3-mini-fast``.
 - ``OCI_STANDARD_MODELS`` — comma-separated model ids that should
   never populate ``reasoning_content``. Default:
-  ``meta.llama-3.3-70b-instruct,cohere.command-r-08-2024,openai.gpt-oss-120b``.
-  (gpt-oss-120b is here because the OCI deployment leaves
-  reasoning_content null even with ``reasoning_effort=MEDIUM`` —
-  it advertises reasoning but currently behaves as a standard model
-  through this API.)
+  ``meta.llama-3.3-70b-instruct,cohere.command-r-08-2024``.
+
+  ``openai.gpt-oss-120b`` is intentionally in neither default list: its
+  ``reasoning_content`` is unreliable on the OCI deployment (sometimes
+  present, sometimes null, on both invoke and stream), so it can't anchor
+  either a "has reasoning" or "no reasoning" assertion. See #213 / #208.
 - ``OCI_LLAMA_MODELS``, ``OCI_COHERE_MODELS``, ``OCI_GROK_MODELS``,
   ``OCI_OPENAI_MODELS`` — comma-separated model ids for the
   per-provider matrices exercised by ``test_multi_model.py``. Defaults
@@ -48,7 +49,6 @@ _DEFAULT_REASONING_MODELS: List[str] = ["xai.grok-3-mini-fast"]
 _DEFAULT_STANDARD_MODELS: List[str] = [
     "meta.llama-3.3-70b-instruct",
     "cohere.command-r-08-2024",
-    "openai.gpt-oss-120b",
 ]
 
 
