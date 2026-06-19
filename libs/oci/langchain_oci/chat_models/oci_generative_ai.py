@@ -160,6 +160,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         arbitrary_types_allowed=True,
     )
 
+    use_responses_api: bool = False
+    """Whether to use the Responses API instead of the Chat API."""
+
     # Cached provider instance (not a Pydantic field to avoid serialization)
     _cached_provider_instance: Optional[Provider] = None
 
@@ -183,9 +186,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
     def _provider(self) -> Any:
         """Get the internal provider object (cached for stateful providers)."""
         if self._cached_provider_instance is None:
-            self._cached_provider_instance = self._get_provider(
-                provider_map=self._provider_map
-            )
+            if self.use_responses_api:
+                self._cached_provider_instance = GenericProvider()
+            else:
+                self._cached_provider_instance = self._get_provider(
+                    provider_map=self._provider_map
+                )
         return self._cached_provider_instance
 
     def _prepare_request(
@@ -482,7 +488,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
-        response = self.client.chat(request)
+        
+        if self.use_responses_api:
+            # Route to the Responses endpoint (OpenAI compatible) for multi-agent models
+            response = self.client.responses(request)
+        else:
+            response = self.client.chat(request)
 
         content = self._provider.chat_response_to_text(response)
 
@@ -544,7 +555,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         Processes each event and yields chunks until the stream ends.
         """
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
-        response = self.client.chat(request)
+        if self.use_responses_api:
+            response = self.client.responses(request)
+        else:
+            response = self.client.chat(request)
         tool_call_ids: Dict[int, str] = {}
 
         # Reset any per-stream provider state (currently the GenericProvider's
