@@ -183,6 +183,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         arbitrary_types_allowed=True,
     )
 
+    use_responses_api: bool = False
+    """Whether to use the Responses API instead of the Chat API."""
+
     # Cached provider instance (not a Pydantic field to avoid serialization)
     _cached_provider_instance: Optional[Provider] = None
 
@@ -206,9 +209,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
     def _provider(self) -> Any:
         """Get the internal provider object (cached for stateful providers)."""
         if self._cached_provider_instance is None:
-            self._cached_provider_instance = self._get_provider(
-                provider_map=self._provider_map
-            )
+            if self.use_responses_api:
+                self._cached_provider_instance = GenericProvider()
+            else:
+                self._cached_provider_instance = self._get_provider(
+                    provider_map=self._provider_map
+                )
         return self._cached_provider_instance
 
     def _prepare_request(
@@ -505,7 +511,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
-        response = self._chat_with_param_retry(request)
+        if self.use_responses_api:
+            response = self._call_responses_api(request, stream=False)
+        else:
+            response = self._chat_with_param_retry(request)
 
         content = self._provider.chat_response_to_text(response)
 
@@ -574,6 +583,147 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     raise
         raise RuntimeError("unreachable")  # pragma: no cover
 
+    def _get_oci_signer(self) -> Any:
+        """Get or create the OCI request signer for HTTP REST requests."""
+        signer = getattr(getattr(self, "client", None), "base_client", None)
+        if signer is not None and hasattr(signer, "signer"):
+            return signer.signer
+
+        from langchain_oci.common.auth import create_oci_client_kwargs
+
+        client_kwargs = create_oci_client_kwargs(
+            auth_type=self.auth_type or "API_KEY",
+            service_endpoint=self.service_endpoint,
+            auth_file_location=self.auth_file_location or "~/.oci/config",
+            auth_profile=self.auth_profile or "DEFAULT",
+        )
+        signer = client_kwargs.get("signer")
+        if signer is None and client_kwargs.get("config"):
+            import oci
+
+            signer = oci.signer.Signer.from_config(client_kwargs["config"])
+        return signer
+
+    def _call_responses_api(self, request_details: Any, stream: bool = False) -> Any:
+        """Call OCI Responses REST API endpoint (/v1/responses) directly via HTTP."""
+        import requests
+
+        endpoint = (
+            self.service_endpoint
+            or "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+        ).rstrip("/")
+        url = f"{endpoint}/v1/responses"
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self.compartment_id:
+            headers["opc-compartment-id"] = self.compartment_id
+
+        signer = self._get_oci_signer()
+
+        chat_req = getattr(request_details, "chat_request", None)
+        payload: Dict[str, Any] = {
+            "model": self.model_id,
+            "stream": stream,
+        }
+        if self.compartment_id:
+            payload["compartment_id"] = self.compartment_id
+
+        if chat_req:
+            if hasattr(chat_req, "messages") and chat_req.messages:
+                formatted_msgs = []
+                for msg in chat_req.messages:
+                    role = getattr(msg, "role", "user")
+                    content = getattr(msg, "content", "")
+                    formatted_msgs.append({"role": role, "content": content})
+                payload["messages"] = formatted_msgs
+            for attr in [
+                "max_tokens",
+                "temperature",
+                "top_p",
+                "top_k",
+                "frequency_penalty",
+                "presence_penalty",
+            ]:
+                val = getattr(chat_req, attr, None)
+                if val is not None:
+                    payload[attr] = val
+
+        res = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            auth=signer,
+            stream=stream,
+            timeout=240,
+        )
+        res.raise_for_status()
+
+        if stream:
+            return res
+        else:
+            return self._process_responses_api_response(res.json(), res.headers)
+
+    def _process_responses_api_response(
+        self, data_dict: Dict[str, Any], headers: Any
+    ) -> Any:
+        """Wrap REST API response JSON into an OCI-compatible response object."""
+        from unittest.mock import MagicMock
+
+        model_id = data_dict.get("model", self.model_id or "")
+        model_version = data_dict.get("model_version", "1.0")
+
+        raw_choices = data_dict.get("choices", [])
+        if not raw_choices and "output_text" in data_dict:
+            raw_choices = [{"message": {"content": data_dict["output_text"]}}]
+        elif not raw_choices and "output" in data_dict:
+            raw_choices = data_dict["output"]
+
+        choices = []
+        for c in raw_choices:
+            msg_data = (
+                c.get("message", {})
+                if isinstance(c, dict)
+                else getattr(c, "message", {})
+            )
+            content_val = (
+                msg_data.get("content", "")
+                if isinstance(msg_data, dict)
+                else str(msg_data)
+            )
+
+            part = MagicMock()
+            part.text = content_val
+
+            msg_obj = MagicMock()
+            msg_obj.content = [part] if isinstance(content_val, str) else content_val
+
+            choice_obj = MagicMock()
+            choice_obj.message = msg_obj
+            choices.append(choice_obj)
+
+        chat_response = MagicMock()
+        chat_response.choices = choices
+        if "usage" in data_dict:
+            chat_response.usage = data_dict["usage"]
+
+        response_data = MagicMock()
+        response_data.model_id = model_id
+        response_data.model_version = model_version
+        response_data.chat_response = chat_response
+
+        response_wrapper = MagicMock()
+        response_wrapper.data = response_data
+        response_wrapper.request_id = headers.get(
+            "opc-request-id", headers.get("x-request-id", "req-1")
+        )
+        response_wrapper.headers = {
+            "content-length": str(headers.get("content-length", "0"))
+        }
+
+        return response_wrapper
+
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -587,7 +737,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         Processes each event and yields chunks until the stream ends.
         """
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
-        response = self._chat_with_param_retry(request)
+        if self.use_responses_api:
+            response = self._call_responses_api(request, stream=True)
+        else:
+            response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
         # Per-stream toolCalls position -> logical index routing map, owned
         # here (not on the shared provider) so concurrent streams on one
