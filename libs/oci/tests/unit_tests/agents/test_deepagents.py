@@ -79,12 +79,19 @@ class TestCreateDeepagentsAgent:
                     mock_create.assert_called_once()
                     assert agent is not None
 
-    def test_datastore_path_uses_lightweight_agent(self) -> None:
-        """Datastore-backed helper should avoid deepagents planning middleware."""
+    def test_datastore_path_uses_deep_agent(self) -> None:
+        """Datastores compose with the full deep agent rather than downgrading it.
+
+        Regression guard for the silent-downgrade bug: ``datastores=`` on its own
+        must route through ``create_deep_agent`` (so planning, filesystem, and
+        subagents stay available) and the generated datastore tools must be
+        forwarded into the deep agent.
+        """
         from langchain_oci.agents.deepagents.agent import create_deepagents_agent
 
         fake_store = MagicMock()
         fake_store.name = "opensearch"
+        sentinel_tool = MagicMock(name="datastore_tool")
 
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test-compartment"}):
             with patch(
@@ -92,15 +99,17 @@ class TestCreateDeepagentsAgent:
             ) as mock_llm_class:
                 with patch(
                     "langchain_oci.agents.deepagents.agent.create_datastore_tools",
-                    return_value=[],
+                    return_value=[sentinel_tool],
                 ):
-                    with patch("langchain.agents.create_agent") as mock_create_agent:
+                    with mock_deepagents() as mock_create:
                         mock_llm_class.return_value = MagicMock()
-                        mock_create_agent.return_value = MagicMock()
 
                         create_deepagents_agent(datastores={"runbooks": fake_store})
 
-                        mock_create_agent.assert_called_once()
+                        # Deep path, not lightweight create_agent.
+                        mock_create.assert_called_once()
+                        # Datastore tools are wired into the deep agent.
+                        assert sentinel_tool in mock_create.call_args.kwargs["tools"]
 
     def test_empty_middleware_uses_lightweight_agent(self) -> None:
         """Explicitly disabling middleware should avoid deepagents planning."""
@@ -122,8 +131,8 @@ class TestCreateDeepagentsAgent:
                     mock_create_agent.assert_called_once()
 
     def test_lightweight_path_does_not_require_deepagents_installed(self) -> None:
-        """The lightweight (datastore / middleware=[]) path must work without
-        the ``deepagents`` package installed. The prerequisite check is only
+        """The lightweight (``middleware=[]``) path must work without the
+        ``deepagents`` package installed. The prerequisite check is only
         relevant when we actually route to ``create_deep_agent``.
         """
         from langchain_oci.agents.deepagents.agent import create_deepagents_agent
@@ -205,6 +214,24 @@ class TestCreateDeepagentsAgent:
                     )
                     mock_create.assert_called_once()
                     assert "interrupt_on" in mock_create.call_args.kwargs
+
+    def test_permissions_forwarded(self) -> None:
+        """permissions= forces the deep path and reaches create_deep_agent
+        (instead of being swallowed by **model_kwargs)."""
+        from langchain_oci.agents.deepagents.agent import create_deepagents_agent
+
+        perms = MagicMock(name="permissions")
+
+        with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
+            with patch("langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"):
+                with mock_deepagents() as mock_create:
+                    create_deepagents_agent(
+                        tools=[dummy_tool],
+                        permissions=perms,
+                    )
+                    mock_create.assert_called_once()
+                    kwargs = mock_create.call_args.kwargs
+                    assert kwargs["permissions"] is perms
 
     def test_raises_without_compartment_id(self) -> None:
         """Test that error is raised when no compartment_id available."""
