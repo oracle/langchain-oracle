@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
@@ -25,6 +25,11 @@ from langgraph_oracledb.checkpoint.oracle._lob import with_blob_lobs
 from langgraph_oracledb.checkpoint.oracle.base import BaseOracleSaver
 
 Conn = _internal.Conn  # For backward compatibility
+
+_AIO_ERROR_MSG = (
+    "OracleSaver is synchronous and does not support async checkpoint operations. "
+    "Use AsyncOracleSaver with LangGraph async APIs such as graph.ainvoke(...)."
+)
 
 
 def _validate_conn_string(conn_string: str):
@@ -457,6 +462,61 @@ class OracleSaver(BaseOracleSaver):
         with self._cursor() as cur:
             cur.executemany(query, with_blob_lobs(cur.connection, params))
             cur.connection.commit()
+
+    async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        """Get a checkpoint tuple asynchronously.
+
+        OracleSaver is synchronous; use AsyncOracleSaver for async graph execution.
+        """
+        raise NotImplementedError(_AIO_ERROR_MSG)
+
+    async def alist(
+        self,
+        config: RunnableConfig | None,
+        *,
+        filter: dict[str, Any] | None = None,
+        before: RunnableConfig | None = None,
+        limit: int | None = None,
+    ) -> AsyncIterator[CheckpointTuple]:
+        """List checkpoints asynchronously.
+
+        OracleSaver is synchronous; use AsyncOracleSaver for async graph execution.
+        """
+        raise NotImplementedError(_AIO_ERROR_MSG)
+        yield
+
+    async def aput(
+        self,
+        config: RunnableConfig,
+        checkpoint: Checkpoint,
+        metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
+        """Save a checkpoint asynchronously.
+
+        OracleSaver is synchronous; use AsyncOracleSaver for async graph execution.
+        """
+        raise NotImplementedError(_AIO_ERROR_MSG)
+
+    async def aput_writes(
+        self,
+        config: RunnableConfig,
+        writes: Sequence[tuple[str, Any]],
+        task_id: str,
+        task_path: str = "",
+    ) -> None:
+        """Store intermediate writes asynchronously.
+
+        OracleSaver is synchronous; use AsyncOracleSaver for async graph execution.
+        """
+        raise NotImplementedError(_AIO_ERROR_MSG)
+
+    async def adelete_thread(self, thread_id: str) -> None:
+        """Delete a thread asynchronously.
+
+        OracleSaver is synchronous; use AsyncOracleSaver for async graph execution.
+        """
+        raise NotImplementedError(_AIO_ERROR_MSG)
 
     def delete_thread(self, thread_id: str) -> None:
         """Delete all checkpoints and writes associated with a thread ID."""
