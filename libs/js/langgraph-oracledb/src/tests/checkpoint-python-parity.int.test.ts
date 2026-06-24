@@ -2,13 +2,14 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { config } from "dotenv";
 import oracledb from "oracledb";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 
 import {
   ERROR,
   INTERRUPT,
   type Checkpoint,
   type CheckpointMetadata,
+  type CheckpointTuple,
 } from "@langchain/langgraph-checkpoint";
 
 import { OracleCheckpointSaver } from "../saver.js";
@@ -135,6 +136,62 @@ async function withSaver<T>(
       await saver.end();
     }
   }
+}
+
+async function createCarryOverCheckpoints(
+  saver: OracleCheckpointSaver,
+  trackThread: (id: string) => string,
+  checkpointNs: string
+): Promise<{
+  child: CheckpointTuple | undefined;
+  latest: CheckpointTuple | undefined;
+}> {
+  const id = trackThread(threadId("carry-over"));
+  const parentId = fixedCheckpointId(7001);
+  const childId = fixedCheckpointId(7002);
+  const parent = await saver.put(
+    { configurable: { thread_id: id, checkpoint_ns: checkpointNs } },
+    checkpoint(
+      parentId,
+      {
+        messages: ["hi"],
+        stepCount: 1,
+      },
+      {
+        messages: 1,
+        stepCount: 1,
+      }
+    ),
+    metadata(0),
+    {
+      messages: 1,
+      stepCount: 1,
+    }
+  );
+
+  const child = await saver.put(
+    parent,
+    checkpoint(
+      childId,
+      {
+        messages: ["hi"],
+        stepCount: 3,
+      },
+      {
+        messages: 1,
+        stepCount: 2,
+      }
+    ),
+    metadata(1),
+    { stepCount: 2 }
+  );
+
+  return {
+    child: await saver.getTuple(child),
+    latest: await saver.getTuple({
+      configurable: { thread_id: id, checkpoint_ns: checkpointNs },
+    }),
+  };
 }
 
 describeIfOracle("Oracle checkpoint Python parity", () => {
@@ -542,6 +599,39 @@ describeIfOracle("Oracle checkpoint Python parity", () => {
       }
     }
   });
+
+  describe.each(["root", "child"])(
+    "channels carried over from an ancestor checkpoint in %s namespace",
+    (namespace) => {
+      const checkpointNs = namespace === "root" ? "" : namespace;
+      let child: CheckpointTuple | undefined;
+      let latest: CheckpointTuple | undefined;
+
+      beforeEach(async () => {
+        await withSaver(async (saver, trackThread) => {
+          ({ child, latest } = await createCarryOverCheckpoints(
+            saver,
+            trackThread,
+            checkpointNs
+          ));
+        });
+      });
+
+      test("reconstructs channels written by an ancestor but not the latest node", () => {
+        expect(child?.checkpoint.channel_values).toEqual({
+          messages: ["hi"],
+          stepCount: 3,
+        });
+      });
+
+      test("reconstructs carried-over channels when loading the latest checkpoint", () => {
+        expect(latest?.checkpoint.channel_values).toEqual({
+          messages: ["hi"],
+          stepCount: 3,
+        });
+      });
+    }
+  );
 
   test("supports a caller supplied Oracle connection pool", async () => {
     const pool = await oracledb.createPool({
