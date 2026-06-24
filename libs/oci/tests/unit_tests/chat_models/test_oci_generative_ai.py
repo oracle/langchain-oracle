@@ -3,7 +3,7 @@
 
 """Test OCI Generative AI LLM service"""
 
-from typing import Optional, Union, cast
+from typing import Any, Optional, Union, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -1671,6 +1671,183 @@ class TestReasoningContentExtraction:
 
         result = llm.invoke([HumanMessage(content="What is 7 * 8?")])
         assert "reasoning_content" not in result.additional_kwargs
+
+
+# =============================================================================
+# Standard Content Blocks Contract (langchain-core v1 ``.content_blocks``)
+# =============================================================================
+
+# ``.content_blocks`` only exists on langchain-core >= 1.0 (the Python 3.10+
+# install). On the 3.9 / core-0.3.x matrix it is absent and these assertions
+# don't apply — the reasoning text still rides harmlessly in additional_kwargs.
+_HAS_CONTENT_BLOCKS = hasattr(AIMessage(content=""), "content_blocks")
+
+
+def _content_blocks(message: Any) -> list:
+    """Read ``.content_blocks`` via getattr.
+
+    The property only exists on langchain-core >= 1.0; on the py3.9 / core-0.3.x
+    matrix it is absent, so a direct attribute access trips mypy's attr-defined
+    check even though these tests are skipped at runtime there.
+    """
+    return list(getattr(message, "content_blocks"))
+
+
+def _make_generic_stream_events(
+    text_parts: list,
+    reasoning_parts: Optional[list] = None,
+    finish_reason: str = "stop",
+) -> list:
+    """Build Generic-provider streaming events (one delta per part).
+
+    Mirrors the real OCI stream schema (verified live against xai.grok-3-mini):
+    streaming events are raw JSON with camelCase keys, so reasoning rides on
+    ``message.reasoningContent`` (not snake_case). Each non-end event is
+    ``{"index", "message": {"role", "content": [{"type": "TEXT", "text"}],
+    "reasoningContent"?}}`` followed by a terminal ``{"finishReason"}`` event.
+    """
+    import json
+
+    reasoning_parts = reasoning_parts or [None] * len(text_parts)
+    events = []
+    for text, reasoning in zip(text_parts, reasoning_parts):
+        message: dict = {
+            "role": "ASSISTANT",
+            "content": [{"type": "TEXT", "text": text}],
+        }
+        if reasoning is not None:
+            message["reasoningContent"] = reasoning
+        events.append(MagicMock(data=json.dumps({"index": 0, "message": message})))
+    events.append(MagicMock(data=json.dumps({"finishReason": finish_reason})))
+    return events
+
+
+def _merge_stream(chunks: list):
+    """Concatenate streamed message chunks into a single message."""
+    merged = chunks[0]
+    for chunk in chunks[1:]:
+        merged = merged + chunk
+    return merged
+
+
+@pytest.mark.skipif(
+    not _HAS_CONTENT_BLOCKS, reason="content_blocks requires langchain-core>=1.0"
+)
+@pytest.mark.requires("oci")
+class TestStandardContentBlocks:
+    """Lock the langchain-core v1 ``.content_blocks`` contract for ChatOCIGenAI.
+
+    These tests double as the backward-compatibility guard: ``.content`` must
+    stay a plain ``str`` (never a block list), so existing code that reads
+    string content is unaffected.
+    """
+
+    def test_text_only_content_block_and_content_unchanged(self) -> None:
+        """Plain text -> single text block; ``.content`` stays a ``str``."""
+        oci_client = MagicMock()
+        llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_client)
+        oci_client.chat.return_value = _make_reasoning_response(
+            text="Hello human!", reasoning_content=None
+        )
+
+        result = llm.invoke([HumanMessage(content="Hi")])
+
+        assert isinstance(result.content, str)
+        assert result.content == "Hello human!"
+        assert _content_blocks(result) == [{"type": "text", "text": "Hello human!"}]
+
+    def test_reasoning_block_non_streaming(self) -> None:
+        """Reasoning models -> a ``reasoning`` block precedes the ``text`` block."""
+        oci_client = MagicMock()
+        llm = ChatOCIGenAI(model_id="xai.grok-3-mini", client=oci_client)
+        oci_client.chat.return_value = _make_reasoning_response(
+            text="56", reasoning_content="7 * 8 = 56."
+        )
+
+        result = llm.invoke([HumanMessage(content="What is 7 * 8?")])
+
+        # Backward compat: visible answer is still a plain string.
+        assert isinstance(result.content, str)
+        assert result.content == "56"
+        # New: reasoning surfaces as a standard block, ahead of the answer.
+        blocks = _content_blocks(result)
+        assert {"type": "reasoning", "reasoning": "7 * 8 = 56."} in blocks
+        assert blocks[0]["type"] == "reasoning"
+        assert {"type": "text", "text": "56"} in blocks
+
+    def test_reasoning_block_streaming(self) -> None:
+        """Streamed reasoning deltas accumulate into a single reasoning block.
+
+        This is the gap the change closes: previously the streaming path dropped
+        ``reasoning_content`` entirely, so streamed ``.content_blocks`` had no
+        reasoning block while the non-streamed path did.
+        """
+        oci_client = MagicMock()
+        llm = ChatOCIGenAI(model_id="xai.grok-3-mini", client=oci_client)
+        mock_stream_response = MagicMock()
+        mock_stream_response.data.events.return_value = _make_generic_stream_events(
+            text_parts=["5", "6"],
+            reasoning_parts=["7 * 8 ", "= 56."],
+        )
+        oci_client.chat.return_value = mock_stream_response
+
+        merged = _merge_stream(list(llm.stream([HumanMessage(content="7 * 8?")])))
+
+        assert isinstance(merged.content, str)
+        assert merged.content == "56"
+        assert merged.additional_kwargs.get("reasoning_content") == "7 * 8 = 56."
+        reasoning_block = {"type": "reasoning", "reasoning": "7 * 8 = 56."}
+        assert reasoning_block in _content_blocks(merged)
+
+    def test_streaming_without_reasoning_is_unchanged(self) -> None:
+        """Non-reasoning models stream identically: no reasoning key/block added."""
+        oci_client = MagicMock()
+        llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_client)
+        mock_stream_response = MagicMock()
+        mock_stream_response.data.events.return_value = _make_generic_stream_events(
+            text_parts=["Hello ", "world"],
+        )
+        oci_client.chat.return_value = mock_stream_response
+
+        merged = _merge_stream(list(llm.stream([HumanMessage(content="Hi")])))
+
+        assert isinstance(merged.content, str)
+        assert merged.content == "Hello world"
+        assert "reasoning_content" not in merged.additional_kwargs
+        assert all(b["type"] != "reasoning" for b in _content_blocks(merged))
+
+
+@pytest.mark.requires("oci")
+class TestStreamReasoningExtraction:
+    """Provider-level unit tests for the streaming reasoning hook."""
+
+    def test_generic_extracts_reasoning_delta(self) -> None:
+        from langchain_oci.chat_models.providers.generic import GenericProvider
+
+        event = {
+            "index": 0,
+            "message": {
+                "role": "ASSISTANT",
+                "content": [{"type": "TEXT", "text": "hi"}],
+                "reasoningContent": "thinking...",
+            },
+        }
+        assert GenericProvider().chat_stream_to_reasoning(event) == "thinking..."
+
+    def test_generic_no_reasoning_returns_empty(self) -> None:
+        from langchain_oci.chat_models.providers.generic import GenericProvider
+
+        event = {"index": 0, "message": {"content": [{"type": "TEXT", "text": "hi"}]}}
+        assert GenericProvider().chat_stream_to_reasoning(event) == ""
+        # Also tolerate end events / malformed messages.
+        end_event = {"finishReason": "stop"}
+        assert GenericProvider().chat_stream_to_reasoning(end_event) == ""
+
+    def test_base_default_returns_empty(self) -> None:
+        """The base default keeps non-overriding providers (e.g. Cohere) no-op."""
+        from langchain_oci.chat_models.providers.cohere import CohereProvider
+
+        assert CohereProvider().chat_stream_to_reasoning({"message": {}}) == ""
 
 
 @pytest.mark.requires("oci")
