@@ -30,6 +30,7 @@ from langchain_oci.common.auth import OCIAuthType
 from langchain_oci.datastores import VectorDataStore, create_datastore_tools
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
     from langgraph.graph.state import CompiledStateGraph
 
 
@@ -55,6 +56,8 @@ class DeepagentsConfig(AgentConfig):
     middleware: Optional[Sequence[Any]] = None
     response_format: Optional[Any] = None
     context_schema: Optional[type] = None
+    # Path-level filesystem access control, forwarded to deepagents.
+    permissions: Optional[Any] = None
 
     # LangGraph options
     backend: Optional[Any] = None
@@ -73,15 +76,21 @@ class DeepagentsConfig(AgentConfig):
             return True
         if self.response_format or self.context_schema:
             return True
+        if self.permissions:
+            return True
         return False
 
     @property
     def _can_use_lightweight(self) -> bool:
-        """Whether a lightweight ReAct agent suffices."""
+        """Whether a lightweight ReAct agent suffices.
+
+        Only an explicit ``middleware=[]`` opts out of the deep-agent harness.
+        Datastores compose *with* the full deep agent (planning, filesystem,
+        subagents); they no longer silently downgrade it to a plain ReAct agent
+        that lacks those capabilities.
+        """
         if self._needs_deep_agent:
             return False
-        if self.datastores:
-            return True
         return self.middleware is not None and len(self.middleware) == 0
 
 
@@ -118,6 +127,8 @@ def create_deepagents_agent(
     default_store: Optional[str] = None,
     embedding_model: Any = None,
     top_k: int = 5,
+    # Model
+    model: Optional["BaseChatModel"] = None,
     # OCI options
     model_id: str = "google.gemini-2.5-pro",
     compartment_id: Optional[str] = None,
@@ -133,6 +144,7 @@ def create_deepagents_agent(
     middleware: Optional[Sequence[Any]] = None,
     response_format: Any = None,
     context_schema: Optional[type] = None,
+    permissions: Optional[Any] = None,
     # LangGraph options
     checkpointer: Any = None,
     store: Any = None,
@@ -163,7 +175,14 @@ def create_deepagents_agent(
         default_store: Alias for default_datastore.
         embedding_model: Custom embedding model for datastores.
         top_k: Number of search results to return.
-        model_id: OCI model identifier (Gemini models recommended).
+        model: Pre-built LangChain chat model to drive the agent. When set, it
+            is used as-is and ``model_id`` plus the OCI inference auth options
+            are ignored (the model owns its own connection). Use this to run on
+            any provider (Anthropic, OpenAI, a self-hosted vLLM model, or a
+            custom-configured ChatOCIGenAI). OCI auth may still be required for
+            datastore embeddings unless ``embedding_model`` is supplied.
+        model_id: OCI model identifier (Gemini models recommended). Used only
+            when ``model`` is not provided.
         compartment_id: OCI compartment OCID.
         service_endpoint: OCI GenAI service endpoint.
         auth_type: OCI authentication type.
@@ -176,6 +195,8 @@ def create_deepagents_agent(
         middleware: Custom middleware. Pass empty list to disable defaults.
         response_format: Structured output response format for the agent.
         context_schema: Schema for typed context passed into the agent graph.
+        permissions: Path-level filesystem access-control rules forwarded to
+            the deep agent (deepagents ``permissions``). Deep path only.
         checkpointer: LangGraph checkpointer for persistence/memory.
         store: LangGraph store for long-term memory.
         backend: State backend for the deep agent (e.g., StoreBackend).
@@ -214,6 +235,7 @@ def create_deepagents_agent(
         ... )
     """
     config = DeepagentsConfig(
+        model=model,
         model_id=model_id,
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
@@ -242,6 +264,7 @@ def create_deepagents_agent(
         middleware=middleware,
         response_format=response_format,
         context_schema=context_schema,
+        permissions=permissions,
         backend=backend,
         cache=cache,
         interrupt_on=interrupt_on,
@@ -340,6 +363,7 @@ def _build_deep(
             middleware=config.middleware,
             response_format=config.response_format,
             context_schema=config.context_schema,
+            permissions=config.permissions,
             checkpointer=config.checkpointer,
             store=config.store,
             backend=config.backend,
