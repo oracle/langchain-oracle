@@ -136,6 +136,9 @@ module = [
     "langgraph_oracledb.*",
     "langchain_oci.tools",
     "langchain_oci.tools.*",
+    # langchain.agents.middleware (AgentMiddleware) only exists on
+    # langchain >= 1.0; absent on the Python 3.9 / langchain 0.3.x matrix.
+    "langchain.agents.middleware",
 ]
 ignore_missing_imports = true
 

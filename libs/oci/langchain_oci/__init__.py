@@ -24,6 +24,7 @@ from langchain_oci.embeddings.oci_data_science_model_deployment_endpoint import 
     OCIModelDeploymentEndpointEmbeddings,
 )
 from langchain_oci.embeddings.oci_generative_ai import OCIGenAIEmbeddings
+from langchain_oci.guardrails import OCIGuardrails
 from langchain_oci.llms.oci_data_science_model_deployment_endpoint import (
     BaseOCIModelDeployment,
     OCIModelDeploymentLLM,
@@ -40,6 +41,21 @@ from langchain_oci.utils.vision import (
     to_data_uri,
 )
 
+# The guardrails agent middleware requires langchain >= 1.0 (AgentMiddleware).
+# It is unavailable on the Python 3.9 / langchain 0.3.x matrix, where the
+# guardrails package skips those exports. Track availability so that ``__all__``
+# — and therefore ``from langchain_oci import *`` — only advertises the
+# middleware when it can actually be resolved.
+try:
+    from langchain_oci.guardrails import (  # noqa: F401
+        OCIGuardrailsMiddleware,
+        OCIGuardrailsViolationError,
+    )
+
+    _HAS_GUARDRAILS_MIDDLEWARE = True
+except ImportError:
+    _HAS_GUARDRAILS_MIDDLEWARE = False
+
 
 def __getattr__(name: str) -> Any:
     """Lazy import for optional dependencies."""
@@ -55,6 +71,10 @@ def __getattr__(name: str) -> Any:
         from langchain_oci import datastores
 
         return getattr(datastores, name)
+    if name in ("OCIGuardrailsMiddleware", "OCIGuardrailsViolationError"):
+        from langchain_oci import guardrails
+
+        return getattr(guardrails, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -66,6 +86,7 @@ __all__ = [
     "ChatOCIOpenAI",
     "OCIAuthType",
     "OCIGenAIEmbeddings",
+    "OCIGuardrails",
     "OCIModelDeploymentEndpointEmbeddings",
     "OCIGenAIBase",
     "OCIGenAI",
@@ -89,3 +110,10 @@ __all__ = [
     "VISION_MODELS",
     "IMAGE_EMBEDDING_MODELS",
 ]
+
+# Only advertise the guardrails agent middleware on ``import *`` when langchain
+# >= 1.0 made it importable (see the guard above); otherwise it stays out of
+# ``__all__`` so ``from langchain_oci import *`` works on the Python 3.9 /
+# langchain 0.3.x dependency set.
+if _HAS_GUARDRAILS_MIDDLEWARE:
+    __all__ += ["OCIGuardrailsMiddleware", "OCIGuardrailsViolationError"]
