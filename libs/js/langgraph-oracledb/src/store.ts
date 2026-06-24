@@ -1495,6 +1495,30 @@ WHERE namespace_path = :namespacePath AND item_key = :key AND field_path = :fiel
     };
   }
 
+  private async deleteVectorRowsIfPresent(
+    connection: Connection,
+    rows: Array<{ namespacePath: string; key: string }>
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    try {
+      await connection.executeMany(
+        `DELETE FROM ${this.vectorTableName}
+WHERE namespace_path = :namespacePath AND item_key = :key`,
+        rows,
+        {
+          autoCommit: false,
+          bindDefs: {
+            namespacePath: { type: oracledb.STRING, maxSize: 4000 },
+            key: { type: oracledb.STRING, maxSize: 1024 },
+          },
+        }
+      );
+    } catch (error) {
+      if (!isOracleError(error, 942)) throw error;
+    }
+  }
+
   private async batchPuts(
     putOpsWithIndex: Array<{ index: number; op: PutOperation }>,
     results: unknown[]
@@ -1544,20 +1568,7 @@ WHERE namespace_path = :namespacePath AND item_key = :key`,
             }
           );
 
-          if (this.indexConfig) {
-            await connection.executeMany(
-              `DELETE FROM ${this.vectorTableName}
-WHERE namespace_path = :namespacePath AND item_key = :key`,
-              deletes,
-              {
-                autoCommit: false,
-                bindDefs: {
-                  namespacePath: { type: oracledb.STRING, maxSize: 4000 },
-                  key: { type: oracledb.STRING, maxSize: 1024 },
-                },
-              }
-            );
-          }
+          await this.deleteVectorRowsIfPresent(connection, deletes);
         }
 
         if (puts.length > 0) {
@@ -1594,20 +1605,10 @@ WHEN NOT MATCHED THEN INSERT (
             }
           );
 
-          if (this.indexConfig) {
-            await connection.executeMany(
-              `DELETE FROM ${this.vectorTableName}
-WHERE namespace_path = :namespacePath AND item_key = :key`,
-              puts.map(({ namespacePath, key }) => ({ namespacePath, key })),
-              {
-                autoCommit: false,
-                bindDefs: {
-                  namespacePath: { type: oracledb.STRING, maxSize: 4000 },
-                  key: { type: oracledb.STRING, maxSize: 1024 },
-                },
-              }
-            );
-          }
+          await this.deleteVectorRowsIfPresent(
+            connection,
+            puts.map(({ namespacePath, key }) => ({ namespacePath, key }))
+          );
         }
 
         if (vectorRows.length > 0) {

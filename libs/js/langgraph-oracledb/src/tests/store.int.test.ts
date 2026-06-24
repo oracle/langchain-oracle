@@ -1372,6 +1372,61 @@ describeIfOracle("OracleStore vector search", () => {
     );
   });
 
+  test("clears stale vectors when JSON-only stores update or delete indexed items", async () => {
+    const prefix = uniquePrefix();
+    const namespace = ["vectors", "mixed-config"];
+    const vectorStore = new OracleStore({
+      connection: oracleConnection,
+      tablePrefix: prefix,
+      index: indexConfig,
+    });
+    const jsonStore = new OracleStore({
+      connection: oracleConnection,
+      tablePrefix: prefix,
+    });
+
+    try {
+      await vectorStore.put(namespace, "doc", { text: "apple fruit" });
+      expect(
+        await countStoreRows(prefix, "STORE_VECTORS", namespace, "doc")
+      ).toBe(1);
+
+      await jsonStore.put(namespace, "doc", { text: "banana fruit" });
+      expect(
+        await countStoreRows(prefix, "STORE_VECTORS", namespace, "doc")
+      ).toBe(0);
+
+      const afterUpdate = await vectorStore.search(namespace, {
+        query: "apple",
+        limit: 10,
+      });
+      expect(afterUpdate).toEqual([
+        expect.objectContaining({
+          key: "doc",
+          value: { text: "banana fruit" },
+        }),
+      ]);
+      expect(afterUpdate[0].score).toBeUndefined();
+
+      await vectorStore.put(namespace, "deleted", { text: "apple fruit" });
+      expect(
+        await countStoreRows(prefix, "STORE_VECTORS", namespace, "deleted")
+      ).toBe(1);
+
+      await jsonStore.delete(namespace, "deleted");
+      expect(await countStoreRows(prefix, "STORE", namespace, "deleted")).toBe(
+        0
+      );
+      expect(
+        await countStoreRows(prefix, "STORE_VECTORS", namespace, "deleted")
+      ).toBe(0);
+    } finally {
+      await vectorStore.stop();
+      await jsonStore.stop();
+      await dropStoreTables(prefix);
+    }
+  });
+
   test("supports per-put field overrides and update re-indexing", async () => {
     await withStore(
       async (store) => {

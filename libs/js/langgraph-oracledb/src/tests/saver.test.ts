@@ -8,6 +8,7 @@ class FakeConnection implements OracleConnectionLike {
     private readonly options: {
       failFirstExecute?: boolean;
       failFirstMergeDuplicate?: boolean;
+      failNullableBlobAlreadyNullable?: boolean;
       delayCheckpointWrites?: boolean;
     } = {}
   ) {}
@@ -40,6 +41,17 @@ class FakeConnection implements OracleConnectionLike {
     if (sql.includes("SELECT v")) {
       const error = new Error("table missing") as Error & { errorNum: number };
       error.errorNum = 942;
+      throw error;
+    }
+
+    if (
+      this.options.failNullableBlobAlreadyNullable &&
+      /\bMODIFY\s+blob\s+NULL\b/i.test(sql)
+    ) {
+      const error = new Error("column already nullable") as Error & {
+        errorNum: number;
+      };
+      error.errorNum = 1451;
       throw error;
     }
 
@@ -89,6 +101,16 @@ describe("OracleCheckpointSaver", () => {
     });
 
     await expect(saver.setup()).rejects.toThrow("boom");
+    await expect(saver.setup()).resolves.toBeUndefined();
+  });
+
+  test("treats already-nullable checkpoint write blob migration as idempotent", async () => {
+    const saver = new OracleCheckpointSaver({
+      connection: new FakeConnection({
+        failNullableBlobAlreadyNullable: true,
+      }),
+    });
+
     await expect(saver.setup()).resolves.toBeUndefined();
   });
 

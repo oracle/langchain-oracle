@@ -97,6 +97,17 @@ const CHECKPOINT_TYPE_MAX_BYTES = 255;
 const CHECKPOINT_BYTE_CONTEXT = "Oracle checkpoint";
 const CHECKPOINT_BYTE_SUFFIX = " after encoding";
 
+const isNullableBlobMigration = (sql: string): boolean =>
+  /\bMODIFY\s+blob\s+NULL\b/i.test(sql);
+
+const isIdempotentMigrationError = (
+  error: unknown,
+  migrationSql: string
+): boolean =>
+  isOracleError(error, 955) ||
+  isOracleError(error, 1430) ||
+  (isOracleError(error, 1451) && isNullableBlobMigration(migrationSql));
+
 const CHECKPOINT_BINDS: Record<string, BindDefinition> = {
   thread_id: STRING_512,
   checkpoint_ns: STRING_512,
@@ -437,12 +448,11 @@ export class OracleCheckpointSaver extends BaseCheckpointSaver {
         version < migrations.length;
         version += 1
       ) {
+        const migrationSql = migrations[version];
         try {
-          await connection.execute(migrations[version]);
+          await connection.execute(migrationSql);
         } catch (error) {
-          if (!isOracleError(error, 955) && !isOracleError(error, 1430)) {
-            throw error;
-          }
+          if (!isIdempotentMigrationError(error, migrationSql)) throw error;
         }
 
         try {
