@@ -26,17 +26,21 @@ export ORACLE_CONNECT_STRING="host:port/service_name"
 
 ## Installation
 
-From inside this monorepo workspace:
+From the package directory in this repository:
 
 ```sh
+cd libs/js/langgraph-oracledb
 pnpm install
 ```
 
 Install the package from npm:
 
 ```sh
-pnpm add @oracle/langgraph-oracledb @langchain/core @langchain/langgraph-checkpoint
+pnpm add @oracle/langgraph-oracledb @langchain/core @langchain/langgraph-checkpoint oracledb
 ```
+
+Applications that compile and run LangGraph graphs should also depend on
+`@langchain/langgraph`.
 
 ## Diagnostics
 
@@ -274,24 +278,29 @@ Setup is idempotent and records migrations in the migration table. Transient set
 Run the package checks with:
 
 ```sh
-pnpm --filter @oracle/langgraph-oracledb lint
-pnpm --filter @oracle/langgraph-oracledb exec tsc --noEmit
-pnpm --filter @oracle/langgraph-oracledb test
-pnpm --filter @oracle/langgraph-oracledb test:int
-pnpm --filter @oracle/langgraph-oracledb run lint:dpdm
-pnpm --filter @oracle/langgraph-oracledb build:internal
+cd libs/js/langgraph-oracledb
+pnpm install
+pnpm build
+pnpm lint
+pnpm exec tsc --noEmit
+pnpm test
+pnpm test:int
+pnpm format:check
 ```
 
 What these commands cover:
 
-- `lint`: source linting with the repository's configured Oxlint rules.
+- `build`: ESM/CJS compilation, declaration generation, entrypoint wrapper generation, and tree-shaking checks.
+- `lint`: ESLint plus circular dependency detection for package source files.
 - `tsc --noEmit`: TypeScript type-checking without writing compiled files.
 - `test`: unit tests for SQL helpers and saver error/race handling.
 - `test:int`: Oracle-backed integration tests, including the shared `@langchain/langgraph-checkpoint-validation` spec for `OracleCheckpointSaver`.
-- `lint:dpdm`: circular dependency detection for package source files.
-- `build:internal`: package compilation, type declaration generation, and package export validation.
+- `format:check`: Prettier formatting validation for source files.
 
 If Oracle credentials are not present, Oracle integration tests are skipped.
+HNSW vector-index tests may also skip when the connected database reports that
+the Oracle VECTOR memory area is unavailable; IVF/vector/store/checkpoint tests
+still run when credentials are present.
 
 ## Current Limitations
 

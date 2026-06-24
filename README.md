@@ -12,6 +12,7 @@ Welcome to the official repository for LangChain integration with [Oracle Cloud 
     - Generate embeddings within/outside the database using `OracleEmbeddings`
     - Chunk according to different requirements using Advanced Oracle Capabilities from `OracleTextSplitter`
     - Store, index, and query vectors using `OracleVS`
+- **LangGraph Persistence**: Includes JavaScript integrations for Oracle-backed LangGraph checkpointing and long-term memory stores with optional Oracle VECTOR search.
 - **More to come**: This repository will continue to expand and offer additional components for various OCI and Oracle AI services as development progresses.
 
 > This project merges and replaces earlier OCI and Oracle AI Vector Search integrations from the `langchain-community` repository and unifies contributions from Oracle teams.
@@ -33,15 +34,22 @@ For Oracle AI Vector Search services:
 python -m pip install -U langchain-oracledb
 ```
 
+For LangGraph.js Oracle persistence:
+
+```bash
+npm install @oracle/langgraph-oracledb @langchain/core @langchain/langgraph-checkpoint oracledb
+```
+
 ---
 
 ## Quick Start
 
-This repository includes three main integration categories. For detailed information, please refer to the respective libraries:
+This repository includes four main integration categories. For detailed information, please refer to the respective libraries:
 
 - [OCI Generative AI](https://github.com/oracle/langchain-oracle/tree/main/libs/oci)
 - [OCI Data Science (Model Deployment)](https://github.com/oracle/langchain-oracle/tree/main/libs/oci)
 - [Oracle AI Vector Search](https://github.com/oracle/langchain-oracle/tree/main/libs/oracledb)
+- [LangGraph.js Oracle Persistence](https://github.com/oracle/langchain-oracle/tree/main/libs/js/langgraph-oracledb)
 
 ## Samples
 
