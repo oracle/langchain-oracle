@@ -6,17 +6,17 @@ Welcome to the official repository for LangChain integration with [Oracle Cloud 
 
 - **LLMs**: Includes LLM classes for OCI services like [Generative AI](https://cloud.oracle.com/ai-services/generative-ai) and [ModelDeployment Endpoints](https://cloud.oracle.com/ai-services/model-deployment), allowing you to leverage their language models within LangChain.
 - **Agents**: Includes Runnables to support [Oracle Generative AI Agents](https://www.oracle.com/artificial-intelligence/generative-ai/agents/), allowing you to leverage Generative AI Agents within LangChain and LangGraph.
-- **Vector Search**: Offers native integration with [Oracle AI Vector Search](https://www.oracle.com/database/ai-vector-search/) through a LangChain-compatible components. This enables pipelines that can:
+- **Vector Search**: Offers native integration with [Oracle AI Vector Search](https://www.oracle.com/database/ai-vector-search/) through LangChain-compatible components. This enables pipelines that can:
     - Load the documents from various sources using `OracleDocLoader`
     - Summarize content within/outside the database using `OracleSummary`
     - Generate embeddings within/outside the database using `OracleEmbeddings`
-    - Chunk according to different requirements using Advanced Oracle Capabilities from `OracleTextSplitter`
+    - Chunk according to different requirements using advanced Oracle capabilities from `OracleTextSplitter`
     - Store, index, and query vectors using `OracleVS`
 - **LangGraph Persistence**: Includes JavaScript integrations for Oracle-backed LangGraph checkpointing and long-term memory stores with optional Oracle VECTOR search.
 - **More to come**: This repository will continue to expand and offer additional components for various OCI and Oracle AI services as development progresses.
 
 > This project merges and replaces earlier OCI and Oracle AI Vector Search integrations from the `langchain-community` repository and unifies contributions from Oracle teams.
-> All integrations in this package assume that you have the credentials setup to connect with oci and database services.
+> All integrations in this package assume that you have credentials set up to connect to OCI and database services.
 
 ---
 

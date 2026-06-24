@@ -9,6 +9,8 @@ type FakeRow = Record<string, unknown>;
 class FakeDiagnosticsConnection implements OracleConnectionLike {
   readonly statements: string[] = [];
 
+  readonly binds: Record<string, unknown>[] = [];
+
   readonly password = "secret-password";
 
   oracleServerVersion = 2300000000;
@@ -28,9 +30,11 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
   ) {}
 
   async execute<RowT = FakeRow>(
-    sql: string
+    sql: string,
+    binds?: Record<string, unknown>
   ): Promise<{ rows?: RowT[]; rowsAffected?: number }> {
     this.statements.push(sql);
+    this.binds.push(binds ?? {});
     expect(sql.trim()).toMatch(/^SELECT\b/i);
     expect(sql).not.toMatch(
       /\b(CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|DROP)\b/i
@@ -431,6 +435,11 @@ describe("Oracle diagnostics", () => {
       0, 1,
     ]);
     expect(enabledDiagnostics.vector.configured).toBe(true);
+    expect(
+      enabledConnection.binds.find(
+        (binds) => typeof binds.probe_vector === "string"
+      )
+    ).toMatchObject({ probe_vector: "[1,0]" });
   });
 
   test("degrades store diagnostics when configured vector probe is unavailable", async () => {

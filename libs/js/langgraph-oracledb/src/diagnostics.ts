@@ -594,7 +594,9 @@ export const probeOracleVector = async (
     typeof dims === "number" && Number.isFinite(dims) && dims > 0
       ? Math.min(Math.floor(dims), ORACLE_VECTOR_MAX_DIMENSIONS)
       : 1;
-  const vector = `[${new Array(safeDims).fill(0).join(",")}]`;
+  const vectorValues = new Array(safeDims).fill(0) as number[];
+  vectorValues[0] = 1;
+  const vector = `[${vectorValues.join(",")}]`;
   try {
     await executeSelect(
       connection,
