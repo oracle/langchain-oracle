@@ -13,10 +13,6 @@ if TYPE_CHECKING:
         VectorDataStore,
         create_datastore_tools,
     )
-    from langchain_oci.guardrails import (
-        OCIGuardrailsMiddleware,
-        OCIGuardrailsViolationError,
-    )
 from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeployment,
     ChatOCIModelDeploymentTGI,
@@ -44,6 +40,21 @@ from langchain_oci.utils.vision import (
     load_image,
     to_data_uri,
 )
+
+# The guardrails agent middleware requires langchain >= 1.0 (AgentMiddleware).
+# It is unavailable on the Python 3.9 / langchain 0.3.x matrix, where the
+# guardrails package skips those exports. Track availability so that ``__all__``
+# — and therefore ``from langchain_oci import *`` — only advertises the
+# middleware when it can actually be resolved.
+try:
+    from langchain_oci.guardrails import (  # noqa: F401
+        OCIGuardrailsMiddleware,
+        OCIGuardrailsViolationError,
+    )
+
+    _HAS_GUARDRAILS_MIDDLEWARE = True
+except ImportError:
+    _HAS_GUARDRAILS_MIDDLEWARE = False
 
 
 def __getattr__(name: str) -> Any:
@@ -84,9 +95,6 @@ __all__ = [
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
     "create_oci_agent",
-    # Guardrails agent middleware (langchain >= 1.0)
-    "OCIGuardrailsMiddleware",
-    "OCIGuardrailsViolationError",
     # Deepagents agent
     "create_deepagents_agent",
     # Datastores
@@ -102,3 +110,10 @@ __all__ = [
     "VISION_MODELS",
     "IMAGE_EMBEDDING_MODELS",
 ]
+
+# Only advertise the guardrails agent middleware on ``import *`` when langchain
+# >= 1.0 made it importable (see the guard above); otherwise it stays out of
+# ``__all__`` so ``from langchain_oci import *`` works on the Python 3.9 /
+# langchain 0.3.x dependency set.
+if _HAS_GUARDRAILS_MIDDLEWARE:
+    __all__ += ["OCIGuardrailsMiddleware", "OCIGuardrailsViolationError"]
