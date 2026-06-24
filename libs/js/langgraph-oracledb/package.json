@@ -1,0 +1,98 @@
+{
+  "name": "@oracle/langgraph-oracledb",
+  "version": "0.1.0",
+  "description": "Oracle Database integrations for LangGraph checkpointing and store memory.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oracle/langchain-oracle.git",
+    "directory": "libs/js/langgraph-oracledb"
+  },
+  "homepage": "https://github.com/oracle/langchain-oracle/tree/main/libs/js/langgraph-oracledb",
+  "scripts": {
+    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:types:cjs && pnpm build:scripts",
+    "build:esm": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist/ && rm -rf dist/tests dist/**/tests",
+    "build:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist-cjs/ -p tsconfig.cjs.json && node scripts/move-cjs-to-dist.js && rm -rf dist-cjs",
+    "build:types:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.types.cjs.json && node scripts/rename-cjs-dts.js",
+    "build:watch": "node scripts/create-entrypoints.js && tsc --outDir dist/ --watch",
+    "build:scripts": "node scripts/create-entrypoints.js && node scripts/check-tree-shaking.js",
+    "clean": "rm -rf dist/ dist-types-cjs && NODE_OPTIONS=--max-old-space-size=4096 node scripts/create-entrypoints.js pre",
+    "lint": "NODE_OPTIONS=--max-old-space-size=4096 eslint src && pnpm lint:dpdm",
+    "lint:dpdm": "dpdm --exit-code circular:1 --no-warning --no-tree src/*.ts src/**/*.ts",
+    "lint:fix": "pnpm lint --fix",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:int": "vitest run --mode int",
+    "format": "prettier --write \"src\"",
+    "format:check": "prettier --check \"src\""
+  },
+  "author": "Oracle",
+  "license": "MIT",
+  "dependencies": {},
+  "peerDependencies": {
+    "@langchain/core": "^1.1.48",
+    "@langchain/langgraph-checkpoint": "^1.1.2",
+    "oracledb": "^6.10.0 || ^7.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^8.33.0",
+    "@langchain/core": "^1.2.1",
+    "@langchain/langgraph": "^1.4.5",
+    "@langchain/langgraph-checkpoint": "^1.1.2",
+    "@langchain/langgraph-checkpoint-validation": "^1.1.0",
+    "@swc/core": "^1.3.90",
+    "@tsconfig/recommended": "^1.0.3",
+    "@types/oracledb": "^6.10.0",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "dotenv": "^17.2.3",
+    "dpdm": "^3.12.0",
+    "eslint": "^8.33.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-no-instanceof": "^1.0.1",
+    "eslint-plugin-prettier": "^4.2.1",
+    "oracledb": "^7.0.0",
+    "prettier": "^2.8.3",
+    "rollup": "^4.37.0",
+    "tsx": "^4.19.3",
+    "typescript": "<5.2.0",
+    "typescript-eslint": "^8.48.1",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    },
+    "./store": {
+      "types": "./store.d.ts",
+      "import": "./store.js",
+      "require": "./store.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "index.cjs",
+    "index.js",
+    "index.d.ts",
+    "index.d.cts",
+    "store.cjs",
+    "store.js",
+    "store.d.ts",
+    "store.d.cts"
+  ]
+}

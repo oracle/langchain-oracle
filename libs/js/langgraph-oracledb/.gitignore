@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-cjs/
+dist-types-cjs/
+index.cjs
+index.js
+index.d.ts
+index.d.cts
+store.cjs
+store.js
+store.d.ts
+store.d.cts
