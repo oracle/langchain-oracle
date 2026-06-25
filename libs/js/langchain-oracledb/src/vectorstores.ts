@@ -968,15 +968,23 @@ export class OracleVS extends VectorStore {
 
     try {
       const bindValues: unknown[] = [this.prepareQueryVector(query)];
+      const hasFilter = !!filter && Object.keys(filter).length > 0;
 
+      // Keep the vector index hint for unfiltered searches. When a JSON filter
+      // is present, forcing VECTOR_INDEX_TRANSFORM can change result semantics
+      // by doing approximate top-k before the filter is applied.
+      const selectClause = hasFilter
+        ? "SELECT"
+        : `SELECT /*+ VECTOR_INDEX_TRANSFORM(${this.tableName}) */`;
       let sqlQuery = `
-      SELECT external_id,
+      ${selectClause}
+        external_id,
         text,
         metadata,
         vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
         embedding
       FROM ${this.tableName} `;
-      if (filter && Object.keys(filter).length > 0) {
+      if (hasFilter) {
         sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
       }
       bindValues.push(k);
@@ -1006,9 +1014,6 @@ export class OracleVS extends VectorStore {
           });
           docsScoresAndEmbeddings.push([document, distance, embedding]);
         }
-      } else {
-        // Throw an exception if no rows are found
-        throwOracleError(OracleErrorCode.QUERY_NO_ROWS_FOUND);
       }
     } finally {
       if (connection) {

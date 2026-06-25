@@ -45,6 +45,9 @@ async function expectOracleErrorCode(
 
   throw new Error(`Expected OracleError with code ${code}`);
 }
+import { describe, expect, test } from "vitest";
+
+import { generateWhereClause } from "../vectorstores.js";
 
 describe("generateWhereClause", () => {
   test("binds scalar values instead of interpolating them into SQL", () => {
@@ -60,7 +63,7 @@ describe("generateWhereClause", () => {
     expect(bindValues).toEqual(["Robert'); DROP TABLE docs; --"]);
   });
 
-  test("rejects metadata keys containing injection payloads", () => {
+  test("rejects metadata keys containing SQL injection payloads", () => {
     expect(() =>
       generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, [])
     ).toThrow(/Invalid metadata key/);

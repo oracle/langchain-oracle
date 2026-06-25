@@ -201,9 +201,19 @@ class ChatOCIGenAIAsyncMixin:
                     event_data, tool_call_ids
                 )
 
+                # Surface incremental reasoning (e.g. xAI Grok, OpenAI o-series)
+                # so the merged message exposes a standard ``reasoning`` content
+                # block, matching the non-streaming path. Absent for models that
+                # don't emit reasoning, in which case nothing is added.
+                reasoning_delta = self._provider.chat_stream_to_reasoning(event_data)  # type: ignore[attr-defined]
+                additional_kwargs = (
+                    {"reasoning_content": reasoning_delta} if reasoning_delta else {}
+                )
+
                 chunk = ChatGenerationChunk(
                     message=AIMessageChunk(
                         content=delta,
+                        additional_kwargs=additional_kwargs,
                         tool_call_chunks=tool_call_chunks,
                     )
                 )
