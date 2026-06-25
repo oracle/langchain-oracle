@@ -204,6 +204,73 @@ class TestChatOCIGenAIAsyncMixin:
             assert content == "Hello, world!"
 
     @pytest.mark.asyncio
+    async def test_astream_surfaces_reasoning(self, mock_oci_client, mock_signer):
+        """Async streaming accumulates reasoning deltas, at parity with sync.
+
+        Reasoning models (e.g. xAI Grok, OpenAI o-series) emit a separate
+        chain-of-thought channel on the raw stream's camelCase
+        ``message.reasoningContent``. ``_astream`` must carry each delta on
+        ``AIMessageChunk.additional_kwargs["reasoning_content"]`` so the merged
+        message exposes a standard ``reasoning`` content block — mirroring both
+        the non-streaming path and the sync ``_stream`` path. Before this change
+        the async path dropped reasoning while the sync path kept it.
+        """
+        _setup_base_client(mock_oci_client, mock_signer)
+        llm = ChatOCIGenAI(
+            model_id="xai.grok-3-mini",
+            compartment_id="test-compartment",
+            service_endpoint=(
+                "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+            ),
+            client=mock_oci_client,
+        )
+
+        # Reasoning is split across deltas, just like the live Grok stream.
+        stream_events: list[Dict[str, Any]] = [
+            {
+                "message": {
+                    "role": "ASSISTANT",
+                    "content": [{"type": "TEXT", "text": "5"}],
+                    "reasoningContent": "7 * 8 ",
+                }
+            },
+            {
+                "message": {
+                    "role": "ASSISTANT",
+                    "content": [{"type": "TEXT", "text": "6"}],
+                    "reasoningContent": "= 56.",
+                }
+            },
+            {"finishReason": "stop"},
+        ]
+
+        async def mock_chat_async(
+            *args: Any, **kwargs: Any
+        ) -> AsyncIterator[Dict[str, Any]]:
+            for event in stream_events:
+                yield event
+
+        with patch.object(OCIAsyncClient, "chat_async", side_effect=mock_chat_async):
+            chunks = [
+                chunk async for chunk in llm._astream([HumanMessage(content="7 * 8?")])
+            ]
+
+        merged = chunks[0].message
+        for chunk in chunks[1:]:
+            merged = merged + chunk.message
+
+        # Backward compat: the visible answer stays a plain string.
+        assert merged.content == "56"
+        # The streamed reasoning deltas accumulate into one reasoning string.
+        assert merged.additional_kwargs.get("reasoning_content") == "7 * 8 = 56."
+
+        # When langchain-core exposes content_blocks (>=1.0), reasoning also
+        # surfaces as a standard block — same contract as the non-streaming path.
+        blocks = getattr(merged, "content_blocks", None)
+        if blocks is not None:
+            assert {"type": "reasoning", "reasoning": "7 * 8 = 56."} in list(blocks)
+
+    @pytest.mark.asyncio
     async def test_agenerate_with_streaming_flag(self, llm):
         """Test that agenerate uses streaming when is_stream is True."""
         llm.is_stream = True
