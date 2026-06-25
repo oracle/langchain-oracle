@@ -23,6 +23,11 @@ class AgentConfig(BaseModel):
     model_config = {"populate_by_name": True, "arbitrary_types_allowed": True}
 
     model_id: str = "meta.llama-4-scout-17b-16e-instruct"
+    # Optional pre-built LangChain chat model. When set, it is used as-is and
+    # ``model_id`` / OCI inference auth are ignored (the model owns its own
+    # connection). Typed ``Any`` to accept any ``BaseChatModel`` without strict
+    # pydantic validation, matching how other injected objects are typed here.
+    model: Optional[Any] = None
     compartment_id: Optional[str] = None
     service_endpoint: Optional[str] = None
     auth_type: Union[str, OCIAuthType] = OCIAuthType.API_KEY
@@ -41,10 +46,15 @@ class AgentConfig(BaseModel):
 
     @model_validator(mode="after")
     def _resolve_oci_env(self) -> "AgentConfig":
-        """Resolve compartment and endpoint from environment if not set."""
+        """Resolve compartment and endpoint from environment if not set.
+
+        When a pre-built ``model`` is supplied the agent does not call OCI
+        inference, so ``compartment_id`` is not required. It is still resolved
+        opportunistically because OCI-backed datastore embeddings may need it.
+        """
         if not self.compartment_id:
             self.compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
-        if not self.compartment_id:
+        if not self.compartment_id and self.model is None:
             raise ValueError(
                 "compartment_id must be provided or set via "
                 "OCI_COMPARTMENT_ID environment variable"
@@ -60,16 +70,26 @@ class AgentConfig(BaseModel):
 
 
 def _build_llm(config: AgentConfig, **extra_kwargs: Any) -> Any:
-    """Build a ChatOCIGenAI instance from an AgentConfig.
+    """Resolve the chat model for an agent.
+
+    If ``config.model`` holds a pre-built LangChain chat model it is returned
+    as-is, letting callers drive the agent with any provider (Anthropic,
+    OpenAI, a self-hosted vLLM model, a custom-configured ChatOCIGenAI, ...).
+    Otherwise a ``ChatOCIGenAI`` is built from ``config.model_id`` and the OCI
+    auth settings.
 
     Args:
         config: Resolved agent configuration.
         **extra_kwargs: Additional kwargs passed to ChatOCIGenAI
-            (e.g. max_sequential_tool_calls, tool_result_guidance).
+            (e.g. max_sequential_tool_calls, tool_result_guidance). Ignored
+            when a pre-built ``config.model`` is supplied.
 
     Returns:
-        ChatOCIGenAI instance.
+        A LangChain ``BaseChatModel`` (the supplied model or a ChatOCIGenAI).
     """
+    if config.model is not None:
+        return config.model
+
     from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 
     auth_type = (

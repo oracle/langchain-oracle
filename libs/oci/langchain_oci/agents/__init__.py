@@ -5,12 +5,51 @@
 
 Agents:
     - create_oci_agent: Simple ReAct agent wrapper around LangGraph
+    - create_deepagents_agent: Deepagents agent with deepagents (optional)
+
+Example - Simple agent with datastore tools:
+    >>> from langchain_oci.agents import create_oci_agent
+    >>> from langchain_oci.datastores import (
+    ...     OpenSearch,
+    ...     create_datastore_tools,
+    ... )
+    >>>
+    >>> tools = create_datastore_tools(
+    ...     stores={"docs": OpenSearch(endpoint="...", index_name="docs")},
+    ...     compartment_id="ocid1.compartment...",
+    ... )
+    >>> agent = create_oci_agent(
+    ...     model_id="meta.llama-3.3-70b-instruct",
+    ...     tools=tools,
+    ... )
 """
+
+from typing import TYPE_CHECKING, Any
 
 from langchain_oci.agents.common import AgentConfig
 from langchain_oci.agents.react.agent import create_oci_agent
 
+if TYPE_CHECKING:
+    from langchain_oci.agents.deepagents import create_deepagents_agent
+    from langchain_oci.agents.deepagents.agent import DeepagentsConfig
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for optional dependencies."""
+    if name == "create_deepagents_agent":
+        from langchain_oci.agents.deepagents import create_deepagents_agent
+
+        return create_deepagents_agent
+    if name == "DeepagentsConfig":
+        from langchain_oci.agents.deepagents.agent import DeepagentsConfig
+
+        return DeepagentsConfig
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "AgentConfig",
     "create_oci_agent",
+    "create_deepagents_agent",
+    "DeepagentsConfig",
 ]

@@ -311,6 +311,23 @@ class GenericProvider(Provider):
         """Extract generation metadata from Meta chat stream event."""
         return {"finish_reason": event_data["finishReason"]}
 
+    def chat_stream_to_reasoning(self, event_data: Dict) -> str:
+        """Extract incremental reasoning text from a Generic stream event.
+
+        Streaming events are raw JSON and use camelCase keys (``finishReason``,
+        ``toolCalls``, ``reasoningContent``) — unlike the non-streaming SDK
+        response object, whose attribute is snake_case ``reasoning_content``
+        (see :meth:`chat_generation_info`). Reasoning models (e.g. xAI Grok,
+        OpenAI o-series) emit the chain-of-thought on ``message.reasoningContent``
+        ahead of the visible ``message.content``. Returns ``""`` when absent so
+        non-reasoning models stream unchanged.
+        """
+        message = event_data.get("message")
+        if not isinstance(message, dict):
+            return ""
+        reasoning = message.get("reasoningContent")
+        return reasoning if isinstance(reasoning, str) else ""
+
     def chat_tool_calls(self, response: Any) -> List[Any]:
         """Retrieve tool calls from chat response.
 

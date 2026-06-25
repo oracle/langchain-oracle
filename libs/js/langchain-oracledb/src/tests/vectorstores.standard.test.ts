@@ -2,7 +2,11 @@ import type { EmbeddingsInterface } from "@langchain/core/embeddings";
 import { describe, expect, test, vi } from "vitest";
 import type oracledb from "oracledb";
 
-import { OracleVS, type OracleDBVSArgs } from "../vectorstores.js";
+import {
+  generateWhereClause,
+  OracleVS,
+  type OracleDBVSArgs,
+} from "../vectorstores.js";
 
 const embeddings = {
   embedDocuments: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
@@ -97,5 +101,26 @@ describe("OracleVS client provider", () => {
 
     expect(connection.execute).toHaveBeenCalledTimes(1);
     expect(connection.close).not.toHaveBeenCalled();
+  });
+});
+
+describe("generateWhereClause", () => {
+  test("binds scalar values instead of interpolating them into SQL", () => {
+    const bindValues: unknown[] = [];
+
+    const clause = generateWhereClause(
+      { author: "Robert'); DROP TABLE docs; --" },
+      bindValues
+    );
+
+    expect(clause).toContain("JSON_EXISTS");
+    expect(clause).not.toContain("DROP TABLE");
+    expect(bindValues).toEqual(["Robert'); DROP TABLE docs; --"]);
+  });
+
+  test("rejects metadata keys containing SQL injection payloads", () => {
+    expect(() =>
+      generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, [])
+    ).toThrow(/Invalid metadata key/);
   });
 });

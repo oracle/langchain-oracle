@@ -1,7 +1,18 @@
 # Copyright (c) 2025 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-from langchain_oci.agents.react import create_oci_agent
+from typing import TYPE_CHECKING, Any
+
+from langchain_oci.agents.react.agent import create_oci_agent
+
+if TYPE_CHECKING:
+    from langchain_oci.agents.deepagents import create_deepagents_agent
+    from langchain_oci.datastores import (
+        ADB,
+        OpenSearch,
+        VectorDataStore,
+        create_datastore_tools,
+    )
 from langchain_oci.chat_models.oci_data_science import (
     ChatOCIModelDeployment,
     ChatOCIModelDeploymentTGI,
@@ -13,6 +24,7 @@ from langchain_oci.embeddings.oci_data_science_model_deployment_endpoint import 
     OCIModelDeploymentEndpointEmbeddings,
 )
 from langchain_oci.embeddings.oci_generative_ai import OCIGenAIEmbeddings
+from langchain_oci.guardrails import OCIGuardrails
 from langchain_oci.llms.oci_data_science_model_deployment_endpoint import (
     BaseOCIModelDeployment,
     OCIModelDeploymentLLM,
@@ -29,6 +41,43 @@ from langchain_oci.utils.vision import (
     to_data_uri,
 )
 
+# The guardrails agent middleware requires langchain >= 1.0 (AgentMiddleware).
+# It is unavailable on the Python 3.9 / langchain 0.3.x matrix, where the
+# guardrails package skips those exports. Track availability so that ``__all__``
+# — and therefore ``from langchain_oci import *`` — only advertises the
+# middleware when it can actually be resolved.
+try:
+    from langchain_oci.guardrails import (  # noqa: F401
+        OCIGuardrailsMiddleware,
+        OCIGuardrailsViolationError,
+    )
+
+    _HAS_GUARDRAILS_MIDDLEWARE = True
+except ImportError:
+    _HAS_GUARDRAILS_MIDDLEWARE = False
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for optional dependencies."""
+    if name == "create_deepagents_agent":
+        from langchain_oci.agents.deepagents import create_deepagents_agent
+
+        return create_deepagents_agent
+    if name == "create_datastore_tools":
+        from langchain_oci.datastores import create_datastore_tools
+
+        return create_datastore_tools
+    if name in ("VectorDataStore", "OpenSearch", "ADB"):
+        from langchain_oci import datastores
+
+        return getattr(datastores, name)
+    if name in ("OCIGuardrailsMiddleware", "OCIGuardrailsViolationError"):
+        from langchain_oci import guardrails
+
+        return getattr(guardrails, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "ChatOCIGenAI",
     "ChatOCIModelDeployment",
@@ -37,6 +86,7 @@ __all__ = [
     "ChatOCIOpenAI",
     "OCIAuthType",
     "OCIGenAIEmbeddings",
+    "OCIGuardrails",
     "OCIModelDeploymentEndpointEmbeddings",
     "OCIGenAIBase",
     "OCIGenAI",
@@ -45,6 +95,13 @@ __all__ = [
     "OCIModelDeploymentTGI",
     "OCIModelDeploymentVLLM",
     "create_oci_agent",
+    # Deepagents agent
+    "create_deepagents_agent",
+    # Datastores
+    "VectorDataStore",
+    "OpenSearch",
+    "ADB",
+    "create_datastore_tools",
     # Vision / image utilities
     "load_image",
     "encode_image",
@@ -53,3 +110,10 @@ __all__ = [
     "VISION_MODELS",
     "IMAGE_EMBEDDING_MODELS",
 ]
+
+# Only advertise the guardrails agent middleware on ``import *`` when langchain
+# >= 1.0 made it importable (see the guard above); otherwise it stays out of
+# ``__all__`` so ``from langchain_oci import *`` works on the Python 3.9 /
+# langchain 0.3.x dependency set.
+if _HAS_GUARDRAILS_MIDDLEWARE:
+    __all__ += ["OCIGuardrailsMiddleware", "OCIGuardrailsViolationError"]
