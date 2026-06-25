@@ -45,9 +45,6 @@ async function expectOracleErrorCode(
 
   throw new Error(`Expected OracleError with code ${code}`);
 }
-import { describe, expect, test } from "vitest";
-
-import { generateWhereClause } from "../vectorstores.js";
 
 describe("generateWhereClause", () => {
   test("binds scalar values instead of interpolating them into SQL", () => {
@@ -187,7 +184,7 @@ describe("Oracle error codes", () => {
     );
   });
 
-  test("covers validation input and query no rows errors", async () => {
+  test("covers validation input errors and returns no matches for query no rows", async () => {
     const store = new OracleVS(embeddings as never, {
       client: {
         execute: async () => ({ rows: [] }),
@@ -209,10 +206,9 @@ describe("Oracle error codes", () => {
       ),
       OracleErrorCode.VALIDATION_INVALID_INPUT,
     );
-    await expectOracleErrorCode(
+    await expect(
       store.similaritySearchByVectorReturningEmbeddings([1, 2], 1),
-      OracleErrorCode.QUERY_NO_ROWS_FOUND,
-    );
+    ).resolves.toEqual([]);
   });
 
   test("covers metadata key and document loader validation error codes", async () => {
