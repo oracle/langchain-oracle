@@ -358,14 +358,13 @@ WHERE thread_id = :thread_id`,
 const buildFetchFirstClause = (limit?: number): string => {
   if (limit === undefined) return "";
 
-  const parsedLimit = Number.parseInt(limit.toString(), 10);
-  if (!Number.isFinite(parsedLimit) || parsedLimit < 0) {
+  if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit < 0) {
     throw new Error(
       "Oracle checkpoint SELECT limit must be a non-negative integer."
     );
   }
 
-  return ` FETCH FIRST ${parsedLimit} ROWS ONLY`;
+  return ` FETCH FIRST ${limit} ROWS ONLY`;
 };
 
 export interface OracleSearchWhereInput {

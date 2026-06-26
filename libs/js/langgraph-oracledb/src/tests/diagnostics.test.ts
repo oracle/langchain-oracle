@@ -5,6 +5,13 @@ import { OracleCheckpointSaver, type OracleConnectionLike } from "../saver.js";
 import { OracleStore } from "../store.js";
 
 type FakeRow = Record<string, unknown>;
+type MetadataQuery =
+  | "tables"
+  | "columns"
+  | "constraints"
+  | "indexes"
+  | "jsonColumns"
+  | "vectorInfo";
 
 class FakeDiagnosticsConnection implements OracleConnectionLike {
   readonly statements: string[] = [];
@@ -26,6 +33,10 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
       storeTables?: boolean;
       vectorTable?: boolean;
       vectorProbeErrorCode?: number;
+      checkpointDataType?: string;
+      omitCheckpointColumn?: boolean;
+      vectorInfoAvailable?: boolean;
+      metadataFailures?: MetadataQuery[];
     }
   ) {}
 
@@ -74,10 +85,15 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
     }
 
     if (/FROM USER_TABLES/i.test(sql)) {
+      this.failMetadata("tables");
       return { rows: this.tableRows() as RowT[] };
     }
 
     if (/FROM USER_TAB_COLUMNS/i.test(sql) && /vector_info/i.test(sql)) {
+      this.failMetadata("vectorInfo");
+      if (this.options.vectorInfoAvailable) {
+        return { rows: this.vectorRows() as RowT[] };
+      }
       const error = new Error("VECTOR_INFO unavailable") as Error & {
         errorNum: number;
       };
@@ -86,19 +102,27 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
     }
 
     if (/FROM USER_TAB_COLUMNS/i.test(sql)) {
+      this.failMetadata("columns");
       return { rows: this.columnRows() as RowT[] };
     }
 
     if (/FROM USER_CONSTRAINTS/i.test(sql)) {
+      this.failMetadata("constraints");
       return { rows: this.constraintRows() as RowT[] };
     }
 
     if (/FROM USER_INDEXES/i.test(sql)) {
+      this.failMetadata("indexes");
       return { rows: this.indexRows() as RowT[] };
     }
 
     if (/FROM USER_JSON_COLUMNS/i.test(sql)) {
+      this.failMetadata("jsonColumns");
       return { rows: this.jsonRows() as RowT[] };
+    }
+
+    if (/SELECT COUNT\(\*\) AS row_count/i.test(sql)) {
+      return { rows: [{ ROW_COUNT: 7 } as RowT] };
     }
 
     return { rows: [] };
@@ -118,6 +142,15 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
 
   async close(): Promise<void> {}
 
+  private failMetadata(query: MetadataQuery): void {
+    if (!this.options.metadataFailures?.includes(query)) return;
+    const error = new Error(`${query} metadata unavailable`) as Error & {
+      errorNum: number;
+    };
+    error.errorNum = 6502;
+    throw error;
+  }
+
   private tableRows(): FakeRow[] {
     return [
       ...(this.options.checkpointTables
@@ -136,7 +169,11 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
   private columnRows(): FakeRow[] {
     return [
       ...(this.options.checkpointTables
-        ? checkpointColumnRows(this.options.prefix)
+        ? checkpointColumnRows(
+            this.options.prefix,
+            this.options.checkpointDataType,
+            this.options.omitCheckpointColumn
+          )
         : []),
       ...(this.options.storeTables
         ? storeColumnRows(this.options.prefix, this.options.vectorTable)
@@ -181,6 +218,17 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
       },
     ];
   }
+
+  private vectorRows(): FakeRow[] {
+    if (!this.options.storeTables || !this.options.vectorTable) return [];
+    return [
+      {
+        TABLE_NAME: `${this.options.prefix}STORE_VECTORS`,
+        COLUMN_NAME: "EMBEDDING",
+        VECTOR_INFO: "VECTOR(2,FLOAT32)",
+      },
+    ];
+  }
 }
 
 function missingTableError(): Error & { errorNum: number } {
@@ -216,7 +264,11 @@ const columns = (
     NULLABLE: "Y",
   }));
 
-function checkpointColumnRows(prefix: string): FakeRow[] {
+function checkpointColumnRows(
+  prefix: string,
+  checkpointDataType = "BLOB",
+  omitCheckpointColumn = false
+): FakeRow[] {
   return [
     ...columns(`${prefix}CHECKPOINT_MIGRATIONS`, [["V", "NUMBER"]]),
     ...columns(`${prefix}CHECKPOINTS`, [
@@ -226,7 +278,9 @@ function checkpointColumnRows(prefix: string): FakeRow[] {
       ["PARENT_CHECKPOINT_ID", "VARCHAR2"],
       ["TYPE", "VARCHAR2"],
       ["METADATA_TYPE", "VARCHAR2"],
-      ["CHECKPOINT", "BLOB"],
+      ...(omitCheckpointColumn
+        ? []
+        : ([["CHECKPOINT", checkpointDataType]] as Array<[string, string]>)),
       ["METADATA", "BLOB"],
     ]),
     ...columns(`${prefix}CHECKPOINT_BLOBS`, [
@@ -382,6 +436,41 @@ describe("Oracle diagnostics", () => {
     expect(diagnostics.storageMode).toBe("blob");
   });
 
+  test("reports checkpoint storage mode from observed checkpoint column metadata", async () => {
+    const clobConnection = new FakeDiagnosticsConnection({
+      prefix: "LG_CLOB_",
+      checkpointTables: true,
+      checkpointApplied: [0, 1, 2, 3, 4, 5],
+      checkpointDataType: "CLOB",
+    });
+    const clobSaver = new OracleCheckpointSaver({
+      connection: clobConnection,
+      tablePrefix: "lg_clob_",
+    });
+
+    await expect(clobSaver.getDiagnostics()).resolves.toMatchObject({
+      status: "partial",
+      storageMode: "clob",
+    });
+
+    const missingColumnConnection = new FakeDiagnosticsConnection({
+      prefix: "LG_UNKNOWN_STORAGE_",
+      checkpointTables: true,
+      checkpointApplied: [0, 1, 2, 3, 4, 5],
+      omitCheckpointColumn: true,
+    });
+    const missingColumnSaver = new OracleCheckpointSaver({
+      connection: missingColumnConnection,
+      tablePrefix: "lg_unknown_storage_",
+    });
+
+    const diagnostics = await missingColumnSaver.getDiagnostics();
+    expect(diagnostics.storageMode).toBe("unknown");
+    expect(diagnostics.issues).toContain(
+      "LG_UNKNOWN_STORAGE_CHECKPOINTS.CHECKPOINT: missing required column"
+    );
+  });
+
   test("uses constructor vector config for store migration expectations", async () => {
     const disabledConnection = new FakeDiagnosticsConnection({
       prefix: "LG_STORE_",
@@ -440,6 +529,78 @@ describe("Oracle diagnostics", () => {
         (binds) => typeof binds.probe_vector === "string"
       )
     ).toMatchObject({ probe_vector: "[1,0]" });
+  });
+
+  test("includes row counts and VECTOR column metadata when requested", async () => {
+    const connection = new FakeDiagnosticsConnection({
+      prefix: "LG_VECTOR_INFO_",
+      storeTables: true,
+      vectorTable: true,
+      vectorInfoAvailable: true,
+      storeApplied: [0, 1],
+    });
+    const store = new OracleStore({
+      pool: {
+        async getConnection() {
+          return connection;
+        },
+        async close() {},
+      },
+      tablePrefix: "lg_vector_info_",
+      index: {
+        dims: 2,
+        embeddings: diagnosticsEmbeddings,
+      },
+    });
+
+    const diagnostics = await store.getDiagnostics({ includeRowCounts: true });
+
+    expect(diagnostics.status).toBe("ready");
+    expect(diagnostics.vector.embeddingColumn).toMatchObject({
+      status: "present",
+      vectorInfo: "VECTOR(2,FLOAT32)",
+    });
+    expect(
+      diagnostics.schema.tables.find(
+        (table) => table.name === "LG_VECTOR_INFO_STORE"
+      )
+    ).toMatchObject({ rowCount: 7 });
+  });
+
+  test("reports metadata query failures without throwing diagnostics", async () => {
+    const connection = new FakeDiagnosticsConnection({
+      prefix: "LG_METADATA_FAIL_",
+      storeTables: true,
+      storeApplied: [0],
+      metadataFailures: ["columns", "constraints", "indexes", "jsonColumns"],
+    });
+    const store = new OracleStore({
+      pool: {
+        async getConnection() {
+          return connection;
+        },
+        async close() {},
+      },
+      tablePrefix: "lg_metadata_fail_",
+    });
+
+    const diagnostics = await store.getDiagnostics();
+
+    expect(diagnostics.status).toBe("unknown");
+    expect(diagnostics.schema.metadataAvailability).toMatchObject({
+      columns: "unknown",
+      constraints: "unknown",
+      indexes: "unknown",
+      jsonColumns: "unknown",
+    });
+    expect(diagnostics.schema.errors).toEqual(
+      expect.arrayContaining([
+        { reason: "column_metadata_query_failed", code: 6502 },
+        { reason: "constraint_metadata_query_failed", code: 6502 },
+        { reason: "index_metadata_query_failed", code: 6502 },
+        { reason: "json_metadata_query_failed", code: 6502 },
+      ])
+    );
   });
 
   test("degrades store diagnostics when configured vector probe is unavailable", async () => {
