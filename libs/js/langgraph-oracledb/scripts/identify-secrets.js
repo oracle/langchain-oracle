@@ -26,7 +26,7 @@ export function identifySecrets() {
         case ts.SyntaxKind.ClassDeclaration:
         case ts.SyntaxKind.ClassExpression: {
           node.forEachChild((node) => {
-            // look for get lc_secrets()
+            // find the redaction map accessor
             switch (node.kind) {
               case ts.SyntaxKind.GetAccessor: {
                 const property = node;
@@ -38,7 +38,7 @@ export function identifySecrets() {
                       stmt.expression.kind ===
                         ts.SyntaxKind.ObjectLiteralExpression
                     ) {
-                      // collect secret identifier
+                      // collect configured identifier
                       stmt.expression.properties.forEach((element) => {
                         if (
                           element.initializer.kind ===

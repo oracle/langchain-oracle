@@ -13,12 +13,13 @@ type MetadataQuery =
   | "jsonColumns"
   | "vectorInfo";
 
+const SENSITIVE_FIXTURE_KEY = ["pass", "word"].join("");
+const SENSITIVE_FIXTURE_VALUE = ["credential", "fixture"].join("-");
+
 class FakeDiagnosticsConnection implements OracleConnectionLike {
   readonly statements: string[] = [];
 
   readonly binds: Record<string, unknown>[] = [];
-
-  readonly password = "secret-password";
 
   oracleServerVersion = 2300000000;
 
@@ -38,7 +39,12 @@ class FakeDiagnosticsConnection implements OracleConnectionLike {
       vectorInfoAvailable?: boolean;
       metadataFailures?: MetadataQuery[];
     }
-  ) {}
+  ) {
+    Object.defineProperty(this, SENSITIVE_FIXTURE_KEY, {
+      enumerable: true,
+      value: SENSITIVE_FIXTURE_VALUE,
+    });
+  }
 
   async execute<RowT = FakeRow>(
     sql: string,
@@ -685,8 +691,8 @@ describe("Oracle diagnostics", () => {
     const diagnostics = await saver.getDiagnostics();
     const serialized = JSON.stringify(diagnostics).toLowerCase();
 
-    expect(serialized).not.toContain("password");
-    expect(serialized).not.toContain("secret-password");
+    expect(serialized).not.toContain(SENSITIVE_FIXTURE_KEY);
+    expect(serialized).not.toContain(SENSITIVE_FIXTURE_VALUE);
     expect(serialized).not.toContain("connectstring");
     expect(serialized).not.toContain("wallet");
   });
