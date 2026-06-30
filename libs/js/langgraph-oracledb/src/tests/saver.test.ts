@@ -85,6 +85,22 @@ class FakeConnection implements OracleConnectionLike {
 }
 
 describe("OracleCheckpointSaver", () => {
+  test("rejects fractional list limits with and without metadata filters", async () => {
+    const saver = new OracleCheckpointSaver({
+      connection: new FakeConnection(),
+    });
+    const config = { configurable: { thread_id: "thread-1" } };
+    const expectedError =
+      "Oracle checkpoint list limit must be a non-negative integer.";
+
+    await expect(saver.list(config, { limit: 1.5 }).next()).rejects.toThrow(
+      expectedError
+    );
+    await expect(
+      saver.list(config, { filter: { source: "loop" }, limit: 1.5 }).next()
+    ).rejects.toThrow(expectedError);
+  });
+
   test("resets setupPromise after setup failure", async () => {
     const connections = [
       new FakeConnection({ failFirstExecute: true }),

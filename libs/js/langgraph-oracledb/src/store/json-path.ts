@@ -68,8 +68,9 @@ export function getTextAtPath(value: unknown, path: string): string[] {
       if (rawIndex === "*") {
         return current.flatMap((item) => extract(item, position + 1));
       }
-      const parsed = Number.parseInt(rawIndex, 10);
-      if (Number.isNaN(parsed)) return [];
+      if (!/^-?\d+$/.test(rawIndex)) return [];
+      const parsed = Number(rawIndex);
+      if (!Number.isSafeInteger(parsed)) return [];
       const index = parsed < 0 ? current.length + parsed : parsed;
       return index >= 0 && index < current.length
         ? extract(current[index], position + 1)

@@ -331,6 +331,18 @@ function validateCheckpointListFields(
   );
 }
 
+function validateCheckpointListLimit(
+  limit: number | undefined
+): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isFinite(limit) || !Number.isInteger(limit) || limit < 0) {
+    throw new Error(
+      "Oracle checkpoint list limit must be a non-negative integer."
+    );
+  }
+  return limit;
+}
+
 async function closeConnection(
   connection: OracleConnectionLike
 ): Promise<void> {
@@ -562,6 +574,7 @@ export class OracleCheckpointSaver extends BaseCheckpointSaver {
       config.configurable?.checkpoint_id,
       options?.before?.configurable?.checkpoint_id
     );
+    const limit = validateCheckpointListLimit(options?.limit);
     await this.setup();
     const query = buildSelectCheckpointSQL(
       {
@@ -573,17 +586,13 @@ export class OracleCheckpointSaver extends BaseCheckpointSaver {
             : config.configurable.checkpoint_ns,
         checkpointId: config.configurable?.checkpoint_id,
         beforeCheckpointId: options?.before?.configurable?.checkpoint_id,
-        limit: options?.filter ? undefined : options?.limit,
+        limit: options?.filter ? undefined : limit,
       },
       this.tablePrefix
     );
 
     const rows = await this.selectCheckpointRows(query.sql, query.binds);
     let yielded = 0;
-    const limit =
-      options?.limit !== undefined
-        ? Number.parseInt(options.limit.toString(), 10)
-        : undefined;
     if (limit !== undefined && limit <= 0) return;
 
     for (const row of rows) {

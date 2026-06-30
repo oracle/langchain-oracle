@@ -124,6 +124,8 @@ describe("Oracle store helper modules", () => {
     expect(getTextAtPath(value, "nested.count[0]")).toEqual([]);
     expect(getTextAtPath(value, "nested.count.*")).toEqual([]);
     expect(getTextAtPath(value, "items[bad].text")).toEqual([]);
+    expect(getTextAtPath(value, "items[1.5].text")).toEqual([]);
+    expect(getTextAtPath(value, "items[1oops].text")).toEqual([]);
 
     expect(jsonValueExpression("nested.count", "number", "s.item_value")).toBe(
       'JSON_VALUE(s.item_value, \'$."nested"."count"\' RETURNING NUMBER NULL ON ERROR)'
