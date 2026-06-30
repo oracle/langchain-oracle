@@ -72,7 +72,14 @@ def _build_headers(
     conversation_store_id: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, str]:
-    """Build headers for OCI OpenAI API requests."""
+    """Build headers for the OCI OpenAI Responses API transport.
+
+    The Responses API path stores conversation state server-side when
+    ``store=True`` (the default), so a conversation-store OCID is required.
+    For the Chat Completions transport (``use_responses_api=False``), use
+    :func:`_build_chat_completions_headers` instead — that path has no
+    server-side state and no conversation store.
+    """
     store = kwargs.get("store", True)
 
     headers = {COMPARTMENT_ID_HEADER: compartment_id}
@@ -85,6 +92,17 @@ def _build_headers(
         headers[CONVERSATION_STORE_ID_HEADER] = conversation_store_id
 
     return headers
+
+
+def _build_chat_completions_headers(compartment_id: str) -> Dict[str, str]:
+    """Build headers for the OCI OpenAI Chat Completions transport.
+
+    Chat Completions (``/openai/v1/chat/completions``) is stateless on OCI's
+    side, so only the compartment header is required. Conversation-store
+    and ``output_version`` are Responses-API-only concepts and must not be
+    sent on this path.
+    """
+    return {COMPARTMENT_ID_HEADER: compartment_id}
 
 
 class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
@@ -716,6 +734,50 @@ class ChatOCIOpenAI(ChatOpenAI):
                 "What transport protocols does the 2025-03-26 version of the MCP "
                 "spec (modelcontextprotocol/modelcontextprotocol) support?"
             )
+
+    Chat Completions transport (``use_responses_api=False``):
+        Opt in to OCI's OpenAI Chat Completions passthrough at
+        ``/openai/v1/chat/completions`` for stateless calls and for OpenAI
+        features that are only exposed on Chat Completions (not the
+        Responses API). The most common motivator today is
+        ``input_audio`` against audio-capable models such as
+        ``openai.gpt-audio``, which neither the OCI-native chat endpoint
+        nor the OpenAI Responses passthrough accept. The same flag covers
+        any other Chat-Completions-only OpenAI feature surfaced through
+        ``langchain-openai``. ``conversation_store_id`` is not used on
+        this path.
+
+        Worked example (audio input):
+
+        .. code-block:: python
+
+            from langchain_core.messages import HumanMessage
+            from langchain_oci import ChatOCIOpenAI
+            from oci_openai import OciUserPrincipalAuth
+
+            client = ChatOCIOpenAI(
+                auth=OciUserPrincipalAuth(profile_name="DEFAULT"),
+                compartment_id=COMPARTMENT_ID,
+                region="us-chicago-1",
+                model="openai.gpt-audio",
+                use_responses_api=False,
+            )
+            response = client.invoke(
+                [
+                    HumanMessage(
+                        content=[
+                            {"type": "text", "text": "What do you hear?"},
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": "<base64-wav>",
+                                    "format": "wav",
+                                },
+                            },
+                        ]
+                    )
+                ]
+            )
     """
 
     @model_validator(mode="before")
@@ -738,8 +800,29 @@ class ChatOCIOpenAI(ChatOpenAI):
         region: Optional[str] = None,
         service_endpoint: Optional[str] = None,
         base_url: Optional[str] = None,
+        use_responses_api: bool = True,
         **kwargs: Any,
     ):
+        """Initialize the OCI OpenAI client.
+
+        Args:
+            use_responses_api: Selects the OCI OpenAI transport. ``True``
+                (default) targets the Responses passthrough at
+                ``/openai/v1/responses`` and preserves existing behavior —
+                this is the path for Responses-API features such as
+                conversation store, hosted MCP, and web search. ``False``
+                targets the Chat Completions passthrough at
+                ``/openai/v1/chat/completions``, which is the right
+                transport for stateless calls and for OpenAI features
+                exposed only on Chat Completions. The motivating example
+                is ``input_audio`` against audio-capable models such as
+                ``openai.gpt-audio`` — see the class docstring — but the
+                same opt-in covers any other Chat-Completions-only OpenAI
+                feature surfaced through ``langchain-openai``.
+                ``conversation_store_id`` and ``store`` are ignored when
+                ``use_responses_api=False`` because they're
+                Responses-API-only concepts.
+        """
         try:
             from oci_openai.oci_openai import _resolve_base_url
         except ImportError as e:
@@ -750,11 +833,21 @@ class ChatOCIOpenAI(ChatOpenAI):
 
         http_client = kwargs.pop("http_client", None)
         http_async_client = kwargs.pop("http_async_client", None)
-        default_headers = _build_headers(
-            compartment_id=compartment_id,
-            conversation_store_id=conversation_store_id,
-            **kwargs,
-        )
+        if use_responses_api:
+            default_headers = _build_headers(
+                compartment_id=compartment_id,
+                conversation_store_id=conversation_store_id,
+                **kwargs,
+            )
+            extra_super_kwargs: Dict[str, Any] = {"output_version": OUTPUT_VERSION}
+        else:
+            # Chat Completions transport is stateless on OCI's side, so we
+            # drop the Responses-API-only knobs: `output_version`,
+            # `conversation_store_id`, and the `store` kwarg (the
+            # /chat/completions endpoint rejects it).
+            default_headers = _build_chat_completions_headers(compartment_id)
+            kwargs.pop("store", None)
+            extra_super_kwargs = {}
 
         super().__init__(
             model=model,
@@ -772,7 +865,7 @@ class ChatOCIOpenAI(ChatOpenAI):
             base_url=_resolve_base_url(
                 region=region, service_endpoint=service_endpoint, base_url=base_url
             ),
-            use_responses_api=True,
-            output_version=OUTPUT_VERSION,
+            use_responses_api=use_responses_api,
+            **extra_super_kwargs,
             **kwargs,
         )
