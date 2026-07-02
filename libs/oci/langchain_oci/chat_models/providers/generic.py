@@ -722,13 +722,27 @@ class GenericProvider(Provider):
         if not tool_call_response:
             return tool_call_chunks
 
-        for idx, tool_call in enumerate(
-            self.format_stream_tool_calls(tool_call_response)
-        ):
+        formatted_tool_calls = self.format_stream_tool_calls(tool_call_response)
+        single_idless_chunk = (
+            len(formatted_tool_calls) == 1 and not formatted_tool_calls[0].get("id")
+        )
+        active_index = getattr(self, "_active_stream_tool_call_index", None)
+
+        for idx, tool_call in enumerate(formatted_tool_calls):
             tool_id = tool_call.get("id")
 
             if tool_id:
-                if idx not in tool_call_ids or tool_call_ids[idx] == tool_id:
+                existing_index = next(
+                    (
+                        stored_index
+                        for stored_index, stored_id in tool_call_ids.items()
+                        if stored_id == tool_id
+                    ),
+                    None,
+                )
+                if existing_index is not None:
+                    index = existing_index
+                elif idx not in tool_call_ids or tool_call_ids[idx] == tool_id:
                     # New idx - use idx as index
                     # Same ID at same idx - reuse idx as index
                     index = idx
@@ -736,6 +750,18 @@ class GenericProvider(Provider):
                     # Different ID at same idx - parallel tool call (Grok pattern)
                     # New idx - use len(tool_call_ids) as index
                     index = len(tool_call_ids)
+                self._active_stream_tool_call_index = index
+            elif (
+                single_idless_chunk
+                and active_index is not None
+                and active_index in tool_call_ids
+            ):
+                # GPT streams a tool-call start with id/name, then sends following
+                # argument fragments without id/name as single-item events. In that
+                # shape, enumerate idx is always 0 and is not a stable tool-call
+                # identity, so attach the fragment to the active tool call.
+                index = active_index
+                tool_id = tool_call_ids[index]
             elif idx in tool_call_ids:
                 # Subsequent chunk - reuse stored ID (gpt-oss pattern)
                 index = idx
