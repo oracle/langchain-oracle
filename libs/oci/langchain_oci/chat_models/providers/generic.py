@@ -141,6 +141,13 @@ class GenericProvider(Provider):
         # and never touch it.
         self._xml_buffer = XmlStreamBuffer()
 
+        # Per-stream map of per-event toolCalls position -> logical tool-call
+        # index. GPT models stream parallel tool calls sequentially at
+        # position 0 (id+name opens a call, then id-less argument fragments
+        # follow), so a position can point at different logical calls over the
+        # stream's lifetime. Reset by `reset_stream_state()`.
+        self._active_tool_call_indices: Dict[int, int] = {}
+
         # Chat request and message models
         self.oci_chat_request = models.GenericChatRequest
         self.oci_chat_message = {
@@ -288,6 +295,7 @@ class GenericProvider(Provider):
         caller-owned state via :meth:`new_stream_state`, which needs no reset.
         """
         self._xml_buffer.reset()
+        self._active_tool_call_indices.clear()
 
     def flush_stream_state(self) -> str:
         """Return held-back text from the legacy instance-level buffer.
@@ -1000,9 +1008,18 @@ class GenericProvider(Provider):
                     # Same ID at same idx - reuse idx as index
                     index = idx
                 else:
-                    # Different ID at same idx - parallel tool call (Grok pattern)
-                    # New idx - use len(tool_call_ids) as index
+                    # Different ID at same idx - parallel tool call
+                    # (Grok/GPT pattern) - use len(tool_call_ids) as index
                     index = len(tool_call_ids)
+                # This position now feeds this logical call; id-less argument
+                # fragments arriving here later belong to it.
+                self._active_tool_call_indices[idx] = index
+            elif idx in self._active_tool_call_indices:
+                # Id-less argument fragment - attach it to the call most
+                # recently opened at this position (GPT parallel pattern);
+                # for single-call streams this equals idx (gpt-oss pattern).
+                index = self._active_tool_call_indices[idx]
+                tool_id = tool_call_ids[index]
             elif idx in tool_call_ids:
                 # Subsequent chunk - reuse stored ID (gpt-oss pattern)
                 index = idx

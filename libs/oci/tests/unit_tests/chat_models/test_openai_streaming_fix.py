@@ -8,7 +8,12 @@ correctly and don't cause API errors when messages are sent back.
 """
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessageChunk,
+    HumanMessage,
+)
 
 from langchain_oci.chat_models.providers import GenericProvider
 
@@ -125,6 +130,84 @@ def test_process_stream_tool_calls_handles_none_values():
     assert chunks_2[0]["id"] == "call_123"
     assert chunks_2[0]["name"] is None
     assert chunks_2[0]["args"] == '{"query": "test", "version": "9.3.0"}'
+
+
+def test_process_stream_tool_calls_parallel_gpt_pattern():
+    """Parallel tool calls streamed sequentially at position 0 (issue #253).
+
+    GPT models open each tool call with a chunk carrying id/name and empty
+    arguments, then stream id-less argument fragments — all at toolCalls[0].
+    Fragments arriving after a second call opens must attach to that call,
+    not to the first one.
+    """
+    provider = GenericProvider()
+    tool_call_ids: dict[int, str] = {}
+
+    def event(tool_call: dict) -> dict:
+        return {"message": {"toolCalls": [{"type": "FUNCTION", **tool_call}]}}
+
+    events = [
+        event({"id": "call_A", "name": "market_research_tool", "arguments": ""}),
+        event({"arguments": '{"idea": "app",'}),
+        event({"arguments": ' "marketSegment": "smb"}'}),
+        event({"id": "call_B", "name": "customer_signal_tool", "arguments": ""}),
+        event({"arguments": '{"idea": "app",'}),
+        event({"arguments": ' "audience": "devs"}'}),
+        event({"id": "call_C", "name": "roadmap_risk_tool", "arguments": ""}),
+        event({"arguments": '{"productArea": "auth",'}),
+        event({"arguments": ' "riskFocus": "churn"}'}),
+    ]
+
+    chunks = []
+    for e in events:
+        chunks.extend(provider.process_stream_tool_calls(e, tool_call_ids))
+
+    # Each call's argument fragments must carry that call's logical index.
+    assert [(c["id"], c["index"]) for c in chunks] == [
+        ("call_A", 0),
+        ("call_A", 0),
+        ("call_A", 0),
+        ("call_B", 1),
+        ("call_B", 1),
+        ("call_B", 1),
+        ("call_C", 2),
+        ("call_C", 2),
+        ("call_C", 2),
+    ]
+
+    # Merge the chunks the way LangChain does during streaming and verify
+    # each tool call reconstructs with its own complete arguments.
+    merged: BaseMessageChunk = AIMessageChunk(content="")
+    for c in chunks:
+        merged = merged + AIMessageChunk(content="", tool_call_chunks=[c])
+
+    assert isinstance(merged, AIMessageChunk)
+    assert len(merged.tool_calls) == 3
+    assert merged.tool_calls[0]["name"] == "market_research_tool"
+    assert merged.tool_calls[0]["args"] == {"idea": "app", "marketSegment": "smb"}
+    assert merged.tool_calls[1]["name"] == "customer_signal_tool"
+    assert merged.tool_calls[1]["args"] == {"idea": "app", "audience": "devs"}
+    assert merged.tool_calls[2]["name"] == "roadmap_risk_tool"
+    assert merged.tool_calls[2]["args"] == {"productArea": "auth", "riskFocus": "churn"}
+
+
+def test_process_stream_tool_calls_position_map_resets_between_streams():
+    """reset_stream_state clears the position map so a new stream starts clean."""
+    provider = GenericProvider()
+    tool_call_ids: dict[int, str] = {}
+
+    provider.process_stream_tool_calls(
+        {"message": {"toolCalls": [{"id": "call_A", "name": "t", "arguments": ""}]}},
+        tool_call_ids,
+    )
+    provider.process_stream_tool_calls(
+        {"message": {"toolCalls": [{"id": "call_B", "name": "u", "arguments": ""}]}},
+        tool_call_ids,
+    )
+    assert provider._active_tool_call_indices == {0: 1}
+
+    provider.reset_stream_state()
+    assert provider._active_tool_call_indices == {}
 
 
 if __name__ == "__main__":
