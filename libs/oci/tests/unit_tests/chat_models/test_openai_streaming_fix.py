@@ -191,6 +191,37 @@ def test_process_stream_tool_calls_parallel_gpt_pattern():
     assert merged.tool_calls[2]["args"] == {"productArea": "auth", "riskFocus": "churn"}
 
 
+def test_process_stream_tool_calls_resent_id_keeps_logical_index():
+    """A re-announced id keeps its logical index even at a new position.
+
+    If a provider re-sends an id-bearing chunk for an already-open call at
+    a position occupied by a different call, the call must keep its
+    original logical index — otherwise its arguments split across two
+    tool calls. (Hardening ported from the approach in PR #252.)
+    """
+    provider = GenericProvider()
+    tool_call_ids: dict[int, str] = {}
+
+    def event(tool_call: dict) -> dict:
+        return {"message": {"toolCalls": [tool_call]}}
+
+    chunks = []
+    for e in [
+        event({"id": "call_A", "name": "a", "arguments": ""}),
+        event({"id": "call_B", "name": "b", "arguments": ""}),  # Grok branch -> 1
+        event({"id": "call_B", "arguments": '{"y": 2}'}),  # re-send at pos 0
+        event({"id": "call_A", "arguments": '{"x": 1}'}),  # re-send at pos 0
+    ]:
+        chunks.extend(provider.process_stream_tool_calls(e, tool_call_ids))
+
+    assert [(c["id"], c["index"]) for c in chunks] == [
+        ("call_A", 0),
+        ("call_B", 1),
+        ("call_B", 1),
+        ("call_A", 0),
+    ]
+
+
 def test_process_stream_tool_calls_position_map_resets_between_streams():
     """reset_stream_state clears the position map so a new stream starts clean."""
     provider = GenericProvider()

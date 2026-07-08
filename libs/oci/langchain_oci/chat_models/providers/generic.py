@@ -1003,9 +1003,17 @@ class GenericProvider(Provider):
             tool_id = tool_call.get("id")
 
             if tool_id:
-                if idx not in tool_call_ids or tool_call_ids[idx] == tool_id:
+                known_index = next(
+                    (i for i, known in tool_call_ids.items() if known == tool_id),
+                    None,
+                )
+                if known_index is not None:
+                    # Re-announced id for an already-open call (possibly at a
+                    # different position) - keep its logical index so its
+                    # arguments never split across two tool calls.
+                    index = known_index
+                elif idx not in tool_call_ids:
                     # New idx - use idx as index
-                    # Same ID at same idx - reuse idx as index
                     index = idx
                 else:
                     # Different ID at same idx - parallel tool call
