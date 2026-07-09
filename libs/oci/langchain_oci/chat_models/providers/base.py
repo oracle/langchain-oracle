@@ -48,9 +48,31 @@ class Provider(ABC):
         """
         ...
 
+    def new_stream_state(self) -> Optional[Any]:
+        """Create per-stream parsing state for one ``_stream``/``_astream`` call.
+
+        Providers that need to accumulate state across streaming events (e.g.
+        GenericProvider's incremental ``<tool_call>`` XML buffer) return a
+        fresh state object here. The caller owns it for the lifetime of one
+        stream and passes it back via the ``stream_state`` keyword of
+        :meth:`chat_stream_to_text` and :meth:`process_stream_tool_calls` —
+        never store it on the provider, which is shared across concurrent
+        streams.
+
+        The default returns ``None`` (stateless provider); callers must not
+        pass ``stream_state`` to providers that returned ``None``.
+        """
+        return None
+
     @abstractmethod
-    def chat_stream_to_text(self, event_data: Dict) -> str:
-        """Extract chat text from a streaming event."""
+    def chat_stream_to_text(
+        self, event_data: Dict, stream_state: Optional[Any] = None
+    ) -> str:
+        """Extract chat text from a streaming event.
+
+        ``stream_state`` is the object returned by :meth:`new_stream_state`
+        for the current stream (``None`` for stateless providers).
+        """
         ...
 
     @abstractmethod
@@ -135,8 +157,13 @@ class Provider(ABC):
         self,
         event_data: Dict,
         tool_call_ids: Dict[int, str],
+        stream_state: Optional[Any] = None,
     ) -> List[ToolCallChunk]:
-        """Process streaming tool calls from event data into chunks."""
+        """Process streaming tool calls from event data into chunks.
+
+        ``stream_state`` is the object returned by :meth:`new_stream_state`
+        for the current stream (``None`` for stateless providers).
+        """
         ...
 
     @property
