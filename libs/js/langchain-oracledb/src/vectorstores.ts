@@ -8,10 +8,10 @@ import { Document, type DocumentInterface } from "@langchain/core/documents";
 import type { EmbeddingsInterface } from "@langchain/core/embeddings";
 import { maximalMarginalRelevance } from "@langchain/core/utils/math";
 import {
-  OracleError,
+  LangChainOracleError,
   OracleErrorCode,
   createOracleErrorFromCodeWithCause,
-  isOracleError,
+  isLangChainOracleError,
   throwOracleError,
 } from "./errors.js";
 
@@ -21,9 +21,12 @@ interface AddDocumentOptions {
   mutateOnDuplicate?: boolean;
 }
 
-export { OracleError, OracleErrorCode };
-export { OracleError as OracleVSError, OracleErrorCode as OracleVSErrorCode };
-export { isOracleError };
+export { LangChainOracleError, OracleErrorCode };
+export {
+  LangChainOracleError as OracleVSError,
+  OracleErrorCode as OracleVSErrorCode,
+};
+export { isLangChainOracleError };
 
 function validateMetadataKey(column: string): void {
   const pattern = /^[a-zA-Z0-9_.[\],\s*]*$/;
@@ -205,8 +208,9 @@ export type DistanceStrategy =
   (typeof DistanceStrategy)[keyof typeof DistanceStrategy];
 
 function handleError(error: unknown): never {
-  // Type guard to check if the error is an object and has 'name' and 'message' properties
-  if (isOracleError(error)) {
+  // Preserve LangChainOracleError instances created by this package instead of
+  // wrapping them again as generic SYSTEM_ERROR failures.
+  if (isLangChainOracleError(error)) {
     throw error;
   }
 

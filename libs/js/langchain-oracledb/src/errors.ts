@@ -1,3 +1,5 @@
+import type { DBError } from "oracledb";
+
 export const OracleErrorCode = {
   VALIDATION_INVALID_INPUT: "VALIDATION_INVALID_INPUT",
   VALIDATION_MISSING_REQUIRED_PARAMETER:
@@ -18,8 +20,8 @@ export const OracleErrorCode = {
 export type OracleErrorCode =
   (typeof OracleErrorCode)[keyof typeof OracleErrorCode];
 
-const ORACLE_ERROR_BRAND = Symbol.for(
-  "@oracle/langchain-oracledb/OracleError"
+const LANGCHAIN_ORACLE_ERROR_BRAND = Symbol.for(
+  "@oracle/langchain-oracledb/LangChainOracleError"
 );
 
 type OracleErrorArgs = {
@@ -38,16 +40,18 @@ type OracleErrorArgs = {
   [OracleErrorCode.SYSTEM_ERROR]: [message: string];
 };
 
-export class OracleError extends Error {
+export class LangChainOracleError extends Error implements DBError {
   readonly code: OracleErrorCode;
 
   readonly cause?: unknown;
 
-  readonly [ORACLE_ERROR_BRAND] = true;
+  isRecoverable = false;
+
+  readonly [LANGCHAIN_ORACLE_ERROR_BRAND] = true;
 
   constructor(code: OracleErrorCode, message: string, cause?: unknown) {
     super(message);
-    this.name = "OracleError";
+    this.name = "LangChainOracleError";
     this.code = code;
     this.cause = cause;
   }
@@ -57,15 +61,19 @@ export function createOracleError(
   code: OracleErrorCode,
   message: string,
   cause?: unknown
-): OracleError {
-  return new OracleError(code, message, cause);
+): LangChainOracleError {
+  return new LangChainOracleError(code, message, cause);
 }
 
-export function isOracleError(error: unknown): error is OracleError {
+// Identifies LangChainOracleError instances created by this package, not generic
+// node-oracledb or database errors such as NJS- or ORA- codes.
+export function isLangChainOracleError(
+  error: unknown
+): error is LangChainOracleError {
   return (
     typeof error === "object" &&
     error !== null &&
-    ORACLE_ERROR_BRAND in error &&
+    LANGCHAIN_ORACLE_ERROR_BRAND in error &&
     "code" in error &&
     typeof error.code === "string" &&
     Object.values(OracleErrorCode).includes(error.code as OracleErrorCode)
@@ -105,7 +113,7 @@ function getOracleErrorMessage<K extends OracleErrorCode>(
 export function createOracleErrorFromCode<K extends OracleErrorCode>(
   code: K,
   ...args: OracleErrorArgs[K]
-): OracleError {
+): LangChainOracleError {
   return createOracleError(code, getOracleErrorMessage(code, ...args));
 }
 
@@ -113,7 +121,7 @@ export function createOracleErrorFromCodeWithCause<K extends OracleErrorCode>(
   code: K,
   cause: unknown,
   ...args: OracleErrorArgs[K]
-): OracleError {
+): LangChainOracleError {
   return createOracleError(code, getOracleErrorMessage(code, ...args), cause);
 }
 

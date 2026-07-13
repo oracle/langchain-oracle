@@ -1,15 +1,15 @@
 import { Document } from "@langchain/core/documents";
+import type { DBError } from "oracledb";
 import { describe, expect, test } from "vitest";
 
 import {
-  OracleError,
+  LangChainOracleError,
   OracleErrorCode,
   OracleVS,
   createIndex,
   createTable,
   dropTablePurge,
   generateWhereClause,
-  isOracleError,
 } from "../vectorstores.js";
 import { OracleDocLoader } from "../document_loaders.js";
 
@@ -38,12 +38,12 @@ async function expectOracleErrorCode(
       await input;
     }
   } catch (error) {
-    expect(error).toBeTruthy();
-    expect(error).toMatchObject({ code });
+    const dbError = error as DBError;
+    expect(dbError.code).toBe(code);
     return;
   }
 
-  throw new Error(`Expected OracleError with code ${code}`);
+  throw new Error(`Expected LangChainOracleError with code ${code}`);
 }
 
 describe("generateWhereClause", () => {
@@ -60,10 +60,11 @@ describe("generateWhereClause", () => {
     expect(bindValues).toEqual(["Robert'); DROP TABLE docs; --"]);
   });
 
-  test("rejects metadata keys containing SQL injection payloads", () => {
-    expect(() =>
-      generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, [])
-    ).toThrow(/Invalid metadata key/);
+  test("rejects metadata keys containing SQL injection payloads", async () => {
+    await expectOracleErrorCode(
+      () => generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, []),
+      OracleErrorCode.FILTER_INVALID_METADATA_KEY,
+    );
   });
 
   test("covers filter validation error codes", async () => {
@@ -82,36 +83,36 @@ describe("generateWhereClause", () => {
   });
 });
 
-describe("OracleError", () => {
+describe("LangChainOracleError", () => {
   test("preserves the no rows found message while exposing a stable code", () => {
-    const error = new OracleError(
+    const error = new LangChainOracleError(
       OracleErrorCode.QUERY_NO_ROWS_FOUND,
       "No rows found."
     );
 
     expect(error.message).toBe("No rows found.");
     expect(error.code).toBe(OracleErrorCode.QUERY_NO_ROWS_FOUND);
-    expect(error.name).toBe("OracleError");
+    expect(error.name).toBe("LangChainOracleError");
   });
 
   test("preserves Error subclassing semantics", () => {
-    const error = new OracleError(
+    const error = new LangChainOracleError(
       OracleErrorCode.SYSTEM_ERROR,
       "system failure"
     );
 
     expect(error).toBeInstanceOf(Error);
-    expect(error).toBeInstanceOf(OracleError);
+    expect(error).toBeInstanceOf(LangChainOracleError);
   });
 
-  test("identifies package errors via the shared guard", () => {
-    const error = new OracleError(
+  test("exposes a DBError-compatible code", () => {
+    const error = new LangChainOracleError(
       OracleErrorCode.SYSTEM_ERROR,
       "system failure"
     );
 
-    expect(isOracleError(error)).toBe(true);
-    expect(isOracleError(new Error("system failure"))).toBe(false);
+    const dbError = error as DBError;
+    expect(dbError.code).toBe(OracleErrorCode.SYSTEM_ERROR);
   });
 });
 
