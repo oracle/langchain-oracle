@@ -18,7 +18,11 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, Tool
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
-from langchain_oci.common.async_support import OCIAsyncClient
+from langchain_oci.common.async_support import OCIAsyncClient, OCIAsyncRequestError
+from langchain_oci.common.param_compat import (
+    PARAM_RETRY_ATTEMPTS,
+    adjust_request_for_param_error,
+)
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 
@@ -110,16 +114,30 @@ class ChatOCIGenAIAsyncMixin:
             messages, stop, stream=False, **kwargs
         )
 
-        # Get single response
+        # Get single response, retrying after fixable 400 parameter errors
+        # (mirrors the sync _chat_with_param_retry; e.g. legacy openai.gpt-5
+        # rejects non-default temperature/top_p with 400 unsupported_value).
         response_data = None
-        async for data in client.chat_async(
-            compartment_id=request_data["compartment_id"],
-            chat_request_dict=request_data["chat_request_dict"],
-            serving_mode_dict=request_data["serving_mode_dict"],
-            stream=False,
-        ):
-            response_data = data
-            break
+        for attempt in range(PARAM_RETRY_ATTEMPTS):
+            try:
+                async for data in client.chat_async(
+                    compartment_id=request_data["compartment_id"],
+                    chat_request_dict=request_data["chat_request_dict"],
+                    serving_mode_dict=request_data["serving_mode_dict"],
+                    stream=False,
+                ):
+                    response_data = data
+                    break
+                break
+            except OCIAsyncRequestError as e:
+                if (
+                    e.status != 400
+                    or attempt == PARAM_RETRY_ATTEMPTS - 1
+                    or not adjust_request_for_param_error(
+                        e.body, request_data["chat_request_dict"]
+                    )
+                ):
+                    raise
 
         if response_data is None:
             raise RuntimeError("No response received from OCI GenAI")
@@ -188,12 +206,40 @@ class ChatOCIGenAIAsyncMixin:
         if reset is not None:
             reset()
 
-        async for event_data in client.chat_async(
-            compartment_id=request_data["compartment_id"],
-            chat_request_dict=request_data["chat_request_dict"],
-            serving_mode_dict=request_data["serving_mode_dict"],
-            stream=True,
-        ):
+        async def _events_with_param_retry() -> AsyncIterator[Dict[str, Any]]:
+            """Open the stream, retrying after fixable 400 parameter errors.
+
+            A non-200 surfaces before the first event, so only the first
+            fetch is retried (mirroring the sync _chat_with_param_retry);
+            mid-stream errors propagate unchanged.
+            """
+            for attempt in range(PARAM_RETRY_ATTEMPTS):
+                stream = client.chat_async(
+                    compartment_id=request_data["compartment_id"],
+                    chat_request_dict=request_data["chat_request_dict"],
+                    serving_mode_dict=request_data["serving_mode_dict"],
+                    stream=True,
+                )
+                try:
+                    first = await stream.__anext__()
+                except StopAsyncIteration:
+                    return
+                except OCIAsyncRequestError as e:
+                    if (
+                        e.status != 400
+                        or attempt == PARAM_RETRY_ATTEMPTS - 1
+                        or not adjust_request_for_param_error(
+                            e.body, request_data["chat_request_dict"]
+                        )
+                    ):
+                        raise
+                    continue
+                yield first
+                async for event in stream:
+                    yield event
+                return
+
+        async for event_data in _events_with_param_retry():
             if not self._provider.is_chat_stream_end(event_data):  # type: ignore[attr-defined]
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(event_data)  # type: ignore[attr-defined]

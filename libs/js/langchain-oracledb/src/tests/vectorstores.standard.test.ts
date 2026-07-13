@@ -1,11 +1,14 @@
 import { Document } from "@langchain/core/documents";
+import type { EmbeddingsInterface } from "@langchain/core/embeddings";
 import type { DBError } from "oracledb";
-import { describe, expect, test } from "vitest";
+import type oracledb from "oracledb";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   LangChainOracleError,
   OracleErrorCode,
   OracleVS,
+  type OracleDBVSArgs,
   createIndex,
   createTable,
   dropTablePurge,
@@ -14,9 +17,17 @@ import {
 import { OracleDocLoader } from "../document_loaders.js";
 
 const embeddings = {
-  embedQuery: async () => [0.1, 0.2],
   embedDocuments: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
-};
+  embedQuery: async () => [0.1, 0.2],
+} as EmbeddingsInterface;
+
+const createConfig = (
+  client: OracleDBVSArgs["client"],
+): OracleDBVSArgs => ({
+  client,
+  tableName: "test_vectors",
+  query: "test query",
+});
 
 type OracleVSInternals = {
   ensureEmbeddingDimension(): number;
@@ -45,6 +56,89 @@ async function expectOracleErrorCode(
 
   throw new Error(`Expected LangChainOracleError with code ${code}`);
 }
+
+describe("OracleVS client provider", () => {
+  test("returns pool-borrowed connections after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const pool = {
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(async () => connection),
+    } as unknown as oracledb.Pool;
+    const getClient = vi.fn(async () => pool);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    await vectorStore.initialize();
+
+    expect(getClient).toHaveBeenCalledTimes(1);
+    expect(pool.getConnection).toHaveBeenCalledTimes(1);
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not close provider-owned pool from end", async () => {
+    const pool = {
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(),
+    } as unknown as oracledb.Pool;
+    const getClient = vi.fn(async () => pool);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    await vectorStore.end();
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(pool.close).not.toHaveBeenCalled();
+  });
+
+  test("returns provider pool connections from public getConnection and retConnection", async () => {
+    const connection = {
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const pool = {
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(async () => connection),
+    } as unknown as oracledb.Pool;
+    const getClient = vi.fn(async () => pool);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    const resolvedConnection = await vectorStore.getConnection();
+    await vectorStore.retConnection(resolvedConnection);
+
+    expect(getClient).toHaveBeenCalledTimes(1);
+    expect(pool.getConnection).toHaveBeenCalledTimes(1);
+    expect(connection.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not close direct connections returned by provider after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const getClient = vi.fn(async () => connection);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    await vectorStore.initialize();
+
+    expect(getClient).toHaveBeenCalledTimes(1);
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).not.toHaveBeenCalled();
+  });
+
+  test("does not close concrete direct connections after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const vectorStore = new OracleVS(embeddings, createConfig(connection));
+
+    await vectorStore.initialize();
+
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).not.toHaveBeenCalled();
+  });
+});
 
 describe("generateWhereClause", () => {
   test("binds scalar values instead of interpolating them into SQL", () => {

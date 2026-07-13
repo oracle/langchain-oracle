@@ -45,6 +45,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from oci.exceptions import ServiceError
 from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
 from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
@@ -56,6 +57,10 @@ from langchain_oci.chat_models.providers import (
     MetaProvider,
     OpenAIProvider,
     Provider,
+)
+from langchain_oci.common.param_compat import (
+    PARAM_RETRY_ATTEMPTS,
+    adjust_request_for_param_error,
 )
 from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, OCIUtils
 from langchain_oci.llms.oci_generative_ai import OCIGenAIBase
@@ -482,7 +487,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
-        response = self.client.chat(request)
+        response = self._chat_with_param_retry(request)
 
         content = self._provider.chat_response_to_text(response)
 
@@ -531,6 +536,26 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             llm_output=llm_output,
         )
 
+    def _chat_with_param_retry(self, request: Any) -> Any:
+        """Call ``client.chat``, retrying after fixable 400 parameter errors.
+
+        Some models reject parameters only at request time (e.g. legacy
+        ``openai.gpt-5``: ``400 unsupported_value`` for non-default
+        ``temperature``/``top_p``). Parse the structured error, drop or
+        rename the rejected parameter on the request, and retry.
+        """
+        for attempt in range(PARAM_RETRY_ATTEMPTS):
+            try:
+                return self.client.chat(request)
+            except ServiceError as e:
+                if (
+                    e.status != 400
+                    or attempt == PARAM_RETRY_ATTEMPTS - 1
+                    or not adjust_request_for_param_error(e, request.chat_request)
+                ):
+                    raise
+        raise RuntimeError("unreachable")  # pragma: no cover
+
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -544,7 +569,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         Processes each event and yields chunks until the stream ends.
         """
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
-        response = self.client.chat(request)
+        response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
 
         # Reset any per-stream provider state (currently the GenericProvider's

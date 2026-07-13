@@ -182,10 +182,16 @@ export const VectorElementFormat = {
 export type VectorElementFormat =
   (typeof VectorElementFormat)[keyof typeof VectorElementFormat];
 
+export type OracleDBClient = oracledb.Pool | oracledb.Connection;
+
+// Allows callers to resolve the OracleDB client lazily, for example when the
+// pool/connection is created asynchronously or managed outside OracleVS.
+export type OracleDBClientProvider = () => Promise<OracleDBClient>;
+
 export interface OracleDBVSArgs {
   tableName: string;
   schemaName?: string | null;
-  client: oracledb.Pool | oracledb.Connection;
+  client: OracleDBClient | OracleDBClientProvider;
   query: string;
   distanceStrategy?: DistanceStrategy;
   filter?: Metadata;
@@ -252,9 +258,15 @@ function handleError(error: unknown): never {
 }
 
 function isPool(
-  client: oracledb.Connection | oracledb.Pool
+  client: OracleDBClient
 ): client is oracledb.Pool {
   return "getConnection" in client;
+}
+
+function isClientProvider(
+  client: OracleDBClient | OracleDBClientProvider
+): client is OracleDBClientProvider {
+  return typeof client === "function";
 }
 
 function quoteIdentifier(identifier: string) {
@@ -641,7 +653,11 @@ export async function dropTablePurge(
 export class OracleVS extends VectorStore {
   declare FilterType: Metadata;
 
-  readonly client: oracledb.Pool | oracledb.Connection;
+  readonly client: OracleDBClient | OracleDBClientProvider;
+
+  // Tracks connections borrowed from a pool so retConnection() can return them
+  // without closing direct connections owned by the caller.
+  private readonly poolConnections = new WeakSet<oracledb.Connection>();
 
   embeddingDimension: number | undefined;
 
@@ -821,12 +837,21 @@ export class OracleVS extends VectorStore {
     }
   }
 
+  private async resolveClient(): Promise<OracleDBClient> {
+    return isClientProvider(this.client)
+      ? await this.client()
+      : this.client;
+  }
+
   public async getConnection(): Promise<oracledb.Connection> {
     try {
-      if (isPool(this.client)) {
-        return await (this.client as oracledb.Pool).getConnection();
+      const client = await this.resolveClient();
+      if (isPool(client)) {
+        const connection = await client.getConnection();
+        this.poolConnections.add(connection);
+        return connection;
       }
-      return this.client as oracledb.Connection;
+      return client;
     } catch (error: unknown) {
       handleError(error);
     }
@@ -835,9 +860,10 @@ export class OracleVS extends VectorStore {
   // Close connection or return it to the pool
   public async retConnection(connection: oracledb.Connection): Promise<void> {
     try {
-      // If the client is a pool, close the connection (return it to the pool)
-      if (isPool(this.client)) {
+      // If this public connection came from any pool, close it to return it to the pool.
+      if (this.poolConnections.has(connection)) {
         await connection.close();
+        this.poolConnections.delete(connection);
       }
     } catch (error) {
       console.error("Error in retConnection:", error);
@@ -863,15 +889,14 @@ export class OracleVS extends VectorStore {
     }
 
     const inputIds = options?.ids;
-    let connection: oracledb.Connection | null = null;
 
+    let connection: oracledb.Connection | null = null;
     try {
       // Ensure there are IDs for all documents
       if (inputIds !== undefined && inputIds.length !== vectors.length) {
         throwOracleError(OracleErrorCode.VALIDATION_INVALID_INPUT, "The number of ids must match the number of vectors provided.");
       }
 
-      connection = await this.getConnection();
       const finalIds: string[] = [];
       const binds: oracledb.BindParameters[] = [];
 
@@ -925,6 +950,7 @@ export class OracleVS extends VectorStore {
         autoCommit: false,
       };
 
+      connection = await this.getConnection();
       await connection.executeMany(sql, binds, executeOptions);
 
       // Commit once all inserts are queued up
@@ -969,7 +995,6 @@ export class OracleVS extends VectorStore {
     > = [];
 
     let connection: oracledb.Connection | null = null;
-
     try {
       const bindValues: unknown[] = [this.prepareQueryVector(query)];
       const hasFilter = !!filter && Object.keys(filter).length > 0;
@@ -1021,7 +1046,7 @@ export class OracleVS extends VectorStore {
       }
     } finally {
       if (connection) {
-        await connection.close();
+        await this.retConnection(connection);
       }
     }
     return docsScoresAndEmbeddings;
@@ -1148,7 +1173,9 @@ export class OracleVS extends VectorStore {
     } catch (error: unknown) {
       handleError(error);
     } finally {
-      if (connection) await connection.close();
+      if (connection) {
+        await this.retConnection(connection);
+      }
     }
   }
 
@@ -1185,8 +1212,8 @@ export class OracleVS extends VectorStore {
    * inside the pool are terminated.
    */
   async end(): Promise<void> {
-    if (isPool(this.client)) {
-      await this.client?.close();
+    if (!isClientProvider(this.client) && isPool(this.client)) {
+      await this.client.close();
     }
   }
 }
