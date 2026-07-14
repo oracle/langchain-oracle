@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
 
 def create_oci_agent(
-    model_id: str,
-    tools: Sequence[BaseTool | Callable[..., Any]],
+    model_id: str = "meta.llama-4-scout-17b-16e-instruct",
+    tools: Sequence[BaseTool | Callable[..., Any]] | None = None,
     *,
     # Model
     model: "BaseChatModel | None" = None,
@@ -63,8 +63,10 @@ def create_oci_agent(
 
     Args:
         model_id: OCI model identifier (e.g., "meta.llama-4-scout-17b-16e-instruct").
-            Ignored when ``model`` is provided.
-        tools: List of tools the agent can use.
+            Optional; defaults to a Llama model. Used only when ``model`` is not
+            provided, so the bring-your-own-model path does not need a
+            placeholder ``model_id``.
+        tools: List of tools the agent can use. Optional; defaults to no tools.
         model: Pre-built LangChain chat model to drive the agent. When set, it
             is used as-is and ``model_id`` plus the OCI auth options (and the
             OCI-specific ``max_sequential_tool_calls`` / ``tool_result_guidance``
@@ -140,7 +142,7 @@ def create_oci_agent(
     prompt_key = "prompt" if use_legacy_api else "system_prompt"
     agent_kwargs = {
         "model": llm,
-        "tools": list(tools),
+        "tools": list(tools) if tools else [],
         **_filter_none(
             checkpointer=config.checkpointer,
             store=config.store,

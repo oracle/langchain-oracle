@@ -207,6 +207,54 @@ describe("OracleVectorStore", () => {
     await pool.close();
   });
 
+  test("does not close concrete connection clients after internal operations", async () => {
+    let directConnection: oracledb.Connection | undefined;
+
+    try {
+      directConnection = await pool.getConnection();
+      const directConnectionStore = new OracleVS(embedder, {
+        ...dbConfig,
+        client: directConnection,
+      });
+
+      await directConnectionStore.initialize();
+
+      const result = await directConnection.execute(`SELECT 1 FROM dual`);
+      expect(result.rows).toHaveLength(1);
+    } finally {
+      await directConnection?.close();
+    }
+  });
+
+  test("returns provider pool connections after internal operations", async () => {
+    const baselineConnectionsInUse = pool.connectionsInUse;
+    const providerPoolStore = new OracleVS(embedder, {
+      ...dbConfig,
+      client: async () => pool,
+    });
+
+    await providerPoolStore.initialize();
+
+    expect(pool.connectionsInUse).toBe(baselineConnectionsInUse);
+  });
+
+  test(
+    "returns provider pool connections from public getConnection and retConnection",
+    async () => {
+      const baselineConnectionsInUse = pool.connectionsInUse;
+      const providerPoolStore = new OracleVS(embedder, {
+        ...dbConfig,
+        client: async () => pool,
+      });
+
+      const providerConnection = await providerPoolStore.getConnection();
+      expect(pool.connectionsInUse).toBe(baselineConnectionsInUse + 1);
+
+      await providerPoolStore.retConnection(providerConnection);
+      expect(pool.connectionsInUse).toBe(baselineConnectionsInUse);
+    },
+  );
+
   test("Test vectorstore fromDocuments", async () => {
     let connection: oracledb.Connection | undefined;
 

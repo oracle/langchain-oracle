@@ -38,6 +38,21 @@ def _get_oci_genai_api_version() -> str:
 OCI_GENAI_API_VERSION = _get_oci_genai_api_version()
 
 
+class OCIAsyncRequestError(RuntimeError):
+    """Non-200 response from the async OCI GenAI REST call.
+
+    Subclasses ``RuntimeError`` (the exception previously raised here) so
+    existing ``except RuntimeError`` handlers keep working, while exposing
+    the HTTP ``status`` and raw response ``body`` for structured handling —
+    e.g. the parameter-compatibility retry in the async chat paths.
+    """
+
+    def __init__(self, status: int, body: str):
+        super().__init__(f"OCI GenAI request failed with status {status}: {body}")
+        self.status = status
+        self.body = body
+
+
 class OCIAsyncClient:
     """Async HTTP client for OCI Generative AI services.
 
@@ -241,10 +256,7 @@ class OCIAsyncClient:
         async with self._arequest("POST", url, headers, body, timeout) as response:
             if response.status != 200:
                 error_text = await response.text()
-                raise RuntimeError(
-                    f"OCI GenAI request failed with status "
-                    f"{response.status}: {error_text}"
-                )
+                raise OCIAsyncRequestError(response.status, error_text)
 
             if stream:
                 async for event in self._parse_sse_async(response.content):

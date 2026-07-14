@@ -100,6 +100,26 @@ class TestCreateOCIReactAgent:
                     mock_llm_class.assert_not_called()
                     assert mock_create.call_args.kwargs["model"] is custom_model
 
+    def test_custom_model_without_model_id(self) -> None:
+        """The BYO-model path works without a placeholder ``model_id``.
+
+        ``model_id`` is optional, so ``create_oci_agent(tools=..., model=...)``
+        drives the agent with the pre-built model and never builds a
+        ChatOCIGenAI, even with no compartment_id set.
+        """
+        custom_model = MagicMock()
+        with patch.dict("os.environ", {}, clear=True):
+            with patch(
+                "langchain_oci.chat_models.oci_generative_ai.ChatOCIGenAI"
+            ) as mock_llm_class:
+                with mock_create_agent() as mock_create:
+                    agent = create_oci_agent(tools=[dummy_tool], model=custom_model)
+
+                    mock_llm_class.assert_not_called()
+                    assert mock_create.call_args.kwargs["model"] is custom_model
+                    assert len(mock_create.call_args.kwargs["tools"]) == 1
+                    assert agent is not None
+
     def test_passes_system_prompt(self) -> None:
         """Test that system_prompt is passed to the agent creation function."""
         with patch.dict("os.environ", {"OCI_COMPARTMENT_ID": "test"}):
