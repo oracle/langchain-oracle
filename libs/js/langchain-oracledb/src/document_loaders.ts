@@ -6,7 +6,7 @@ import path from "node:path";
 import oracledb from "oracledb";
 import * as htmlparser2 from "htmlparser2";
 import { BaseDocumentLoader } from "@langchain/core/document_loaders/base";
-import { OracleErrorCode, throwOracleError } from "./errors.js";
+import { ErrorCode, throwError } from "./errors.js";
 
 function* listDir(dir: string): Generator<string> {
   const files = fs.readdirSync(dir, { withFileTypes: true });
@@ -69,8 +69,8 @@ export class OracleDocLoader extends BaseDocumentLoader {
       }
     } else if ("tablename" in this.pref) {
       if (!("owner" in this.pref) || !("colname" in this.pref)) {
-        throwOracleError(
-          OracleErrorCode.VALIDATION_INVALID_INPUT,
+        throwError(
+          ErrorCode.VALIDATION_INVALID_INPUT,
           "Invalid preferences: missing owner or colname"
         );
       }
@@ -82,8 +82,8 @@ export class OracleDocLoader extends BaseDocumentLoader {
         ))
       );
     } else {
-      throwOracleError(
-        OracleErrorCode.VALIDATION_INVALID_INPUT,
+      throwError(
+        ErrorCode.VALIDATION_INVALID_INPUT,
         "Invalid preferences: missing file, dir, or tablename"
       );
     }
@@ -149,8 +149,8 @@ export class OracleDocLoader extends BaseDocumentLoader {
       const binds = [col, qn];
       await this.conn.execute(sql, binds);
     } catch {
-      throwOracleError(
-        OracleErrorCode.VALIDATION_INVALID_IDENTIFIER,
+      throwError(
+        ErrorCode.VALIDATION_INVALID_IDENTIFIER,
         `${owner}.${table}.${col}`
       );
     }

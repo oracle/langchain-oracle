@@ -1,4 +1,4 @@
-export const OracleErrorCode = {
+export const ErrorCode = {
   VALIDATION_INVALID_INPUT: "VALIDATION_INVALID_INPUT",
   VALIDATION_MISSING_REQUIRED_PARAMETER:
     "VALIDATION_MISSING_REQUIRED_PARAMETER",
@@ -15,27 +15,27 @@ export const OracleErrorCode = {
   SYSTEM_ERROR: "SYSTEM_ERROR",
 } as const;
 
-export type OracleErrorCode =
-  (typeof OracleErrorCode)[keyof typeof OracleErrorCode];
+export type ErrorCode =
+  (typeof ErrorCode)[keyof typeof ErrorCode];
 
 const LANGCHAIN_ORACLE_ERROR_BRAND = Symbol.for(
   "@oracle/langchain-oracledb/LangChainOracleError"
 );
 
-type OracleErrorArgs = {
-  [OracleErrorCode.VALIDATION_INVALID_INPUT]: [message: string];
-  [OracleErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER]: [parameter: string];
-  [OracleErrorCode.VALIDATION_INVALID_IDENTIFIER]: [identifier: string];
-  [OracleErrorCode.FILTER_INVALID_METADATA_KEY]: [column: string];
-  [OracleErrorCode.FILTER_INVALID_VALUE]: [message: string];
-  [OracleErrorCode.FILTER_UNSUPPORTED_OPERATOR]: [operator: string];
-  [OracleErrorCode.VECTOR_INVALID_CONFIGURATION]: [message: string];
-  [OracleErrorCode.VECTOR_INVALID_VALUE]: [message: string];
-  [OracleErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION]: [message: string];
-  [OracleErrorCode.VECTOR_INVALID_INDEX_PARAMETERS]: [invalidKeys: string[]];
-  [OracleErrorCode.STATE_INVALID]: [message: string];
-  [OracleErrorCode.QUERY_NO_ROWS_FOUND]: [];
-  [OracleErrorCode.SYSTEM_ERROR]: [message: string];
+type ErrorArgs = {
+  [ErrorCode.VALIDATION_INVALID_INPUT]: [message: string];
+  [ErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER]: [parameter: string];
+  [ErrorCode.VALIDATION_INVALID_IDENTIFIER]: [identifier: string];
+  [ErrorCode.FILTER_INVALID_METADATA_KEY]: [column: string];
+  [ErrorCode.FILTER_INVALID_VALUE]: [message: string];
+  [ErrorCode.FILTER_UNSUPPORTED_OPERATOR]: [operator: string];
+  [ErrorCode.VECTOR_INVALID_CONFIGURATION]: [message: string];
+  [ErrorCode.VECTOR_INVALID_VALUE]: [message: string];
+  [ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION]: [message: string];
+  [ErrorCode.VECTOR_INVALID_INDEX_PARAMETERS]: [invalidKeys: string[]];
+  [ErrorCode.STATE_INVALID]: [message: string];
+  [ErrorCode.QUERY_NO_ROWS_FOUND]: [];
+  [ErrorCode.SYSTEM_ERROR]: [message: string];
 };
 
 /**
@@ -45,13 +45,13 @@ type OracleErrorArgs = {
  * property to protect against shifting node-oracledb definitions.
  */
 export class LangChainOracleError extends Error {
-  readonly code: OracleErrorCode;
+  readonly code: ErrorCode;
 
   readonly cause?: unknown;
 
   readonly [LANGCHAIN_ORACLE_ERROR_BRAND] = true;
 
-  constructor(code: OracleErrorCode, message: string, cause?: unknown) {
+  constructor(code: ErrorCode, message: string, cause?: unknown) {
     super(message);
 
     // Hardcode the class name so logs show "LangChainOracleError: ..."
@@ -63,8 +63,8 @@ export class LangChainOracleError extends Error {
   }
 }
 
-export function createOracleError(
-  code: OracleErrorCode,
+export function createError(
+  code: ErrorCode,
   message: string,
   cause?: unknown
 ): LangChainOracleError {
@@ -84,53 +84,53 @@ export function isLangChainOracleError(
 }
 
 const errorMessageFactories: {
-  [Code in OracleErrorCode]: (...innerArgs: OracleErrorArgs[Code]) => string;
+  [Code in ErrorCode]: (...innerArgs: ErrorArgs[Code]) => string;
 } = {
-  [OracleErrorCode.VALIDATION_INVALID_INPUT]: (message) => message,
-  [OracleErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER]: (parameter) =>
+  [ErrorCode.VALIDATION_INVALID_INPUT]: (message) => message,
+  [ErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER]: (parameter) =>
     `${parameter} parameter is required...`,
-  [OracleErrorCode.VALIDATION_INVALID_IDENTIFIER]: (identifier) =>
+  [ErrorCode.VALIDATION_INVALID_IDENTIFIER]: (identifier) =>
     `Identifier name ${identifier} is not valid.`,
-  [OracleErrorCode.FILTER_INVALID_METADATA_KEY]: (column) =>
+  [ErrorCode.FILTER_INVALID_METADATA_KEY]: (column) =>
     `Invalid metadata key '${String(column)}'. Only letters, numbers, underscores, nesting via '.', and array wildcards '[*]' are allowed.`,
-  [OracleErrorCode.FILTER_INVALID_VALUE]: (message) => message,
-  [OracleErrorCode.FILTER_UNSUPPORTED_OPERATOR]: (operator) =>
+  [ErrorCode.FILTER_INVALID_VALUE]: (message) => message,
+  [ErrorCode.FILTER_UNSUPPORTED_OPERATOR]: (operator) =>
     `Unsupported operator: ${operator}`,
-  [OracleErrorCode.VECTOR_INVALID_CONFIGURATION]: (message) => message,
-  [OracleErrorCode.VECTOR_INVALID_VALUE]: (message) => message,
-  [OracleErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION]: (message) => message,
-  [OracleErrorCode.VECTOR_INVALID_INDEX_PARAMETERS]: (invalidKeys) =>
+  [ErrorCode.VECTOR_INVALID_CONFIGURATION]: (message) => message,
+  [ErrorCode.VECTOR_INVALID_VALUE]: (message) => message,
+  [ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION]: (message) => message,
+  [ErrorCode.VECTOR_INVALID_INDEX_PARAMETERS]: (invalidKeys) =>
     `Invalid parameter(s): ${invalidKeys.join(", ")}`,
-  [OracleErrorCode.STATE_INVALID]: (message) => message,
-  [OracleErrorCode.QUERY_NO_ROWS_FOUND]: () => "No rows found.",
-  [OracleErrorCode.SYSTEM_ERROR]: (message) => message,
+  [ErrorCode.STATE_INVALID]: (message) => message,
+  [ErrorCode.QUERY_NO_ROWS_FOUND]: () => "No rows found.",
+  [ErrorCode.SYSTEM_ERROR]: (message) => message,
 };
 
-function getOracleErrorMessage<K extends OracleErrorCode>(
+function getErrorMessage<K extends ErrorCode>(
   code: K,
-  ...args: OracleErrorArgs[K]
+  ...args: ErrorArgs[K]
 ): string {
   return errorMessageFactories[code](...args);
 }
 
-export function createOracleErrorFromCode<K extends OracleErrorCode>(
+export function createErrorFromCode<K extends ErrorCode>(
   code: K,
-  ...args: OracleErrorArgs[K]
+  ...args: ErrorArgs[K]
 ): LangChainOracleError {
-  return createOracleError(code, getOracleErrorMessage(code, ...args));
+  return createError(code, getErrorMessage(code, ...args));
 }
 
-export function createOracleErrorFromCodeWithCause<K extends OracleErrorCode>(
+export function createErrorFromCodeWithCause<K extends ErrorCode>(
   code: K,
   cause: unknown,
-  ...args: OracleErrorArgs[K]
+  ...args: ErrorArgs[K]
 ): LangChainOracleError {
-  return createOracleError(code, getOracleErrorMessage(code, ...args), cause);
+  return createError(code, getErrorMessage(code, ...args), cause);
 }
 
-export function throwOracleError<K extends OracleErrorCode>(
+export function throwError<K extends ErrorCode>(
   code: K,
-  ...args: OracleErrorArgs[K]
+  ...args: ErrorArgs[K]
 ): never {
-  throw createOracleErrorFromCode(code, ...args);
+  throw createErrorFromCode(code, ...args);
 }
