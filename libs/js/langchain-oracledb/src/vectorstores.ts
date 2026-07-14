@@ -220,40 +220,21 @@ function handleError(error: unknown): never {
     throw error;
   }
 
-  if (
+  // Preserve a useful message for both real Error instances and thrown
+  // object literals shaped like { message: string }.
+  const details =
     typeof error === "object" &&
     error !== null &&
-    "name" in error &&
-    "message" in error
-  ) {
-    const err = error as { name: string; message: string }; // Type assertion based on guarded checks
+    "message" in error &&
+    typeof error.message === "string"
+      ? error.message
+      : String(error);
 
-    // Handle specific error types based on the name property
-    switch (err.name) {
-      case "RuntimeError":
-        throw createOracleErrorFromCodeWithCause(
-          OracleErrorCode.SYSTEM_ERROR,
-          error,
-          "Database operation failed due to a runtime error."
-        );
-      case "ValidationError":
-        throw createOracleErrorFromCodeWithCause(
-          OracleErrorCode.SYSTEM_ERROR,
-          error,
-          "Operation failed due to a validation error."
-        );
-      default:
-        throw createOracleErrorFromCodeWithCause(
-          OracleErrorCode.SYSTEM_ERROR,
-          error,
-          `An unexpected error occurred during the operation. ${error}`
-        );
-    }
-  }
+  // Normalize all underlying anomalies into a unified telemetry payload.
   throw createOracleErrorFromCodeWithCause(
     OracleErrorCode.SYSTEM_ERROR,
     error,
-    `An unknown and unexpected error occurred. ${error}`
+    `An unexpected error occurred during the operation. ${details}`
   );
 }
 

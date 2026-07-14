@@ -205,7 +205,7 @@ describe("LangChainOracleError", () => {
       "system failure"
     );
 
-    const dbError = error as DBError;
+    const dbError = error as unknown as DBError;
     expect(dbError.code).toBe(OracleErrorCode.SYSTEM_ERROR);
   });
 });

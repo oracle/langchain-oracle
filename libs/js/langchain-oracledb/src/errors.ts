@@ -1,5 +1,3 @@
-import type { DBError } from "oracledb";
-
 export const OracleErrorCode = {
   VALIDATION_INVALID_INPUT: "VALIDATION_INVALID_INPUT",
   VALIDATION_MISSING_REQUIRED_PARAMETER:
@@ -40,19 +38,27 @@ type OracleErrorArgs = {
   [OracleErrorCode.SYSTEM_ERROR]: [message: string];
 };
 
-export class LangChainOracleError extends Error implements DBError {
+/**
+ * A specialized exception representing domain-specific failures within the
+ * LangChain Oracle integration. Extends the native JavaScript `Error` to preserve
+ * stack traces. Lower-level driver errors are safely isolated inside the `cause`
+ * property to protect against shifting node-oracledb definitions.
+ */
+export class LangChainOracleError extends Error {
   readonly code: OracleErrorCode;
 
   readonly cause?: unknown;
-
-  isRecoverable = false;
 
   readonly [LANGCHAIN_ORACLE_ERROR_BRAND] = true;
 
   constructor(code: OracleErrorCode, message: string, cause?: unknown) {
     super(message);
+
+    // Hardcode the class name so logs show "LangChainOracleError: ..."
     this.name = "LangChainOracleError";
     this.code = code;
+
+    // Save the raw node-oracledb error (or validation error) for root-cause analysis
     this.cause = cause;
   }
 }
@@ -73,10 +79,7 @@ export function isLangChainOracleError(
   return (
     typeof error === "object" &&
     error !== null &&
-    LANGCHAIN_ORACLE_ERROR_BRAND in error &&
-    "code" in error &&
-    typeof error.code === "string" &&
-    Object.values(OracleErrorCode).includes(error.code as OracleErrorCode)
+    LANGCHAIN_ORACLE_ERROR_BRAND in error
   );
 }
 
