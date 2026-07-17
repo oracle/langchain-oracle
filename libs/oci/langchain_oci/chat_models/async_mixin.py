@@ -201,10 +201,20 @@ class ChatOCIGenAIAsyncMixin:
         )
         tool_call_ids: Dict[int, str] = {}
 
-        # Reset per-stream provider state (see _stream's note).
-        reset = getattr(self._provider, "reset_stream_state", None)  # type: ignore[attr-defined]
-        if reset is not None:
-            reset()
+        # Per-stream provider state, owned by this call (see _stream's note).
+        # Concurrent astream calls on a shared chat-model instance interleave
+        # at every await, so provider-instance state would cross-contaminate:
+        # one stream could wipe another's partial <tool_call> block or drain
+        # its completed tool calls.
+        new_state = getattr(self._provider, "new_stream_state", None)  # type: ignore[attr-defined]
+        stream_state = new_state() if new_state is not None else None
+        state_kwargs: Dict[str, Any] = (
+            {"stream_state": stream_state} if stream_state is not None else {}
+        )
+        if stream_state is None:
+            reset = getattr(self._provider, "reset_stream_state", None)  # type: ignore[attr-defined]
+            if reset is not None:
+                reset()
 
         async def _events_with_param_retry() -> AsyncIterator[Dict[str, Any]]:
             """Open the stream, retrying after fixable 400 parameter errors.
@@ -242,9 +252,11 @@ class ChatOCIGenAIAsyncMixin:
         async for event_data in _events_with_param_retry():
             if not self._provider.is_chat_stream_end(event_data):  # type: ignore[attr-defined]
                 # Process streaming content
-                delta = self._provider.chat_stream_to_text(event_data)  # type: ignore[attr-defined]
+                delta = self._provider.chat_stream_to_text(  # type: ignore[attr-defined]
+                    event_data, **state_kwargs
+                )
                 tool_call_chunks = self._provider.process_stream_tool_calls(  # type: ignore[attr-defined]
-                    event_data, tool_call_ids
+                    event_data, tool_call_ids, **state_kwargs
                 )
 
                 # Surface incremental reasoning (e.g. xAI Grok, OpenAI o-series)
@@ -267,10 +279,13 @@ class ChatOCIGenAIAsyncMixin:
                     await run_manager.on_llm_new_token(delta, chunk=chunk)
                 yield chunk
             else:
-                # Flush any held-back text from the provider's <tool_call>
+                # Flush any held-back text from the per-stream <tool_call>
                 # buffer so trailing characters don't disappear.
-                flush = getattr(self._provider, "flush_stream_state", None)  # type: ignore[attr-defined]
-                tail = flush() if flush is not None else ""
+                if stream_state is not None:
+                    tail = stream_state.flush()
+                else:
+                    flush = getattr(self._provider, "flush_stream_state", None)  # type: ignore[attr-defined]
+                    tail = flush() if flush is not None else ""
                 if tail:
                     yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
 

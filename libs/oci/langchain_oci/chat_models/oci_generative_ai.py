@@ -590,21 +590,30 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
 
-        # Reset any per-stream provider state (currently the GenericProvider's
+        # Per-stream provider state (currently the GenericProvider's
         # incremental <tool_call> XML buffer used for Hermes/Llama-style DAC
-        # fine-tunes). Older providers don't define this hook.
-        reset = getattr(self._provider, "reset_stream_state", None)
-        if reset is not None:
-            reset()
+        # fine-tunes). Owned by this call and passed into the provider on
+        # every event, so concurrent streams sharing one chat-model instance
+        # can't corrupt each other's parsing state. Providers that predate
+        # the hook fall back to their legacy instance-level state.
+        new_state = getattr(self._provider, "new_stream_state", None)
+        stream_state = new_state() if new_state is not None else None
+        state_kwargs: Dict[str, Any] = (
+            {"stream_state": stream_state} if stream_state is not None else {}
+        )
+        if stream_state is None:
+            reset = getattr(self._provider, "reset_stream_state", None)
+            if reset is not None:
+                reset()
 
         for event in response.data.events():
             event_data = json.loads(event.data)
 
             if not self._provider.is_chat_stream_end(event_data):
                 # Process streaming content
-                delta = self._provider.chat_stream_to_text(event_data)
+                delta = self._provider.chat_stream_to_text(event_data, **state_kwargs)
                 tool_call_chunks = self._provider.process_stream_tool_calls(
-                    event_data, tool_call_ids
+                    event_data, tool_call_ids, **state_kwargs
                 )
 
                 # Surface incremental reasoning (e.g. xAI Grok, OpenAI o-series)
@@ -630,8 +639,11 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 # Flush any text the provider was holding back waiting on a
                 # potential <tool_call> opener; emit it as a final delta so
                 # callers don't lose trailing characters.
-                flush = getattr(self._provider, "flush_stream_state", None)
-                tail = flush() if flush is not None else ""
+                if stream_state is not None:
+                    tail = stream_state.flush()
+                else:
+                    flush = getattr(self._provider, "flush_stream_state", None)
+                    tail = flush() if flush is not None else ""
                 if tail:
                     yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
 
