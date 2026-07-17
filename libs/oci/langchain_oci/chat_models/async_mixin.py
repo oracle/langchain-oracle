@@ -200,6 +200,9 @@ class ChatOCIGenAIAsyncMixin:
             messages, stop, stream=True, **kwargs
         )
         tool_call_ids: Dict[int, str] = {}
+        # Per-stream position -> logical index routing map, caller-owned so
+        # concurrent streams can't corrupt each other (see _stream's note).
+        active_tool_call_indices: Dict[int, int] = {}
 
         # Per-stream provider state, owned by this call (see _stream's note).
         # Concurrent astream calls on a shared chat-model instance interleave
@@ -256,7 +259,10 @@ class ChatOCIGenAIAsyncMixin:
                     event_data, **state_kwargs
                 )
                 tool_call_chunks = self._provider.process_stream_tool_calls(  # type: ignore[attr-defined]
-                    event_data, tool_call_ids, **state_kwargs
+                    event_data,
+                    tool_call_ids,
+                    active_tool_call_indices=active_tool_call_indices,
+                    **state_kwargs,
                 )
 
                 # Surface incremental reasoning (e.g. xAI Grok, OpenAI o-series)

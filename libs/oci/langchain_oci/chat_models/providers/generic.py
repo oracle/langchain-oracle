@@ -141,13 +141,6 @@ class GenericProvider(Provider):
         # and never touch it.
         self._xml_buffer = XmlStreamBuffer()
 
-        # Per-stream map of per-event toolCalls position -> logical tool-call
-        # index. GPT models stream parallel tool calls sequentially at
-        # position 0 (id+name opens a call, then id-less argument fragments
-        # follow), so a position can point at different logical calls over the
-        # stream's lifetime. Reset by `reset_stream_state()`.
-        self._active_tool_call_indices: Dict[int, int] = {}
-
         # Chat request and message models
         self.oci_chat_request = models.GenericChatRequest
         self.oci_chat_message = {
@@ -295,7 +288,6 @@ class GenericProvider(Provider):
         caller-owned state via :meth:`new_stream_state`, which needs no reset.
         """
         self._xml_buffer.reset()
-        self._active_tool_call_indices.clear()
 
     def flush_stream_state(self) -> str:
         """Return held-back text from the legacy instance-level buffer.
@@ -958,6 +950,7 @@ class GenericProvider(Provider):
         event_data: Dict,
         tool_call_ids: Dict[int, str],
         stream_state: Optional[XmlStreamBuffer] = None,
+        active_tool_call_indices: Optional[Dict[int, int]] = None,
     ) -> List[ToolCallChunk]:
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
@@ -972,10 +965,22 @@ class GenericProvider(Provider):
             stream_state: Per-stream buffer from :meth:`new_stream_state`;
                 when ``None``, falls back to the legacy instance-level buffer
                 (not safe under concurrent streaming)
+            active_tool_call_indices: Per-stream map of per-event toolCalls
+                position -> logical tool-call index, owned by the caller like
+                ``tool_call_ids`` so concurrent streams on one provider don't
+                corrupt each other's routing. GPT models stream parallel tool
+                calls sequentially at position 0 (id+name opens a call, then
+                id-less argument fragments follow), so a position can point at
+                different logical calls over the stream's lifetime. When
+                ``None``, id-less fragments fall back to positional routing
+                only (pre-#254 behavior).
 
         Returns:
             List of ToolCallChunk objects
         """
+        if active_tool_call_indices is None:
+            active_tool_call_indices = {}
+
         tool_call_chunks: List[ToolCallChunk] = []
 
         # Drain XML tool calls that completed during this event.
@@ -1021,12 +1026,12 @@ class GenericProvider(Provider):
                     index = len(tool_call_ids)
                 # This position now feeds this logical call; id-less argument
                 # fragments arriving here later belong to it.
-                self._active_tool_call_indices[idx] = index
-            elif idx in self._active_tool_call_indices:
+                active_tool_call_indices[idx] = index
+            elif idx in active_tool_call_indices:
                 # Id-less argument fragment - attach it to the call most
                 # recently opened at this position (GPT parallel pattern);
                 # for single-call streams this equals idx (gpt-oss pattern).
-                index = self._active_tool_call_indices[idx]
+                index = active_tool_call_indices[idx]
                 tool_id = tool_call_ids[index]
             elif idx in tool_call_ids:
                 # Subsequent chunk - reuse stored ID (gpt-oss pattern)
