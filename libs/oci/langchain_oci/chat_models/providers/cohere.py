@@ -739,6 +739,7 @@ class CohereProvider(Provider):
         event_data: Dict,
         tool_call_ids: Dict[int, str],
         stream_state: Optional[Any] = None,
+        active_tool_call_indices: Optional[Dict[int, int]] = None,
     ) -> List[ToolCallChunk]:
         """
         Process Cohere stream tool calls and return them as ToolCallChunk objects.
@@ -747,6 +748,9 @@ class CohereProvider(Provider):
             event_data: The event data from the stream
             tool_call_ids: Dict mapping tool call IDs for aggregation
             stream_state: Unused — Cohere parsing is stateless per event
+            active_tool_call_indices: Accepted for signature parity with the
+                base provider; Cohere streams don't emit id-less fragments at
+                reused positions, so it is unused here.
 
         Returns:
             List of ToolCallChunk objects

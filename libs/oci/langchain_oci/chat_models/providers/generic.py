@@ -950,6 +950,7 @@ class GenericProvider(Provider):
         event_data: Dict,
         tool_call_ids: Dict[int, str],
         stream_state: Optional[XmlStreamBuffer] = None,
+        active_tool_call_indices: Optional[Dict[int, int]] = None,
     ) -> List[ToolCallChunk]:
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
@@ -964,10 +965,22 @@ class GenericProvider(Provider):
             stream_state: Per-stream buffer from :meth:`new_stream_state`;
                 when ``None``, falls back to the legacy instance-level buffer
                 (not safe under concurrent streaming)
+            active_tool_call_indices: Per-stream map of per-event toolCalls
+                position -> logical tool-call index, owned by the caller like
+                ``tool_call_ids`` so concurrent streams on one provider don't
+                corrupt each other's routing. GPT models stream parallel tool
+                calls sequentially at position 0 (id+name opens a call, then
+                id-less argument fragments follow), so a position can point at
+                different logical calls over the stream's lifetime. When
+                ``None``, id-less fragments fall back to positional routing
+                only (pre-#254 behavior).
 
         Returns:
             List of ToolCallChunk objects
         """
+        if active_tool_call_indices is None:
+            active_tool_call_indices = {}
+
         tool_call_chunks: List[ToolCallChunk] = []
 
         # Drain XML tool calls that completed during this event.
@@ -995,14 +1008,31 @@ class GenericProvider(Provider):
             tool_id = tool_call.get("id")
 
             if tool_id:
-                if idx not in tool_call_ids or tool_call_ids[idx] == tool_id:
+                known_index = next(
+                    (i for i, known in tool_call_ids.items() if known == tool_id),
+                    None,
+                )
+                if known_index is not None:
+                    # Re-announced id for an already-open call (possibly at a
+                    # different position) - keep its logical index so its
+                    # arguments never split across two tool calls.
+                    index = known_index
+                elif idx not in tool_call_ids:
                     # New idx - use idx as index
-                    # Same ID at same idx - reuse idx as index
                     index = idx
                 else:
-                    # Different ID at same idx - parallel tool call (Grok pattern)
-                    # New idx - use len(tool_call_ids) as index
+                    # Different ID at same idx - parallel tool call
+                    # (Grok/GPT pattern) - use len(tool_call_ids) as index
                     index = len(tool_call_ids)
+                # This position now feeds this logical call; id-less argument
+                # fragments arriving here later belong to it.
+                active_tool_call_indices[idx] = index
+            elif idx in active_tool_call_indices:
+                # Id-less argument fragment - attach it to the call most
+                # recently opened at this position (GPT parallel pattern);
+                # for single-call streams this equals idx (gpt-oss pattern).
+                index = active_tool_call_indices[idx]
+                tool_id = tool_call_ids[index]
             elif idx in tool_call_ids:
                 # Subsequent chunk - reuse stored ID (gpt-oss pattern)
                 index = idx

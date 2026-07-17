@@ -589,6 +589,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
         response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
+        # Per-stream toolCalls position -> logical index routing map, owned
+        # here (not on the shared provider) so concurrent streams on one
+        # ChatOCIGenAI instance can't corrupt each other's tool-call routing.
+        active_tool_call_indices: Dict[int, int] = {}
 
         # Per-stream provider state (currently the GenericProvider's
         # incremental <tool_call> XML buffer used for Hermes/Llama-style DAC
@@ -613,7 +617,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(event_data, **state_kwargs)
                 tool_call_chunks = self._provider.process_stream_tool_calls(
-                    event_data, tool_call_ids, **state_kwargs
+                    event_data,
+                    tool_call_ids,
+                    active_tool_call_indices=active_tool_call_indices,
+                    **state_kwargs,
                 )
 
                 # Surface incremental reasoning (e.g. xAI Grok, OpenAI o-series)

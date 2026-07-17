@@ -158,11 +158,17 @@ class Provider(ABC):
         event_data: Dict,
         tool_call_ids: Dict[int, str],
         stream_state: Optional[Any] = None,
+        active_tool_call_indices: Optional[Dict[int, int]] = None,
     ) -> List[ToolCallChunk]:
         """Process streaming tool calls from event data into chunks.
 
         ``stream_state`` is the object returned by :meth:`new_stream_state`
         for the current stream (``None`` for stateless providers).
+
+        ``tool_call_ids`` and ``active_tool_call_indices`` are per-stream
+        aggregation state owned by the caller (``_stream`` / ``_astream``),
+        never by the provider, so concurrent streams sharing one provider
+        instance can't corrupt each other's tool-call routing.
         """
         ...
 

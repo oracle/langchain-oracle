@@ -8,7 +8,12 @@ correctly and don't cause API errors when messages are sent back.
 """
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessageChunk,
+    HumanMessage,
+)
 
 from langchain_oci.chat_models.providers import GenericProvider
 
@@ -125,6 +130,153 @@ def test_process_stream_tool_calls_handles_none_values():
     assert chunks_2[0]["id"] == "call_123"
     assert chunks_2[0]["name"] is None
     assert chunks_2[0]["args"] == '{"query": "test", "version": "9.3.0"}'
+
+
+def test_process_stream_tool_calls_parallel_gpt_pattern():
+    """Parallel tool calls streamed sequentially at position 0 (issue #253).
+
+    GPT models open each tool call with a chunk carrying id/name and empty
+    arguments, then stream id-less argument fragments — all at toolCalls[0].
+    Fragments arriving after a second call opens must attach to that call,
+    not to the first one.
+    """
+    provider = GenericProvider()
+    tool_call_ids: dict[int, str] = {}
+    active_tool_call_indices: dict[int, int] = {}
+
+    def event(tool_call: dict) -> dict:
+        return {"message": {"toolCalls": [{"type": "FUNCTION", **tool_call}]}}
+
+    events = [
+        event({"id": "call_A", "name": "market_research_tool", "arguments": ""}),
+        event({"arguments": '{"idea": "app",'}),
+        event({"arguments": ' "marketSegment": "smb"}'}),
+        event({"id": "call_B", "name": "customer_signal_tool", "arguments": ""}),
+        event({"arguments": '{"idea": "app",'}),
+        event({"arguments": ' "audience": "devs"}'}),
+        event({"id": "call_C", "name": "roadmap_risk_tool", "arguments": ""}),
+        event({"arguments": '{"productArea": "auth",'}),
+        event({"arguments": ' "riskFocus": "churn"}'}),
+    ]
+
+    chunks = []
+    for e in events:
+        chunks.extend(
+            provider.process_stream_tool_calls(
+                e, tool_call_ids, active_tool_call_indices=active_tool_call_indices
+            )
+        )
+
+    # Each call's argument fragments must carry that call's logical index.
+    assert [(c["id"], c["index"]) for c in chunks] == [
+        ("call_A", 0),
+        ("call_A", 0),
+        ("call_A", 0),
+        ("call_B", 1),
+        ("call_B", 1),
+        ("call_B", 1),
+        ("call_C", 2),
+        ("call_C", 2),
+        ("call_C", 2),
+    ]
+
+    # Merge the chunks the way LangChain does during streaming and verify
+    # each tool call reconstructs with its own complete arguments.
+    merged: BaseMessageChunk = AIMessageChunk(content="")
+    for c in chunks:
+        merged = merged + AIMessageChunk(content="", tool_call_chunks=[c])
+
+    assert isinstance(merged, AIMessageChunk)
+    assert len(merged.tool_calls) == 3
+    assert merged.tool_calls[0]["name"] == "market_research_tool"
+    assert merged.tool_calls[0]["args"] == {"idea": "app", "marketSegment": "smb"}
+    assert merged.tool_calls[1]["name"] == "customer_signal_tool"
+    assert merged.tool_calls[1]["args"] == {"idea": "app", "audience": "devs"}
+    assert merged.tool_calls[2]["name"] == "roadmap_risk_tool"
+    assert merged.tool_calls[2]["args"] == {"productArea": "auth", "riskFocus": "churn"}
+
+
+def test_process_stream_tool_calls_resent_id_keeps_logical_index():
+    """A re-announced id keeps its logical index even at a new position.
+
+    If a provider re-sends an id-bearing chunk for an already-open call at
+    a position occupied by a different call, the call must keep its
+    original logical index — otherwise its arguments split across two
+    tool calls. (Hardening ported from the approach in PR #252.)
+    """
+    provider = GenericProvider()
+    tool_call_ids: dict[int, str] = {}
+    active_tool_call_indices: dict[int, int] = {}
+
+    def event(tool_call: dict) -> dict:
+        return {"message": {"toolCalls": [tool_call]}}
+
+    chunks = []
+    for e in [
+        event({"id": "call_A", "name": "a", "arguments": ""}),
+        event({"id": "call_B", "name": "b", "arguments": ""}),  # Grok branch -> 1
+        event({"id": "call_B", "arguments": '{"y": 2}'}),  # re-send at pos 0
+        event({"id": "call_A", "arguments": '{"x": 1}'}),  # re-send at pos 0
+    ]:
+        chunks.extend(
+            provider.process_stream_tool_calls(
+                e, tool_call_ids, active_tool_call_indices=active_tool_call_indices
+            )
+        )
+
+    assert [(c["id"], c["index"]) for c in chunks] == [
+        ("call_A", 0),
+        ("call_B", 1),
+        ("call_B", 1),
+        ("call_A", 0),
+    ]
+
+
+def test_process_stream_tool_calls_routing_state_is_per_stream():
+    """Concurrent streams on one provider don't corrupt each other's routing.
+
+    The position -> logical-index map is caller-owned per-stream state (like
+    ``tool_call_ids``), not provider state. Interleaving two streams must not
+    reroute one stream's id-less fragments to the wrong call:
+
+    1. Stream A opens calls A and B at position 0; its active index is 1.
+    2. Stream B starts and sets its own position 0 to index 0.
+    3. Stream A receives call B's next id-less argument fragment.
+    4. The fragment must stay attached to call B (index 1), not call A.
+    """
+    provider = GenericProvider()
+    ids_a: dict[int, str] = {}
+    indices_a: dict[int, int] = {}
+    ids_b: dict[int, str] = {}
+    indices_b: dict[int, int] = {}
+
+    def event(tool_call: dict) -> dict:
+        return {"message": {"toolCalls": [{"type": "FUNCTION", **tool_call}]}}
+
+    provider.process_stream_tool_calls(
+        event({"id": "call_A", "name": "a", "arguments": ""}),
+        ids_a,
+        active_tool_call_indices=indices_a,
+    )
+    provider.process_stream_tool_calls(
+        event({"id": "call_B", "name": "b", "arguments": ""}),
+        ids_a,
+        active_tool_call_indices=indices_a,
+    )
+    # Stream B starts on the same provider instance.
+    provider.process_stream_tool_calls(
+        event({"id": "call_X", "name": "x", "arguments": ""}),
+        ids_b,
+        active_tool_call_indices=indices_b,
+    )
+    # Stream A's id-less fragment for call_B must still route to index 1.
+    chunks = provider.process_stream_tool_calls(
+        event({"arguments": '{"y": 2}'}), ids_a, active_tool_call_indices=indices_a
+    )
+
+    assert [(c["id"], c["index"]) for c in chunks] == [("call_B", 1)]
+    assert indices_a == {0: 1}
+    assert indices_b == {0: 0}
 
 
 if __name__ == "__main__":
