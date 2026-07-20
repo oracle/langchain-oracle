@@ -1,5 +1,12 @@
 # LangGraph Oracle Persistence (Checkpoint + Store)
 
+[![PyPI - Version](https://img.shields.io/pypi/v/langgraph-oracledb?label=%20&logo=pypi&logoColor=white)](https://pypi.org/project/langgraph-oracledb/)
+[![PyPI - Downloads](https://img.shields.io/pepy/dt/langgraph-oracledb)](https://pypistats.org/packages/langgraph-oracledb)
+[![License](https://img.shields.io/badge/license-UPL--1.0-blue)](https://oss.oracle.com/licenses/upl/)
+[![GitHub stars](https://img.shields.io/github/stars/oracle/langchain-oracle?style=flat&logo=github)](https://github.com/oracle/langchain-oracle)
+
+> ⭐ If this package is useful to you, consider [starring the repository](https://github.com/oracle/langchain-oracle) — it helps other developers discover these integrations.
+
 Oracle-backed implementations for:
 - Checkpoints: OracleSaver (sync) and AsyncOracleSaver (async)
 - Key/Value Store with optional vector search: OracleStore (sync) and AsyncOracleStore (async)

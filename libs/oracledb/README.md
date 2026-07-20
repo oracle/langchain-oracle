@@ -1,6 +1,13 @@
 # langchain-oracledb
 
+[![PyPI - Version](https://img.shields.io/pypi/v/langchain-oracledb?label=%20&logo=pypi&logoColor=white)](https://pypi.org/project/langchain-oracledb/)
+[![PyPI - Downloads](https://img.shields.io/pepy/dt/langchain-oracledb)](https://pypistats.org/packages/langchain-oracledb)
+[![License](https://img.shields.io/badge/license-UPL--1.0-blue)](https://oss.oracle.com/licenses/upl/)
+[![GitHub stars](https://img.shields.io/github/stars/oracle/langchain-oracle?style=flat&logo=github)](https://github.com/oracle/langchain-oracle)
+
 This package contains the LangChain integrations with [Oracle AI Vector Search](https://www.oracle.com/database/ai-vector-search/).
+
+> ⭐ If this package is useful to you, consider [starring the repository](https://github.com/oracle/langchain-oracle) — it helps other developers discover these integrations.
 
 ## Installation
 
