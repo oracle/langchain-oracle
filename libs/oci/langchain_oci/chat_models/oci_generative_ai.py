@@ -537,9 +537,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         elif method == "json_schema":
             if is_pydantic_schema:
                 # model_json_schema is pydantic v2; v1 models expose schema()
-                schema_method = getattr(
-                    schema, "model_json_schema", None
-                ) or getattr(schema, "schema")
+                schema_method = getattr(schema, "model_json_schema", None) or getattr(
+                    schema, "schema"
+                )
                 json_schema_dict: Dict[str, Any] = schema_method()
             else:
                 json_schema_dict = schema  # type: ignore[assignment]
