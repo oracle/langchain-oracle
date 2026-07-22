@@ -535,11 +535,14 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            json_schema_dict: Dict[str, Any] = (
-                schema.model_json_schema()  # type: ignore[union-attr]
-                if is_pydantic_schema
-                else schema  # type: ignore[assignment]
-            )
+            if is_pydantic_schema:
+                # model_json_schema is pydantic v2; v1 models expose schema()
+                schema_method = getattr(
+                    schema, "model_json_schema", None
+                ) or getattr(schema, "schema")
+                json_schema_dict: Dict[str, Any] = schema_method()
+            else:
+                json_schema_dict = schema  # type: ignore[assignment]
 
             # Resolve $ref references as OCI doesn't support $ref and $defs
             json_schema_dict = OCIUtils.resolve_schema_refs(json_schema_dict)
