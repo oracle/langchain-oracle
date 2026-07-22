@@ -14,10 +14,16 @@ from typing import Any, List
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_oci.common.utils import OCIUtils
+
+# output_version / content_blocks only exist on langchain-core >= 1.0
+# (absent on the Python 3.9 / langchain-core 0.3.x matrix). The v1 *input*
+# tolerance tests below run on both matrices.
+_CORE_SUPPORTS_V1 = "output_version" in BaseChatModel.model_fields
 
 V1_AI_MESSAGE = AIMessage(
     content=[
@@ -98,6 +104,9 @@ def test_cohere_provider_accepts_v1_history() -> None:
 
 
 @pytest.mark.requires("oci")
+@pytest.mark.skipif(
+    not _CORE_SUPPORTS_V1, reason="output_version requires langchain-core>=1.0"
+)
 def test_output_version_v1_rewrites_content(monkeypatch: pytest.MonkeyPatch) -> None:
     """End to end with a mocked client: invoke returns list-of-blocks content."""
 
@@ -106,7 +115,7 @@ def test_output_version_v1_rewrites_content(monkeypatch: pytest.MonkeyPatch) -> 
             return self.get(val)
 
     client = MagicMock()
-    llm = ChatOCIGenAI(
+    llm = ChatOCIGenAI(  # type: ignore[call-arg]  # kwarg absent on core 0.3.x
         model_id="meta.llama-3.3-70b-instruct",
         client=client,
         compartment_id="c",
@@ -155,4 +164,5 @@ def test_output_version_v1_rewrites_content(monkeypatch: pytest.MonkeyPatch) -> 
     result = llm.invoke("hi")
     assert isinstance(result.content, list)
     assert result.content == [{"type": "text", "text": "Hello world"}]
-    assert result.content_blocks == [{"type": "text", "text": "Hello world"}]
+    blocks = result.content_blocks  # type: ignore[attr-defined]  # core 0.3.x
+    assert blocks == [{"type": "text", "text": "Hello world"}]
