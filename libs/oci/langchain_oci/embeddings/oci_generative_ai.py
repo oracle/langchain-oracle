@@ -1,12 +1,14 @@
 # Copyright (c) 2023 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
+from functools import cached_property
 from typing import Any, Dict, Iterator, List, Mapping, Optional
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.utils import pre_init
 from pydantic import BaseModel, ConfigDict
 
+from langchain_oci.common.async_support import OCIAsyncClient
 from langchain_oci.common.auth import create_oci_client_kwargs
 from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
 from langchain_oci.embeddings.image import ImageEmbeddingMixin
@@ -248,3 +250,58 @@ class OCIGenAIEmbeddings(BaseModel, Embeddings, ImageEmbeddingMixin):
             Embeddings for the text.
         """
         return self.embed_documents([text])[0]
+
+    @cached_property
+    def _async_client(self) -> OCIAsyncClient:
+        """Get the async client, creating it on first access.
+
+        Reuses the sync client's signer/config so sync and async requests
+        authenticate identically (same pattern as ChatOCIGenAI's async mixin).
+        """
+        base_client = self.client.base_client
+        return OCIAsyncClient(
+            service_endpoint=self.service_endpoint,  # type: ignore[arg-type]
+            signer=base_client.signer,
+            config=getattr(base_client, "config", {}),
+        )
+
+    async def aclose(self) -> None:
+        """Close the async HTTP client and release resources."""
+        if "_async_client" in self.__dict__:
+            await self._async_client.close()
+            del self.__dict__["_async_client"]
+
+    async def _aembed_inputs(
+        self, inputs: List[str], input_type: Optional[str] = None
+    ) -> List[List[float]]:
+        """Embed a single batch of inputs via the native async client."""
+        invocation_obj = self._build_embed_request(inputs, input_type=input_type)
+        body = self.client.base_client.sanitize_for_serialization(invocation_obj)
+        data = await self._async_client.embed_text_async(body)
+        vectors: List[List[float]] = data["embeddings"]
+        return vectors
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Async call to OCIGenAI's embedding endpoint (native async I/O).
+
+        Args:
+            texts: The list of texts to embed.
+
+        Returns:
+            List of embeddings, one for each text.
+        """
+        embeddings: List[List[float]] = []
+        for i in range(0, len(texts), self.batch_size):
+            embeddings.extend(await self._aembed_inputs(texts[i : i + self.batch_size]))
+        return embeddings
+
+    async def aembed_query(self, text: str) -> List[float]:
+        """Async call to OCIGenAI's embedding endpoint (native async I/O).
+
+        Args:
+            text: The text to embed.
+
+        Returns:
+            Embeddings for the text.
+        """
+        return (await self.aembed_documents([text]))[0]
