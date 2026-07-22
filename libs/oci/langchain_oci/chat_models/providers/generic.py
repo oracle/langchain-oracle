@@ -770,6 +770,14 @@ class GenericProvider(Provider):
                             f"application/pdf"
                         )
 
+                # Tool-call blocks embedded in AIMessage content lists
+                # (Anthropic-style "tool_use", v1-standard "tool_call").
+                # Skipped, not fatal: the calls themselves are transmitted
+                # through the request's dedicated tool_calls field, built
+                # from AIMessage.tool_calls in messages_to_oci_params.
+                elif content_type in ("tool_use", "tool_call"):
+                    continue
+
                 else:
                     raise ValueError(
                         f"Unsupported content type: {content_type}. "
