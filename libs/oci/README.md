@@ -1,6 +1,12 @@
 # langchain-oci
 
-This package contains the LangChain integrations with oci.
+[![PyPI - Version](https://img.shields.io/pypi/v/langchain-oci?label=%20&logo=pypi&logoColor=white)](https://pypi.org/project/langchain-oci/)
+[![PyPI - Downloads](https://img.shields.io/pepy/dt/langchain-oci)](https://pypistats.org/packages/langchain-oci)
+[![License](https://img.shields.io/badge/license-UPL--1.0-blue)](https://oss.oracle.com/licenses/upl/)
+
+This package contains the LangChain integrations with [Oracle Cloud Infrastructure (OCI)](https://cloud.oracle.com/).
+
+> ⭐ If this package is useful to you, consider [starring the repository](https://github.com/oracle/langchain-oracle) — it helps other developers discover these integrations.
 
 ## Installation
 
