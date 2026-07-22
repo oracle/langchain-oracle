@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
-from pydantic import BaseModel
+from langchain_core.utils.pydantic import is_basemodel_subclass
 
 try:
     from langchain_core.messages import UsageMetadata
@@ -22,8 +22,8 @@ class OCIUtils:
 
     @staticmethod
     def is_pydantic_class(obj: Any) -> bool:
-        """Check if an object is a Pydantic BaseModel subclass."""
-        return isinstance(obj, type) and issubclass(obj, BaseModel)
+        """Check if an object is a Pydantic BaseModel subclass (v2 or v1)."""
+        return isinstance(obj, type) and is_basemodel_subclass(obj)
 
     @staticmethod
     def remove_signature_from_tool_description(name: str, description: str) -> str:
