@@ -190,6 +190,67 @@ class OCIModelDeploymentEndpointEmbeddings(BaseModel, Embeddings):
             results.extend(response)
         return results
 
+    async def _aembedding(self, texts: List[str]) -> List[List[float]]:
+        """Async call to the Model Deployment endpoint (native async I/O).
+
+        The request is signed with the same OCI signer as the sync path (a
+        requests.PreparedRequest is signed, then its headers and exact body
+        are replayed through aiohttp, keeping the body-hash signature valid).
+        """
+        import aiohttp
+
+        _model_kwargs = self.model_kwargs or {}
+        body = self._construct_request_body(texts, _model_kwargs)
+        _endpoint_kwargs = dict(self.endpoint_kwargs or {})
+        headers = _endpoint_kwargs.pop("headers", DEFAULT_HEADER)
+
+        req = requests.Request("POST", self.endpoint, json=body, headers=headers)
+        prepared = req.prepare()
+        signer = self.auth.get("signer")
+        if signer is not None:
+            prepared = signer(prepared)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.endpoint,
+                data=prepared.body,
+                headers=dict(prepared.headers),
+                **_endpoint_kwargs,
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    raise ValueError(
+                        f"Error raised by inference endpoint: "
+                        f"status {response.status}. Response: {text}"
+                    )
+                res_json = await response.json()
+
+        try:
+            embeddings: List[List[float]] = res_json["data"][0]["embedding"]
+            return embeddings
+        except Exception as e:
+            raise ValueError(
+                f"Error raised by inference API: {e}.\nResponse: {res_json}"
+            ) from e
+
+    async def aembed_documents(
+        self,
+        texts: List[str],
+        chunk_size: Optional[int] = None,
+    ) -> List[List[float]]:
+        """Async version of :meth:`embed_documents` (native async I/O)."""
+        results: List[List[float]] = []
+        _chunk_size = (
+            len(texts) if (not chunk_size or chunk_size > len(texts)) else chunk_size
+        )
+        for i in range(0, len(texts), _chunk_size):
+            results.extend(await self._aembedding(texts[i : i + _chunk_size]))
+        return results
+
+    async def aembed_query(self, text: str) -> List[float]:
+        """Async version of :meth:`embed_query` (native async I/O)."""
+        return (await self.aembed_documents([text]))[0]
+
     def embed_query(self, text: str) -> List[float]:
         """Compute query embeddings using OCI Data Science Model Deployment Endpoint.
 

@@ -6,14 +6,19 @@ from __future__ import annotations
 import json
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List, Mapping, Optional
+from functools import cached_property
+from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional
 
-from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForLLMRun,
+    CallbackManagerForLLMRun,
+)
 from langchain_core.language_models.llms import LLM
 from langchain_core.outputs import GenerationChunk
 from langchain_core.utils import pre_init
 from pydantic import BaseModel, ConfigDict, Field
 
+from langchain_oci.common.async_support import OCIAsyncClient
 from langchain_oci.common.auth import create_oci_client_kwargs
 from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
 from langchain_oci.llms.utils import enforce_stop_tokens
@@ -360,4 +365,110 @@ class OCIGenAI(LLM, OCIGenAIBase):
             chunk = GenerationChunk(text=event_data_text)
             if run_manager:
                 run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+            yield chunk
+
+    @cached_property
+    def _async_client(self) -> OCIAsyncClient:
+        """Get the async client, creating it on first access.
+
+        Reuses the sync client's signer/config so sync and async requests
+        authenticate identically (same pattern as ChatOCIGenAI's async mixin).
+        """
+        base_client = self.client.base_client
+        return OCIAsyncClient(
+            service_endpoint=self.service_endpoint,  # type: ignore[arg-type]
+            signer=base_client.signer,
+            config=getattr(base_client, "config", {}),
+        )
+
+    async def aclose(self) -> None:
+        """Close the async HTTP client and release resources."""
+        if "_async_client" in self.__dict__:
+            await self._async_client.close()
+            del self.__dict__["_async_client"]
+
+    def _prepare_async_invocation_body(
+        self, prompt: str, stop: Optional[List[str]], stream: bool, kwargs: Dict
+    ) -> Dict[str, Any]:
+        """Serialize a GenerateTextDetails for the async REST call.
+
+        Unlike the sync path, the stream flag is passed explicitly instead of
+        read from (or written to) the shared ``self.is_stream`` attribute, so
+        concurrent async calls can't interfere with each other.
+        """
+        # _prepare_invocation_object is annotated as Dict but actually returns
+        # the SDK's GenerateTextDetails object; treat it as Any here.
+        invocation_obj: Any = self._prepare_invocation_object(prompt, stop, kwargs)
+        invocation_obj.inference_request.is_stream = stream
+        body: Dict[str, Any] = self.client.base_client.sanitize_for_serialization(
+            invocation_obj
+        )
+        return body
+
+    @staticmethod
+    def _completion_text_from_dict(data: Dict[str, Any]) -> str:
+        """Extract generated text from a raw generate-text REST response.
+
+        Handles both response shapes: Cohere (``generatedTexts``) and
+        Meta/generic (``choices``).
+        """
+        inference = data.get("inferenceResponse") or {}
+        if inference.get("generatedTexts"):
+            return str(inference["generatedTexts"][0].get("text", ""))
+        if inference.get("choices"):
+            return str(inference["choices"][0].get("text", ""))
+        return ""
+
+    async def _acall(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Async call to the OCIGenAI generate endpoint (native async I/O).
+
+        Example:
+            .. code-block:: python
+
+               response = await llm.ainvoke("Tell me a joke.")
+        """
+        if self.is_stream:
+            text = ""
+            async for chunk in self._astream(prompt, stop, run_manager, **kwargs):
+                text += chunk.text
+            if stop is not None:
+                text = enforce_stop_tokens(text, stop)
+            return text
+
+        body = self._prepare_async_invocation_body(prompt, stop, False, kwargs)
+        response_data: Dict[str, Any] = {}
+        async for data in self._async_client.generate_text_async(body):
+            response_data = data
+
+        text = self._completion_text_from_dict(response_data)
+        if stop is not None:
+            text = enforce_stop_tokens(text, stop)
+        return text
+
+    async def _astream(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[GenerationChunk]:
+        """Stream OCIGenAI LLM asynchronously (native async I/O).
+
+        Example:
+            .. code-block:: python
+
+            async for chunk in llm.astream("Tell me a joke."):
+                print(chunk.text, end="", flush=True)
+        """
+        body = self._prepare_async_invocation_body(prompt, stop, True, kwargs)
+        async for event in self._async_client.generate_text_async(body, stream=True):
+            chunk = GenerationChunk(text=event.get("text", ""))
+            if run_manager:
+                await run_manager.on_llm_new_token(chunk.text, chunk=chunk)
             yield chunk
