@@ -264,3 +264,32 @@ class OCIAsyncClient:
             else:
                 data = await response.json()
                 yield data
+
+    async def rerank_text_async(
+        self,
+        rerank_text_details_dict: Dict[str, Any],
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """Make async rerank request to OCI GenAI.
+
+        Args:
+            rerank_text_details_dict: Serialized RerankTextDetails (includes
+                compartmentId, servingMode, input, documents, ...), as
+                produced by the SDK's ``sanitize_for_serialization``.
+            timeout: Request timeout in seconds.
+
+        Returns:
+            The rerank response dictionary (``documentRanks`` key holds the
+            per-document scores).
+        """
+        url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/rerankText"
+        headers = self._sign_headers("POST", url, rerank_text_details_dict)
+
+        async with self._arequest(
+            "POST", url, headers, rerank_text_details_dict, timeout
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise OCIAsyncRequestError(response.status, error_text)
+            data: Dict[str, Any] = await response.json()
+            return data
