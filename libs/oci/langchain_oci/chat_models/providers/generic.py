@@ -770,6 +770,13 @@ class GenericProvider(Provider):
                             f"application/pdf"
                         )
 
+                # Standard v1 content blocks that are transmitted through
+                # dedicated request fields rather than message content:
+                # tool calls come from AIMessage.tool_calls, and reasoning
+                # is model output that the API doesn't accept back as input.
+                elif content_type in ("tool_use", "tool_call", "reasoning"):
+                    continue
+
                 else:
                     raise ValueError(
                         f"Unsupported content type: {content_type}. "

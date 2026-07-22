@@ -496,7 +496,9 @@ class CohereProvider(Provider):
             role = self.get_role(msg)
             if role in ("USER", "SYSTEM"):
                 oci_chat_history.append(
-                    self.oci_chat_message[role](message=msg.content)
+                    self.oci_chat_message[role](
+                        message=OCIUtils.content_to_text(msg.content)
+                    )
                 )
             elif isinstance(msg, AIMessage):
                 # Skip tool calls if forcing single step
@@ -510,7 +512,7 @@ class CohereProvider(Provider):
                     if msg.tool_calls
                     else None
                 )
-                msg_content = msg.content if msg.content else " "
+                msg_content = OCIUtils.content_to_text(msg.content) or " "
                 oci_chat_history.append(
                     self.oci_chat_message[role](
                         message=msg_content, tool_calls=tool_calls
@@ -541,7 +543,9 @@ class CohereProvider(Provider):
                     # by an AI message
                     oci_chat_history.append(
                         self.oci_chat_message["CHATBOT"](
-                            message=messages[len(messages) - i - 2].content
+                            message=OCIUtils.content_to_text(
+                                messages[len(messages) - i - 2].content
+                            )
                         )
                     )
                 break
@@ -570,7 +574,9 @@ class CohereProvider(Provider):
             oci_tool_results = None
 
         # Use last message's content if no tool results are present
-        message_str = "" if oci_tool_results else messages[-1].content
+        message_str = (
+            "" if oci_tool_results else OCIUtils.content_to_text(messages[-1].content)
+        )
 
         oci_params = {
             "message": message_str,
