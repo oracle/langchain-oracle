@@ -73,6 +73,31 @@ You can do so by adding appropriate field to your project's `package.json` like 
 
 The field you need depends on the package manager you're using, but we recommend adding a field for the common `yarn`, `npm`, and `pnpm` to maximize compatibility.
 
+## Development and testing
+
+From `libs/js/oci`, install development dependencies and run the isolated test suite:
+
+```bash
+pnpm install
+pnpm test
+```
+
+The integration tests make real OCI Generative AI calls for both Cohere and
+generic models. Configure OCI API-key authentication in `~/.oci/config` (the
+`DEFAULT` profile is used by default), then set the compartment and the two
+model IDs before running them:
+
+```bash
+export OCI_GENAI_INTEGRATION_TESTS_COMPARTMENT_ID='<compartment-ocid>'
+export OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID='cohere.command-r-plus-08-2024'
+export OCI_GENAI_INTEGRATION_TESTS_GENERIC_ON_DEMAND_MODEL_ID='meta.llama-3.3-70b-instruct'
+pnpm test:int
+```
+
+Use model IDs available to your tenancy and region. To use a non-default OCI
+profile or authentication method, pass `newClientParams` when constructing the
+chat model, as shown below.
+
 ## Instantiation
 
 The OCI Generative AI service supports two groups of LLMs: 1. Cohere

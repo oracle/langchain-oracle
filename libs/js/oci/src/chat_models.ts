@@ -1,16 +1,16 @@
-import { AIMessageChunk, BaseMessage } from "@langchain/core/messages";
+import { AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
 import { ChatGenerationChunk } from "@langchain/core/outputs";
 import { SimpleChatModel } from "@langchain/core/language_models/chat_models";
-import { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
+import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 
-import { ChatResponse } from "oci-generativeaiinference/lib/response";
-import { ChatRequest } from "oci-generativeaiinference/lib/request";
+import type { ChatResponse } from "oci-generativeaiinference/lib/response";
+import type { ChatRequest } from "oci-generativeaiinference/lib/request";
 import {
   DedicatedServingMode,
   OnDemandServingMode,
 } from "oci-generativeaiinference/lib/model";
 
-import {
+import type {
   OciGenAiChatCallResponseType,
   OciGenAiModelBaseParams,
   OciGenAiModelCallOptions,
@@ -50,7 +50,12 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     options: this["ParsedCallOptions"]
   ): Promise<string> {
     const response: ChatResponse = await this._makeRequest(messages, options);
-    return this._parseResponse(response?.chatResult?.chatResponse);
+    // The OCI SDK's ChatResult union includes Cohere V2 responses, but this
+    // integration only sends the V1 Cohere request format or the generic
+    // format, whose response types are represented by this base class.
+    return this._parseResponse(
+      response?.chatResult?.chatResponse as OciGenAiSupportedResponseType
+    );
   }
 
   override async *_streamResponseChunks(

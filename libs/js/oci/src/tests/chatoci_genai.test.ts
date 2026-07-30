@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { expect, test } from "vitest";
+
 import {
   AIMessage,
   BaseMessage,
@@ -315,7 +317,10 @@ test("OCI GenAI chat models invoke with unsupported message", async () => {
 
       await expect(
         chatClass.invoke([
-          new LangChainToolMessage({ content: "tools message" }, "tool_id"),
+          new LangChainToolMessage({
+            content: "tools message",
+            tool_call_id: "tool_id",
+          }),
         ])
       ).rejects.toThrow("Message type 'tool' is not supported");
     },
@@ -1375,7 +1380,7 @@ async function testEachChatModelType(
   ];
 
   for (let i = 0; i < chatClassTypes.length; i += 1) {
-    await testFunction(chatClassTypes[i], parameters?.at(i));
+    await testFunction(chatClassTypes[i], parameters?.[i]);
   }
 }
 

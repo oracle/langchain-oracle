@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { expect, test } from "vitest";
 
 import { AIMessageChunk } from "@langchain/core/messages";
 import { OciGenAiCohereChat } from "../cohere_chat.js";
@@ -89,6 +90,6 @@ async function testEachChatModelType(
   ];
 
   for (let i = 0; i < chatClassTypes.length; i += 1) {
-    await testFunction(chatClassTypes[i], parameters?.at(i));
+    await testFunction(chatClassTypes[i], parameters?.[i]);
   }
 }
