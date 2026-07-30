@@ -209,8 +209,13 @@ class CohereProvider(Provider):
             )
         return text
 
-    def chat_stream_to_text(self, event_data: Dict) -> str:
-        """Extract text from a Cohere chat stream event (V1 or V2)."""
+    def chat_stream_to_text(
+        self, event_data: Dict, stream_state: Optional[Any] = None
+    ) -> str:
+        """Extract text from a Cohere chat stream event (V1 or V2).
+
+        ``stream_state`` is unused — Cohere parsing is stateless per event.
+        """
         # Return empty string if finish reason or tool calls are present
         if "finishReason" in event_data or "toolCalls" in event_data:
             return ""
@@ -730,7 +735,11 @@ class CohereProvider(Provider):
         return None
 
     def process_stream_tool_calls(
-        self, event_data: Dict, tool_call_ids: Dict[int, str]
+        self,
+        event_data: Dict,
+        tool_call_ids: Dict[int, str],
+        stream_state: Optional[Any] = None,
+        active_tool_call_indices: Optional[Dict[int, int]] = None,
     ) -> List[ToolCallChunk]:
         """
         Process Cohere stream tool calls and return them as ToolCallChunk objects.
@@ -738,6 +747,10 @@ class CohereProvider(Provider):
         Args:
             event_data: The event data from the stream
             tool_call_ids: Dict mapping tool call IDs for aggregation
+            stream_state: Unused — Cohere parsing is stateless per event
+            active_tool_call_indices: Accepted for signature parity with the
+                base provider; Cohere streams don't emit id-less fragments at
+                reused positions, so it is unused here.
 
         Returns:
             List of ToolCallChunk objects

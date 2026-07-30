@@ -134,9 +134,11 @@ class GenericProvider(Provider):
     def __init__(self) -> None:
         from oci.generative_ai_inference import models
 
-        # Per-stream incremental parser for inline <tool_call>...</tool_call>
-        # blocks emitted by Hermes/Llama/Qwen-style fine-tunes. Reset by
-        # `reset_stream_state()` at the start of each `_stream` call.
+        # Legacy fallback buffer for callers that don't pass per-stream state
+        # (see `new_stream_state`). Shared across every stream on this
+        # provider instance, so it is NOT safe under concurrent streaming —
+        # `_stream`/`_astream` create their own state via `new_stream_state`
+        # and never touch it.
         self._xml_buffer = XmlStreamBuffer()
 
         # Chat request and message models
@@ -242,13 +244,31 @@ class GenericProvider(Provider):
             )
         return cleaned
 
-    def chat_stream_to_text(self, event_data: Dict) -> str:
+    def new_stream_state(self) -> XmlStreamBuffer:
+        """Create a fresh per-stream ``<tool_call>`` parsing buffer.
+
+        ``ChatOCIGenAI._stream`` / ``_astream`` call this once per stream and
+        pass the buffer back via the ``stream_state`` keyword of
+        :meth:`chat_stream_to_text` and :meth:`process_stream_tool_calls`.
+        Because each stream owns its buffer, concurrent streams on a shared
+        chat-model instance can no longer wipe each other's partial blocks or
+        receive each other's tool calls.
+        """
+        return XmlStreamBuffer()
+
+    def chat_stream_to_text(
+        self, event_data: Dict, stream_state: Optional[XmlStreamBuffer] = None
+    ) -> str:
         """Extract text from Meta chat stream event.
 
         Routes the raw delta through :class:`XmlStreamBuffer` so inline
         ``<tool_call>``/``<tool_calling>`` blocks (Hermes/Llama/Qwen-style
         fine-tunes) are surfaced via :meth:`process_stream_tool_calls`
         instead of leaking into normal token-stream content.
+
+        ``stream_state`` must be the buffer from :meth:`new_stream_state` for
+        the current stream. When ``None``, the legacy instance-level buffer is
+        used, which is not safe under concurrent streaming.
         """
         content = event_data.get("message", {}).get("content", None)
         if not content:
@@ -257,23 +277,24 @@ class GenericProvider(Provider):
             raw_delta = "".join(
                 part.get("text", "") for part in content if part.get("text")
             )
-        return self._xml_buffer.feed(raw_delta)
+        buffer = stream_state if stream_state is not None else self._xml_buffer
+        return buffer.feed(raw_delta)
 
     def reset_stream_state(self) -> None:
-        """Clear per-stream ``<tool_call>`` parsing state.
+        """Clear the legacy instance-level ``<tool_call>`` parsing state.
 
-        Called by ``ChatOCIGenAI._stream`` / ``_astream`` at the start of each
-        new stream so a previous, possibly-aborted stream's leftover buffer
-        doesn't leak into the next one.
+        Only relevant for callers still using the shared instance buffer
+        (``stream_state=None``). ``_stream``/``_astream`` instead create
+        caller-owned state via :meth:`new_stream_state`, which needs no reset.
         """
         self._xml_buffer.reset()
 
     def flush_stream_state(self) -> str:
-        """Return any held-back text and reset the per-stream buffer.
+        """Return held-back text from the legacy instance-level buffer.
 
-        Called once at end-of-stream so trailing characters that were held
-        back as a possible ``<tool_call>`` prefix don't get dropped if the
-        opener never actually arrived.
+        Only relevant for callers still using the shared instance buffer
+        (``stream_state=None``); with caller-owned state, flush the
+        :class:`XmlStreamBuffer` returned by :meth:`new_stream_state` directly.
         """
         return self._xml_buffer.flush()
 
@@ -925,7 +946,11 @@ class GenericProvider(Provider):
         )
 
     def process_stream_tool_calls(
-        self, event_data: Dict, tool_call_ids: Dict[int, str]
+        self,
+        event_data: Dict,
+        tool_call_ids: Dict[int, str],
+        stream_state: Optional[XmlStreamBuffer] = None,
+        active_tool_call_indices: Optional[Dict[int, int]] = None,
     ) -> List[ToolCallChunk]:
         """
         Process Meta stream tool calls and convert them to ToolCallChunks.
@@ -937,14 +962,30 @@ class GenericProvider(Provider):
         Args:
             event_data: The event data from the stream
             tool_call_ids: Dict mapping tool call index to ID for aggregation
+            stream_state: Per-stream buffer from :meth:`new_stream_state`;
+                when ``None``, falls back to the legacy instance-level buffer
+                (not safe under concurrent streaming)
+            active_tool_call_indices: Per-stream map of per-event toolCalls
+                position -> logical tool-call index, owned by the caller like
+                ``tool_call_ids`` so concurrent streams on one provider don't
+                corrupt each other's routing. GPT models stream parallel tool
+                calls sequentially at position 0 (id+name opens a call, then
+                id-less argument fragments follow), so a position can point at
+                different logical calls over the stream's lifetime. When
+                ``None``, id-less fragments fall back to positional routing
+                only (pre-#254 behavior).
 
         Returns:
             List of ToolCallChunk objects
         """
+        if active_tool_call_indices is None:
+            active_tool_call_indices = {}
+
         tool_call_chunks: List[ToolCallChunk] = []
 
         # Drain XML tool calls that completed during this event.
-        for parsed in self._xml_buffer.drain_completed():
+        buffer = stream_state if stream_state is not None else self._xml_buffer
+        for parsed in buffer.drain_completed():
             index = len(tool_call_ids)
             tool_call_ids[index] = parsed["id"]
             tool_call_chunks.append(
@@ -967,14 +1008,31 @@ class GenericProvider(Provider):
             tool_id = tool_call.get("id")
 
             if tool_id:
-                if idx not in tool_call_ids or tool_call_ids[idx] == tool_id:
+                known_index = next(
+                    (i for i, known in tool_call_ids.items() if known == tool_id),
+                    None,
+                )
+                if known_index is not None:
+                    # Re-announced id for an already-open call (possibly at a
+                    # different position) - keep its logical index so its
+                    # arguments never split across two tool calls.
+                    index = known_index
+                elif idx not in tool_call_ids:
                     # New idx - use idx as index
-                    # Same ID at same idx - reuse idx as index
                     index = idx
                 else:
-                    # Different ID at same idx - parallel tool call (Grok pattern)
-                    # New idx - use len(tool_call_ids) as index
+                    # Different ID at same idx - parallel tool call
+                    # (Grok/GPT pattern) - use len(tool_call_ids) as index
                     index = len(tool_call_ids)
+                # This position now feeds this logical call; id-less argument
+                # fragments arriving here later belong to it.
+                active_tool_call_indices[idx] = index
+            elif idx in active_tool_call_indices:
+                # Id-less argument fragment - attach it to the call most
+                # recently opened at this position (GPT parallel pattern);
+                # for single-call streams this equals idx (gpt-oss pattern).
+                index = active_tool_call_indices[idx]
+                tool_id = tool_call_ids[index]
             elif idx in tool_call_ids:
                 # Subsequent chunk - reuse stored ID (gpt-oss pattern)
                 index = idx
@@ -1009,6 +1067,18 @@ class OpenAIProvider(GenericProvider):
     - max_tokens → max_completion_tokens (OpenAI rejects max_tokens on GPT-5
       family and reasoning models; max_completion_tokens is the forward-compatible
       name).
+
+    Transport note:
+      This provider routes through OCI's native chat endpoint
+      (``/20231130/actions/chat``), whose schema for OpenAI-family models
+      only accepts ``text`` and ``image_url`` content blocks. For any
+      OpenAI feature not exposed on that schema — most notably
+      ``input_audio`` against audio-capable models such as
+      ``openai.gpt-audio``, but also any other Chat-Completions-only
+      OpenAI feature surfaced through ``langchain-openai`` — use
+      :class:`langchain_oci.ChatOCIOpenAI` with
+      ``use_responses_api=False``, which targets OCI's OpenAI Chat
+      Completions passthrough at ``/openai/v1/chat/completions``.
     """
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
