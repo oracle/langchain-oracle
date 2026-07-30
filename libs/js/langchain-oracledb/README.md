@@ -1,6 +1,12 @@
 # @oracle/langchain-oracledb
 
+[![npm - Version](https://img.shields.io/npm/v/%40oracle%2Flangchain-oracledb?label=%20&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@oracle/langchain-oracledb)
+[![npm - Downloads](https://img.shields.io/npm/dt/%40oracle%2Flangchain-oracledb)](https://www.npmjs.com/package/@oracle/langchain-oracledb)
+[![License](https://img.shields.io/npm/l/%40oracle%2Flangchain-oracledb)](https://github.com/oracle/langchain-oracle/blob/main/libs/js/langchain-oracledb/LICENSE)
+
 This package contains the LangChain.js integrations for Oracle Database.
+
+> ⭐ If this package is useful to you, consider [starring the repository](https://github.com/oracle/langchain-oracle) — it helps other developers discover these integrations.
 
 ## Installation
 
@@ -17,7 +23,7 @@ You can do so by adding an appropriate field to your project's `package.json` li
   "name": "your-project",
   "version": "0.1.0",
   "dependencies": {
-    "@oracle/langchain-oracledb": "^0.1.1",
+    "@oracle/langchain-oracledb": "^1.0.0",
     "@langchain/core": "^1.0.0"
   },
   "resolutions": {

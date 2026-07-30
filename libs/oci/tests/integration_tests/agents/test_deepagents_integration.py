@@ -347,6 +347,57 @@ class TestOCIDeepAgentIntegration:
         assert final_message.content, "Final message should have content"
         assert len(final_message.content) > 100, "Response should be substantive"
 
+    def test_bring_your_own_model(
+        self,
+        compartment_id: str,
+        service_endpoint: str,
+        auth_type: str,
+        auth_profile: str,
+        model_id: str,
+    ) -> None:
+        """A pre-built chat model passed via ``model=`` drives the agent.
+
+        Exercises the bring-your-own-model path: ``create_deepagents_agent``
+        uses the supplied ``ChatOCIGenAI`` as-is instead of building one from
+        ``model_id`` + OCI auth. Any LangChain ``BaseChatModel`` works the same
+        way (Anthropic, OpenAI, self-hosted vLLM, etc.); we use ChatOCIGenAI
+        here because it is the model the integration env is provisioned for.
+        """
+        from langchain_oci import ChatOCIGenAI, create_deepagents_agent
+
+        model = ChatOCIGenAI(
+            model_id=model_id,
+            compartment_id=compartment_id,
+            service_endpoint=service_endpoint,
+            auth_type=auth_type,
+            auth_profile=auth_profile,
+            model_kwargs={"temperature": 0.3, "max_tokens": 2048},
+        )
+
+        agent = create_deepagents_agent(
+            tools=[search_knowledge_base, get_statistics, analyze_trends],
+            model=model,
+            middleware=[],
+            system_prompt="You are a concise research analyst.",
+        )
+        try:
+            # The supplied model must be the one wired into the agent.
+            assert getattr(agent, "_oci_llm", None) is model
+
+            result = agent.invoke(
+                {
+                    "messages": [
+                        HumanMessage(content="What are the current trends in AI?")
+                    ]
+                }
+            )
+            assert "messages" in result
+            final_message = result["messages"][-1]
+            assert final_message.content, "Final message should have content"
+        finally:
+            if hasattr(model, "aclose"):
+                asyncio.run(model.aclose())
+
     def test_multi_tool_research(self, agent: Any) -> None:
         """Test agent uses multiple tools for research."""
         result = agent.invoke(
@@ -1047,10 +1098,16 @@ class TestDeepAgentResponseFormat:
             summary: str = Field(description="A brief summary of findings")
             confidence: float = Field(description="Confidence score between 0 and 1")
 
+        # Structured output relies on function-calling, which gemini-2.5-flash
+        # handles unreliably (it frequently returns ``malformed_function_call``
+        # with empty content). Pin the more capable pro variant regardless of
+        # the OCI_DEEPAGENTS_MODEL default used elsewhere.
+        oci_kwargs = {**_make_oci_kwargs(), "model_id": "google.gemini-2.5-pro"}
+
         agent = create_deepagents_agent(
             tools=[search_knowledge_base],
             response_format=AutoStrategy(schema=ResearchSummary),
-            **_make_oci_kwargs(),
+            **oci_kwargs,
         )
         try:
             result = agent.invoke(

@@ -18,7 +18,11 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, Tool
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
-from langchain_oci.common.async_support import OCIAsyncClient
+from langchain_oci.common.async_support import OCIAsyncClient, OCIAsyncRequestError
+from langchain_oci.common.param_compat import (
+    PARAM_RETRY_ATTEMPTS,
+    adjust_request_for_param_error,
+)
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 
@@ -110,16 +114,30 @@ class ChatOCIGenAIAsyncMixin:
             messages, stop, stream=False, **kwargs
         )
 
-        # Get single response
+        # Get single response, retrying after fixable 400 parameter errors
+        # (mirrors the sync _chat_with_param_retry; e.g. legacy openai.gpt-5
+        # rejects non-default temperature/top_p with 400 unsupported_value).
         response_data = None
-        async for data in client.chat_async(
-            compartment_id=request_data["compartment_id"],
-            chat_request_dict=request_data["chat_request_dict"],
-            serving_mode_dict=request_data["serving_mode_dict"],
-            stream=False,
-        ):
-            response_data = data
-            break
+        for attempt in range(PARAM_RETRY_ATTEMPTS):
+            try:
+                async for data in client.chat_async(
+                    compartment_id=request_data["compartment_id"],
+                    chat_request_dict=request_data["chat_request_dict"],
+                    serving_mode_dict=request_data["serving_mode_dict"],
+                    stream=False,
+                ):
+                    response_data = data
+                    break
+                break
+            except OCIAsyncRequestError as e:
+                if (
+                    e.status != 400
+                    or attempt == PARAM_RETRY_ATTEMPTS - 1
+                    or not adjust_request_for_param_error(
+                        e.body, request_data["chat_request_dict"]
+                    )
+                ):
+                    raise
 
         if response_data is None:
             raise RuntimeError("No response received from OCI GenAI")
@@ -182,28 +200,84 @@ class ChatOCIGenAIAsyncMixin:
             messages, stop, stream=True, **kwargs
         )
         tool_call_ids: Dict[int, str] = {}
+        # Per-stream position -> logical index routing map, caller-owned so
+        # concurrent streams can't corrupt each other (see _stream's note).
+        active_tool_call_indices: Dict[int, int] = {}
 
-        # Reset per-stream provider state (see _stream's note).
-        reset = getattr(self._provider, "reset_stream_state", None)  # type: ignore[attr-defined]
-        if reset is not None:
-            reset()
+        # Per-stream provider state, owned by this call (see _stream's note).
+        # Concurrent astream calls on a shared chat-model instance interleave
+        # at every await, so provider-instance state would cross-contaminate:
+        # one stream could wipe another's partial <tool_call> block or drain
+        # its completed tool calls.
+        new_state = getattr(self._provider, "new_stream_state", None)  # type: ignore[attr-defined]
+        stream_state = new_state() if new_state is not None else None
+        state_kwargs: Dict[str, Any] = (
+            {"stream_state": stream_state} if stream_state is not None else {}
+        )
+        if stream_state is None:
+            reset = getattr(self._provider, "reset_stream_state", None)  # type: ignore[attr-defined]
+            if reset is not None:
+                reset()
 
-        async for event_data in client.chat_async(
-            compartment_id=request_data["compartment_id"],
-            chat_request_dict=request_data["chat_request_dict"],
-            serving_mode_dict=request_data["serving_mode_dict"],
-            stream=True,
-        ):
+        async def _events_with_param_retry() -> AsyncIterator[Dict[str, Any]]:
+            """Open the stream, retrying after fixable 400 parameter errors.
+
+            A non-200 surfaces before the first event, so only the first
+            fetch is retried (mirroring the sync _chat_with_param_retry);
+            mid-stream errors propagate unchanged.
+            """
+            for attempt in range(PARAM_RETRY_ATTEMPTS):
+                stream = client.chat_async(
+                    compartment_id=request_data["compartment_id"],
+                    chat_request_dict=request_data["chat_request_dict"],
+                    serving_mode_dict=request_data["serving_mode_dict"],
+                    stream=True,
+                )
+                try:
+                    first = await stream.__anext__()
+                except StopAsyncIteration:
+                    return
+                except OCIAsyncRequestError as e:
+                    if (
+                        e.status != 400
+                        or attempt == PARAM_RETRY_ATTEMPTS - 1
+                        or not adjust_request_for_param_error(
+                            e.body, request_data["chat_request_dict"]
+                        )
+                    ):
+                        raise
+                    continue
+                yield first
+                async for event in stream:
+                    yield event
+                return
+
+        async for event_data in _events_with_param_retry():
             if not self._provider.is_chat_stream_end(event_data):  # type: ignore[attr-defined]
                 # Process streaming content
-                delta = self._provider.chat_stream_to_text(event_data)  # type: ignore[attr-defined]
+                delta = self._provider.chat_stream_to_text(  # type: ignore[attr-defined]
+                    event_data, **state_kwargs
+                )
                 tool_call_chunks = self._provider.process_stream_tool_calls(  # type: ignore[attr-defined]
-                    event_data, tool_call_ids
+                    event_data,
+                    tool_call_ids,
+                    active_tool_call_indices=active_tool_call_indices,
+                    **state_kwargs,
+                )
+
+                # Surface incremental reasoning (e.g. xAI Grok, OpenAI o-series)
+                # so the merged message exposes a standard ``reasoning`` content
+                # block, matching the non-streaming path. Absent for models that
+                # don't emit reasoning, in which case nothing is added.
+                reasoning_delta = self._provider.chat_stream_to_reasoning(event_data)  # type: ignore[attr-defined]
+                additional_kwargs = (
+                    {"reasoning_content": reasoning_delta} if reasoning_delta else {}
                 )
 
                 chunk = ChatGenerationChunk(
                     message=AIMessageChunk(
                         content=delta,
+                        additional_kwargs=additional_kwargs,
                         tool_call_chunks=tool_call_chunks,
                     )
                 )
@@ -211,10 +285,13 @@ class ChatOCIGenAIAsyncMixin:
                     await run_manager.on_llm_new_token(delta, chunk=chunk)
                 yield chunk
             else:
-                # Flush any held-back text from the provider's <tool_call>
+                # Flush any held-back text from the per-stream <tool_call>
                 # buffer so trailing characters don't disappear.
-                flush = getattr(self._provider, "flush_stream_state", None)  # type: ignore[attr-defined]
-                tail = flush() if flush is not None else ""
+                if stream_state is not None:
+                    tail = stream_state.flush()
+                else:
+                    flush = getattr(self._provider, "flush_stream_state", None)  # type: ignore[attr-defined]
+                    tail = flush() if flush is not None else ""
                 if tail:
                     yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
 

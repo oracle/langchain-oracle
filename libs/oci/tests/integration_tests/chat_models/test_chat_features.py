@@ -13,7 +13,7 @@ Run:
 """
 
 import os
-from typing import Union
+from typing import Any, Union
 
 import pytest
 from langchain_core.messages import (
@@ -443,6 +443,28 @@ def test_long_context_handling(llm):
 REASONING_MODELS = reasoning_models()
 STANDARD_MODELS = standard_models()
 
+# ``.content_blocks`` exists on langchain-core >= 1.0 only (the Python 3.10+
+# install); on the 3.9 / core-0.3.x matrix it is absent.
+_HAS_CONTENT_BLOCKS = hasattr(AIMessage(content=""), "content_blocks")
+
+
+def _merge_stream(chunks: list):
+    """Concatenate streamed message chunks into a single message."""
+    merged = chunks[0]
+    for chunk in chunks[1:]:
+        merged = merged + chunk
+    return merged
+
+
+def _content_blocks(message: Any) -> list:
+    """Read ``.content_blocks`` via getattr.
+
+    The property only exists on langchain-core >= 1.0; on the py3.9 / core-0.3.x
+    matrix it is absent, so a direct attribute access trips mypy's attr-defined
+    check even though these tests are skipped at runtime there.
+    """
+    return list(getattr(message, "content_blocks"))
+
 
 def _make_reasoning_llm(model_id: str) -> ChatOCIGenAI:
     """Create LLM for reasoning content tests."""
@@ -477,6 +499,68 @@ def test_reasoning_model_returns_reasoning_content(model_id: str) -> None:
     )
     assert len(reasoning) > 10, f"{model_id}: reasoning too short: {reasoning!r}"
     assert result.content, f"{model_id}: content should not be empty"
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.skipif(
+    not _HAS_CONTENT_BLOCKS, reason="content_blocks requires langchain-core>=1.0"
+)
+@pytest.mark.parametrize("model_id", REASONING_MODELS)
+def test_reasoning_model_content_blocks(model_id: str) -> None:
+    """Reasoning models expose a standard ``reasoning`` content block (invoke).
+
+    Backward compatibility: ``.content`` must remain a plain string.
+    """
+    llm = _make_reasoning_llm(model_id)
+    result = llm.invoke([HumanMessage(content="What is 17 * 23?")])
+
+    assert isinstance(result.content, str), f"{model_id}: .content must stay a str"
+    blocks = _content_blocks(result)
+    assert any(b.get("type") == "reasoning" for b in blocks), (
+        f"{model_id}: expected a reasoning content block, got {blocks}"
+    )
+    assert any(b.get("type") == "text" for b in blocks), (
+        f"{model_id}: expected a text content block, got {blocks}"
+    )
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize("model_id", REASONING_MODELS)
+def test_reasoning_model_streaming_reasoning_content(model_id: str) -> None:
+    """Streaming a reasoning model accumulates reasoning + a reasoning block.
+
+    Guards against the prior gap where the streaming path dropped
+    ``reasoning_content`` entirely (it surfaced only on ``invoke()``).
+    """
+    llm = _make_reasoning_llm(model_id)
+    chunks = list(llm.stream([HumanMessage(content="What is 17 * 23?")]))
+    assert chunks, f"{model_id}: stream yielded no chunks"
+    merged = _merge_stream(chunks)
+
+    assert isinstance(merged.content, str), f"{model_id}: .content must stay a str"
+    reasoning = merged.additional_kwargs.get("reasoning_content")
+    assert reasoning is not None and len(reasoning) > 10, (
+        f"{model_id}: streamed reasoning_content missing/short: {reasoning!r}"
+    )
+    if _HAS_CONTENT_BLOCKS:
+        assert any(b.get("type") == "reasoning" for b in _content_blocks(merged)), (
+            f"{model_id}: streamed message missing a reasoning content block"
+        )
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize("model_id", STANDARD_MODELS)
+def test_standard_model_streaming_no_reasoning(model_id: str) -> None:
+    """Standard models stream unchanged: no ``reasoning_content`` key is added."""
+    llm = _make_reasoning_llm(model_id)
+    chunks = list(llm.stream([HumanMessage(content="What is 17 * 23?")]))
+    assert chunks, f"{model_id}: stream yielded no chunks"
+    merged = _merge_stream(chunks)
+
+    assert isinstance(merged.content, str)
+    assert merged.additional_kwargs.get("reasoning_content") is None, (
+        f"{model_id}: unexpected streamed reasoning_content"
+    )
 
 
 @pytest.mark.requires("oci")

@@ -220,6 +220,29 @@ agent = create_deepagents_agent(
 )
 ```
 
+## Example: Bring Your Own Model
+
+By default the agent builds a `ChatOCIGenAI` from `model_id` and the OCI auth
+options. To drive it with any other LangChain chat model, pass a pre-built
+model via `model=...`. When set, `model_id` and the OCI inference auth options
+are ignored — the model owns its own connection.
+
+```python
+from langchain_anthropic import ChatAnthropic
+from langchain_oci.agents import create_deepagents_agent
+
+agent = create_deepagents_agent(
+    tools=[...],
+    model=ChatAnthropic(model="claude-opus-4-8"),
+)
+```
+
+This also works with a custom-configured `ChatOCIGenAI` (e.g. extra kwargs not
+exposed on the factory), a self-hosted vLLM endpoint via `ChatOpenAI`, etc. If
+you use OCI-backed datastores you may still need OCI auth for embeddings unless
+you pass your own `embedding_model`. The same `model=...` parameter is available
+on `create_oci_agent`.
+
 ## Async Cleanup Note
 
 If your workflow keeps agents/models alive across many async calls, explicitly

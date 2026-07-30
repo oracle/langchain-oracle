@@ -7,11 +7,33 @@ import {
 import { Document, type DocumentInterface } from "@langchain/core/documents";
 import type { EmbeddingsInterface } from "@langchain/core/embeddings";
 import { maximalMarginalRelevance } from "@langchain/core/utils/math";
+import {
+  LangChainOracleError,
+  ErrorCode,
+  createErrorFromCodeWithCause,
+  isLangChainOracleError,
+  throwError,
+} from "./errors.js";
 
 export type Metadata = Record<string, unknown>;
 interface AddDocumentOptions {
   ids?: string[];
   mutateOnDuplicate?: boolean;
+}
+
+export { LangChainOracleError, ErrorCode };
+export {
+  LangChainOracleError as OracleVSError,
+  ErrorCode as OracleVSErrorCode,
+};
+export { isLangChainOracleError };
+
+function validateMetadataKey(column: string): void {
+  const pattern = /^[a-zA-Z0-9_.[\],\s*]*$/;
+
+  if (!column || !pattern.test(column)) {
+    throwError(ErrorCode.FILTER_INVALID_METADATA_KEY, column);
+  }
 }
 
 export function generateWhereClause(
@@ -64,6 +86,8 @@ function generateOperatorCondition(
   value: unknown,
   bindValues: unknown[]
 ): string {
+  validateMetadataKey(column);
+
   switch (operator) {
     case "$eq":
       return jsonCompare(column, "=", value, bindValues);
@@ -84,7 +108,9 @@ function generateOperatorCondition(
       return jsonCompare(column, ">=", value, bindValues);
 
     case "$in": {
-      if (!Array.isArray(value)) throw new Error("$in requires array");
+      if (!Array.isArray(value)) {
+        throwError(ErrorCode.FILTER_INVALID_VALUE, "$in requires array");
+      }
       const inClauses = value.map((v) =>
         jsonCompare(column, "=", v, bindValues)
       );
@@ -92,7 +118,9 @@ function generateOperatorCondition(
     }
 
     case "$nin": {
-      if (!Array.isArray(value)) throw new Error("$nin requires array");
+      if (!Array.isArray(value)) {
+        throwError(ErrorCode.FILTER_INVALID_VALUE, "$nin requires array");
+      }
       const ninClauses = value.map((v) =>
         jsonCompare(column, "!=", v, bindValues)
       );
@@ -100,8 +128,9 @@ function generateOperatorCondition(
     }
 
     case "$between": {
-      if (!Array.isArray(value) || value.length !== 2)
-        throw new Error("$between requires [low, high]");
+      if (!Array.isArray(value) || value.length !== 2) {
+        throwError(ErrorCode.FILTER_INVALID_VALUE, "$between requires [low, high]");
+      }
       const [low, high] = value;
       bindValues.push(low, high);
       const posLow = bindValues.length - 1;
@@ -117,7 +146,7 @@ function generateOperatorCondition(
       }
 
     default:
-      throw new Error(`Unsupported operator: ${operator}`);
+      throwError(ErrorCode.FILTER_UNSUPPORTED_OPERATOR, operator);
   }
 }
 
@@ -153,10 +182,16 @@ export const VectorElementFormat = {
 export type VectorElementFormat =
   (typeof VectorElementFormat)[keyof typeof VectorElementFormat];
 
+export type OracleDBClient = oracledb.Pool | oracledb.Connection;
+
+// Allows callers to resolve the OracleDB client lazily, for example when the
+// pool/connection is created asynchronously or managed outside OracleVS.
+export type OracleDBClientProvider = () => Promise<OracleDBClient>;
+
 export interface OracleDBVSArgs {
   tableName: string;
   schemaName?: string | null;
-  client: oracledb.Pool | oracledb.Connection;
+  client: OracleDBClient | OracleDBClientProvider;
   query: string;
   distanceStrategy?: DistanceStrategy;
   filter?: Metadata;
@@ -179,34 +214,40 @@ export type DistanceStrategy =
   (typeof DistanceStrategy)[keyof typeof DistanceStrategy];
 
 function handleError(error: unknown): never {
-  // Type guard to check if the error is an object and has 'name' and 'message' properties
-  if (
+  // Preserve LangChainOracleError instances created by this package instead of
+  // wrapping them again as generic SYSTEM_ERROR failures.
+  if (isLangChainOracleError(error)) {
+    throw error;
+  }
+
+  // Preserve a useful message for both real Error instances and thrown
+  // object literals shaped like { message: string }.
+  const details =
     typeof error === "object" &&
     error !== null &&
-    "name" in error &&
-    "message" in error
-  ) {
-    const err = error as { name: string; message: string }; // Type assertion based on guarded checks
+    "message" in error &&
+    typeof error.message === "string"
+      ? error.message
+      : String(error);
 
-    // Handle specific error types based on the name property
-    switch (err.name) {
-      case "RuntimeError":
-        throw new Error("Database operation failed due to a runtime error.");
-      case "ValidationError":
-        throw new Error("Operation failed due to a validation error.");
-      default:
-        throw new Error(
-          `An unexpected error occurred during the operation. ${error}`
-        );
-    }
-  }
-  throw new Error(`An unknown and unexpected error occurred. ${error}`);
+  // Normalize all underlying anomalies into a unified telemetry payload.
+  throw createErrorFromCodeWithCause(
+    ErrorCode.SYSTEM_ERROR,
+    error,
+    `An unexpected error occurred during the operation. ${details}`
+  );
 }
 
 function isPool(
-  client: oracledb.Connection | oracledb.Pool
+  client: OracleDBClient
 ): client is oracledb.Pool {
   return "getConnection" in client;
+}
+
+function isClientProvider(
+  client: OracleDBClient | OracleDBClientProvider
+): client is OracleDBClientProvider {
+  return typeof client === "function";
 }
 
 function quoteIdentifier(identifier: string) {
@@ -214,7 +255,7 @@ function quoteIdentifier(identifier: string) {
 
   const validateRegex = /^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$/;
   if (!validateRegex.test(name)) {
-    throw new Error(`Identifier name ${identifier} is not valid.`);
+    throwError(ErrorCode.VALIDATION_INVALID_IDENTIFIER, identifier);
   }
 
   // extracts parts of the identifier with quoted and unquoted.
@@ -314,7 +355,7 @@ function normalizeVectorFormat(
     : VectorElementFormat.FLOAT32;
 
   if (vectorType === VectorType.SPARSE && format === VectorElementFormat.BINARY) {
-    throw new Error("BINARY format is not supported for SPARSE vectors.");
+    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "BINARY format is not supported for SPARSE vectors.");
   }
 
   return format;
@@ -325,22 +366,22 @@ function buildVectorColumnDefinition(
   customization?: TableCustomization,
 ): string {
   if (embeddingDim === undefined || embeddingDim === null) {
-    throw new Error("Embedding dimension is required to create the vector column.");
+    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "Embedding dimension is required to create the vector column.");
   }
   if (!Number.isInteger(embeddingDim) || embeddingDim <= 0) {
-    throw new Error("Embedding dimension must be a positive integer.");
+    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "Embedding dimension must be a positive integer.");
   }
 
   const vectorType = normalizeVectorTypeValue(customization?.vectorType);
 
   if (vectorType === VectorType.SPARSE && customization?.format === undefined) {
-    throw new Error("Sparse vector type requires a vector format to be specified.");
+    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "Sparse vector type requires a vector format to be specified.");
   }
 
   const format = normalizeVectorFormat(customization?.format, vectorType);
 
   if (format === VectorElementFormat.BINARY && embeddingDim % 8 !== 0) {
-    throw new Error("BINARY vector format requires dimensions to be a multiple of 8.");
+    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "BINARY vector format requires dimensions to be a multiple of 8.");
   }
 
   const dimensionSegment = String(embeddingDim);
@@ -457,7 +498,7 @@ function convertDenseVectorForFormat(
       for (let i = 0; i < values.length; i += 1) {
         const rounded = Math.round(values[i]);
         if (rounded < -128 || rounded > 127) {
-          throw new Error("INT8 vector values must be within [-128, 127].");
+          throwError(ErrorCode.VECTOR_INVALID_VALUE, "INT8 vector values must be within [-128, 127].");
         }
         clamped[i] = rounded;
       }
@@ -519,7 +560,7 @@ async function createHNSWIndex(
 
     const invalidKeys = Object.keys(extra);
     if (invalidKeys.length > 0) {
-      throw new Error(`Invalid parameter(s): ${invalidKeys.join(", ")}`);
+      throwError(ErrorCode.VECTOR_INVALID_INDEX_PARAMETERS, invalidKeys);
     }
 
     const ddl = `
@@ -557,7 +598,7 @@ async function createIVFIndex(
 
     const invalidKeys = Object.keys(extra);
     if (invalidKeys.length > 0) {
-      throw new Error(`Invalid parameter(s): ${invalidKeys.join(", ")}`);
+      throwError(ErrorCode.VECTOR_INVALID_INDEX_PARAMETERS, invalidKeys);
     }
 
     const ddl = `
@@ -593,7 +634,11 @@ export async function dropTablePurge(
 export class OracleVS extends VectorStore {
   declare FilterType: Metadata;
 
-  readonly client: oracledb.Pool | oracledb.Connection;
+  readonly client: OracleDBClient | OracleDBClientProvider;
+
+  // Tracks connections borrowed from a pool so retConnection() can return them
+  // without closing direct connections owned by the caller.
+  private readonly poolConnections = new WeakSet<oracledb.Connection>();
 
   embeddingDimension: number | undefined;
 
@@ -644,7 +689,7 @@ export class OracleVS extends VectorStore {
 
   private ensureEmbeddingDimension(): number {
     if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
-      throw new Error("Embedding dimension is not initialized for this vector store.");
+      throwError(ErrorCode.STATE_INVALID, "Embedding dimension is not initialized for this vector store.");
     }
     return this.embeddingDimension;
   }
@@ -661,7 +706,7 @@ export class OracleVS extends VectorStore {
 
     if (vectorType === VectorType.SPARSE) {
       if (vector.length !== dimension) {
-        throw new Error("Sparse vectors must supply full-dimension arrays for conversion.");
+        throwError(ErrorCode.VECTOR_INVALID_VALUE, "Sparse vectors must supply full-dimension arrays for conversion.");
       }
 
       let sparseInput: number[] | Float32Array | Float64Array | Int8Array = vector;
@@ -670,7 +715,7 @@ export class OracleVS extends VectorStore {
         for (let i = 0; i < vector.length; i += 1) {
           const rounded = Math.round(vector[i]);
           if (rounded < -128 || rounded > 127) {
-            throw new Error("INT8 sparse vector values must be within [-128, 127].");
+            throwError(ErrorCode.VECTOR_INVALID_VALUE, "INT8 sparse vector values must be within [-128, 127].");
           }
           clamped[i] = rounded;
         }
@@ -685,7 +730,7 @@ export class OracleVS extends VectorStore {
     }
 
     if (vector.length !== dimension) {
-      throw new Error("Vector length does not match the embedding dimension.");
+      throwError(ErrorCode.VECTOR_INVALID_VALUE, "Vector length does not match the embedding dimension.");
     }
 
     return convertDenseVectorForFormat(vector, format);
@@ -701,7 +746,7 @@ export class OracleVS extends VectorStore {
     if (isSparseVector(value)) {
       const dense = value.dense?.();
       if (!dense) {
-        throw new Error("Unable to expand sparse vector to dense representation.");
+        throwError(ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION, "Unable to expand sparse vector to dense representation.");
       }
       if (isFloat32Array(dense)) {
         return dense;
@@ -723,7 +768,7 @@ export class OracleVS extends VectorStore {
     if (Array.isArray(value)) {
       return value as number[];
     }
-    throw new Error("Received unsupported vector representation from the database.");
+    throwError(ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION, "Received unsupported vector representation from the database.");
   }
 
   // Normalizes any supported vector representation into Float32Array so downstream math
@@ -773,12 +818,21 @@ export class OracleVS extends VectorStore {
     }
   }
 
+  private async resolveClient(): Promise<OracleDBClient> {
+    return isClientProvider(this.client)
+      ? await this.client()
+      : this.client;
+  }
+
   public async getConnection(): Promise<oracledb.Connection> {
     try {
-      if (isPool(this.client)) {
-        return await (this.client as oracledb.Pool).getConnection();
+      const client = await this.resolveClient();
+      if (isPool(client)) {
+        const connection = await client.getConnection();
+        this.poolConnections.add(connection);
+        return connection;
       }
-      return this.client as oracledb.Connection;
+      return client;
     } catch (error: unknown) {
       handleError(error);
     }
@@ -787,9 +841,10 @@ export class OracleVS extends VectorStore {
   // Close connection or return it to the pool
   public async retConnection(connection: oracledb.Connection): Promise<void> {
     try {
-      // If the client is a pool, close the connection (return it to the pool)
-      if (isPool(this.client)) {
+      // If this public connection came from any pool, close it to return it to the pool.
+      if (this.poolConnections.has(connection)) {
         await connection.close();
+        this.poolConnections.delete(connection);
       }
     } catch (error) {
       console.error("Error in retConnection:", error);
@@ -811,21 +866,18 @@ export class OracleVS extends VectorStore {
     options?: AddDocumentOptions
   ): Promise<string[] | undefined> {
     if (vectors.length === 0) {
-      throw new Error("Vectors input null. Nothing to add...");
+      throwError(ErrorCode.VALIDATION_INVALID_INPUT, "Vectors input null. Nothing to add...");
     }
 
     const inputIds = options?.ids;
-    let connection: oracledb.Connection | null = null;
 
+    let connection: oracledb.Connection | null = null;
     try {
       // Ensure there are IDs for all documents
       if (inputIds !== undefined && inputIds.length !== vectors.length) {
-        throw new Error(
-          "The number of ids must match the number of vectors provided."
-        );
+        throwError(ErrorCode.VALIDATION_INVALID_INPUT, "The number of ids must match the number of vectors provided.");
       }
 
-      connection = await this.getConnection();
       const finalIds: string[] = [];
       const binds: oracledb.BindParameters[] = [];
 
@@ -879,6 +931,7 @@ export class OracleVS extends VectorStore {
         autoCommit: false,
       };
 
+      connection = await this.getConnection();
       await connection.executeMany(sql, binds, executeOptions);
 
       // Commit once all inserts are queued up
@@ -923,18 +976,25 @@ export class OracleVS extends VectorStore {
     > = [];
 
     let connection: oracledb.Connection | null = null;
-
     try {
       const bindValues: unknown[] = [this.prepareQueryVector(query)];
+      const hasFilter = !!filter && Object.keys(filter).length > 0;
 
+      // Keep the vector index hint for unfiltered searches. When a JSON filter
+      // is present, forcing VECTOR_INDEX_TRANSFORM can change result semantics
+      // by doing approximate top-k before the filter is applied.
+      const selectClause = hasFilter
+        ? "SELECT"
+        : `SELECT /*+ VECTOR_INDEX_TRANSFORM(${this.tableName}) */`;
       let sqlQuery = `
-      SELECT external_id,
+      ${selectClause}
+        external_id,
         text,
         metadata,
         vector_distance(embedding, :1, ${this.distanceStrategy}) as distance,
         embedding
       FROM ${this.tableName} `;
-      if (filter && Object.keys(filter).length > 0) {
+      if (hasFilter) {
         sqlQuery += ` WHERE ${generateWhereClause(filter, bindValues)}`;
       }
       bindValues.push(k);
@@ -964,13 +1024,10 @@ export class OracleVS extends VectorStore {
           });
           docsScoresAndEmbeddings.push([document, distance, embedding]);
         }
-      } else {
-        // Throw an exception if no rows are found
-        throw new Error("No rows found.");
       }
     } finally {
       if (connection) {
-        await connection.close();
+        await this.retConnection(connection);
       }
     }
     return docsScoresAndEmbeddings;
@@ -1097,7 +1154,9 @@ export class OracleVS extends VectorStore {
     } catch (error: unknown) {
       handleError(error);
     } finally {
-      if (connection) await connection.close();
+      if (connection) {
+        await this.retConnection(connection);
+      }
     }
   }
 
@@ -1108,7 +1167,9 @@ export class OracleVS extends VectorStore {
     options?: AddDocumentOptions
   ): Promise<OracleVS> {
     const { client } = dbConfig;
-    if (!client) throw new Error("client parameter is required...");
+    if (!client) {
+      throwError(ErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER, "client");
+    }
 
     try {
       const vss = new OracleVS(embeddings, dbConfig);
@@ -1132,8 +1193,8 @@ export class OracleVS extends VectorStore {
    * inside the pool are terminated.
    */
   async end(): Promise<void> {
-    if (isPool(this.client)) {
-      await this.client?.close();
+    if (!isClientProvider(this.client) && isPool(this.client)) {
+      await this.client.close();
     }
   }
 }

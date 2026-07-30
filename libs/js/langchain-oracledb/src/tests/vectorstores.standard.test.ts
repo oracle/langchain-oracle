@@ -1,0 +1,386 @@
+import { Document } from "@langchain/core/documents";
+import type { EmbeddingsInterface } from "@langchain/core/embeddings";
+import type { DBError } from "oracledb";
+import type oracledb from "oracledb";
+import { describe, expect, test, vi } from "vitest";
+
+import {
+  LangChainOracleError,
+  ErrorCode,
+  OracleVS,
+  type OracleDBVSArgs,
+  createIndex,
+  createTable,
+  dropTablePurge,
+  generateWhereClause,
+} from "../vectorstores.js";
+import { OracleDocLoader } from "../document_loaders.js";
+
+const embeddings = {
+  embedDocuments: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
+  embedQuery: async () => [0.1, 0.2],
+} as EmbeddingsInterface;
+
+const createConfig = (
+  client: OracleDBVSArgs["client"],
+): OracleDBVSArgs => ({
+  client,
+  tableName: "test_vectors",
+  query: "test query",
+});
+
+type OracleVSInternals = {
+  ensureEmbeddingDimension(): number;
+  normalizeReturnedEmbedding(value: unknown): unknown;
+};
+
+type OracleDocLoaderInternals = {
+  _loadFromTable(owner: string, table: string, col: string): Promise<unknown>;
+};
+
+async function expectErrorCode(
+  input: Promise<unknown> | (() => unknown),
+  code: ErrorCode,
+): Promise<void> {
+  try {
+    if (typeof input === "function") {
+      await input();
+    } else {
+      await input;
+    }
+  } catch (error) {
+    const dbError = error as DBError;
+    expect(dbError.code).toBe(code);
+    return;
+  }
+
+  throw new Error(`Expected LangChainOracleError with code ${code}`);
+}
+
+describe("OracleVS client provider", () => {
+  test("returns pool-borrowed connections after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const pool = {
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(async () => connection),
+    } as unknown as oracledb.Pool;
+    const getClient = vi.fn(async () => pool);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    await vectorStore.initialize();
+
+    expect(getClient).toHaveBeenCalledTimes(1);
+    expect(pool.getConnection).toHaveBeenCalledTimes(1);
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not close provider-owned pool from end", async () => {
+    const pool = {
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(),
+    } as unknown as oracledb.Pool;
+    const getClient = vi.fn(async () => pool);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    await vectorStore.end();
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(pool.close).not.toHaveBeenCalled();
+  });
+
+  test("returns provider pool connections from public getConnection and retConnection", async () => {
+    const connection = {
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const pool = {
+      close: vi.fn(async () => {}),
+      getConnection: vi.fn(async () => connection),
+    } as unknown as oracledb.Pool;
+    const getClient = vi.fn(async () => pool);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    const resolvedConnection = await vectorStore.getConnection();
+    await vectorStore.retConnection(resolvedConnection);
+
+    expect(getClient).toHaveBeenCalledTimes(1);
+    expect(pool.getConnection).toHaveBeenCalledTimes(1);
+    expect(connection.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not close direct connections returned by provider after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const getClient = vi.fn(async () => connection);
+    const vectorStore = new OracleVS(embeddings, createConfig(getClient));
+
+    await vectorStore.initialize();
+
+    expect(getClient).toHaveBeenCalledTimes(1);
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).not.toHaveBeenCalled();
+  });
+
+  test("does not close concrete direct connections after internal operations", async () => {
+    const connection = {
+      execute: vi.fn(async () => ({})),
+      close: vi.fn(async () => {}),
+    } as unknown as oracledb.Connection;
+    const vectorStore = new OracleVS(embeddings, createConfig(connection));
+
+    await vectorStore.initialize();
+
+    expect(connection.execute).toHaveBeenCalledTimes(1);
+    expect(connection.close).not.toHaveBeenCalled();
+  });
+});
+
+describe("generateWhereClause", () => {
+  test("binds scalar values instead of interpolating them into SQL", () => {
+    const bindValues: unknown[] = [];
+
+    const clause = generateWhereClause(
+      { author: "Robert'); DROP TABLE docs; --" },
+      bindValues
+    );
+
+    expect(clause).toContain("JSON_EXISTS");
+    expect(clause).not.toContain("DROP TABLE");
+    expect(bindValues).toEqual(["Robert'); DROP TABLE docs; --"]);
+  });
+
+  test("rejects metadata keys containing SQL injection payloads", async () => {
+    await expectErrorCode(
+      () => generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, []),
+      ErrorCode.FILTER_INVALID_METADATA_KEY,
+    );
+  });
+
+  test("covers filter validation error codes", async () => {
+    await expectErrorCode(
+      () => generateWhereClause({ tags: { $in: "bad" } }, []),
+      ErrorCode.FILTER_INVALID_VALUE,
+    );
+    await expectErrorCode(
+      () => generateWhereClause({ score: { $between: [1] } }, []),
+      ErrorCode.FILTER_INVALID_VALUE,
+    );
+    await expectErrorCode(
+      () => generateWhereClause({ score: { $weird: 1 } }, []),
+      ErrorCode.FILTER_UNSUPPORTED_OPERATOR,
+    );
+  });
+});
+
+describe("LangChainOracleError", () => {
+  test("preserves the no rows found message while exposing a stable code", () => {
+    const error = new LangChainOracleError(
+      ErrorCode.QUERY_NO_ROWS_FOUND,
+      "No rows found."
+    );
+
+    expect(error.message).toBe("No rows found.");
+    expect(error.code).toBe(ErrorCode.QUERY_NO_ROWS_FOUND);
+    expect(error.name).toBe("LangChainOracleError");
+  });
+
+  test("preserves Error subclassing semantics", () => {
+    const error = new LangChainOracleError(
+      ErrorCode.SYSTEM_ERROR,
+      "system failure"
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(LangChainOracleError);
+  });
+
+  test("exposes a DBError-compatible code", () => {
+    const error = new LangChainOracleError(
+      ErrorCode.SYSTEM_ERROR,
+      "system failure"
+    );
+
+    const dbError = error as unknown as DBError;
+    expect(dbError.code).toBe(ErrorCode.SYSTEM_ERROR);
+  });
+});
+
+describe("Oracle error codes", () => {
+  test("covers validation identifier and missing parameter errors", async () => {
+    await expectErrorCode(
+      () =>
+        new OracleVS(embeddings as never, {
+          client: {} as never,
+          tableName: 'bad"name',
+          query: "q",
+        }),
+      ErrorCode.VALIDATION_INVALID_IDENTIFIER,
+    );
+
+    await expectErrorCode(
+      OracleVS.fromDocuments([], embeddings as never, {
+        tableName: "docs",
+        query: "q",
+      } as never),
+      ErrorCode.VALIDATION_MISSING_REQUIRED_PARAMETER,
+    );
+  });
+
+  test("covers vector configuration and index parameter errors", async () => {
+    await expectErrorCode(
+      createTable({} as never, "docs", null),
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+    );
+    await expectErrorCode(
+      createTable({} as never, "docs", 7, { format: "BINARY" as never }),
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+    );
+    await expectErrorCode(
+      createIndex(
+        {} as never,
+        { tableName: '"DOCS"', distanceStrategy: "COSINE" } as OracleVS,
+        { bogus: true } as never,
+      ),
+      ErrorCode.VECTOR_INVALID_INDEX_PARAMETERS,
+    );
+  });
+
+  test("covers vector value, state, and unsupported representation errors", async () => {
+    const store = new OracleVS(embeddings as never, {
+      client: {
+        executeMany: async () => undefined,
+        commit: async () => undefined,
+        close: async () => undefined,
+      } as never,
+      tableName: "docs",
+      query: "q",
+      format: "INT8" as never,
+    });
+    const storeInternals = store as unknown as OracleVSInternals;
+
+    await expectErrorCode(
+      () => storeInternals.ensureEmbeddingDimension(),
+      ErrorCode.STATE_INVALID,
+    );
+
+    store.embeddingDimension = 2;
+    await expectErrorCode(
+      store.addVectors([[300, 1]], [new Document({ pageContent: "x", metadata: {} })]),
+      ErrorCode.VECTOR_INVALID_VALUE,
+    );
+    await expectErrorCode(
+      () => storeInternals.normalizeReturnedEmbedding({ bad: true }),
+      ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION,
+    );
+  });
+
+  test("covers validation input errors and returns no matches for query no rows", async () => {
+    const store = new OracleVS(embeddings as never, {
+      client: {
+        execute: async () => ({ rows: [] }),
+        close: async () => undefined,
+      } as never,
+      tableName: "docs",
+      query: "q",
+    });
+
+    await expectErrorCode(
+      store.addVectors([], []),
+      ErrorCode.VALIDATION_INVALID_INPUT,
+    );
+    await expectErrorCode(
+      store.addVectors(
+        [[1, 2]],
+        [new Document({ pageContent: "x", metadata: {} })],
+        { ids: ["a", "b"] },
+      ),
+      ErrorCode.VALIDATION_INVALID_INPUT,
+    );
+    await expect(
+      store.similaritySearchByVectorReturningEmbeddings([1, 2], 1),
+    ).resolves.toEqual([]);
+  });
+
+  test("covers metadata key and document loader validation error codes", async () => {
+    await expectErrorCode(
+      () => generateWhereClause({ ["author') OR 1=1 --"]: "alice" }, []),
+      ErrorCode.FILTER_INVALID_METADATA_KEY,
+    );
+
+    const loader = new OracleDocLoader({} as never, {});
+    await expectErrorCode(
+      loader.load(),
+      ErrorCode.VALIDATION_INVALID_INPUT,
+    );
+
+    const sqlLoader = new OracleDocLoader(
+      {
+        execute: async () => {
+          throw new Error("bad identifier");
+        },
+      } as never,
+      { owner: "OWNER", tablename: "DOCS", colname: "CONTENT" },
+    );
+    const sqlLoaderInternals = sqlLoader as unknown as OracleDocLoaderInternals;
+    await expectErrorCode(
+      sqlLoaderInternals._loadFromTable("OWNER", "DOCS", "CONTENT"),
+      ErrorCode.VALIDATION_INVALID_IDENTIFIER,
+    );
+  });
+
+  test("covers system fallback error code", async () => {
+    await expectErrorCode(
+      createTable(
+        {
+          execute: async () => {
+            throw { name: "RuntimeError", message: "boom" };
+          },
+        } as never,
+        "docs",
+        2,
+      ),
+      ErrorCode.SYSTEM_ERROR,
+    );
+
+    await expectErrorCode(
+      dropTablePurge(
+        {
+          execute: async () => {
+            throw { name: "ValidationError", message: "bad input" };
+          },
+        } as never,
+        "docs",
+      ),
+      ErrorCode.SYSTEM_ERROR,
+    );
+
+    await expectErrorCode(
+      createIndex(
+        {
+          execute: async () => {
+            throw { name: "OtherError", message: "surprise" };
+          },
+        } as never,
+        { tableName: '"DOCS"', distanceStrategy: "COSINE" } as OracleVS,
+      ),
+      ErrorCode.SYSTEM_ERROR,
+    );
+
+    await expectErrorCode(
+      dropTablePurge(
+        {
+          execute: async () => {
+            throw "plain failure";
+          },
+        } as never,
+        "docs",
+      ),
+      ErrorCode.SYSTEM_ERROR,
+    );
+  });
+});

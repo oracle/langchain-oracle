@@ -34,6 +34,7 @@ from langgraph_oracledb.store.oracle.base import (
     _normalize_existing_index_params,
     _row_to_item,
     _row_to_search_item,
+    _schema_inconsistency_error,
     _should_ignore_ttl_refresh_error,
     _validate_table_suffix,
 )
@@ -146,6 +147,36 @@ class AsyncOracleStore(
         async with _ainternal.get_connection(self.conn) as conn:
             async with conn.cursor() as cur:
                 yield cur
+
+    async def _table_exists(
+        self, cur: oracledb.AsyncCursor, table_name: str
+    ) -> bool:
+        await cur.execute(
+            """
+            SELECT 1
+            FROM user_tables
+            WHERE table_name = :1
+            """,
+            (table_name.upper(),),
+        )
+        row = await cur.fetchone()
+        return row is not None
+
+    async def _raise_if_schema_inconsistent(
+        self,
+        cur: oracledb.AsyncCursor,
+        *,
+        migration_table: str,
+        migration_version: int,
+        required_table: str,
+    ) -> None:
+        if migration_version >= 0 and not await self._table_exists(cur, required_table):
+            raise _schema_inconsistency_error(
+                table_suffix=self.table_suffix or "",
+                migration_table=migration_table,
+                migration_version=migration_version,
+                missing_table=required_table,
+            )
 
     async def _validate_configuration(
         self,
@@ -367,6 +398,19 @@ class AsyncOracleStore(
             version = await _get_version(
                 cur, table=self.table_names["store_migrations"]
             )
+            await self._raise_if_schema_inconsistent(
+                cur,
+                migration_table=self.table_names["store_migrations"],
+                migration_version=version,
+                required_table=self.table_names["store"],
+            )
+            if version >= 3:
+                await self._raise_if_schema_inconsistent(
+                    cur,
+                    migration_table=self.table_names["store_migrations"],
+                    migration_version=version,
+                    required_table="store_configs",
+                )
 
             for v, sql in enumerate(self.MIGRATIONS[version + 1 :], start=version + 1):
                 try:
@@ -386,6 +430,12 @@ class AsyncOracleStore(
             if self.index_config:
                 vector_migration_table_name = self.table_names["vector_migrations"]
                 version = await _get_version(cur, table=vector_migration_table_name)
+                await self._raise_if_schema_inconsistent(
+                    cur,
+                    migration_table=vector_migration_table_name,
+                    migration_version=version,
+                    required_table=self.table_names["store_vectors"],
+                )
 
                 for v, migration in enumerate(
                     self.VECTOR_MIGRATIONS[version + 1 :], start=version + 1

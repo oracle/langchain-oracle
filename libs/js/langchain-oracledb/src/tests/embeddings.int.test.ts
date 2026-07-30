@@ -3,6 +3,8 @@ import { test, expect } from "vitest";
 import oracledb from "oracledb";
 import { OracleEmbeddings } from "../index.js";
 
+const testWithCredential = process.env.DEMO_CREDENTIAL ? test : test.skip;
+
 test("Test embedQuery with database", async () => {
   const pref = {
     provider: "database",
@@ -46,7 +48,7 @@ test("Test embedDocuments with database", async () => {
   expect(docEmbeddings.length).toBe(6);
 });
 
-test("Test embedDocuments with third-party", async () => {
+testWithCredential("Test embedDocuments with third-party", async () => {
   const texts = [
     "Hello world!",
     "Hello bad world!",
