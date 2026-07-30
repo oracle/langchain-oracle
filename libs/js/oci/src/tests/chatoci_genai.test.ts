@@ -12,22 +12,29 @@ import {
   ToolMessage,
 } from "@langchain/core/messages";
 
-import { GenerativeAiInferenceClient } from "oci-generativeaiinference";
-import {
+import { GenerativeAiInferenceClient, models } from "oci-generativeaiinference";
+
+const {
   CohereChatRequest,
-  CohereSystemMessage as OciGenAiCohereSystemMessage,
-  CohereUserMessage as OciGenAiCohereUserMessage,
-  Message,
+  CohereSystemMessage: OciGenAiCohereSystemMessage,
+  CohereUserMessage: OciGenAiCohereUserMessage,
   GenericChatRequest,
   TextContent,
-  CohereMessage,
   CohereChatBotMessage,
   CohereSystemMessage,
   CohereUserMessage,
-  AssistantMessage as GenericAssistantMessage,
-  UserMessage as GenericUserMessage,
-  SystemMessage as GenericSystemMessage,
-} from "oci-generativeaiinference/lib/model";
+  AssistantMessage: GenericAssistantMessage,
+  UserMessage: GenericUserMessage,
+  SystemMessage: GenericSystemMessage,
+} = models;
+type Message = models.Message;
+type CohereMessage = models.CohereMessage;
+type CohereChatRequest = models.CohereChatRequest;
+type GenericChatRequest = models.GenericChatRequest;
+type TextContent = models.TextContent;
+type CohereChatBotMessage = models.CohereChatBotMessage;
+type CohereSystemMessage = models.CohereSystemMessage;
+type CohereUserMessage = models.CohereUserMessage;
 
 import { MaxAttemptsTerminationStrategy } from "oci-common";
 

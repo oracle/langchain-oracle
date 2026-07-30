@@ -3,17 +3,16 @@ import {
   BaseChatModelParams,
 } from "@langchain/core/language_models/chat_models";
 import { AuthParams, ClientConfiguration } from "oci-common";
-import { GenerativeAiInferenceClient } from "oci-generativeaiinference";
-
-import {
-  ChatDetails,
-  CohereChatRequest,
-  CohereChatResponse,
-  GenericChatRequest,
-  GenericChatResponse,
-} from "oci-generativeaiinference/lib/model";
-
-import { ChatResponse } from "oci-generativeaiinference/lib/response";
+import type {
+  GenerativeAiInferenceClient,
+  models,
+  responses,
+} from "oci-generativeaiinference";
+type ChatDetails = models.ChatDetails;
+type CohereChatRequest = models.CohereChatRequest;
+type CohereChatResponse = models.CohereChatResponse;
+type GenericChatRequest = models.GenericChatRequest;
+type GenericChatResponse = models.GenericChatResponse;
 
 export enum OciGenAiNewClientAuthType {
   ConfigFile,
@@ -61,6 +60,6 @@ export type OciGenAiSupportedResponseType =
   | GenericChatResponse
   | CohereChatResponse;
 export type OciGenAiChatCallResponseType =
-  | ChatResponse
+  | responses.ChatResponse
   | ReadableStream<Uint8Array>
   | null;

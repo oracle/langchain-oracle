@@ -1,15 +1,21 @@
-import {
-  CohereChatBotMessage,
-  CohereChatRequest,
-  CohereChatResponse,
-  CohereMessage,
-  CohereSystemMessage,
-  CohereUserMessage,
-} from "oci-generativeaiinference/lib/model";
+import { models } from "oci-generativeaiinference";
 
 import { BaseMessage } from "@langchain/core/messages";
 import { LangSmithParams } from "@langchain/core/language_models/chat_models";
 import { OciGenAiBaseChat } from "./chat_models.js";
+
+const {
+  CohereChatBotMessage,
+  CohereChatRequest,
+  CohereSystemMessage,
+  CohereUserMessage,
+} = models;
+type CohereChatRequest = models.CohereChatRequest;
+type CohereChatResponse = models.CohereChatResponse;
+type CohereMessage = models.CohereMessage;
+type CohereChatBotMessage = models.CohereChatBotMessage;
+type CohereSystemMessage = models.CohereSystemMessage;
+type CohereUserMessage = models.CohereUserMessage;
 
 interface HistoryMessageInfo {
   chatHistory: CohereMessage[];

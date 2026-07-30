@@ -1,19 +1,23 @@
 import { BaseMessage } from "@langchain/core/messages";
 import { LangSmithParams } from "@langchain/core/language_models/chat_models";
 
-import {
+import { models } from "oci-generativeaiinference";
+
+import { OciGenAiBaseChat } from "./chat_models.js";
+
+const {
   AssistantMessage,
   GenericChatRequest,
-  GenericChatResponse,
-  Message,
   SystemMessage,
   TextContent,
   UserMessage,
-  ChatChoice,
-  ChatContent,
-} from "oci-generativeaiinference/lib/model";
-
-import { OciGenAiBaseChat } from "./chat_models.js";
+} = models;
+type GenericChatRequest = models.GenericChatRequest;
+type GenericChatResponse = models.GenericChatResponse;
+type Message = models.Message;
+type TextContent = models.TextContent;
+type ChatChoice = models.ChatChoice;
+type ChatContent = models.ChatContent;
 
 export type GenericCallOptions = Omit<
   GenericChatRequest,

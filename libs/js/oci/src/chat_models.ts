@@ -3,12 +3,11 @@ import { ChatGenerationChunk } from "@langchain/core/outputs";
 import { SimpleChatModel } from "@langchain/core/language_models/chat_models";
 import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 
-import type { ChatResponse } from "oci-generativeaiinference/lib/response";
-import type { ChatRequest } from "oci-generativeaiinference/lib/request";
-import {
-  DedicatedServingMode,
-  OnDemandServingMode,
-} from "oci-generativeaiinference/lib/model";
+import { models, type requests, type responses } from "oci-generativeaiinference";
+
+const { DedicatedServingMode, OnDemandServingMode } = models;
+type DedicatedServingMode = models.DedicatedServingMode;
+type OnDemandServingMode = models.OnDemandServingMode;
 
 import type {
   OciGenAiChatCallResponseType,
@@ -49,7 +48,10 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     messages: BaseMessage[],
     options: this["ParsedCallOptions"]
   ): Promise<string> {
-    const response: ChatResponse = await this._makeRequest(messages, options);
+    const response: responses.ChatResponse = await this._makeRequest(
+      messages,
+      options
+    );
     // The OCI SDK's ChatResult union includes Cohere V2 responses, but this
     // integration only sends the V1 Cohere request format or the generic
     // format, whose response types are represented by this base class.
@@ -159,11 +161,15 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
       throw new Error("OCI SDK client not initialized");
     }
 
-    const fullChatRequest: ChatRequest = this._composeFullRequest(chatRequest);
+    const fullChatRequest: requests.ChatRequest = this._composeFullRequest(
+      chatRequest
+    );
     return await this._sdkClient.client.chat(fullChatRequest);
   }
 
-  _composeFullRequest(chatRequest: OciGenAiSupportedRequestType): ChatRequest {
+  _composeFullRequest(
+    chatRequest: OciGenAiSupportedRequestType
+  ): requests.ChatRequest {
     return {
       chatDetails: {
         chatRequest,
