@@ -26,6 +26,26 @@ class OCIUtils:
         return isinstance(obj, type) and issubclass(obj, BaseModel)
 
     @staticmethod
+    def content_to_text(content: Any) -> str:
+        """Coerce message content (str or v1 list-of-blocks) to plain text.
+
+        Joins ``text`` blocks in order. Non-text blocks (``reasoning``,
+        ``tool_call``, ``tool_use``, ...) are transmitted through dedicated
+        message/request fields, so they are skipped here rather than fatal.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+            return "".join(parts)
+        return str(content)
+
+    @staticmethod
     def remove_signature_from_tool_description(name: str, description: str) -> str:
         """
         Remove the tool signature and Args section from a tool description.
