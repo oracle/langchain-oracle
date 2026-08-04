@@ -168,3 +168,54 @@ class TestModelDeploymentAsync:
         monkeypatch.setattr(embeddings, "_aembedding", fake_aembedding)
 
         assert await embeddings.aembed_query("q") == [0.2]
+
+    async def test_async_session_cached_and_aclose(self) -> None:
+        """One session per instance, released by aclose (same pattern as
+        the OCIGenAI classes' cached _async_client)."""
+        pytest.importorskip("aiohttp")
+        embeddings = self._make()
+
+        session = embeddings._async_session
+        assert embeddings._async_session is session
+
+        await embeddings.aclose()
+        assert session.closed
+        assert "_async_session" not in embeddings.__dict__
+
+        reopened = embeddings._async_session
+        assert reopened is not session
+        await embeddings.aclose()
+
+    async def test_aembedding_reuses_cached_session(self) -> None:
+        """_aembedding posts through the shared session, not a new one."""
+        embeddings = self._make()
+
+        class FakeResponse:
+            status = 200
+
+            async def json(self) -> Dict[str, Any]:
+                return {"data": [{"embedding": [[0.3]]}]}
+
+            async def text(self) -> str:
+                return ""
+
+            async def __aenter__(self) -> "FakeResponse":
+                return self
+
+            async def __aexit__(self, *exc: Any) -> bool:
+                return False
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.posts = 0
+
+            def post(self, *args: Any, **kwargs: Any) -> FakeResponse:
+                self.posts += 1
+                return FakeResponse()
+
+        fake = FakeSession()
+        embeddings.__dict__["_async_session"] = fake
+
+        assert await embeddings._aembedding(["a"]) == [[0.3]]
+        assert await embeddings._aembedding(["b"]) == [[0.3]]
+        assert fake.posts == 2
