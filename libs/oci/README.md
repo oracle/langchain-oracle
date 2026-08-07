@@ -250,6 +250,35 @@ text_vector = embeddings.embed_query("a photo of a cat")
 
 <sub>**Note:** Image embeddings require a multimodal model. Use `IMAGE_EMBEDDING_MODELS` to check supported models.</sub>
 
+### 3c. Rerank Documents
+`OCIGenAIRerank` is a document compressor backed by OCI GenAI rerank models (e.g. `cohere.rerank-v3.5`, `cohere.rerank-v4.0-fast`, `cohere.rerank-v4.0-pro`). Use it standalone via `rerank()`/`arerank()` or plug it into a `ContextualCompressionRetriever`.
+
+```python
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain_oci import OCIGenAIRerank
+
+reranker = OCIGenAIRerank(
+    model_id="cohere.rerank-v3.5",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="ocid1.compartment.oc1..xxxxx",
+    top_n=3,
+)
+
+# Standalone: returns [{"index": ..., "relevance_score": ...}, ...]
+results = reranker.rerank(
+    documents=["Oracle Database 26ai", "Kubernetes on OKE", "OCI GenAI rerank"],
+    query="vector search in Oracle",
+)
+
+# Or as the compression stage of a retriever
+retriever = ContextualCompressionRetriever(
+    base_compressor=reranker,
+    base_retriever=vector_store.as_retriever(search_kwargs={"k": 20}),
+)
+```
+
+<sub>**Note:** Authentication follows the same options as the other classes (`auth_type`, `auth_profile`, `auth_file_location`). Tuning knobs: `top_n` (documents kept, `None` = all), `score_threshold` (drop low-relevance documents), and `max_chunks_per_document` / `max_tokens_per_document` (passed through to the OCI rerank API). Async is supported via `arerank()`/`acompress_documents()`.</sub>
+
 ### 4. Use Structured Output
 `ChatOCIGenAI` supports structured output.
 
