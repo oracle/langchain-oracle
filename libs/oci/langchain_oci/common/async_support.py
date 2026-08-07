@@ -264,3 +264,70 @@ class OCIAsyncClient:
             else:
                 data = await response.json()
                 yield data
+
+    async def embed_text_async(
+        self,
+        embed_text_details_dict: Dict[str, Any],
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """Make async embed-text request to OCI GenAI.
+
+        Args:
+            embed_text_details_dict: Serialized EmbedTextDetails (includes
+                compartmentId, servingMode, inputs, ...), as produced by the
+                SDK's ``sanitize_for_serialization``.
+            timeout: Request timeout in seconds.
+
+        Returns:
+            The embed-text response dictionary (``embeddings`` key holds the
+            vectors).
+        """
+        url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/embedText"
+        headers = self._sign_headers("POST", url, embed_text_details_dict)
+
+        async with self._arequest(
+            "POST", url, headers, embed_text_details_dict, timeout
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise OCIAsyncRequestError(response.status, error_text)
+            data: Dict[str, Any] = await response.json()
+            return data
+
+    async def generate_text_async(
+        self,
+        generate_text_details_dict: Dict[str, Any],
+        stream: bool = False,
+        timeout: int = 300,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Make async generate-text (completion) request to OCI GenAI.
+
+        Args:
+            generate_text_details_dict: Serialized GenerateTextDetails
+                (includes compartmentId, servingMode, inferenceRequest), as
+                produced by the SDK's ``sanitize_for_serialization``.
+            stream: Whether to stream the response.
+            timeout: Request timeout in seconds.
+
+        Yields:
+            For streaming: SSE event dictionaries.
+            For non-streaming: a single response dictionary.
+        """
+        url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/generateText"
+        headers = self._sign_headers(
+            "POST", url, generate_text_details_dict, stream=stream
+        )
+
+        async with self._arequest(
+            "POST", url, headers, generate_text_details_dict, timeout
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise OCIAsyncRequestError(response.status, error_text)
+
+            if stream:
+                async for event in self._parse_sse_async(response.content):
+                    yield event
+            else:
+                data = await response.json()
+                yield data
