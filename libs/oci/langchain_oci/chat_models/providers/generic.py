@@ -1164,7 +1164,10 @@ class GeminiProvider(GenericProvider):
         ``grep`` tool of deepagents >= 0.7). Other OCI model families accept
         these keywords, so the rewrite is scoped to this provider.
         """
-        definition = super().convert_to_oci_tool(tool)
+        # Annotated Any: the parent is typed Dict[str, Any] but actually
+        # returns the OCI SDK FunctionDefinition model, whose `parameters`
+        # attribute is what the rewrite targets.
+        definition: Any = super().convert_to_oci_tool(tool)
         parameters = getattr(definition, "parameters", None)
         if isinstance(parameters, dict):
             definition.parameters = _to_gemini_compatible_schema(parameters)
