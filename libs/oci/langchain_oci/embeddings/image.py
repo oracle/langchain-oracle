@@ -35,6 +35,14 @@ class ImageEmbeddingMixin:
         """Build an embed request (provided by host class)."""
         ...
 
+    async def _aembed_inputs(
+        self,
+        inputs: List[str],
+        input_type: Optional[str] = None,
+    ) -> List[List[float]]:
+        """Embed one batch of inputs asynchronously (provided by host class)."""
+        raise NotImplementedError
+
     def embed_image(
         self,
         image: Union[str, bytes, Path],
@@ -87,4 +95,30 @@ class ImageEmbeddingMixin:
             )
             response = self.client.embed_text(invocation_obj)
             embeddings.extend(response.data.embeddings)
+        return embeddings
+
+    async def aembed_image(
+        self,
+        image: Union[str, bytes, Path],
+        mime_type: str = "image/png",
+    ) -> List[float]:
+        """Embed a single image asynchronously (native async I/O).
+
+        See :meth:`embed_image` for argument semantics.
+        """
+        return (await self.aembed_image_batch([image], mime_type=mime_type))[0]
+
+    async def aembed_image_batch(
+        self,
+        images: Sequence[Union[str, bytes, Path]],
+        mime_type: str = "image/png",
+    ) -> List[List[float]]:
+        """Embed multiple images asynchronously (native async I/O).
+
+        See :meth:`embed_image_batch` for argument semantics.
+        """
+        embeddings: List[List[float]] = []
+        for image in images:
+            data_uri = to_data_uri(image, mime_type=mime_type)
+            embeddings.extend(await self._aembed_inputs([data_uri], input_type="IMAGE"))
         return embeddings
