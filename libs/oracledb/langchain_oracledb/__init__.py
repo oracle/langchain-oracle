@@ -20,13 +20,16 @@ from langchain_oracledb.retrievers.hybrid_search import (
 from langchain_oracledb.retrievers.text_search import (
     OracleTextSearchRetriever,
 )
+from langchain_oracledb.storage import OracleByteStore, OracleDocStore
 from langchain_oracledb.utilities.oracleai import OracleSummary
 from langchain_oracledb.vectorstores.oraclevs import OracleVS
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
+    "OracleByteStore",
     "OracleCache",
+    "OracleDocStore",
     "OracleSemanticCache",
     "OracleChatMessageHistory",
     "OracleDocLoader",
