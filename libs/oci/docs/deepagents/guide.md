@@ -97,7 +97,10 @@ flowchart TD
 > so the deep path currently fails on `google.gemini-*` models with
 > `deepagents>=0.7` installed. Workarounds: use a non-Gemini model on the
 > deep path (verified with `meta.llama-3.3-70b-instruct`), pin
-> `deepagents<0.7`, or use the lightweight path with Gemini. See the
+> `deepagents<0.7`, or use the lightweight path with Gemini. A provider-level
+> fix (rewriting the bounds to `minimum`/`maximum` for Gemini) is proposed in
+> [#291](https://github.com/oracle/langchain-oracle/pull/291); this note
+> applies to releases without it. See the
 > [troubleshooting table](operations.md#troubleshooting).
 
 ## Construction lifecycle
