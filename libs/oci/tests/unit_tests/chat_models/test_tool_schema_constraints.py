@@ -974,3 +974,98 @@ def test_cohere_full_mcp_combo():
     # output_format: resolved Optional, enum in desc
     assert params["output_format"].type == "str"
     assert "json" in params["output_format"].description
+
+
+# ---------------------------------------------------------------------------
+# GeminiProvider: exclusive-bounds rewrite
+# (Google's function-declaration API rejects exclusiveMinimum/exclusiveMaximum
+#  with HTTP 400; other OCI model families accept them — see GeminiProvider.)
+# ---------------------------------------------------------------------------
+
+
+def _gemini_props(tool_obj):
+    """Run GeminiProvider.convert_to_oci_tool and return the properties dict."""
+    from langchain_oci.chat_models.providers.generic import GeminiProvider
+
+    result = GeminiProvider().convert_to_oci_tool(tool_obj)
+    return result.parameters.get("properties", {})  # type: ignore[attr-defined]
+
+
+@pytest.mark.requires("oci")
+def test_gemini_exclusive_bounds_become_inclusive():
+    """Pydantic gt/lt must be rewritten to minimum/maximum for Gemini."""
+    p = _gemini_props(exclusive_range_tool)
+    assert "exclusiveMinimum" not in p["score"]
+    assert "exclusiveMaximum" not in p["score"]
+    assert p["score"]["minimum"] == 0
+    assert p["score"]["maximum"] == 1.0
+
+
+@pytest.mark.requires("oci")
+def test_gemini_optional_gt_constraint_rewritten():
+    """Optional[int] with gt=0 (the deepagents>=0.7 grep max_count shape)."""
+
+    @tool
+    def grep_like_tool(
+        pattern: str,
+        max_count: Optional[int] = Field(default=None, gt=0, description="Max matches"),
+    ) -> str:
+        """Search for a pattern."""
+        return pattern
+
+    p = _gemini_props(grep_like_tool)
+    assert "exclusiveMinimum" not in str(p), p
+    assert p["max_count"]["minimum"] == 0
+    assert p["max_count"]["type"] == "integer"
+
+
+@pytest.mark.requires("oci")
+def test_gemini_explicit_inclusive_bound_wins():
+    """An explicit minimum next to a draft-4 boolean flag must survive as-is."""
+    from langchain_oci.chat_models.providers.generic import (
+        _to_gemini_compatible_schema,
+    )
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "n": {
+                "type": "integer",
+                "minimum": 5,
+                "exclusiveMinimum": True,  # draft-4 flag form: dropped
+            },
+            "m": {
+                "type": "number",
+                "maximum": 9,
+                "exclusiveMaximum": 3,  # explicit inclusive bound wins
+            },
+        },
+    }
+    out = _to_gemini_compatible_schema(schema)
+    assert out["properties"]["n"] == {"type": "integer", "minimum": 5}
+    assert out["properties"]["m"] == {"type": "number", "maximum": 9}
+
+
+@pytest.mark.requires("oci")
+def test_gemini_user_field_named_exclusive_minimum_survives():
+    """properties keys are user-defined names, never JSON-Schema keywords."""
+    from langchain_oci.chat_models.providers.generic import (
+        _to_gemini_compatible_schema,
+    )
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "exclusiveMinimum": {"type": "string", "description": "odd name"},
+        },
+    }
+    out = _to_gemini_compatible_schema(schema)
+    assert out["properties"]["exclusiveMinimum"]["type"] == "string"
+
+
+@pytest.mark.requires("oci")
+def test_generic_provider_still_preserves_exclusive_bounds():
+    """Non-Gemini providers keep the richer constraint keywords (issue #103)."""
+    p = _props(exclusive_range_tool)
+    assert p["score"]["exclusiveMinimum"] == 0
+    assert p["score"]["exclusiveMaximum"] == 1.0

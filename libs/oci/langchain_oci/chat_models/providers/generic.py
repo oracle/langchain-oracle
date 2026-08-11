@@ -1099,13 +1099,76 @@ class OpenAIProvider(GenericProvider):
         return result
 
 
+def _to_gemini_compatible_schema(schema: Any) -> Any:
+    """Rewrite JSON-Schema numeric exclusive bounds for Gemini.
+
+    Google's function-declaration schema dialect rejects any request whose
+    tool parameters contain ``exclusiveMinimum`` / ``exclusiveMaximum``
+    (HTTP 400 ``Unknown name "exclusiveMinimum"``). Pydantic v2 emits the
+    numeric draft 2020-12 form for ``gt``/``lt`` constraints, so convert it
+    to the inclusive ``minimum`` / ``maximum`` bounds Gemini does accept.
+    The draft-4 boolean form is dropped (its paired inclusive bound already
+    stands on its own), and an explicit inclusive bound always wins over a
+    converted one.
+    """
+    if isinstance(schema, list):
+        return [_to_gemini_compatible_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    converted: Dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in ("exclusiveMinimum", "exclusiveMaximum"):
+            # bool is the draft-4 flag form; drop it. (bool before number:
+            # isinstance(True, int) is True.)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            inclusive = "minimum" if key == "exclusiveMinimum" else "maximum"
+            if inclusive not in schema:
+                converted[inclusive] = value
+            continue
+
+        # `properties` / `$defs` / `definitions` keys are user-defined field
+        # names, not JSON-Schema keywords — a field literally named
+        # "exclusiveMinimum" must survive. Recurse into each value only.
+        if key in ("properties", "$defs", "definitions") and isinstance(value, dict):
+            converted[key] = {
+                name: _to_gemini_compatible_schema(sub_schema)
+                for name, sub_schema in value.items()
+            }
+            continue
+
+        converted[key] = _to_gemini_compatible_schema(value)
+    return converted
+
+
 class GeminiProvider(GenericProvider):
     """Provider for Google Gemini models.
 
     Handles Gemini-specific parameter requirements:
     - max_output_tokens → max_tokens (Gemini SDK uses max_output_tokens,
       but OCI API expects max_tokens)
+    - tool parameter schemas are rewritten for Gemini's schema dialect
+      (``exclusiveMinimum``/``exclusiveMaximum`` → ``minimum``/``maximum``)
     """
+
+    def convert_to_oci_tool(
+        self,
+        tool: Union[Dict[str, Any], Type[BaseModel], Callable, BaseTool],
+    ) -> Dict[str, Any]:
+        """Convert a tool and rewrite its schema for Gemini compatibility.
+
+        Gemini's function-calling API rejects whole requests when any tool
+        schema contains ``exclusiveMinimum``/``exclusiveMaximum`` (emitted by
+        Pydantic v2 for ``gt``/``lt`` field constraints — e.g. the built-in
+        ``grep`` tool of deepagents >= 0.7). Other OCI model families accept
+        these keywords, so the rewrite is scoped to this provider.
+        """
+        definition = super().convert_to_oci_tool(tool)
+        parameters = getattr(definition, "parameters", None)
+        if isinstance(parameters, dict):
+            definition.parameters = _to_gemini_compatible_schema(parameters)
+        return definition
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize Gemini parameters with warnings for mapped keys."""
