@@ -91,6 +91,15 @@ flowchart TD
 > tool-loop with no planning/filesystem overhead? Pass `middleware=[]`.
 > Otherwise take the default.
 
+> **Known issue (deepagents ≥ 0.7 + Gemini):** the 0.7.x built-in `grep`
+> tool's schema contains `exclusiveMinimum` (from a `max_count` `gt=0`
+> constraint), which Gemini's function-calling API rejects with a 400 —
+> so the deep path currently fails on `google.gemini-*` models with
+> `deepagents>=0.7` installed. Workarounds: use a non-Gemini model on the
+> deep path (verified with `meta.llama-3.3-70b-instruct`), pin
+> `deepagents<0.7`, or use the lightweight path with Gemini. See the
+> [troubleshooting table](operations.md#troubleshooting).
+
 ## Construction lifecycle
 
 Everything below happens **inside the factory call** — including network I/O.

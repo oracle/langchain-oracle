@@ -93,10 +93,15 @@ from deepagents.backends import StoreBackend
 
 agent = create_deepagents_agent(
     ...,
-    store=oracle_store,        # required by StoreBackend
-    backend=StoreBackend(),
+    store=oracle_store,        # StoreBackend reads/writes through this store
+    backend=StoreBackend(namespace=lambda rt: ("agent-files",)),
 )
 ```
+
+The `namespace` factory (required since deepagents 0.7) receives the LangGraph
+`Runtime` and returns the namespace tuple that scopes file storage — return a
+per-user tuple (e.g. `(rt.context.user_id, "files")`) for per-user isolation,
+or a constant for globally shared files.
 
 Now `write_file`/`read_file` operate on Oracle-backed storage: a report written
 in one thread is readable in the next. (`backend=` forces the deep path — see

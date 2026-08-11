@@ -182,9 +182,11 @@ Details that matter in practice:
 - **Tool descriptions are composed at build time**: static description + usage
   hint + `"Available stores: name (description), …"` — so the LLM knows what
   stores exist without a tool call, but `stats` gives it live counts.
-- **All tool errors return formatted strings**
+- **Search and retrieval failures return formatted strings**
   (`Error during hybrid search: …`) instead of raising — the agent loop keeps
-  going and can self-correct.
+  going and can self-correct. (One exception: a failure while *routing* the
+  query — e.g. the embedding call itself failing — happens before the guarded
+  section and propagates.)
 - Two more tool classes are exported for manual composition but *not* included
   by the factory: `SearchTool` (semantic-only) and `KeywordSearchTool` (exact
   terms). Swap or add them if you build the tool list yourself:

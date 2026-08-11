@@ -69,12 +69,16 @@ agent = create_deepagents_agent(
 result = agent.invoke(inputs, cfg)           # pauses before write_file
 # inspect result["__interrupt__"], then approve:
 from langgraph.types import Command
-result = agent.invoke(Command(resume=[{"type": "accept"}]), cfg)
+result = agent.invoke(
+    Command(resume={"decisions": [{"type": "approve"}]}), cfg
+)
 ```
 
 Values can be `True` or an `InterruptOnConfig` (allowed decision types,
-description). Applies to the main agent; declarative subagents inherit unless
-they override.
+description). The resume payload is a dict with one decision per pending
+interrupt; decision types are `"approve"`, `"edit"`, and `"reject"`
+(shape verified live against langchain 1.3 / deepagents 0.7.5). Applies to
+the main agent; declarative subagents inherit unless they override.
 
 ## Filesystem permissions
 
