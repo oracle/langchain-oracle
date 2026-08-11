@@ -349,8 +349,30 @@ def _generate_condition(
 
             return res
 
+        elif any(value_key.startswith("$") for value_key in value.keys()):
+            raise ValueError(
+                "Invalid filter: operator keys ($...) cannot be mixed with "
+                f"nested metadata keys in {value!r}."
+            )
+
         else:
-            raise ValueError("Nested filters are not supported.")
+            # Nested metadata path: {"address": {"city": "NYC"}} is
+            # equivalent to {"address.city": "NYC"}. Recurse with the
+            # dotted path; operator dicts and scalars terminate the
+            # recursion, so arbitrary nesting depth is supported.
+            nested_conditions = [
+                _generate_condition(
+                    f"{metadata_key}.{sub_key}", sub_value, bind_variables
+                )
+                for sub_key, sub_value in value.items()
+            ]
+
+            res = " AND ".join(nested_conditions)
+
+            if len(nested_conditions) > 1:
+                return "(" + res + ")"
+
+            return res
 
     else:
         raise ValueError("Filter format is invalid.")
