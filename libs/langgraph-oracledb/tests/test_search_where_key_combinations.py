@@ -110,6 +110,36 @@ def generate_key_parameter_combinations():
     ]
 
 
+def _assert_containment_paths(where_clause, param_values, path, value) -> None:
+    """Assert flattened containment predicates for dict filter values."""
+    if not value:
+        assert f"JSON_EXISTS(metadata, '$.{path}')" in where_clause
+        return
+    for sub_key, sub_value in value.items():
+        sub_path = f"{path}.{sub_key}"
+        if isinstance(sub_value, dict):
+            _assert_containment_paths(where_clause, param_values, sub_path, sub_value)
+        elif sub_value is None:
+            assert f"JSON_VALUE(metadata, '$.{sub_path}') IS NULL" in where_clause
+        elif isinstance(sub_value, bool):
+            bool_str = "true" if sub_value else "false"
+            assert (
+                f"JSON_VALUE(metadata, '$.{sub_path}') = '{bool_str}'" in where_clause
+            )
+        elif isinstance(sub_value, int | float):
+            assert (
+                f"JSON_VALUE(metadata, '$.{sub_path}' RETURNING NUMBER) ="
+                in where_clause
+            )
+            assert sub_value in param_values.values()
+        elif isinstance(sub_value, list):
+            assert f"JSON_EQUAL(JSON_QUERY(metadata, '$.{sub_path}')" in where_clause
+            assert json.dumps(sub_value) in param_values.values()
+        else:
+            assert f"JSON_VALUE(metadata, '$.{sub_path}') =" in where_clause
+            assert sub_value in param_values.values()
+
+
 def _assert_search_where_shape(saver, config, filter_dict, before) -> None:
     where_clause, param_values = saver._search_where(config, filter_dict, before)
 
@@ -136,9 +166,12 @@ def _assert_search_where_shape(saver, config, filter_dict, before) -> None:
                 assert (
                     f"JSON_VALUE(metadata, '$.{key}') = '{str(value).lower()}'"
                 ) in where_clause
-            elif isinstance(value, dict | list):
+            elif isinstance(value, list):
                 assert f"JSON_EQUAL(JSON_QUERY(metadata, '$.{key}')" in where_clause
                 assert json.dumps(value) in param_values.values()
+            elif isinstance(value, dict):
+                # dict filters match by containment: flattened per-leaf paths
+                _assert_containment_paths(where_clause, param_values, key, value)
             elif isinstance(value, int | float):
                 assert (
                     f"JSON_VALUE(metadata, '$.{key}' RETURNING NUMBER) ="

@@ -457,44 +457,81 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
 
         # construct predicate for metadata filter
         if filter:
-            # Oracle JSON filtering - build individual conditions for each key-value pair
+            # Oracle JSON filtering. Dict values use recursive CONTAINMENT
+            # semantics: the filter {"nested": {"b": {"c": True}}} matches
+            # metadata {"nested": {"a": 1, "b": {"c": True}}}. Each dict is
+            # flattened into per-leaf JSON-path predicates, matching the
+            # LangGraph.js Oracle saver and PostgresSaver (`metadata @> filter`).
+            # Lists keep JSON_EQUAL exact-match (positional) semantics.
             filter_conditions = []
-            for i, (key, value) in enumerate(filter.items()):
-                # SECURITY: Validate key to prevent JSON path injection attacks
-                self._validate_json_path_key(key)
+            param_counter = 0
+
+            def _next_param() -> str:
+                nonlocal param_counter
+                name = f"filter_key_{param_counter}"
+                param_counter += 1
+                return name
+
+            def _add_leaf_condition(path: str, value: Any) -> None:
+                """Append a predicate comparing one JSON path to a leaf value."""
                 if value is None:
                     # Check for null values
-                    filter_conditions.append(f"JSON_VALUE(metadata, '$.{key}') IS NULL")
-                elif isinstance(value, (dict, list)):
-                    # For complex objects, use JSON_EQUAL for exact match
-                    param_name = f"filter_json_{i}"
                     filter_conditions.append(
-                        f"JSON_EQUAL(JSON_QUERY(metadata, '$.{key}'), :{param_name})"
+                        f"JSON_VALUE(metadata, '$.{path}') IS NULL"
+                    )
+                elif isinstance(value, bool):
+                    # Oracle has issues with boolean parameter binding, so use
+                    # literal comparison.
+                    # NOTE: Must check bool BEFORE int/float since bool is a
+                    # subclass of int
+                    bool_str = "true" if value else "false"
+                    filter_conditions.append(
+                        f"JSON_VALUE(metadata, '$.{path}') = '{bool_str}'"
+                    )
+                elif isinstance(value, (int, float)):
+                    # For numeric values, use JSON_VALUE with RETURNING NUMBER
+                    # for proper type comparison
+                    param_name = _next_param()
+                    filter_conditions.append(
+                        f"JSON_VALUE(metadata, '$.{path}' RETURNING NUMBER) = :{param_name}"
+                    )
+                    param_values[param_name] = value
+                elif isinstance(value, list):
+                    # Lists keep exact-match semantics (element order matters)
+                    param_name = _next_param()
+                    filter_conditions.append(
+                        f"JSON_EQUAL(JSON_QUERY(metadata, '$.{path}'), :{param_name})"
                     )
                     param_values[param_name] = json.dumps(value)
                 else:
-                    # Check for simple values - preserve data types for proper comparison
-                    param_name = f"filter_key_{i}"
-                    if isinstance(value, bool):
-                        # For boolean values, use JSON_EXISTS to check for boolean values safely
-                        # Oracle has issues with boolean parameter binding, so use literal comparison
-                        # NOTE: Must check bool BEFORE int/float since bool is subclass of int
-                        bool_str = "true" if value else "false"
-                        filter_conditions.append(
-                            f"JSON_VALUE(metadata, '$.{key}') = '{bool_str}'"
-                        )
-                    elif isinstance(value, (int, float)):
-                        # For numeric values, use JSON_VALUE with RETURNING NUMBER for proper type comparison
-                        filter_conditions.append(
-                            f"JSON_VALUE(metadata, '$.{key}' RETURNING NUMBER) = :{param_name}"
-                        )
-                        param_values[param_name] = value
-                    else:
-                        # For string values, use direct comparison
-                        filter_conditions.append(
-                            f"JSON_VALUE(metadata, '$.{key}') = :{param_name}"
-                        )
-                        param_values[param_name] = value
+                    # For string values, use direct comparison
+                    param_name = _next_param()
+                    filter_conditions.append(
+                        f"JSON_VALUE(metadata, '$.{path}') = :{param_name}"
+                    )
+                    param_values[param_name] = value
+
+            def _expand_filter(path: str, value: Any) -> None:
+                """Flatten dict filters into per-path containment predicates."""
+                if isinstance(value, dict):
+                    if not value:
+                        # {} is contained in any object at this path: only
+                        # require that the path exists.
+                        filter_conditions.append(f"JSON_EXISTS(metadata, '$.{path}')")
+                        return
+                    for sub_key, sub_value in value.items():
+                        # SECURITY: nested keys become part of the JSON path
+                        # expression, so validate them exactly like top-level
+                        # keys to prevent JSON path injection attacks
+                        self._validate_json_path_key(sub_key)
+                        _expand_filter(f"{path}.{sub_key}", sub_value)
+                    return
+                _add_leaf_condition(path, value)
+
+            for key, value in filter.items():
+                # SECURITY: Validate key to prevent JSON path injection attacks
+                self._validate_json_path_key(key)
+                _expand_filter(key, value)
 
             if len(filter_conditions) > 0:
                 wheres.append("(" + " AND ".join(filter_conditions) + ")")
