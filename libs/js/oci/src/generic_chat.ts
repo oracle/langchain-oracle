@@ -3,7 +3,7 @@ import { LangSmithParams } from "@langchain/core/language_models/chat_models";
 
 import { models } from "oci-generativeaiinference";
 
-import { OciGenAiBaseChat } from "./chat_models.js";
+import { OciGenAiBaseChat, type OciGenAiStreamChunk } from "./chat_models.js";
 
 const {
   AssistantMessage,
@@ -54,16 +54,18 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
       .join("");
   }
 
-  override _parseStreamedResponseChunk(chunk: unknown): string | undefined {
+  override _parseStreamedResponseChunk(
+    chunk: unknown
+  ): OciGenAiStreamChunk | undefined {
     if (!OciGenAiGenericChat._isValidChatChoice(chunk)) {
       throw new Error("Invalid streamed response chunk data");
     }
 
     if (OciGenAiGenericChat._isFinalChunk(chunk)) {
-      return undefined;
+      return { finishReason: chunk.finishReason };
     }
 
-    return OciGenAiGenericChat._getChunkDataText(chunk);
+    return { text: OciGenAiGenericChat._getChunkDataText(chunk) };
   }
 
   static _convertBaseMessagesToGenericMessages(
@@ -76,7 +78,7 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     baseMessage: BaseMessage
   ): Message {
     const messageType: string = baseMessage.getType();
-    const text: string = baseMessage.content as string;
+    const text = OciGenAiBaseChat._contentToText(baseMessage.content);
     const messageRole: string =
       OciGenAiGenericChat._convertBaseMessageTypeToRole(messageType);
 
@@ -166,9 +168,10 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
   }
 
   static _getChunkDataText(chunkData: ChatChoice): string | undefined {
+    // Match non-streaming response parsing: OCI content parts are contiguous.
     return chunkData.message?.content
       ?.map((message: TextContent) => message.text)
-      .join(" ");
+      .join("");
   }
 
   static _isFinalChunk(chunkData: unknown) {

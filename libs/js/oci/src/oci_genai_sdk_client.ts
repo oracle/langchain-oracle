@@ -7,6 +7,7 @@ import {
   SessionAuthDetailProvider,
   MaxAttemptsTerminationStrategy,
   Region,
+  ResourcePrincipalAuthenticationDetailsProvider,
 } from "oci-common";
 
 import { GenerativeAiInferenceClient } from "oci-generativeaiinference";
@@ -28,6 +29,10 @@ export class OciGenAiSdkClient {
 
   get client(): GenerativeAiInferenceClient {
     return this._client;
+  }
+
+  close(): void {
+    this._client.close();
   }
 
   static async create(
@@ -95,6 +100,9 @@ export class OciGenAiSdkClient {
       case OciGenAiNewClientAuthType.InstancePrincipal:
         return await this._getInstancePrincipalAuthProvider();
 
+      case OciGenAiNewClientAuthType.ResourcePrincipal:
+        return this._getResourcePrincipalAuthProvider();
+
       case OciGenAiNewClientAuthType.Session:
         return this._getSessionAuthProvider(params);
 
@@ -119,6 +127,12 @@ export class OciGenAiSdkClient {
     const instancePrincipalAuthenticationBuilder =
       new InstancePrincipalsAuthenticationDetailsProviderBuilder();
     return await instancePrincipalAuthenticationBuilder.build();
+  }
+
+  static _getResourcePrincipalAuthProvider(): AuthenticationDetailsProvider {
+    // The OCI SDK obtains Resource Principal credentials from the runtime
+    // environment used by OCI Functions and Data Science.
+    return ResourcePrincipalAuthenticationDetailsProvider.builder();
   }
 
   static _getSessionAuthProvider(

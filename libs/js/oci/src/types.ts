@@ -8,6 +8,7 @@ import type {
   models,
   responses,
 } from "oci-generativeaiinference";
+
 type ChatDetails = models.ChatDetails;
 type CohereChatRequest = models.CohereChatRequest;
 type CohereChatResponse = models.CohereChatResponse;
@@ -17,6 +18,7 @@ type GenericChatResponse = models.GenericChatResponse;
 export enum OciGenAiNewClientAuthType {
   ConfigFile,
   InstancePrincipal,
+  ResourcePrincipal,
   Session,
   Other,
 }

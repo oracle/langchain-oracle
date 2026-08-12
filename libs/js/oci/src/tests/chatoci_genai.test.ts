@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import {
   AIMessage,
@@ -13,6 +13,14 @@ import {
 } from "@langchain/core/messages";
 
 import { GenerativeAiInferenceClient, models } from "oci-generativeaiinference";
+import { MaxAttemptsTerminationStrategy } from "oci-common";
+
+import { OciGenAiBaseChat } from "../index.js";
+import { OciGenAiCohereChat } from "../cohere_chat.js";
+import { OciGenAiGenericChat } from "../generic_chat.js";
+import { JsonServerEventsIterator } from "../server_events_iterator.js";
+import { OciGenAiSdkClient } from "../oci_genai_sdk_client.js";
+import { OciGenAiClientParams, OciGenAiNewClientAuthType } from "../types.js";
 
 const {
   CohereChatRequest,
@@ -36,15 +44,6 @@ type CohereChatBotMessage = models.CohereChatBotMessage;
 type CohereSystemMessage = models.CohereSystemMessage;
 type CohereUserMessage = models.CohereUserMessage;
 
-import { MaxAttemptsTerminationStrategy } from "oci-common";
-
-import { OciGenAiBaseChat } from "../index.js";
-import { OciGenAiCohereChat } from "../cohere_chat.js";
-import { OciGenAiGenericChat } from "../generic_chat.js";
-import { JsonServerEventsIterator } from "../server_events_iterator.js";
-import { OciGenAiSdkClient } from "../oci_genai_sdk_client.js";
-import { OciGenAiClientParams, OciGenAiNewClientAuthType } from "../types.js";
-
 type OciGenAiChatConstructor = new (args: any) =>
   | OciGenAiCohereChat
   | OciGenAiGenericChat;
@@ -67,6 +66,7 @@ const invalidServerEvents: string[][] = [
   ["data: 5\n\n"],
   ["data: fail\n\n"],
   ['data: "testing 1, 2, 3"\n'],
+  ['data: {"test":5}'],
   ["data: null\n\n"],
   ["data: -345.345345\n\n"],
   ["\u{1F600}e\u0301\n\n"],
@@ -74,6 +74,7 @@ const invalidServerEvents: string[][] = [
 
 const invalidEventDataErrors = new RegExp(
   "Event text is empty, too short or malformed|" +
+    "Incomplete server-sent event at end of stream|" +
     "Event data is empty or too short to be valid|" +
     "Could not parse event data as JSON|" +
     "Event data could not be parsed into an object"
@@ -84,13 +85,9 @@ const validServerEvents: string[] = [
   'data: {"message":"this is a message"}\n\n',
   'data: {"finalReason":"i j`us`t felt like stopping", "terminate": true}\n\n',
   "data: {}\n\n",
-  'data: {"message":"this is a message"\n,"ignore":{"yes":"no"}}\n\n',
-  'data: {"message":"this is',
-  ' a message"',
-  ',"ignore": { "yes": "no" }}\n\n',
+  'data: {"message":"this is a message","ignore":{"yes":"no"}}\n\n',
   'data: {"index":0,"message":{"role":"ASSISTANT","content":[{"type":"TEXT","text":" I"}]},"pad":"aaaaa"}\n\n',
-  'data: {"index":0,"message":{"role":"',
-  'ASSISTANT","content":[{"type":"TEXT","text":" discover"}]},"pad":"aaaaaaaaaaa"}\n\n',
+  'data: {"index":0,"message":{"role":"ASSISTANT","content":[{"type":"TEXT","text":" discover"}]},"pad":"aaaaaaaaaaa"}\n\n',
 ];
 
 interface ValidServerEventProps {
@@ -102,15 +99,15 @@ const validServerEventsProps: string[] = [
   `data: ${JSON.stringify(<ValidServerEventProps>{
     finalReason: "reason 1",
     terminate: true,
-  })}`,
+  })}\n\n`,
   `data: ${JSON.stringify(<ValidServerEventProps>{
     finalReason: "this is a message",
     terminate: true,
-  })}`,
+  })}\n\n`,
   `data: ${JSON.stringify(<ValidServerEventProps>{
     finalReason: "i just felt like stopping",
     terminate: true,
-  })}`,
+  })}\n\n`,
 ];
 
 test("JsonServerEventsIterator invalid events", async () => {
@@ -148,6 +145,42 @@ test("JsonServerEventsIterator valid events check properties", async () => {
     expect(typeof (<ValidServerEventProps>event).finalReason).toBe("string");
     expect((<ValidServerEventProps>event).terminate).toBe(true);
   }
+});
+
+test("JsonServerEventsIterator parses multiple events in one chunk", async () => {
+  const events = await collectServerEvents([
+    'data: {"text":"one"}\n\ndata: {"text":"two"}\n\n',
+  ]);
+
+  expect(events).toEqual([{ text: "one" }, { text: "two" }]);
+});
+
+test("JsonServerEventsIterator parses an event split across chunks", async () => {
+  const events = await collectServerEvents([
+    'data: {"text":"he',
+    'llo"}\n',
+    "\n",
+  ]);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator preserves UTF-8 characters split across chunks", async () => {
+  const text = 'data: {"text":"😊"}\n\n';
+  const encoded = new TextEncoder().encode(text);
+  const emojiStart = new TextEncoder().encode('data: {"text":"').length;
+  const events = await collectServerEventBytes([
+    encoded.slice(0, emojiStart + 2),
+    encoded.slice(emojiStart + 2),
+  ]);
+
+  expect(events).toEqual([{ text: "😊" }]);
+});
+
+test("JsonServerEventsIterator parses CRLF framing", async () => {
+  const events = await collectServerEvents(['data: {"text":"hello"}\r\n\r\n']);
+
+  expect(events).toEqual([{ text: "hello" }]);
 });
 
 /*
@@ -260,7 +293,7 @@ test("OCI GenAI chat models creation", async () => {
       });
 
       await expect(instance.invoke("prompt")).rejects.toThrow(
-        "Either onDemandModelId or dedicatedEndpointId must be supplied"
+        "Exactly one of onDemandModelId or dedicatedEndpointId must be supplied"
       );
 
       instance = new ChatClassType({
@@ -270,7 +303,7 @@ test("OCI GenAI chat models creation", async () => {
       });
 
       await expect(instance.invoke("prompt")).rejects.toThrow(
-        "Either onDemandModelId or dedicatedEndpointId must be supplied"
+        "Exactly one of onDemandModelId or dedicatedEndpointId must be supplied"
       );
 
       instance = new ChatClassType({
@@ -287,6 +320,63 @@ test("OCI GenAI chat models creation", async () => {
       expect(instance._params.onDemandModelId).toBe(onDemandModelId);
     }
   );
+});
+
+test("OCI GenAI chat rejects both serving modes", async () => {
+  const chat = new OciGenAiGenericChat({
+    compartmentId,
+    onDemandModelId,
+    dedicatedEndpointId,
+    client: DummyClient as unknown as GenerativeAiInferenceClient,
+  });
+
+  await expect(chat.invoke("prompt")).rejects.toThrow(
+    "Exactly one of onDemandModelId or dedicatedEndpointId must be supplied"
+  );
+});
+
+test("OCI GenAI chat accepts text content blocks", () => {
+  const message = new LangChainHumanMessage({
+    content: [
+      { type: "text", text: "hello" },
+      { type: "reasoning", reasoning: "ignored" },
+    ],
+  } as any);
+
+  expect(OciGenAiBaseChat._contentToText(message.content)).toBe("hello");
+  expect(
+    new OciGenAiGenericChat(createParams)._prepareRequest([message], {}, false)
+  ).toMatchObject({
+    messages: [
+      {
+        content: [{ type: TextContent.type, text: "hello" }],
+      },
+    ],
+  });
+});
+
+test("OCI GenAI chat identifies itself for tracing", () => {
+  expect(new OciGenAiGenericChat(createParams)._llmType()).toBe("oci_genai");
+});
+
+test("OCI GenAI chat closes only clients it owns", async () => {
+  const closeOwned = vi.fn();
+  const closeExternal = vi.fn();
+  const ownedChat = new OciGenAiGenericChat(createParams);
+  const externalChat = new OciGenAiGenericChat(createParams);
+
+  ownedChat._sdkClient = { close: closeOwned } as unknown as OciGenAiSdkClient;
+  ownedChat._ownsSdkClient = true;
+  externalChat._sdkClient = {
+    close: closeExternal,
+  } as unknown as OciGenAiSdkClient;
+
+  await ownedChat.close();
+  await externalChat.close();
+
+  expect(closeOwned).toHaveBeenCalledOnce();
+  expect(closeExternal).not.toHaveBeenCalled();
+  expect(ownedChat._sdkClient).toBeUndefined();
 });
 
 const chatClassReturnValues = [
@@ -328,6 +418,7 @@ test("OCI GenAI chat models invoke with unsupported message", async () => {
             content: "tools message",
             tool_call_id: "tool_id",
           }),
+          new LangChainHumanMessage("Human message"),
         ])
       ).rejects.toThrow("Message type 'tool' is not supported");
     },
@@ -341,8 +432,6 @@ const messages = [
   new LangChainSystemMessage("System message"),
   new LangChainSystemMessage("System message"),
   new LangChainHumanMessage(lastHumanMessage),
-  new LangChainSystemMessage("System message"),
-  new LangChainSystemMessage("System message"),
 ];
 
 const callOptions = {
@@ -396,10 +485,7 @@ const invalidMessages = [
   [
     new LangChainToolMessage("Human message", "tool"),
     new LangChainSystemMessage("System message"),
-    new LangChainSystemMessage("System message"),
     new LangChainHumanMessage(lastHumanMessage),
-    new LangChainSystemMessage("System message"),
-    new LangChainSystemMessage("System message"),
   ],
   [
     new LangChainSystemMessage({
@@ -436,7 +522,7 @@ test("OCI GenAI chat create invalid request messages", async () => {
       ).toThrow("Message type 'tool' is not supported");
       expect(() =>
         chatClass._prepareRequest(invalidMessages[2], callOptions, true)
-      ).toThrow("Only text messages are supported");
+      ).toThrow("Unsupported message content");
     }
   );
 });
@@ -777,9 +863,9 @@ test("OCI GenAI Cohere parse invalid streamed chunks", async () => {
   const cohereChat = new OciGenAiCohereChat(createParams);
 
   for (const invalidValue of validCohereStreamedChunks) {
-    expect(cohereChat._parseStreamedResponseChunk(invalidValue)).toBe(
-      "this is some text"
-    );
+    expect(cohereChat._parseStreamedResponseChunk(invalidValue)).toEqual({
+      text: "this is some text",
+    });
   }
 });
 
@@ -809,6 +895,22 @@ test("OCI GenAI Generic parse invalid streamed chunks", async () => {
   }
 });
 
+test("OCI GenAI Generic streamed content matches non-streamed concatenation", () => {
+  const genericChat = new OciGenAiGenericChat(createParams);
+  const chunk = {
+    message: {
+      content: [
+        { type: TextContent.type, text: "hello" },
+        { type: TextContent.type, text: " world" },
+      ],
+    },
+  };
+
+  expect(genericChat._parseStreamedResponseChunk(chunk)).toEqual({
+    text: "hello world",
+  });
+});
+
 const validGenericStreamedChunks = [
   {
     message: {
@@ -829,22 +931,16 @@ test("OCI GenAI Generic parse invalid streamed chunks", async () => {
   const genericChat = new OciGenAiGenericChat(createParams);
 
   for (const invalidValue of validGenericStreamedChunks) {
-    expect(["this is some text", undefined]).toContain(
-      genericChat._parseStreamedResponseChunk(invalidValue)
+    expect(genericChat._parseStreamedResponseChunk(invalidValue)).toEqual(
+      "finishReason" in invalidValue
+        ? { finishReason: invalidValue.finishReason }
+        : { text: "this is some text" }
     );
   }
 });
 
-test("OCI GenAI cohere history and message split", async () => {
+test("OCI GenAI cohere history and message split", () => {
   const lastHumanMessage = "Last human message";
-
-  testCohereMessageHistorySplit({
-    messages: [],
-    lastHumanMessage: "",
-    numExpectedMessagesInHistory: 0,
-    numExpectedHumanMessagesInHistory: 0,
-    numExpectedOtherMessagesInHistory: 0,
-  });
 
   testCohereMessageHistorySplit({
     messages: [new LangChainHumanMessage(lastHumanMessage)],
@@ -856,60 +952,30 @@ test("OCI GenAI cohere history and message split", async () => {
 
   testCohereMessageHistorySplit({
     messages: [
-      new LangChainHumanMessage("Human message"),
       new LangChainSystemMessage("System message"),
       new LangChainHumanMessage("Human message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainHumanMessage(lastHumanMessage),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-    ],
-    lastHumanMessage,
-    numExpectedMessagesInHistory: 6,
-    numExpectedHumanMessagesInHistory: 2,
-    numExpectedOtherMessagesInHistory: 4,
-  });
-
-  testCohereMessageHistorySplit({
-    messages: [
-      new LangChainHumanMessage(lastHumanMessage),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-    ],
-    lastHumanMessage,
-    numExpectedMessagesInHistory: 4,
-    numExpectedHumanMessagesInHistory: 0,
-    numExpectedOtherMessagesInHistory: 4,
-  });
-
-  testCohereMessageHistorySplit({
-    messages: [
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
+      new AIMessage("Assistant message"),
       new LangChainHumanMessage(lastHumanMessage),
     ],
     lastHumanMessage,
-    numExpectedMessagesInHistory: 4,
-    numExpectedHumanMessagesInHistory: 0,
-    numExpectedOtherMessagesInHistory: 4,
+    numExpectedMessagesInHistory: 3,
+    numExpectedHumanMessagesInHistory: 1,
+    numExpectedOtherMessagesInHistory: 2,
   });
+});
 
-  testCohereMessageHistorySplit({
-    messages: [
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-      new LangChainSystemMessage("System message"),
-    ],
-    lastHumanMessage: "",
-    numExpectedMessagesInHistory: 4,
-    numExpectedHumanMessagesInHistory: 0,
-    numExpectedOtherMessagesInHistory: 4,
-  });
+test("OCI GenAI cohere requires a final human message", () => {
+  const invalidConversations = [
+    [],
+    [new LangChainSystemMessage("System message")],
+    [new LangChainHumanMessage("Human message"), new AIMessage("Reply")],
+  ];
+
+  for (const messages of invalidConversations) {
+    expect(() => OciGenAiCohereChat._splitMessageAndHistory(messages)).toThrow(
+      "Cohere chat requires the final message to be a human message"
+    );
+  }
 });
 
 test("OCI GenAI chat cohere _convertBaseMessageToCohereMessage", () => {
@@ -1244,9 +1310,11 @@ test("OCI GenAI chat models invoke with dedicated endpoint", async () => {
         },
       });
 
-      expect(
-        async () => await chatClass.invoke("this is a message")
-      ).not.toThrow();
+      await expect(
+        chatClass.invoke("this is a message")
+      ).resolves.toMatchObject({
+        content: expect.anything(),
+      });
     },
     chatClassReturnValues
   );
@@ -1280,15 +1348,22 @@ test("OCI GenAI chat models stream", async () => {
       });
 
       expect(OciGenAiBaseChat._isSdkClient(chatClass._sdkClient)).toBe(false);
-      let numMessages = 0;
+      const streamedMessages = [];
 
-      for await (const _message of await chatClass.stream([
+      for await (const message of await chatClass.stream([
         "this is a prompt",
       ])) {
-        numMessages += 1;
+        streamedMessages.push(message);
       }
 
-      expect(numMessages).toBe(2);
+      expect(streamedMessages).toHaveLength(
+        ChatClassType === OciGenAiGenericChat ? 3 : 2
+      );
+      if (ChatClassType === OciGenAiGenericChat) {
+        expect(streamedMessages.at(-1)?.response_metadata).toEqual({
+          finish_reason: "stop sequence",
+        });
+      }
       expect(numApiCalls).toBe(1);
       expect(OciGenAiBaseChat._isSdkClient(chatClass._sdkClient)).toBe(true);
     },
@@ -1329,6 +1404,39 @@ async function testNumExpectedServerEvents(
   }
 
   expect(numEvents).toBe(numExpectedServerEvents);
+}
+
+async function collectServerEvents(serverEvents: string[]): Promise<unknown[]> {
+  const streamIterator = new JsonServerEventsIterator(
+    createStreamFromStringArray(serverEvents)
+  );
+  const events = [];
+
+  for await (const event of streamIterator) {
+    events.push(event);
+  }
+
+  return events;
+}
+
+async function collectServerEventBytes(
+  serverEvents: Uint8Array[]
+): Promise<unknown[]> {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of serverEvents) {
+        controller.enqueue(event);
+      }
+      controller.close();
+    },
+  });
+  const events = [];
+
+  for await (const event of new JsonServerEventsIterator(stream)) {
+    events.push(event);
+  }
+
+  return events;
 }
 
 function testSdkClient(
@@ -1431,6 +1539,7 @@ function testCohereMessageHistorySplitMessage(
   lastHumanMessage: string
 ) {
   expect([
+    CohereChatBotMessage.role,
     OciGenAiCohereSystemMessage.role,
     OciGenAiCohereUserMessage.role,
   ]).toContain(message.role);

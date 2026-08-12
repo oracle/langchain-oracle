@@ -32,7 +32,7 @@
     "format": "prettier --config .prettierrc --write \"src\"",
     "format:check": "prettier --config .prettierrc --check \"src\""
   },
-  "author": "LangChain",
+  "author": "Oracle",
   "license": "MIT",
   "dependencies": {
     "oci-common": "^2.107.2",

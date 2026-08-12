@@ -3,12 +3,11 @@ import { ChatGenerationChunk } from "@langchain/core/outputs";
 import { SimpleChatModel } from "@langchain/core/language_models/chat_models";
 import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 
-import { models, type requests, type responses } from "oci-generativeaiinference";
-
-const { DedicatedServingMode, OnDemandServingMode } = models;
-type DedicatedServingMode = models.DedicatedServingMode;
-type OnDemandServingMode = models.OnDemandServingMode;
-
+import {
+  models,
+  type requests,
+  type responses,
+} from "oci-generativeaiinference";
 import type {
   OciGenAiChatCallResponseType,
   OciGenAiModelBaseParams,
@@ -20,10 +19,22 @@ import type {
 import { OciGenAiSdkClient } from "./oci_genai_sdk_client.js";
 import { JsonServerEventsIterator } from "./server_events_iterator.js";
 
+const { DedicatedServingMode, OnDemandServingMode } = models;
+type DedicatedServingMode = models.DedicatedServingMode;
+type OnDemandServingMode = models.OnDemandServingMode;
+
+export interface OciGenAiStreamChunk {
+  text?: string;
+  finishReason?: string;
+}
+
 export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
   OciGenAiModelCallOptions<RequestType>
 > {
   _sdkClient: OciGenAiSdkClient | undefined;
+
+  // A caller-injected SDK client remains caller-owned and must not be closed.
+  _ownsSdkClient = false;
 
   _params: Partial<OciGenAiModelBaseParams>;
 
@@ -42,7 +53,9 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     response: OciGenAiSupportedResponseType | undefined
   ): string;
 
-  abstract _parseStreamedResponseChunk(chunk: unknown): string | undefined;
+  abstract _parseStreamedResponseChunk(
+    chunk: unknown
+  ): OciGenAiStreamChunk | undefined;
 
   async _call(
     messages: BaseMessage[],
@@ -81,15 +94,18 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     responseChunkData: unknown,
     runManager?: CallbackManagerForLLMRun
   ): AsyncGenerator<ChatGenerationChunk> {
-    const text: string | undefined =
-      this._parseStreamedResponseChunk(responseChunkData);
+    const parsedChunk = this._parseStreamedResponseChunk(responseChunkData);
 
-    if (text === undefined) {
+    if (parsedChunk === undefined) {
       return;
     }
 
-    yield this._createStreamResponse(text);
-    await runManager?.handleLLMNewToken(text);
+    const text = parsedChunk.text ?? "";
+    // Preserve OCI terminal state even when its final SSE event has no text.
+    yield this._createStreamResponse(text, parsedChunk.finishReason);
+    if (text) {
+      await runManager?.handleLLMNewToken(text);
+    }
   }
 
   async _makeRequest<ResponseType>(
@@ -103,7 +119,7 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
       stream
     );
     await this._setupClient();
-    return <ResponseType> await this._chat(request);
+    return (await this._chat(request)) as ResponseType;
   }
 
   async _setupClient() {
@@ -112,11 +128,25 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     }
 
     this._sdkClient = await OciGenAiSdkClient.create(this._params);
+    this._ownsSdkClient = !this._params.client;
   }
 
-  _createStreamResponse(text: string) {
+  async close(): Promise<void> {
+    if (this._sdkClient && this._ownsSdkClient) {
+      this._sdkClient.close();
+      this._sdkClient = undefined;
+      this._ownsSdkClient = false;
+    }
+  }
+
+  _createStreamResponse(text: string, finishReason?: string) {
     return new ChatGenerationChunk({
-      message: new AIMessageChunk({ content: text }),
+      message: new AIMessageChunk({
+        content: text,
+        response_metadata: finishReason
+          ? { finish_reason: finishReason }
+          : undefined,
+      }),
       text,
     });
   }
@@ -136,10 +166,34 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     }
 
     for (const message of messages) {
-      if (typeof message.content !== "string") {
-        throw new Error("Only text messages are supported");
+      OciGenAiBaseChat._contentToText(message.content);
+    }
+  }
+
+  static _contentToText(content: BaseMessage["content"]): string {
+    if (typeof content === "string") {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      // LangChain v1 messages may represent text as content blocks. Ignore
+      // non-text blocks rather than serializing provider-specific objects.
+      const textBlocks = content.filter(
+        (block): block is { type: "text"; text: string } =>
+          typeof block === "object" &&
+          block !== null &&
+          "type" in block &&
+          block.type === "text" &&
+          "text" in block &&
+          typeof block.text === "string"
+      );
+
+      if (textBlocks.length > 0) {
+        return textBlocks.map((block) => block.text).join("");
       }
     }
+
+    throw new Error("Unsupported message content");
   }
 
   async _chat(
@@ -161,9 +215,8 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
       throw new Error("OCI SDK client not initialized");
     }
 
-    const fullChatRequest: requests.ChatRequest = this._composeFullRequest(
-      chatRequest
-    );
+    const fullChatRequest: requests.ChatRequest =
+      this._composeFullRequest(chatRequest);
     return await this._sdkClient.client.chat(fullChatRequest);
   }
 
@@ -212,12 +265,18 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
   }
 
   _assertServingMode() {
-    if (
-      !OciGenAiBaseChat._isValidString(this._params.onDemandModelId) &&
-      !OciGenAiBaseChat._isValidString(this._params.dedicatedEndpointId)
-    ) {
+    const hasModelId = OciGenAiBaseChat._isValidString(
+      this._params.onDemandModelId
+    );
+    const hasEndpointId = OciGenAiBaseChat._isValidString(
+      this._params.dedicatedEndpointId
+    );
+
+    // OCI accepts one serving target per request; choosing one when both are
+    // supplied would silently send a request to the wrong target.
+    if (hasModelId === hasEndpointId) {
       throw new Error(
-        "Either onDemandModelId or dedicatedEndpointId must be supplied"
+        "Exactly one of onDemandModelId or dedicatedEndpointId must be supplied"
       );
     }
   }
@@ -227,6 +286,6 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
   }
 
   _llmType() {
-    return "custom";
+    return "oci_genai";
   }
 }

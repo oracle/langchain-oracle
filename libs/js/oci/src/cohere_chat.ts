@@ -2,7 +2,7 @@ import { models } from "oci-generativeaiinference";
 
 import { BaseMessage } from "@langchain/core/messages";
 import { LangSmithParams } from "@langchain/core/language_models/chat_models";
-import { OciGenAiBaseChat } from "./chat_models.js";
+import { OciGenAiBaseChat, type OciGenAiStreamChunk } from "./chat_models.js";
 
 const {
   CohereChatBotMessage,
@@ -59,37 +59,33 @@ export class OciGenAiCohereChat extends OciGenAiBaseChat<CohereCallOptions> {
     return response.text;
   }
 
-  override _parseStreamedResponseChunk(chunk: unknown): string {
+  override _parseStreamedResponseChunk(chunk: unknown): OciGenAiStreamChunk {
     if (OciGenAiCohereChat._isCohereChunkData(chunk)) {
-      return chunk.text;
+      return { text: chunk.text };
     }
 
     throw new Error("Invalid streamed response chunk data");
   }
 
   static _splitMessageAndHistory(messages: BaseMessage[]): HistoryMessageInfo {
-    const chatHistory: CohereMessage[] = [];
-    let lastUserMessage = "";
-    let lastUserMessageIndex = -1;
-
-    for (let i = 0; i < messages.length; i += 1) {
-      const cohereMessage: CohereMessage =
-        this._convertBaseMessageToCohereMessage(messages[i]);
-      chatHistory.push(cohereMessage);
-
-      if (cohereMessage.role === CohereUserMessage.role) {
-        lastUserMessage = (<CohereUserMessage>cohereMessage).message;
-        lastUserMessageIndex = i;
-      }
+    const currentMessage = messages.at(-1);
+    // Cohere V1 separates the current user input from ordered chat history.
+    // Promoting an earlier user turn would reorder later assistant/system turns.
+    if (!currentMessage || currentMessage.getType() !== "human") {
+      throw new Error(
+        "Cohere chat requires the final message to be a human message"
+      );
     }
 
-    if (lastUserMessageIndex !== -1) {
-      chatHistory.splice(lastUserMessageIndex, 1);
-    }
+    const cohereCurrentMessage = this._convertBaseMessageToCohereMessage(
+      currentMessage
+    ) as CohereUserMessage;
 
     return {
-      chatHistory,
-      message: lastUserMessage,
+      chatHistory: messages
+        .slice(0, -1)
+        .map(this._convertBaseMessageToCohereMessage),
+      message: cohereCurrentMessage.message,
     };
   }
 
@@ -97,7 +93,7 @@ export class OciGenAiCohereChat extends OciGenAiBaseChat<CohereCallOptions> {
     baseMessage: BaseMessage
   ): CohereMessage {
     const messageType: string = baseMessage.getType();
-    const message: string = baseMessage.content as string;
+    const message = OciGenAiBaseChat._contentToText(baseMessage.content);
 
     switch (messageType) {
       case "ai":

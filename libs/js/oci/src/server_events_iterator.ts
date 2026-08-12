@@ -3,9 +3,6 @@ import { IterableReadableStream } from "@langchain/core/utils/stream";
 export class JsonServerEventsIterator {
   static readonly _DATA_PREFIX: string = "data: ";
 
-  static readonly _DATA_PREFIX_LENGTH =
-    JsonServerEventsIterator._DATA_PREFIX.length;
-
   _eventsStream: IterableReadableStream<Uint8Array>;
 
   _textDecoder: TextDecoder = new TextDecoder();
@@ -19,40 +16,87 @@ export class JsonServerEventsIterator {
 
   async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
     for await (const eventRawData of this._eventsStream) {
-      this._textBuffer += this._textDecoder.decode(eventRawData);
+      // A network chunk is not an SSE message boundary. Streaming decoding also
+      // retains incomplete UTF-8 sequences (for example, a split emoji).
+      this._textBuffer += this._textDecoder.decode(eventRawData, {
+        stream: true,
+      });
+      yield* this._parseAvailableMessages();
+    }
 
-      if (this._completeMessageReceived()) {
-        yield this._parseMessage();
-        this._textBuffer = "";
+    // Flush a final buffered UTF-8 sequence before parsing the remaining data.
+    this._textBuffer += this._textDecoder.decode();
+    yield* this._parseAvailableMessages();
+
+    if (this._textBuffer.trim() !== "") {
+      throw new Error("Incomplete server-sent event at end of stream");
+    }
+  }
+
+  private *_parseAvailableMessages(): Generator<unknown> {
+    while (true) {
+      // Consume every complete event while retaining a trailing partial event
+      // for the next transport chunk.
+      const delimiterIndex = this._findEventDelimiter();
+      if (delimiterIndex === -1) {
+        return;
+      }
+
+      const delimiterLength = this._getDelimiterLength(delimiterIndex);
+      const eventText = this._textBuffer.slice(0, delimiterIndex);
+      this._textBuffer = this._textBuffer.slice(
+        delimiterIndex + delimiterLength
+      );
+
+      if (eventText.trim() !== "") {
+        yield this._parseMessage(eventText);
       }
     }
   }
 
-  _completeMessageReceived(): boolean {
-    return this._textBuffer.endsWith("\n\n");
+  private _findEventDelimiter(): number {
+    const lfIndex = this._textBuffer.indexOf("\n\n");
+    const crlfIndex = this._textBuffer.indexOf("\r\n\r\n");
+
+    if (lfIndex === -1) {
+      return crlfIndex;
+    }
+    if (crlfIndex === -1) {
+      return lfIndex;
+    }
+    return Math.min(lfIndex, crlfIndex);
   }
 
-  _parseMessage(): unknown {
-    this._assertDataMessage();
-    const justJsonText: string = this._textBuffer.substring(
-      JsonServerEventsIterator._DATA_PREFIX_LENGTH
-    );
-    return this._tryParseTextToJson(justJsonText);
+  private _getDelimiterLength(index: number): number {
+    return this._textBuffer.startsWith("\r\n\r\n", index) ? 4 : 2;
   }
 
-  _assertDataMessage() {
-    if (!this._textBuffer.startsWith(JsonServerEventsIterator._DATA_PREFIX)) {
+  private _parseMessage(eventText: string): unknown {
+    // SSE permits multiple data lines; join them according to the SSE format
+    // before treating their contents as the OCI JSON payload.
+    const dataLines = eventText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith(JsonServerEventsIterator._DATA_PREFIX));
+
+    if (dataLines.length === 0) {
       throw new Error("Event text is empty, too short or malformed");
     }
+
+    const jsonText = dataLines
+      .map((line) =>
+        line.substring(JsonServerEventsIterator._DATA_PREFIX.length)
+      )
+      .join("\n");
+    return this._tryParseTextToJson(jsonText);
   }
 
-  _tryParseTextToJson(jsonText: string): unknown {
+  private _tryParseTextToJson(jsonText: string): unknown {
     const parsedJson: unknown = this._parseTextToJson(jsonText);
     this._assertParsedJson(parsedJson);
     return parsedJson;
   }
 
-  _parseTextToJson(jsonText: string) {
+  private _parseTextToJson(jsonText: string): unknown {
     try {
       return JSON.parse(jsonText);
     } catch {
@@ -60,7 +104,7 @@ export class JsonServerEventsIterator {
     }
   }
 
-  _assertParsedJson(parsedJson: unknown) {
+  private _assertParsedJson(parsedJson: unknown): asserts parsedJson is object {
     if (typeof parsedJson !== "object" || parsedJson === null) {
       throw new Error("Event data could not be parsed into an object");
     }

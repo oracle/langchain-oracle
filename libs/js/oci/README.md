@@ -89,7 +89,9 @@ model IDs before running them:
 
 ```bash
 export OCI_GENAI_INTEGRATION_TESTS_COMPARTMENT_ID='<compartment-ocid>'
-export OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID='cohere.command-r-plus-08-2024'
+# OciGenAiCohereChat uses the legacy COHERE (V1) API format. Set this only
+# when testing a legacy Cohere V1 model or compatible dedicated endpoint.
+export OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID='<legacy-cohere-v1-model-id>'
 export OCI_GENAI_INTEGRATION_TESTS_GENERIC_ON_DEMAND_MODEL_ID='meta.llama-3.3-70b-instruct'
 pnpm test:int
 ```
@@ -98,14 +100,22 @@ Use model IDs available to your tenancy and region. To use a non-default OCI
 profile or authentication method, pass `newClientParams` when constructing the
 chat model, as shown below.
 
+`OciGenAiNewClientAuthType` supports configuration-file, instance-principal,
+resource-principal, and session authentication, as well as a caller-provided
+OCI authentication provider. Resource Principal authentication is intended for
+OCI Functions and Data Science environments, where the SDK reads credentials
+from the runtime environment.
+
 ## Instantiation
 
 The OCI Generative AI service supports two groups of LLMs: 1. Cohere
 family of LLMs. 2. Generic family of LLMs which include model such as
 Llama.
 
-The following code demonstrates how to create an instance for each of
-the families. The only mandatory two parameters are: 1.
+The following code demonstrates how to create an instance for the generic
+family. `OciGenAiCohereChat` uses OCI's legacy COHERE (V1) API format; current
+Cohere models require V2 support and are not yet supported by this package. The
+only mandatory two parameters are: 1.
 `compartmentId` - A compartment OCID in which the user you are using for
 authentication was granted permissions to access the Generative AI
 service. 2. `onDemandModelId` or `dedicatedEndpointId` - Either a
@@ -129,13 +139,7 @@ set to `us-chicago-1`. Please make sure that your tenancy is registered
 this region.
 
 ```ts
-import { OciGenAiCohereChat, OciGenAiGenericChat } from "@oracle/langchain-oci";
-
-const cohereLlm = new OciGenAiCohereChat({
-  compartmentId: "oci.compartment...",
-  onDemandModelId: "cohere.command-r-plus-08-2024",
-  // dedicatedEndpointId: "oci.dedicatedendpoint..."
-});
+import { OciGenAiGenericChat } from "@oracle/langchain-oci";
 
 const genericLlm = new OciGenAiGenericChat({
   compartmentId: "oci.compartment...",
@@ -148,8 +152,7 @@ const genericLlm = new OciGenAiGenericChat({
 
 The above example used default values to create the SDK client behind
 the scenes. If you need more control in the creation of the client, here
-are additional options (the options are the same for
-`OciGenAiCohereChat` and `OciGenAiGenericChat`).
+are additional options for `OciGenAiGenericChat`.
 
 The first example will create an SDK client with the following
 configuration: 1. [Instance Principal
@@ -161,13 +164,13 @@ API calls fail.
 ```ts
 import { MaxAttemptsTerminationStrategy, Region } from "oci-common";
 import {
-  OciGenAiCohereChat,
+  OciGenAiGenericChat,
   OciGenAiNewClientAuthType,
 } from "@oracle/langchain-oci";
 
-const cohereLlm = new OciGenAiCohereChat({
+const genericLlm = new OciGenAiGenericChat({
   compartmentId: "oci.compartment...",
-  onDemandModelId: "cohere.command-r-plus-08-2024",
+  onDemandModelId: "meta.llama-3.3-70b-instruct",
   newClientParams: {
     authType: OciGenAiNewClientAuthType.InstancePrincipal,
     regionId: Region.SA_SAOPAULO_1.regionId,
@@ -190,11 +193,11 @@ was not successful, the request will fail. 1. The region will be set to
 region.
 
 ```ts
-import { OciGenAiCohereChat, OciGenAiNewClientAuthType } from "@oracle/langchain-oci";
+import { OciGenAiGenericChat, OciGenAiNewClientAuthType } from "@oracle/langchain-oci";
 
-const cohereLlm = new OciGenAiCohereChat({
+const genericLlm = new OciGenAiGenericChat({
   compartmentId: "oci.compartment...",
-  onDemandModelId: "cohere.command-r-plus-08-2024",
+  onDemandModelId: "meta.llama-3.3-70b-instruct",
   newClientParams: {
     authType: OciGenAiNewClientAuthType.ConfigFile,
     authParams: {
@@ -206,7 +209,7 @@ const cohereLlm = new OciGenAiCohereChat({
 ```
 
 The third example will create an SDK client with the following
-configuration: 1. Config file authentication. 1. Use [Resource
+configuration: 1. Use [Resource
 Principal](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/sdk_authentication_methods.htm#sdk_authentication_methods_resource_principal)
 authentication. 1. The retry strategy will be set to a single attempt.
 If the first API call was not successful, the request will fail. 1. The
@@ -214,21 +217,16 @@ region will be set to `us-chicago-1`. Please make sure that your tenancy
 is registered this region.
 
 ```ts
-import { ResourcePrincipalAuthenticationDetailsProvider } from "oci-common";
 import {
-  OciGenAiCohereChat,
+  OciGenAiGenericChat,
   OciGenAiNewClientAuthType,
 } from "@oracle/langchain-oci";
 
-const cohereLlm = new OciGenAiCohereChat({
+const genericLlm = new OciGenAiGenericChat({
   compartmentId: "oci.compartment...",
-  onDemandModelId: "cohere.command-r-plus-08-2024",
+  onDemandModelId: "meta.llama-3.3-70b-instruct",
   newClientParams: {
-    authType: OciGenAiNewClientAuthType.Other,
-    authParams: {
-      authenticationDetailsProvider:
-        ResourcePrincipalAuthenticationDetailsProvider.builder(),
-    },
+    authType: OciGenAiNewClientAuthType.ResourcePrincipal,
   },
 });
 ```
@@ -241,23 +239,23 @@ specific needs:
 ```ts
 import { ConfigFileAuthenticationDetailsProvider } from "oci-common";
 import { GenerativeAiInferenceClient } from "oci-generativeaiinference";
-import { OciGenAiCohereChat } from "@oracle/langchain-oci";
+import { OciGenAiGenericChat } from "@oracle/langchain-oci";
 
 const client = new GenerativeAiInferenceClient({
   authenticationDetailsProvider: new ConfigFileAuthenticationDetailsProvider(),
 });
 
-const cohereLlm = new OciGenAiCohereChat({
+const genericLlm = new OciGenAiGenericChat({
   compartmentId: "oci.compartment...",
-  onDemandModelId: "cohere.command-r-plus-08-2024",
+  onDemandModelId: "meta.llama-3.3-70b-instruct",
   client,
 });
 ```
 
 ## Invocation
 
-In this example, we make a simple call to the OCI Generative AI service
-while leveraging the power of the `cohere.command-r-plus-08-2024` model.
+In this example, we make a simple call to the OCI Generative AI service using a
+generic model.
 Please note that you can pass additional request parameters under the
 `requestParams` key as shown in the `invoke` call below. For more
 information please see the [Cohere request
@@ -269,23 +267,13 @@ parameters](https://docs.oracle.com/en-us/iaas/api/#/en/generative-ai-inference/
 (the `apiFormat`, `isStream`, `messages` & `stop` parameters are
 automatically generated or inferred from the call context).
 
-If you wish to specify the chat history for a Cohere request, the list
-of messages passed into the request will be analyzed and split into the
-current message and history messages. The last `Human` message sent in
-the list (regardless of it’s position in the list) will be considered as
-the `message` parameter for the request and the rest of the messages
-will be added to the `chatHistory` parameter. If there are more than one
-`Human` messages, the very last one will be considered as the `message`
-to be sent to the LLM in the current request and the other will be
-appended to the `chatHistory`.
-
 ```ts
-import { OciGenAiCohereChat } from "@oracle/langchain-oci";
+import { OciGenAiGenericChat } from "@oracle/langchain-oci";
 
 (async () => {
-  const llm = new OciGenAiCohereChat({
+  const llm = new OciGenAiGenericChat({
     compartmentId: "oci.compartment...",
-    onDemandModelId: "cohere.command-r-plus-08-2024",
+    onDemandModelId: "meta.llama-3.3-70b-instruct",
   });
 
   const result = await llm.invoke("Tell me a joke about beagles", {
