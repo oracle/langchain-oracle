@@ -273,4 +273,159 @@ class OracleSemanticCache(BaseCache):
         return _quote_indentifier(self._table_name)
 
 
-__all__ = ["OracleSemanticCache"]
+DEFAULT_EXACT_TABLE_NAME = "langchain_exact_cache"
+
+
+class OracleCache(BaseCache):
+    """Exact-match LLM cache backed by a plain Oracle Database table.
+
+    Entries are keyed by ``sha256(prompt + llm_string)``, so lookups are a
+    single primary-key ``SELECT`` — no embedding call per lookup and no
+    false-positive risk. Use it as the cheap deterministic first tier in
+    front of (or instead of) :class:`OracleSemanticCache`.
+
+    Example:
+        .. code-block:: python
+
+            import oracledb
+            from langchain_core.globals import set_llm_cache
+            from langchain_oracledb import OracleCache
+
+            connection = oracledb.connect(user=..., password=..., dsn=...)
+            set_llm_cache(OracleCache(connection))
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        table_name: str = DEFAULT_EXACT_TABLE_NAME,
+    ) -> None:
+        """Initialize the Oracle exact-match cache.
+
+        Args:
+            client: ``oracledb.Connection`` or ``oracledb.ConnectionPool``.
+            table_name: Table used to store cache entries. Defaults to
+                ``langchain_exact_cache``. Created on init if missing.
+        """
+        if client is None:
+            raise ValueError("client must be provided")
+
+        _validate_indentifier(table_name)
+        self._client = client
+        self._table_name = table_name
+        self._ensure_table()
+
+    def _ensure_table(self) -> None:
+        ddl = f"""
+            CREATE TABLE IF NOT EXISTS {self._quoted_table_name} (
+                id VARCHAR2(64) PRIMARY KEY,
+                prompt_hash VARCHAR2(64) NOT NULL,
+                llm_string_hash VARCHAR2(64) NOT NULL,
+                generations CLOB NOT NULL,
+                created_at TIMESTAMP DEFAULT SYSTIMESTAMP
+            )
+        """
+        with _get_connection(self._client) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(ddl)
+            connection.commit()
+
+    def lookup(self, prompt: str, llm_string: str) -> Optional[RETURN_VAL_TYPE]:
+        """Look up the cached response for an exact prompt and llm string."""
+        query = f"SELECT generations FROM {self._quoted_table_name} WHERE id = :id"
+        with _get_connection(self._client) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, {"id": _cache_entry_id(prompt, llm_string)})
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        blob = row[0]
+        generations_str = blob.read() if hasattr(blob, "read") else blob
+        generations = _loads_generations(generations_str)
+        if generations is not None:
+            _reset_generation_ids(generations)
+        return generations
+
+    def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:
+        """Insert or update a cache entry (idempotent MERGE on the hashed id).
+
+        Generations whose message carries ``tool_calls`` are intentionally
+        **not** cached, for the same reason as :class:`OracleSemanticCache`:
+        replaying procedural tool-call responses collapses agent state.
+        """
+        if _has_tool_calls(return_val):
+            return
+
+        merge = f"""
+            MERGE INTO {self._quoted_table_name} t
+            USING (SELECT :id AS id FROM dual) s
+            ON (t.id = s.id)
+            WHEN MATCHED THEN UPDATE SET
+                t.generations = :generations,
+                t.created_at = SYSTIMESTAMP
+            WHEN NOT MATCHED THEN INSERT
+                (id, prompt_hash, llm_string_hash, generations)
+                VALUES (:id, :prompt_hash, :llm_string_hash, :generations)
+        """
+        bind_vars = {
+            "id": _cache_entry_id(prompt, llm_string),
+            "prompt_hash": _hash_value(prompt),
+            "llm_string_hash": _hash_value(llm_string),
+            "generations": _dumps_generations(return_val),
+        }
+        with _get_connection(self._client) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(merge, bind_vars)
+            connection.commit()
+
+    def clear(self, **kwargs: Any) -> None:
+        """Clear cache entries.
+
+        Supported filters:
+            - ``prompt``: delete only entries written for the exact prompt
+            - ``llm_string``: delete only entries written for the exact llm string
+        """
+        prompt = kwargs.pop("prompt", None)
+        llm_string = kwargs.pop("llm_string", None)
+        if kwargs:
+            unsupported = ", ".join(sorted(kwargs))
+            raise ValueError(f"Unsupported clear filters: {unsupported}")
+
+        query = f"DELETE FROM {self._quoted_table_name}"
+        bind_vars: dict[str, Any] = {}
+        conditions = []
+
+        if prompt is not None:
+            conditions.append("prompt_hash = :prompt_hash")
+            bind_vars["prompt_hash"] = _hash_value(prompt)
+
+        if llm_string is not None:
+            conditions.append("llm_string_hash = :llm_hash")
+            bind_vars["llm_hash"] = _hash_value(llm_string)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        with _get_connection(self._client) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, bind_vars)
+            connection.commit()
+
+    @staticmethod
+    def drop_table(client: Any, table_name: str = DEFAULT_EXACT_TABLE_NAME) -> None:
+        """Drop the exact cache table.
+
+        Args:
+            client: ``oracledb.Connection`` or ``oracledb.ConnectionPool``.
+            table_name: Table to drop. Defaults to ``langchain_exact_cache``.
+        """
+        drop_table_purge(client, table_name)
+
+    @property
+    def _quoted_table_name(self) -> str:
+        return _quote_indentifier(self._table_name)
+
+
+__all__ = ["OracleCache", "OracleSemanticCache"]
