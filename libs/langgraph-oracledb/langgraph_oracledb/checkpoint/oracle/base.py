@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from collections.abc import Sequence
 from decimal import Decimal
@@ -462,7 +463,9 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
             # metadata {"nested": {"a": 1, "b": {"c": True}}}. Each dict is
             # flattened into per-leaf JSON-path predicates, matching the
             # LangGraph.js Oracle saver and PostgresSaver (`metadata @> filter`).
-            # Lists keep JSON_EQUAL exact-match (positional) semantics.
+            # Lists also use containment (issue #296): the stored value must be
+            # an array containing every filter element, regardless of order or
+            # duplicates, with dict/array elements matched recursively.
             filter_conditions = []
             param_counter = 0
 
@@ -471,6 +474,72 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                 name = f"filter_key_{param_counter}"
                 param_counter += 1
                 return name
+
+            def _bound_path_variable(value: Any, passing: list[str]) -> str:
+                """Bind a value for use as a JSON path variable ($NAME)."""
+                param_name = _next_param()
+                variable = param_name.upper()
+                passing.append(f':{param_name} AS "{variable}"')
+                param_values[param_name] = value
+                return f"${variable}"
+
+            def _is_object_predicate(subject: str) -> str:
+                return " && ".join(
+                    f'!({subject}.type() == "{scalar}")'
+                    for scalar in ("array", "string", "number", "boolean", "null")
+                )
+
+            def _element_predicate(subject: str, value: Any, passing: list[str]) -> str:
+                """JSON-path predicate matching one array element by containment.
+
+                Mirrors the LangGraph.js Oracle saver's filter compiler so both
+                languages match the same rows: scalars compare by type and
+                value, dicts by recursive containment, arrays by nested
+                containment. String and numeric values are bound through the
+                PASSING clause; only our own literals reach the path text.
+                """
+                if value is None:
+                    return f'{subject}.type() == "null" && {subject} == null'
+                if isinstance(value, bool):
+                    literal = "true" if value else "false"
+                    return f'{subject}.type() == "boolean" && {subject} == {literal}'
+                if isinstance(value, (int, float)):
+                    if isinstance(value, float) and not math.isfinite(value):
+                        raise ValueError(
+                            "Metadata filter numbers inside lists must be finite."
+                        )
+                    variable = _bound_path_variable(value, passing)
+                    return f'{subject}.type() == "number" && {subject} == {variable}'
+                if isinstance(value, str):
+                    if value == "":
+                        return f'{subject}.type() == "string" && {subject} == ""'
+                    variable = _bound_path_variable(value, passing)
+                    return f'{subject}.type() == "string" && {subject} == {variable}'
+                if isinstance(value, list):
+                    predicates = [f'{subject}.type() == "array"']
+                    predicates.extend(
+                        f"exists({subject}[*]?"
+                        f"({_element_predicate('@', item, passing)}))"
+                        for item in value
+                    )
+                    return " && ".join(predicates)
+                if isinstance(value, dict):
+                    predicates = [] if subject == "@" else [f"exists({subject})"]
+                    predicates.append(_is_object_predicate(subject))
+                    for sub_key, sub_value in value.items():
+                        # SECURITY: member names become part of the JSON path
+                        # expression; validate exactly like top-level keys.
+                        self._validate_json_path_key(sub_key)
+                        predicates.append(
+                            _element_predicate(
+                                f'{subject}."{sub_key}"', sub_value, passing
+                            )
+                        )
+                    return " && ".join(predicates)
+                raise ValueError(
+                    "Metadata filter list elements must be JSON values, got "
+                    f"{type(value).__name__}."
+                )
 
             def _add_leaf_condition(path: str, value: Any) -> None:
                 """Append a predicate comparing one JSON path to a leaf value."""
@@ -497,12 +566,22 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                     )
                     param_values[param_name] = value
                 elif isinstance(value, list):
-                    # Lists keep exact-match semantics (element order matters)
-                    param_name = _next_param()
+                    # Containment: the stored value must be an array holding
+                    # every filter element somewhere (order-insensitive),
+                    # matching the LangGraph.js Oracle saver and PostgresSaver.
                     filter_conditions.append(
-                        f"JSON_EQUAL(JSON_QUERY(metadata, '$.{path}'), :{param_name})"
+                        f"JSON_EXISTS(metadata, '$.{path}?(@.type() == \"array\")')"
                     )
-                    param_values[param_name] = json.dumps(value)
+                    for element in value:
+                        passing: list[str] = []
+                        predicate = _element_predicate("@", element, passing)
+                        passing_sql = (
+                            f" PASSING {', '.join(passing)}" if passing else ""
+                        )
+                        filter_conditions.append(
+                            f"JSON_EXISTS(metadata, "
+                            f"'$.{path}[*]?({predicate})'{passing_sql})"
+                        )
                 else:
                     # For string values, use direct comparison
                     param_name = _next_param()

@@ -3,7 +3,6 @@
 """Oracle checkpoint search WHERE clause parameter coverage."""
 
 import itertools
-import json
 from contextlib import contextmanager
 
 import oracledb
@@ -103,10 +102,10 @@ def generate_parameter_combinations():
         {"mixed": "active", "count": 1, "enabled": False},
         {"complex_dict": {"nested": {"deep": {"value": 123}}}},
         {"dict": {"key": "val"}, "list": [1, 2]},
+        {"list_key": [1, 2, "three"]},
+        {"complex_list": [{"item": 1}, {"item": 2}, [3, 4]]},
         # {"float_key": 3.14},
         # {"bool_false": False},
-        # {"list_key": [1, 2, "three"]},
-        # {"complex_list": [{"item": 1}, {"item": 2}, [3, 4]]},
         # {"empty_string": ""},
         # {"zero_int": 0},
         # {"zero_float": 0.0},
@@ -154,6 +153,19 @@ def _count_leaf_params(value) -> int:
         return 0
     if isinstance(value, dict):
         return sum(_count_leaf_params(v) for v in value.values())
+    if isinstance(value, list):
+        return sum(_count_list_element_params(v) for v in value)
+    return 1
+
+
+def _count_list_element_params(value) -> int:
+    """Bind count for one list element under containment (issue #296)."""
+    if value is None or isinstance(value, bool) or value == "":
+        return 0
+    if isinstance(value, dict):
+        return sum(_count_list_element_params(v) for v in value.values())
+    if isinstance(value, list):
+        return sum(_count_list_element_params(v) for v in value)
     return 1
 
 
@@ -161,6 +173,19 @@ def _expected_filter_param_count(filter_dict) -> int:
     if not filter_dict:
         return 0
     return sum(_count_leaf_params(value) for value in filter_dict.values())
+
+
+def _assert_list_containment(where_clause, param_values, path, value) -> None:
+    """Assert containment predicates for list filter values (issue #296)."""
+    assert f"JSON_EXISTS(metadata, '$.{path}?(@.type() == \"array\")')" in where_clause
+    if value:
+        assert f"'$.{path}[*]?(" in where_clause
+    for element in value:
+        if isinstance(element, (dict, list)):
+            continue  # nested elements are covered by their bound leaf params
+        if element is None or isinstance(element, bool) or element == "":
+            continue  # rendered as path literals, not binds
+        assert element in param_values.values()
 
 
 def _assert_containment_paths(where_clause, param_values, path, value) -> None:
@@ -186,8 +211,7 @@ def _assert_containment_paths(where_clause, param_values, path, value) -> None:
             )
             assert sub_value in param_values.values()
         elif isinstance(sub_value, list):
-            assert f"JSON_EQUAL(JSON_QUERY(metadata, '$.{sub_path}')" in where_clause
-            assert json.dumps(sub_value) in param_values.values()
+            _assert_list_containment(where_clause, param_values, sub_path, sub_value)
         else:
             assert f"JSON_VALUE(metadata, '$.{sub_path}') =" in where_clause
             assert sub_value in param_values.values()
@@ -233,8 +257,7 @@ def _assert_search_where_shape(saver, config, filter_dict, before) -> None:
                 bool_str = "true" if value else "false"
                 assert f"JSON_VALUE(metadata, '$.{key}') = '{bool_str}'" in where_clause
             elif isinstance(value, list):
-                assert f"JSON_EQUAL(JSON_QUERY(metadata, '$.{key}')" in where_clause
-                assert json.dumps(value) in param_values.values()
+                _assert_list_containment(where_clause, param_values, key, value)
             elif isinstance(value, dict):
                 # dict filters match by containment: flattened per-leaf paths
                 _assert_containment_paths(where_clause, param_values, key, value)
