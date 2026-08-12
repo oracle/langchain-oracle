@@ -605,8 +605,15 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         return signer
 
     def _call_responses_api(self, request_details: Any, stream: bool = False) -> Any:
-        """Call OCI Responses REST API endpoint (/v1/responses) directly via HTTP."""
-        import requests
+        """Call OCI Responses REST API endpoint (/v1/responses) directly via HTTP.
+
+        Builds an OpenAI Responses-compatible payload:
+        - ``input`` (not ``messages``)
+        - ``max_output_tokens`` (not ``max_tokens``)
+        - ``compartment_id`` / ``top_k`` stay out of the body; the compartment
+          is conveyed only via the ``opc-compartment-id`` header.
+        """
+        import requests as _requests
 
         endpoint = (
             self.service_endpoint
@@ -627,30 +634,39 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             "model": self.model_id,
             "stream": stream,
         }
-        if self.compartment_id:
-            payload["compartment_id"] = self.compartment_id
 
         if chat_req:
+            # Build ``input`` (OpenAI Responses schema) from SDK messages.
             if hasattr(chat_req, "messages") and chat_req.messages:
-                formatted_msgs = []
+                formatted_input: List[Dict[str, Any]] = []
                 for msg in chat_req.messages:
                     role = getattr(msg, "role", "user")
                     content = getattr(msg, "content", "")
-                    formatted_msgs.append({"role": role, "content": content})
-                payload["messages"] = formatted_msgs
-            for attr in [
-                "max_tokens",
-                "temperature",
-                "top_p",
-                "top_k",
-                "frequency_penalty",
-                "presence_penalty",
-            ]:
-                val = getattr(chat_req, attr, None)
-                if val is not None:
-                    payload[attr] = val
+                    # Flatten content list to plain string when possible.
+                    if isinstance(content, list):
+                        content = "".join(
+                            part.get("text", "")
+                            if isinstance(part, dict)
+                            else str(part)
+                            for part in content
+                        )
+                    formatted_input.append({"role": str(role), "content": content})
+                payload["input"] = formatted_input
 
-        res = requests.post(
+            # Map max_tokens -> max_output_tokens; skip top_k / compartment_id.
+            _param_map = {
+                "max_tokens": "max_output_tokens",
+                "temperature": "temperature",
+                "top_p": "top_p",
+                "frequency_penalty": "frequency_penalty",
+                "presence_penalty": "presence_penalty",
+            }
+            for sdk_attr, api_key in _param_map.items():
+                val = getattr(chat_req, sdk_attr, None)
+                if val is not None:
+                    payload[api_key] = val
+
+        res = _requests.post(
             url,
             json=payload,
             headers=headers,
@@ -665,64 +681,144 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         else:
             return self._process_responses_api_response(res.json(), res.headers)
 
+    @staticmethod
+    def _extract_responses_api_text(data_dict: Dict[str, Any]) -> str:
+        """Extract the assistant text from an OpenAI Responses API JSON body.
+
+        The actual schema nests text at::
+
+            output[].content[].text   (where content[].type == "output_text")
+        """
+        texts: List[str] = []
+        for item in data_dict.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for part in item.get("content", []):
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "output_text"
+                    and "text" in part
+                ):
+                    texts.append(part["text"])
+        return "".join(texts)
+
     def _process_responses_api_response(
         self, data_dict: Dict[str, Any], headers: Any
     ) -> Any:
-        """Wrap REST API response JSON into an OCI-compatible response object."""
-        from unittest.mock import MagicMock
+        """Wrap REST API response JSON into an OCI-compatible response object.
+
+        Uses ``types.SimpleNamespace`` instead of ``unittest.mock.MagicMock``
+        so attribute access is explicit and missing fields raise
+        ``AttributeError`` immediately (instead of silently returning new mocks).
+        """
+        from types import SimpleNamespace
 
         model_id = data_dict.get("model", self.model_id or "")
         model_version = data_dict.get("model_version", "1.0")
 
-        raw_choices = data_dict.get("choices", [])
-        if not raw_choices and "output_text" in data_dict:
-            raw_choices = [{"message": {"content": data_dict["output_text"]}}]
-        elif not raw_choices and "output" in data_dict:
-            raw_choices = data_dict["output"]
+        # --- extract text from the Responses schema ---
+        content_text = self._extract_responses_api_text(data_dict)
 
-        choices = []
-        for c in raw_choices:
-            msg_data = (
-                c.get("message", {})
-                if isinstance(c, dict)
-                else getattr(c, "message", {})
-            )
-            content_val = (
-                msg_data.get("content", "")
-                if isinstance(msg_data, dict)
-                else str(msg_data)
-            )
+        # Build an object graph compatible with GenericProvider expectations:
+        #   response.data.chat_response.choices[0].message.content[0].text
+        part = SimpleNamespace(text=content_text)
+        msg_obj = SimpleNamespace(content=[part])
+        choice_obj = SimpleNamespace(message=msg_obj)
 
-            part = MagicMock()
-            part.text = content_val
-
-            msg_obj = MagicMock()
-            msg_obj.content = [part] if isinstance(content_val, str) else content_val
-
-            choice_obj = MagicMock()
-            choice_obj.message = msg_obj
-            choices.append(choice_obj)
-
-        chat_response = MagicMock()
-        chat_response.choices = choices
-        if "usage" in data_dict:
-            chat_response.usage = data_dict["usage"]
-
-        response_data = MagicMock()
-        response_data.model_id = model_id
-        response_data.model_version = model_version
-        response_data.chat_response = chat_response
-
-        response_wrapper = MagicMock()
-        response_wrapper.data = response_data
-        response_wrapper.request_id = headers.get(
-            "opc-request-id", headers.get("x-request-id", "req-1")
+        # Usage: Responses API returns input_tokens / output_tokens.
+        raw_usage = data_dict.get("usage", {})
+        usage = SimpleNamespace(
+            input_tokens=raw_usage.get("input_tokens", 0),
+            output_tokens=raw_usage.get("output_tokens", 0),
+            total_tokens=raw_usage.get("total_tokens",
+                                       raw_usage.get("input_tokens", 0)
+                                       + raw_usage.get("output_tokens", 0)),
         )
-        response_wrapper.headers = {
-            "content-length": str(headers.get("content-length", "0"))
-        }
+
+        chat_response = SimpleNamespace(choices=[choice_obj], usage=usage)
+
+        response_data = SimpleNamespace(
+            model_id=model_id,
+            model_version=model_version,
+            chat_response=chat_response,
+        )
+
+        response_wrapper = SimpleNamespace(
+            data=response_data,
+            request_id=headers.get(
+                "opc-request-id", headers.get("x-request-id", "req-1")
+            ),
+            headers={
+                "content-length": str(headers.get("content-length", "0"))
+            },
+        )
 
         return response_wrapper
+
+    def _stream_responses_api(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """Stream via the OCI Responses REST API with SSE parsing.
+
+        The Responses API emits Server-Sent Events with typed event names:
+        - ``response.output_text.delta``  — incremental text tokens
+        - ``response.completed``          — final event with full response
+        - other lifecycle events are acknowledged but not surfaced as chunks.
+        """
+        request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
+        raw_response = self._call_responses_api(request, stream=True)
+
+        event_type: Optional[str] = None
+        for raw_line in raw_response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                # Blank line = end of SSE event frame; reset.
+                event_type = None
+                continue
+
+            if raw_line.startswith("event:"):
+                event_type = raw_line[len("event:"):].strip()
+                continue
+
+            if raw_line.startswith("data:"):
+                data_str = raw_line[len("data:"):].strip()
+                if data_str == "[DONE]":
+                    break
+
+                try:
+                    event_data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                if event_type == "response.output_text.delta":
+                    delta = event_data.get("delta", "")
+                    if delta:
+                        chunk = ChatGenerationChunk(
+                            message=AIMessageChunk(content=delta)
+                        )
+                        if run_manager:
+                            run_manager.on_llm_new_token(delta, chunk=chunk)
+                        yield chunk
+
+                elif event_type == "response.completed":
+                    # Final event carries the full response; extract usage.
+                    resp = event_data.get("response", event_data)
+                    raw_usage = resp.get("usage", {})
+                    generation_info: Dict[str, Any] = {}
+                    if raw_usage:
+                        generation_info["usage"] = raw_usage
+                    generation_info["status"] = resp.get("status", "completed")
+                    generation_info["response_id"] = resp.get("id", "")
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(
+                            content="",
+                            additional_kwargs=generation_info,
+                        ),
+                        generation_info=generation_info,
+                    )
 
     def _stream(
         self,
@@ -736,11 +832,14 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
         Processes each event and yields chunks until the stream ends.
         """
-        request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
         if self.use_responses_api:
-            response = self._call_responses_api(request, stream=True)
-        else:
-            response = self._chat_with_param_retry(request)
+            yield from self._stream_responses_api(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )
+            return
+
+        request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
+        response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
         # Per-stream toolCalls position -> logical index routing map, owned
         # here (not on the shared provider) so concurrent streams on one
