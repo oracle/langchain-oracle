@@ -11,6 +11,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -349,8 +350,29 @@ def _detect_dimensions(config) -> int:
     return config["dims"]
 
 
+def _coerce_decimals(obj: Any) -> Any:
+    """Recursively convert ``decimal.Decimal`` values to ``int``/``float``.
+
+    Oracle's native JSON type deserializes every number as ``Decimal``, which
+    ``json.dumps`` cannot encode. The checkpoint saver has the same helper for
+    the same reason; see ``BaseOracleSaver._coerce_decimals``.
+    """
+    if isinstance(obj, Decimal):
+        return int(obj) if obj == obj.to_integral_value() else float(obj)
+    if isinstance(obj, dict):
+        return {k: _coerce_decimals(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_coerce_decimals(v) for v in obj]
+    return obj
+
+
 def _normalize_existing_index_params(existing_params: Any) -> dict[str, Any]:
-    """Normalize persisted store config params into a plain dict."""
+    """Normalize persisted store config params into a plain dict.
+
+    The result must be JSON-serializable: callers compare configurations by
+    ``json.dumps``-ing this dict, and numbers read back from the ``index_params``
+    JSON column arrive as ``Decimal``.
+    """
     if hasattr(existing_params, "read"):
         existing_params = existing_params.read()
 
@@ -358,7 +380,7 @@ def _normalize_existing_index_params(existing_params: Any) -> dict[str, Any]:
         existing_params = existing_params.decode()
 
     if isinstance(existing_params, Mapping):
-        return dict(existing_params)
+        return _coerce_decimals(dict(existing_params))
 
     if isinstance(existing_params, str):
         try:
@@ -373,7 +395,7 @@ def _normalize_existing_index_params(existing_params: Any) -> dict[str, Any]:
                 "Stored index configuration must decode to a JSON object. "
                 "Use a different table_suffix or drop existing tables."
             )
-        return dict(parsed)
+        return _coerce_decimals(dict(parsed))
 
     raise ValueError(
         "Stored index configuration has an unsupported format. "
