@@ -787,6 +787,11 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
         raw_response = self._call_responses_api(request, stream=True)
 
+        # The service sends ``text/event-stream`` without a charset, so
+        # requests would fall back to ISO-8859-1 and garble multi-byte
+        # UTF-8 characters. SSE is always UTF-8.
+        raw_response.encoding = "utf-8"
+
         event_type: Optional[str] = None
         for raw_line in raw_response.iter_lines(decode_unicode=True):
             if not raw_line:

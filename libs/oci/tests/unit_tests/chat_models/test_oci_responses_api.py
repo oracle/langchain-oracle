@@ -434,6 +434,45 @@ class TestSSEStreaming:
         assert len(chunks) == 1
         assert chunks[0].message.content == "OK"
 
+    def test_stream_decodes_utf8_multibyte(self, chat_model: Any) -> None:
+        """SSE bytes are UTF-8, but the wire content-type carries no charset,
+        so requests defaults to ISO-8859-1 and would garble multi-byte chars.
+
+        Uses a real ``requests.Response`` over raw bytes so the decode path
+        is actually exercised.
+        """
+        import io
+
+        import requests
+
+        text = "café — ☕"
+        payload = {"type": "response.output_text.delta", "delta": text}
+        sse_bytes = (
+            b"data: "
+            + json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            + b"\n\ndata: [DONE]\n\n"
+        )
+
+        fake_response = requests.Response()
+        fake_response.status_code = 200
+        fake_response.headers["content-type"] = "text/event-stream"
+        # What requests infers for text/* without an explicit charset.
+        fake_response.encoding = "ISO-8859-1"
+        fake_response.raw = io.BytesIO(sse_bytes)
+
+        with patch.object(chat_model, "_prepare_request", return_value=MagicMock()):
+            with patch.object(
+                chat_model, "_call_responses_api", return_value=fake_response
+            ):
+                from langchain_core.messages import HumanMessage
+
+                chunks = list(
+                    chat_model._stream_responses_api([HumanMessage(content="test")])
+                )
+
+        assert len(chunks) == 1
+        assert chunks[0].message.content == text
+
 
 # ===================================================================
 # 4. End-to-End invoke() and stream()
