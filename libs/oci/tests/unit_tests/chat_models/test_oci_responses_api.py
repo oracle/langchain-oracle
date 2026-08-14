@@ -17,10 +17,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers — lightweight fakes
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def chat_model() -> Any:
@@ -66,6 +66,7 @@ def _fake_request_details(chat_request: Any) -> SimpleNamespace:
 # 1. Payload construction
 # ===================================================================
 
+
 @pytest.mark.requires("oci")
 class TestPayloadConstruction:
     """Verify ``_call_responses_api`` builds the correct request body."""
@@ -108,7 +109,9 @@ class TestPayloadConstruction:
         # Core assertions
         assert "input" in captured_payload, "Payload must use 'input'"
         assert "messages" not in captured_payload, "Must NOT contain 'messages'"
-        assert "max_output_tokens" in captured_payload, "max_tokens -> max_output_tokens"
+        assert "max_output_tokens" in captured_payload, (
+            "max_tokens -> max_output_tokens"
+        )
         assert "max_tokens" not in captured_payload, "Must NOT send max_tokens"
         assert "top_k" not in captured_payload, "Must NOT send top_k in body"
         assert "compartment_id" not in captured_payload, "Must NOT send compartment_id"
@@ -153,9 +156,10 @@ class TestPayloadConstruction:
 # 2. Response parsing
 # ===================================================================
 
+
 @pytest.mark.requires("oci")
 class TestResponseParsing:
-    """Verify ``_process_responses_api_response`` and ``_extract_responses_api_text``."""
+    """Verify response extraction and wrapper construction."""
 
     def test_extracts_text_from_output_content(self, chat_model: Any) -> None:
         """Text at output[].content[].text where type == 'output_text'."""
@@ -287,6 +291,7 @@ class TestResponseParsing:
 # 3. SSE Streaming
 # ===================================================================
 
+
 @pytest.mark.requires("oci")
 class TestSSEStreaming:
     """Verify ``_stream_responses_api`` parses SSE events correctly."""
@@ -399,3 +404,90 @@ class TestSSEStreaming:
 
         assert len(chunks) == 1
         assert chunks[0].message.content == "OK"
+
+    def test_stream_raw_wire_without_event_header_line(self, chat_model: Any) -> None:
+        """The live endpoint emits SSE lines without preceding event: headers.
+
+        Verify parser extracts type from data JSON directly.
+        """
+        sse_lines = [
+            'data: {"sequence_number":0,"type":"response.created"}',
+            "",
+            'data: {"sequence_number":4,"type":"response.output_text.delta",'
+            '"content_index":0,"delta":"OK"}',
+            "",
+        ]
+
+        fake_response = MagicMock()
+        fake_response.iter_lines.return_value = iter(sse_lines)
+
+        with patch.object(chat_model, "_prepare_request", return_value=MagicMock()):
+            with patch.object(
+                chat_model, "_call_responses_api", return_value=fake_response
+            ):
+                from langchain_core.messages import HumanMessage
+
+                chunks = list(
+                    chat_model._stream_responses_api([HumanMessage(content="test")])
+                )
+
+        assert len(chunks) == 1
+        assert chunks[0].message.content == "OK"
+
+
+# ===================================================================
+# 4. End-to-End invoke() and stream()
+# ===================================================================
+
+
+@pytest.mark.requires("oci")
+class TestEndToEndPublicApi:
+    """Verify end-to-end ``invoke()`` and ``stream()`` calls."""
+
+    def test_invoke_end_to_end(self, chat_model: Any) -> None:
+        """llm.invoke() should return AIMessage with correct content."""
+        fake_res = MagicMock()
+        fake_res.raise_for_status = lambda: None
+        fake_res.json.return_value = {
+            "model": "xai.grok-3",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "OK"}],
+                }
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 1},
+        }
+        fake_res.headers = {"opc-request-id": "req-999", "content-length": "123"}
+
+        with patch.object(chat_model, "_get_oci_signer", return_value=None):
+            with patch("requests.post", return_value=fake_res):
+                res = chat_model.invoke("Reply with exactly: OK")
+
+        assert res.content == "OK"
+
+    def test_stream_end_to_end(self, chat_model: Any) -> None:
+        """llm.stream() should yield AIMessageChunks without errors."""
+        sse_lines = [
+            'data: {"sequence_number":0,"type":"response.created"}',
+            "",
+            'data: {"type":"response.output_text.delta","delta":"1 "}',
+            "",
+            'data: {"type":"response.output_text.delta","delta":"2 "}',
+            "",
+            'data: {"type":"response.output_text.delta","delta":"3"}',
+            "",
+        ]
+        fake_res = MagicMock()
+        fake_res.raise_for_status = lambda: None
+        fake_res.iter_lines.return_value = iter(sse_lines)
+
+        with patch.object(chat_model, "_get_oci_signer", return_value=None):
+            with patch("requests.post", return_value=fake_res):
+                chunks = list(chat_model.stream("Count: 1 2 3"))
+
+        text_chunks = [c for c in chunks if c.content]
+        assert len(text_chunks) == 3
+        text = "".join(c.content for c in chunks)
+        assert text == "1 2 3"

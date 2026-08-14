@@ -640,17 +640,20 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             if hasattr(chat_req, "messages") and chat_req.messages:
                 formatted_input: List[Dict[str, Any]] = []
                 for msg in chat_req.messages:
-                    role = getattr(msg, "role", "user")
+                    role = str(getattr(msg, "role", "user")).lower()
                     content = getattr(msg, "content", "")
-                    # Flatten content list to plain string when possible.
+                    # Flatten content list / SDK objects to plain text.
                     if isinstance(content, list):
-                        content = "".join(
-                            part.get("text", "")
-                            if isinstance(part, dict)
-                            else str(part)
-                            for part in content
-                        )
-                    formatted_input.append({"role": str(role), "content": content})
+                        parts_text: List[str] = []
+                        for part in content:
+                            if isinstance(part, dict):
+                                parts_text.append(part.get("text", ""))
+                            elif isinstance(part, str):
+                                parts_text.append(part)
+                            else:
+                                parts_text.append(getattr(part, "text", str(part)))
+                        content = "".join(parts_text)
+                    formatted_input.append({"role": role, "content": content})
                 payload["input"] = formatted_input
 
             # Map max_tokens -> max_output_tokens; skip top_k / compartment_id.
@@ -721,21 +724,35 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
         # Build an object graph compatible with GenericProvider expectations:
         #   response.data.chat_response.choices[0].message.content[0].text
+        #   response.data.chat_response.choices[0].message.tool_calls
+        #   response.data.chat_response.choices[0].finish_reason
         part = SimpleNamespace(text=content_text)
-        msg_obj = SimpleNamespace(content=[part])
-        choice_obj = SimpleNamespace(message=msg_obj)
+        msg_obj = SimpleNamespace(
+            content=[part],
+            tool_calls=None,
+            reasoning_content=None,
+        )
+        choice_obj = SimpleNamespace(
+            message=msg_obj,
+            finish_reason="stop",
+        )
 
         # Usage: Responses API returns input_tokens / output_tokens.
         raw_usage = data_dict.get("usage", {})
         usage = SimpleNamespace(
             input_tokens=raw_usage.get("input_tokens", 0),
             output_tokens=raw_usage.get("output_tokens", 0),
-            total_tokens=raw_usage.get("total_tokens",
-                                       raw_usage.get("input_tokens", 0)
-                                       + raw_usage.get("output_tokens", 0)),
+            total_tokens=raw_usage.get(
+                "total_tokens",
+                raw_usage.get("input_tokens", 0) + raw_usage.get("output_tokens", 0),
+            ),
         )
 
-        chat_response = SimpleNamespace(choices=[choice_obj], usage=usage)
+        chat_response = SimpleNamespace(
+            choices=[choice_obj],
+            usage=usage,
+            time_created=None,
+        )
 
         response_data = SimpleNamespace(
             model_id=model_id,
@@ -748,9 +765,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             request_id=headers.get(
                 "opc-request-id", headers.get("x-request-id", "req-1")
             ),
-            headers={
-                "content-length": str(headers.get("content-length", "0"))
-            },
+            headers={"content-length": str(headers.get("content-length", "0"))},
         )
 
         return response_wrapper
@@ -780,11 +795,11 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 continue
 
             if raw_line.startswith("event:"):
-                event_type = raw_line[len("event:"):].strip()
+                event_type = raw_line[len("event:") :].strip()
                 continue
 
             if raw_line.startswith("data:"):
-                data_str = raw_line[len("data:"):].strip()
+                data_str = raw_line[len("data:") :].strip()
                 if data_str == "[DONE]":
                     break
 
@@ -793,7 +808,14 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 except json.JSONDecodeError:
                     continue
 
-                if event_type == "response.output_text.delta":
+                # Extract event type from data JSON if present (or fallback
+                # to event_type header line).
+                current_event_type = event_data.get("type", event_type)
+
+                if (
+                    current_event_type == "response.output_text.delta"
+                    or "delta" in event_data
+                ):
                     delta = event_data.get("delta", "")
                     if delta:
                         chunk = ChatGenerationChunk(
@@ -803,7 +825,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                             run_manager.on_llm_new_token(delta, chunk=chunk)
                         yield chunk
 
-                elif event_type == "response.completed":
+                elif current_event_type == "response.completed":
                     # Final event carries the full response; extract usage.
                     resp = event_data.get("response", event_data)
                     raw_usage = resp.get("usage", {})
