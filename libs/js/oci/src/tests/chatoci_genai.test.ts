@@ -54,7 +54,6 @@ type OciGenAiChatConstructor = new (args: any) =>
 
 const invalidServerEvents: string[][] = [
   [{} as string],
-  ["invalid event data", 'data: {"test":5}\n\n'],
   ['{"prop":"val"}\n\n'],
   [""],
   [" "],
@@ -66,7 +65,6 @@ const invalidServerEvents: string[][] = [
   ["data: 5\n\n"],
   ["data: fail\n\n"],
   ['data: "testing 1, 2, 3"\n'],
-  ['data: {"test":5}'],
   ["data: null\n\n"],
   ["data: -345.345345\n\n"],
   ["\u{1F600}e\u0301\n\n"],
@@ -181,6 +179,44 @@ test("JsonServerEventsIterator parses CRLF framing", async () => {
   const events = await collectServerEvents(['data: {"text":"hello"}\r\n\r\n']);
 
   expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator accepts data fields without a space", async () => {
+  const events = await collectServerEvents(['data:{"text":"hello"}\n\n']);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator ignores comments and control-only events", async () => {
+  const events = await collectServerEvents([
+    ": keepalive\n\n",
+    "event: message\nid: 123\nretry: 1000\n\n",
+    'data: {"text":"hello"}\n\n',
+  ]);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator dispatches a final event at end of stream", async () => {
+  const events = await collectServerEvents(['data: {"text":"hello"}']);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator parses CR-only framing", async () => {
+  const events = await collectServerEvents(['data: {"text":"hello"}\r\r']);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator bounds incomplete events", async () => {
+  await expect(
+    collectServerEvents([
+      `data: {"text":"${"x".repeat(
+        JsonServerEventsIterator._MAX_BUFFER_LENGTH
+      )}`,
+    ])
+  ).rejects.toThrow("Server-sent event exceeds maximum buffered size");
 });
 
 /*
@@ -407,23 +443,18 @@ const chatClassReturnValues = [
   },
 ];
 
-test("OCI GenAI chat models invoke with unsupported message", async () => {
-  await testEachChatModelType(
-    async (ChatClassType: OciGenAiChatConstructor) => {
-      const chatClass = new ChatClassType(createParams);
+test("OCI GenAI Cohere chat rejects tool messages", async () => {
+  const chatClass = new OciGenAiCohereChat(createParams);
 
-      await expect(
-        chatClass.invoke([
-          new LangChainToolMessage({
-            content: "tools message",
-            tool_call_id: "tool_id",
-          }),
-          new LangChainHumanMessage("Human message"),
-        ])
-      ).rejects.toThrow("Message type 'tool' is not supported");
-    },
-    chatClassReturnValues
-  );
+  await expect(
+    chatClass.invoke([
+      new LangChainToolMessage({
+        content: "tools message",
+        tool_call_id: "tool_id",
+      }),
+      new LangChainHumanMessage("Human message"),
+    ])
+  ).rejects.toThrow("Message type 'tool' is not supported");
 });
 
 const lastHumanMessage = "Last human message";
@@ -510,6 +541,28 @@ test("OCI GenAI chat create request", async () => {
   );
 });
 
+test("OCI GenAI Generic streaming usage is opt-in", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+  const withoutUsage = chat._createRequest(messages, {}, true);
+  const withUsage = chat._createRequest(
+    messages,
+    { requestParams: { streamOptions: { isIncludeUsage: true } } },
+    true
+  );
+
+  expect(withoutUsage.streamOptions).toBeUndefined();
+  expect(withUsage.streamOptions).toEqual({ isIncludeUsage: true });
+});
+
+test("only Generic chat exposes LangChain tool binding", () => {
+  expect(typeof new OciGenAiGenericChat(createParams).bindTools).toBe(
+    "function"
+  );
+  expect(typeof new OciGenAiCohereChat(createParams).bindTools).toBe(
+    "undefined"
+  );
+});
+
 test("OCI GenAI chat create invalid request messages", async () => {
   await testEachChatModelType(
     async (ChatClassType: OciGenAiChatConstructor) => {
@@ -517,9 +570,17 @@ test("OCI GenAI chat create invalid request messages", async () => {
       expect(() =>
         chatClass._prepareRequest(invalidMessages[0], callOptions, true)
       ).toThrow("No messages provided");
-      expect(() =>
-        chatClass._prepareRequest(invalidMessages[1], callOptions, true)
-      ).toThrow("Message type 'tool' is not supported");
+      const prepareToolMessage = () =>
+        chatClass._prepareRequest(invalidMessages[1], callOptions, true);
+      if (ChatClassType === OciGenAiCohereChat) {
+        expect(prepareToolMessage).toThrow(
+          "Message type 'tool' is not supported"
+        );
+      } else {
+        expect(prepareToolMessage).toThrow(
+          "ToolMessage references unknown tool call 'tool'"
+        );
+      }
       expect(() =>
         chatClass._prepareRequest(invalidMessages[2], callOptions, true)
       ).toThrow("Unsupported message content");
@@ -562,7 +623,7 @@ test("OCI GenAI Cohere parse valid response", async () => {
   const cohereChat = new OciGenAiCohereChat(createParams);
 
   for (const validValue of validCohereResponseValues) {
-    expect(cohereChat._parseResponse(<any>validValue)).toBe(
+    expect(cohereChat._parseResponse(<any>validValue).content).toBe(
       "This is the response text"
     );
   }
@@ -815,10 +876,142 @@ test("OCI GenAI Generic parse valid response", async () => {
   const genericChat = new OciGenAiGenericChat(createParams);
 
   for (const validValue of validGenericResponseValues) {
-    expect(["This is the response text", ""]).toContain(
-      genericChat._parseResponse(<any>validValue)
+    expect(["This is the response text", "This is ", ""]).toContain(
+      genericChat._parseResponse(<any>validValue).content
     );
   }
+});
+
+test("OCI GenAI Generic invoke preserves tool calls and usage metadata", async () => {
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: {
+      chat: () => ({
+        chatResult: {
+          chatResponse: {
+            choices: [
+              {
+                finishReason: "TOOL_CALLS",
+                message: {
+                  toolCalls: [
+                    {
+                      id: "call-1",
+                      type: "FUNCTION",
+                      name: "get_weather",
+                      arguments: '{"city":"London"}',
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: {
+              promptTokens: 10,
+              completionTokens: 5,
+              totalTokens: 15,
+            },
+          },
+        },
+      }),
+    } as any,
+  });
+
+  const message = await chat.invoke("weather?");
+
+  expect(message.content).toBe("");
+  expect(message.tool_calls).toEqual([
+    {
+      type: "tool_call",
+      id: "call-1",
+      name: "get_weather",
+      args: { city: "London" },
+    },
+  ]);
+  expect(message.usage_metadata).toEqual({
+    input_tokens: 10,
+    output_tokens: 5,
+    total_tokens: 15,
+  });
+  expect(message.response_metadata).toMatchObject({
+    finish_reason: "TOOL_CALLS",
+  });
+});
+
+test("OCI GenAI Generic bindTools sends OCI function definitions", async () => {
+  const requests: any[] = [];
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: {
+      chat: (request: unknown) => {
+        requests.push(request);
+        return {
+          chatResult: {
+            chatResponse: {
+              choices: [
+                {
+                  finishReason: "STOP",
+                  message: { content: [] },
+                },
+              ],
+            },
+          },
+        };
+      },
+    } as any,
+  });
+
+  const bound = chat.bindTools([
+    {
+      type: "function",
+      function: {
+        name: "get_weather",
+        description: "Get weather for a city",
+        parameters: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      },
+    },
+  ]);
+
+  await bound.invoke("weather?");
+
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({
+    chatDetails: {
+      chatRequest: {
+        tools: [
+          {
+            type: "FUNCTION",
+            name: "get_weather",
+            parameters: {
+              required: ["city"],
+            },
+          },
+        ],
+      },
+    },
+  });
+});
+
+test("OCI GenAI Generic parses usage-only stream events", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+
+  expect(
+    chat._parseStreamedResponseChunk({
+      usage: {
+        promptTokens: 10,
+        completionTokens: 5,
+        totalTokens: 15,
+      },
+    })
+  ).toEqual({
+    usageMetadata: {
+      input_tokens: 10,
+      output_tokens: 5,
+      total_tokens: 15,
+    },
+  });
 });
 
 const invalidCohereStreamedChunks = [
@@ -1016,7 +1209,11 @@ test("OCI GenAI chat cohere _convertBaseMessageToCohereMessage", () => {
 });
 
 test("OCI GenAI chat generic _convertBaseMessagesToGenericMessages", () => {
-  const testCases = [
+  const testCases: Array<{
+    input: BaseMessage[];
+    expectedOutput?: unknown;
+    expectedError?: string;
+  }> = [
     {
       input: [],
       expectedOutput: [],
@@ -1073,11 +1270,51 @@ test("OCI GenAI chat generic _convertBaseMessagesToGenericMessages", () => {
     },
     {
       input: [
-        new AIMessage("Hello"),
+        new AIMessage({
+          content: "Hello",
+          tool_calls: [
+            {
+              id: "id",
+              name: "get_weather",
+              args: { city: "London" },
+            },
+          ],
+        }),
         new ToolMessage("Hi", "id"),
         new HumanMessage("Hi"),
       ],
-      expectedError: "Message type 'tool' is not supported",
+      expectedOutput: [
+        {
+          role: GenericAssistantMessage.role,
+          toolCalls: [
+            {
+              id: "id",
+              type: "FUNCTION",
+              name: "get_weather",
+              arguments: '{"city":"London"}',
+            },
+          ],
+        },
+        {
+          role: "TOOL",
+          toolCallId: "id",
+          content: [
+            {
+              text: "Hi",
+              type: TextContent.type,
+            },
+          ],
+        },
+        {
+          role: GenericUserMessage.role,
+          content: [
+            {
+              text: "Hi",
+              type: TextContent.type,
+            },
+          ],
+        },
+      ],
     },
   ];
 
@@ -1256,6 +1493,31 @@ test("OCI GenAI chat models invoke API fail", async () => {
       );
       expect(OciGenAiBaseChat._isSdkClient(chatClass._sdkClient)).toBe(true);
     }
+  );
+});
+
+test("OCI GenAI chat preserves the original API error as its cause", async () => {
+  const originalError = new Error("API error");
+  const chat = new OciGenAiGenericChat({
+    compartmentId,
+    onDemandModelId,
+    client: {
+      chat: () => {
+        throw originalError;
+      },
+    } as any,
+  });
+
+  await expect(chat.invoke("this is a prompt")).rejects.toMatchObject({
+    message: "Error executing chat API, error: API error",
+    cause: originalError,
+  });
+});
+
+test("OCI GenAI SDK client guard requires a chat function", () => {
+  expect(OciGenAiBaseChat._isSdkClient({ client: {} })).toBe(false);
+  expect(OciGenAiBaseChat._isSdkClient({ client: { chat: vi.fn() } })).toBe(
+    true
   );
 });
 

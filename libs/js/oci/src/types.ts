@@ -23,23 +23,31 @@ export enum OciGenAiNewClientAuthType {
   Other,
 }
 
+/** OCI configuration-file location and profile used for API-key or session auth. */
 export interface ConfigFileAuthParams {
   clientConfigFilePath: string;
   clientProfile: string;
 }
 
+/**
+ * Controls construction of the OCI SDK client when a caller does not inject one.
+ * `serviceEndpoint` is primarily useful for private or region-specific endpoints.
+ */
 export interface OciGenAiNewClientParams {
   authType: OciGenAiNewClientAuthType;
   regionId?: string;
+  serviceEndpoint?: string;
   authParams?: ConfigFileAuthParams | AuthParams;
   clientConfiguration?: ClientConfiguration;
 }
 
+/** Provide either a caller-owned SDK client or the parameters used to create one. */
 export interface OciGenAiClientParams {
   client?: GenerativeAiInferenceClient;
   newClientParams?: OciGenAiNewClientParams;
 }
 
+/** Exactly one OCI serving target must be provided for each chat request. */
 export interface OciGenAiServingParams {
   onDemandModelId?: string;
   dedicatedEndpointId?: string;

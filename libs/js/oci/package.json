@@ -29,6 +29,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:int": "vitest run --mode int",
+    "test:langgraph:int": "vitest run --mode int src/tests/langgraph_tool_roundtrip.int.test.ts",
     "format": "prettier --config .prettierrc --write \"src\"",
     "format:check": "prettier --config .prettierrc --check \"src\""
   },
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@langchain/core": "^1.0.0",
+    "@langchain/langgraph": "^1.4.9",
     "@swc/core": "^1.3.90",
     "@tsconfig/recommended": "^1.0.3",
     "@typescript-eslint/eslint-plugin": "^6.12.0",
@@ -59,7 +61,8 @@
     "release-it": "^15.10.1",
     "rollup": "^4.5.2",
     "typescript": "<5.2.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "zod": "^3.25.32"
   },
   "publishConfig": {
     "access": "public"

@@ -1,6 +1,17 @@
-import { AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
-import { ChatGenerationChunk } from "@langchain/core/outputs";
-import { SimpleChatModel } from "@langchain/core/language_models/chat_models";
+import {
+  AIMessage,
+  AIMessageChunk,
+  type BaseMessage,
+  type ToolCall,
+  type ToolCallChunk,
+  type UsageMetadata,
+} from "@langchain/core/messages";
+import {
+  type ChatGeneration,
+  ChatGenerationChunk,
+  type ChatResult,
+} from "@langchain/core/outputs";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 
 import {
@@ -23,12 +34,27 @@ const { DedicatedServingMode, OnDemandServingMode } = models;
 type DedicatedServingMode = models.DedicatedServingMode;
 type OnDemandServingMode = models.OnDemandServingMode;
 
+/** Provider-neutral information extracted from one OCI streaming event. */
 export interface OciGenAiStreamChunk {
   text?: string;
   finishReason?: string;
+  toolCallChunks?: ToolCallChunk[];
+  usageMetadata?: UsageMetadata;
 }
 
-export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
+/** Provider-neutral information extracted from a completed OCI chat response. */
+export interface OciGenAiParsedResponse {
+  content: string;
+  toolCalls?: ToolCall[];
+  usageMetadata?: UsageMetadata;
+  responseMetadata?: Record<string, unknown>;
+}
+
+/**
+ * Shared LangChain chat-model lifecycle for OCI chat APIs. Subclasses translate
+ * between LangChain messages and an OCI-specific request/response format.
+ */
+export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
   OciGenAiModelCallOptions<RequestType>
 > {
   _sdkClient: OciGenAiSdkClient | undefined;
@@ -51,26 +77,42 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
 
   abstract _parseResponse(
     response: OciGenAiSupportedResponseType | undefined
-  ): string;
+  ): OciGenAiParsedResponse;
 
   abstract _parseStreamedResponseChunk(
     chunk: unknown
   ): OciGenAiStreamChunk | undefined;
 
-  async _call(
+  async _generate(
     messages: BaseMessage[],
     options: this["ParsedCallOptions"]
-  ): Promise<string> {
+  ): Promise<ChatResult> {
     const response: responses.ChatResponse = await this._makeRequest(
       messages,
       options
     );
-    // The OCI SDK's ChatResult union includes Cohere V2 responses, but this
-    // integration only sends the V1 Cohere request format or the generic
-    // format, whose response types are represented by this base class.
-    return this._parseResponse(
+    const parsed = this._parseResponse(
       response?.chatResult?.chatResponse as OciGenAiSupportedResponseType
     );
+    const message = new AIMessage({
+      content: parsed.content,
+      tool_calls: parsed.toolCalls ?? [],
+      usage_metadata: parsed.usageMetadata,
+      response_metadata: parsed.responseMetadata ?? {},
+    });
+    const generation: ChatGeneration = {
+      message,
+      text: parsed.content,
+      generationInfo: parsed.responseMetadata ?? {},
+    };
+
+    return {
+      generations: [generation],
+      llmOutput: {
+        ...(parsed.responseMetadata ?? {}),
+        usage: parsed.usageMetadata,
+      },
+    };
   }
 
   override async *_streamResponseChunks(
@@ -102,8 +144,13 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
 
     const text = parsedChunk.text ?? "";
     // Preserve OCI terminal state even when its final SSE event has no text.
-    yield this._createStreamResponse(text, parsedChunk.finishReason);
-    if (text) {
+    yield this._createStreamResponse(
+      text,
+      parsedChunk.finishReason,
+      parsedChunk.toolCallChunks,
+      parsedChunk.usageMetadata
+    );
+    if (text || parsedChunk.toolCallChunks?.length) {
       await runManager?.handleLLMNewToken(text);
     }
   }
@@ -132,6 +179,8 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
   }
 
   async close(): Promise<void> {
+    // Only close a client this model created; an injected SDK client may be
+    // shared by the application and remains the caller's responsibility.
     if (this._sdkClient && this._ownsSdkClient) {
       this._sdkClient.close();
       this._sdkClient = undefined;
@@ -139,10 +188,17 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     }
   }
 
-  _createStreamResponse(text: string, finishReason?: string) {
+  _createStreamResponse(
+    text: string,
+    finishReason?: string,
+    toolCallChunks?: ToolCallChunk[],
+    usageMetadata?: UsageMetadata
+  ) {
     return new ChatGenerationChunk({
       message: new AIMessageChunk({
         content: text,
+        tool_call_chunks: toolCallChunks ?? [],
+        usage_metadata: usageMetadata,
         response_metadata: finishReason
           ? { finish_reason: finishReason }
           : undefined,
@@ -196,15 +252,70 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     throw new Error("Unsupported message content");
   }
 
+  static _toUsageMetadata(
+    usage: models.Usage | undefined
+  ): UsageMetadata | undefined {
+    if (!usage) {
+      return undefined;
+    }
+
+    const inputTokens = usage.promptTokens ?? 0;
+    const outputTokens = usage.completionTokens ?? 0;
+    return {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: usage.totalTokens ?? inputTokens + outputTokens,
+    };
+  }
+
+  static _toolCall(name: string, args: unknown, id: string): ToolCall {
+    let parsedArgs: unknown = args ?? {};
+    if (typeof parsedArgs === "string") {
+      try {
+        parsedArgs = JSON.parse(parsedArgs);
+      } catch {
+        // OCI can return malformed tool arguments. Preserve the tool call so
+        // an agent can still surface it, using an empty object as safe args.
+        parsedArgs = {};
+      }
+    }
+
+    return {
+      type: "tool_call",
+      name,
+      args:
+        parsedArgs !== null && typeof parsedArgs === "object" ? parsedArgs : {},
+      id,
+    };
+  }
+
+  static _toolCallChunk(
+    name: string | undefined,
+    args: string | undefined,
+    id: string | undefined,
+    index: number
+  ): ToolCallChunk {
+    return { type: "tool_call_chunk", name, args: args ?? "", id, index };
+  }
+
   async _chat(
     chatRequest: OciGenAiSupportedRequestType
   ): Promise<OciGenAiChatCallResponseType> {
     try {
       return await this._callChat(chatRequest);
     } catch (error) {
-      throw new Error(
-        `Error executing chat API, error: ${(<Error>error)?.message}`
-      );
+      // Use a structural check because this package's lint rules prohibit
+      // instanceof, and errors can originate from a separate JS realm.
+      const message =
+        error !== null &&
+        typeof error === "object" &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : String(error);
+      throw new Error(`Error executing chat API, error: ${message}`, {
+        cause: error,
+      });
     }
   }
 
@@ -236,7 +347,8 @@ export abstract class OciGenAiBaseChat<RequestType> extends SimpleChatModel<
     return (
       sdkClient !== null &&
       typeof sdkClient === "object" &&
-      typeof (<OciGenAiSdkClient>sdkClient).client === "object"
+      "client" in sdkClient &&
+      typeof (sdkClient as OciGenAiSdkClient).client?.chat === "function"
     );
   }
 

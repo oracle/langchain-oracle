@@ -2,7 +2,11 @@ import { models } from "oci-generativeaiinference";
 
 import { BaseMessage } from "@langchain/core/messages";
 import { LangSmithParams } from "@langchain/core/language_models/chat_models";
-import { OciGenAiBaseChat, type OciGenAiStreamChunk } from "./chat_models.js";
+import {
+  OciGenAiBaseChat,
+  type OciGenAiParsedResponse,
+  type OciGenAiStreamChunk,
+} from "./chat_models.js";
 
 const {
   CohereChatBotMessage,
@@ -32,6 +36,10 @@ export type CohereCallOptions = Omit<
   "apiFormat" | "message" | "chatHistory" | "isStream" | "stopSequences"
 >;
 
+/**
+ * OCI's legacy Cohere V1 chat format. It accepts text conversations only and
+ * represents the newest human turn separately from the ordered chat history.
+ */
 export class OciGenAiCohereChat extends OciGenAiBaseChat<CohereCallOptions> {
   override _createRequest(
     messages: BaseMessage[],
@@ -51,12 +59,18 @@ export class OciGenAiCohereChat extends OciGenAiBaseChat<CohereCallOptions> {
     };
   }
 
-  override _parseResponse(response: CohereChatResponse | undefined): string {
+  override _parseResponse(
+    response: CohereChatResponse | undefined
+  ): OciGenAiParsedResponse {
     if (!OciGenAiCohereChat._isCohereResponse(response)) {
       throw new Error("Invalid CohereResponse object");
     }
 
-    return response.text;
+    return {
+      content: response.text,
+      usageMetadata: OciGenAiBaseChat._toUsageMetadata(response.usage),
+      responseMetadata: { finish_reason: response.finishReason },
+    };
   }
 
   override _parseStreamedResponseChunk(chunk: unknown): OciGenAiStreamChunk {

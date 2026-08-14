@@ -18,6 +18,7 @@ import {
   OciGenAiNewClientAuthType,
 } from "./types.js";
 
+/** Owns the OCI SDK client created from the integration's auth configuration. */
 export class OciGenAiSdkClient {
   static readonly _DEFAULT_REGION_ID = Region.US_CHICAGO_1.regionId;
 
@@ -63,6 +64,12 @@ export class OciGenAiSdkClient {
       client.regionId = this._DEFAULT_REGION_ID;
     } else {
       client.regionId = params.newClientParams.regionId;
+    }
+
+    if (params.newClientParams?.serviceEndpoint) {
+      // Set the region first: the SDK region setter derives its default endpoint.
+      // An explicit endpoint must be applied afterwards so it remains authoritative.
+      client.endpoint = params.newClientParams.serviceEndpoint;
     }
 
     return client;

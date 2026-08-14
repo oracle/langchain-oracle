@@ -64,10 +64,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # pnpm 11 requires Node.js 22.13+ (and relies on node:sqlite).
+          node-version: "22"
 
       - name: Enable pnpm
-        run: corepack enable
+        run: corepack enable pnpm
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile

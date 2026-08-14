@@ -1,5 +1,4 @@
 /* eslint-disable no-process-env */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { expect, test } from "vitest";
@@ -7,34 +6,91 @@ import { expect, test } from "vitest";
 import { AIMessageChunk } from "@langchain/core/messages";
 import { OciGenAiCohereChat } from "../cohere_chat.js";
 import { OciGenAiGenericChat } from "../generic_chat.js";
+import { OciGenAiNewClientAuthType } from "../types.js";
+import type { OciGenAiModelBaseParams } from "../types.js";
 
-type OciGenAiChatConstructor = new (args: any) => BaseChatModel;
+type OciGenAiChatParameters = Partial<OciGenAiModelBaseParams>;
+type OciGenAiChatConstructor = new (
+  args: OciGenAiChatParameters
+) => BaseChatModel;
+type OciGenAiChatModelFamily = "cohere" | "generic";
+
+interface OciGenAiChatTestConfiguration {
+  family: OciGenAiChatModelFamily;
+  ChatClassType: OciGenAiChatConstructor;
+  creationParams: OciGenAiChatParameters[];
+}
 
 /*
  *  OciGenAiChat tests
  */
 
 const compartmentId = process.env.OCI_GENAI_INTEGRATION_TESTS_COMPARTMENT_ID;
-const creationParameters = [
-  [
-    {
-      compartmentId,
-      onDemandModelId:
-        process.env.OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID,
-    },
-  ],
-  [
-    {
-      compartmentId,
-      onDemandModelId:
-        process.env.OCI_GENAI_INTEGRATION_TESTS_GENERIC_ON_DEMAND_MODEL_ID,
-    },
-  ],
+const regionId = process.env.OCI_REGION ?? "us-phoenix-1";
+const serviceEndpoint =
+  process.env.OCI_ENDPOINT ??
+  "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com";
+const configFilePath = process.env.OCI_CONFIG_FILE;
+const configProfile = process.env.OCI_CONFIG_PROFILE;
+const newClientParams = {
+  authType: OciGenAiNewClientAuthType.ConfigFile,
+  regionId,
+  serviceEndpoint,
+  authParams:
+    configFilePath || configProfile
+      ? {
+          clientConfigFilePath: configFilePath ?? "",
+          clientProfile: configProfile ?? "DEFAULT",
+        }
+      : undefined,
+};
+const chatModelConfigurations: OciGenAiChatTestConfiguration[] = [
+  {
+    family: "cohere",
+    ChatClassType: OciGenAiCohereChat,
+    creationParams: [
+      {
+        compartmentId,
+        onDemandModelId:
+          process.env.OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID,
+        newClientParams,
+      },
+    ],
+  },
+  {
+    family: "generic",
+    ChatClassType: OciGenAiGenericChat,
+    creationParams: [
+      {
+        compartmentId,
+        onDemandModelId:
+          process.env.OCI_GENAI_INTEGRATION_TESTS_GENERIC_ON_DEMAND_MODEL_ID,
+        newClientParams,
+      },
+    ],
+  },
 ];
+const selectedFamilies = new Set(
+  (process.env.OCI_GENAI_INTEGRATION_TESTS_CHAT_MODELS ?? "cohere,generic")
+    .split(",")
+    .map((family) => family.trim())
+);
+const selectedChatModelConfigurations = chatModelConfigurations.filter(
+  ({ family }) => selectedFamilies.has(family)
+);
+
+if (selectedChatModelConfigurations.length === 0) {
+  throw new Error(
+    "OCI_GENAI_INTEGRATION_TESTS_CHAT_MODELS must include cohere or generic"
+  );
+}
 
 test("OCI GenAI chat invoke", async () => {
   await testEachChatModelType(
-    async (ChatClassType: OciGenAiChatConstructor, creationParams: any[]) => {
+    async (
+      ChatClassType: OciGenAiChatConstructor,
+      creationParams: OciGenAiChatParameters[]
+    ) => {
       for (const params of creationParams) {
         const chatClass = new ChatClassType(params);
         const response = await chatClass.invoke(
@@ -43,14 +99,16 @@ test("OCI GenAI chat invoke", async () => {
 
         expect(response.content.length).toBeGreaterThan(0);
       }
-    },
-    creationParameters
+    }
   );
 });
 
 test("OCI GenAI chat stream", async () => {
   await testEachChatModelType(
-    async (ChatClassType: OciGenAiChatConstructor, creationParams: any[]) => {
+    async (
+      ChatClassType: OciGenAiChatConstructor,
+      creationParams: OciGenAiChatParameters[]
+    ) => {
       for (const params of creationParams) {
         const chatClass = new ChatClassType(params);
         const response = await chatClass.stream(
@@ -68,8 +126,7 @@ test("OCI GenAI chat stream", async () => {
         expect(numChunks).toBeGreaterThan(0);
         console.log(`Chunks generated: ${numChunks}`);
       }
-    },
-    creationParameters
+    }
   );
 });
 
@@ -80,16 +137,13 @@ test("OCI GenAI chat stream", async () => {
 async function testEachChatModelType(
   testFunction: (
     ChatClassType: OciGenAiChatConstructor,
-    parameter?: any | undefined
-  ) => Promise<void>,
-  parameters?: any[]
+    creationParams: OciGenAiChatParameters[]
+  ) => Promise<void>
 ) {
-  const chatClassTypes: OciGenAiChatConstructor[] = [
-    OciGenAiCohereChat,
-    OciGenAiGenericChat,
-  ];
-
-  for (let i = 0; i < chatClassTypes.length; i += 1) {
-    await testFunction(chatClassTypes[i], parameters?.[i]);
+  for (const {
+    ChatClassType,
+    creationParams,
+  } of selectedChatModelConfigurations) {
+    await testFunction(ChatClassType, creationParams);
   }
 }

@@ -1,7 +1,14 @@
 import { IterableReadableStream } from "@langchain/core/utils/stream";
 
+/**
+ * Converts OCI's byte-oriented SSE response into validated JSON event objects.
+ * It deliberately keeps transport chunking separate from SSE event framing.
+ */
 export class JsonServerEventsIterator {
-  static readonly _DATA_PREFIX: string = "data: ";
+  static readonly _DATA_FIELD = "data:";
+
+  // Guard against an upstream stream that never emits an SSE event delimiter.
+  static readonly _MAX_BUFFER_LENGTH = 1024 * 1024;
 
   _eventsStream: IterableReadableStream<Uint8Array>;
 
@@ -22,14 +29,21 @@ export class JsonServerEventsIterator {
         stream: true,
       });
       yield* this._parseAvailableMessages();
+      this._assertBufferLength();
     }
 
     // Flush a final buffered UTF-8 sequence before parsing the remaining data.
     this._textBuffer += this._textDecoder.decode();
     yield* this._parseAvailableMessages();
 
+    // The SSE parsing algorithm dispatches a final event at EOF even when it
+    // is not followed by a blank line.
     if (this._textBuffer.trim() !== "") {
-      throw new Error("Incomplete server-sent event at end of stream");
+      const event = this._parseMessage(this._textBuffer);
+      this._textBuffer = "";
+      if (event !== undefined) {
+        yield event;
+      }
     }
   }
 
@@ -49,7 +63,10 @@ export class JsonServerEventsIterator {
       );
 
       if (eventText.trim() !== "") {
-        yield this._parseMessage(eventText);
+        const event = this._parseMessage(eventText);
+        if (event !== undefined) {
+          yield event;
+        }
       }
     }
   }
@@ -57,37 +74,49 @@ export class JsonServerEventsIterator {
   private _findEventDelimiter(): number {
     const lfIndex = this._textBuffer.indexOf("\n\n");
     const crlfIndex = this._textBuffer.indexOf("\r\n\r\n");
+    const crIndex = this._textBuffer.indexOf("\r\r");
 
-    if (lfIndex === -1) {
-      return crlfIndex;
-    }
-    if (crlfIndex === -1) {
-      return lfIndex;
-    }
-    return Math.min(lfIndex, crlfIndex);
+    const delimiterIndexes = [lfIndex, crlfIndex, crIndex].filter(
+      (index) => index !== -1
+    );
+    return delimiterIndexes.length > 0 ? Math.min(...delimiterIndexes) : -1;
   }
 
   private _getDelimiterLength(index: number): number {
-    return this._textBuffer.startsWith("\r\n\r\n", index) ? 4 : 2;
+    if (this._textBuffer.startsWith("\r\n\r\n", index)) {
+      return 4;
+    }
+    return 2;
   }
 
-  private _parseMessage(eventText: string): unknown {
+  private _parseMessage(eventText: string): unknown | undefined {
     // SSE permits multiple data lines; join them according to the SSE format
     // before treating their contents as the OCI JSON payload.
     const dataLines = eventText
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith(JsonServerEventsIterator._DATA_PREFIX));
+      .split(/\r\n|\r|\n/)
+      .filter((line) => line.startsWith(JsonServerEventsIterator._DATA_FIELD));
 
     if (dataLines.length === 0) {
-      throw new Error("Event text is empty, too short or malformed");
+      // Comments, keepalives, and control-only SSE events do not dispatch data.
+      return undefined;
     }
 
     const jsonText = dataLines
-      .map((line) =>
-        line.substring(JsonServerEventsIterator._DATA_PREFIX.length)
-      )
+      .map((line) => {
+        const data = line.substring(
+          JsonServerEventsIterator._DATA_FIELD.length
+        );
+        // The optional single space after `data:` is excluded from the value.
+        return data.startsWith(" ") ? data.substring(1) : data;
+      })
       .join("\n");
     return this._tryParseTextToJson(jsonText);
+  }
+
+  private _assertBufferLength(): void {
+    if (this._textBuffer.length > JsonServerEventsIterator._MAX_BUFFER_LENGTH) {
+      throw new Error("Server-sent event exceeds maximum buffered size");
+    }
   }
 
   private _tryParseTextToJson(jsonText: string): unknown {
