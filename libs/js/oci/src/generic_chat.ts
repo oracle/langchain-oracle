@@ -61,6 +61,9 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
   override _parseResponse(
     response: GenericChatResponse
   ): OciGenAiParsedResponse {
+    // This JS adapter fails at the OCI boundary rather than converting an
+    // unexpected response into an empty completion, as Python's defensive
+    // provider path can do. A shape mismatch is actionable integration drift.
     if (!OciGenAiGenericChat._isGenericResponse(response)) {
       throw new Error("Invalid GenericChatResponse object");
     }
@@ -85,6 +88,8 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
   override _parseStreamedResponseChunk(
     chunk: unknown
   ): OciGenAiStreamChunk | undefined {
+    // Keep the stream contract equally strict for unknown payloads; the
+    // explicitly supported reasoning/role-only delta is handled below.
     if (!OciGenAiGenericChat._isValidStreamChoice(chunk)) {
       throw new Error("Invalid streamed response chunk data");
     }
@@ -94,15 +99,29 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
       ? OciGenAiGenericChat._getToolCallChunks(choice)
       : [];
 
+    const text = OciGenAiGenericChat._getChunkDataText(choice);
+    const finishReason =
+      typeof choice.finishReason === "string" ? choice.finishReason : undefined;
+    const usageMetadata = choice.usage
+      ? OciGenAiBaseChat._toUsageMetadata(choice.usage)
+      : undefined;
+
+    // Reasoning-only and role-only deltas carry no public ChatModel output.
+    // OCI can emit them before visible text for reasoning-capable models.
+    if (
+      text === undefined &&
+      toolCallChunks.length === 0 &&
+      finishReason === undefined &&
+      usageMetadata === undefined
+    ) {
+      return undefined;
+    }
+
     return {
-      text: OciGenAiGenericChat._getChunkDataText(choice),
-      ...(typeof choice.finishReason === "string"
-        ? { finishReason: choice.finishReason }
-        : {}),
+      text,
+      ...(finishReason !== undefined ? { finishReason } : {}),
       ...(toolCallChunks.length > 0 ? { toolCallChunks } : {}),
-      ...(choice.usage
-        ? { usageMetadata: OciGenAiBaseChat._toUsageMetadata(choice.usage) }
-        : {}),
+      ...(usageMetadata !== undefined ? { usageMetadata } : {}),
     };
   }
 
@@ -110,7 +129,8 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     messages: BaseMessage[]
   ): Message[] {
     // OCI requires every tool result to refer to an earlier assistant tool call.
-    // Tracking IDs here prevents malformed agent histories reaching the service.
+    // Unlike Python's best-effort history conversion, do not drop malformed
+    // calls: their ID is the only safe LangChain agent-loop correlation key.
     const outstandingToolCallIds = new Set<string>();
 
     return messages.map((message) => {
@@ -177,12 +197,21 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
           tool_calls?: Array<{ id?: string; name: string; args: unknown }>;
         }
       ).tool_calls ?? [];
+    // Python skips assistant calls lacking an ID. JS instead fails before the
+    // request because silently removing a call can orphan a later ToolMessage.
+    for (const toolCall of toolCalls) {
+      if (!toolCall.id) {
+        throw new Error(
+          `LangChain tool call '${toolCall.name}' did not contain a tool call id`
+        );
+      }
+    }
     return {
       role: AssistantMessage.role,
       ...(toolCalls.length > 0
         ? {
-            toolCalls: toolCalls.map((toolCall, index) => ({
-              id: toolCall.id ?? `langchain-tool-call-${index}`,
+            toolCalls: toolCalls.map((toolCall) => ({
+              id: toolCall.id,
               type: "FUNCTION",
               name: toolCall.name,
               arguments: JSON.stringify(toolCall.args ?? {}),
@@ -281,13 +310,20 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
       )?.toolCalls ?? [];
     return toolCalls
       .filter((toolCall) => typeof toolCall.name === "string")
-      .map((toolCall, index) =>
-        OciGenAiBaseChat._toolCall(
+      .map((toolCall) => {
+        // Completed OCI calls need a service-provided ID. Never synthesize one:
+        // it must match the ToolMessage.tool_call_id sent in the next turn.
+        if (!toolCall.id) {
+          throw new Error(
+            `OCI tool call '${toolCall.name}' did not contain a tool call id`
+          );
+        }
+        return OciGenAiBaseChat._toolCall(
           toolCall.name as string,
           toolCall.arguments,
-          toolCall.id ?? `oci-tool-call-${index}`
-        )
-      );
+          toolCall.id
+        );
+      });
   }
 
   static _getToolCallChunks(chunkData: ChatChoice) {
@@ -303,6 +339,11 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
             }
           | undefined
       )?.toolCalls ?? [];
+    // Streaming deltas may omit the id and name after their first occurrence.
+    // LangChain merges the fragments by index, reconstructing the completed
+    // call (including the initial id) without inventing a correlation key.
+    // This intentionally stays simpler than Python's provider-specific index
+    // remapping for non-standard parallel-streaming implementations.
     return toolCalls.map((toolCall, index) =>
       OciGenAiBaseChat._toolCallChunk(
         toolCall.name,
@@ -365,9 +406,25 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     const candidate = chunk as Partial<ChatChoice>;
     return (
       (candidate.message !== undefined &&
-        OciGenAiGenericChat._isValidMessage(candidate.message)) ||
+        OciGenAiGenericChat._isValidStreamMessage(candidate.message)) ||
       candidate.finishReason !== undefined ||
       candidate.usage !== undefined
+    );
+  }
+
+  static _isValidStreamMessage(message: unknown): message is Message {
+    if (OciGenAiGenericChat._isValidMessage(message)) {
+      return true;
+    }
+
+    // Reasoning-capable OCI models can send a delta containing only a role
+    // and/or reasoningContent before visible text or tool-call content.
+    return (
+      message !== null &&
+      typeof message === "object" &&
+      (typeof (message as { role?: unknown }).role === "string" ||
+        typeof (message as { reasoningContent?: unknown }).reasoningContent ===
+          "string")
     );
   }
 

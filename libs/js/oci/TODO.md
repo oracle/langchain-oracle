@@ -14,8 +14,8 @@ follow-up scope rather than a prerequisite for the initial release.
   tool calls have no provider-generated call IDs and its request shape separates
   the current human message from tool results.
 - [ ] Support multimodal message content where the OCI model/API supports it.
-- [ ] Add `OciGenAiEmbeddings` for OCI embedding models, with unit and
-  authenticated integration coverage.
+- [ ] Extend `OciGenAiEmbeddings` from its text-only MVP to OCI Embed v4
+  multimodal `embedContents` inputs and embedding-type output variants.
 - [ ] Add OCI Cohere V2 API support. `OciGenAiCohereChat` currently uses the
   legacy Cohere V1 API format only.
 
@@ -43,3 +43,5 @@ follow-up scope rather than a prerequisite for the initial release.
 - [x] Support configuration-file, instance-principal, resource-principal,
   session, and custom OCI authentication providers.
 - [x] Run the package unit tests, lint, format check, and build in CI.
+- [x] Add text-only `OciGenAiEmbeddings` with on-demand and dedicated serving,
+  batching, unit coverage, and opt-in authenticated integration coverage.

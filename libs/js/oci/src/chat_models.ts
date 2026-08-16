@@ -232,8 +232,9 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
     }
 
     if (Array.isArray(content)) {
-      // LangChain v1 messages may represent text as content blocks. Ignore
-      // non-text blocks rather than serializing provider-specific objects.
+      // This integration is intentionally text-only until OCI multimodal
+      // conversion is implemented. Reject a mixed array instead of silently
+      // dropping image, document, audio, video, or reasoning blocks.
       const textBlocks = content.filter(
         (block): block is { type: "text"; text: string } =>
           typeof block === "object" &&
@@ -244,7 +245,7 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
           typeof block.text === "string"
       );
 
-      if (textBlocks.length > 0) {
+      if (textBlocks.length === content.length && textBlocks.length > 0) {
         return textBlocks.map((block) => block.text).join("");
       }
     }

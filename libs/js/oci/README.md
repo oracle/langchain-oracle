@@ -13,6 +13,11 @@ and
 
 This package enables you to use OCI Generative AI in your LangChainJS applications.
 
+`OciGenAiGenericChat` supports text chat, streaming, token usage and finish
+metadata, LangChain tool binding, and tool-message turns. This enables the
+standard LangChain structured-output flow for OCI Generic models. Cohere support
+uses OCI's legacy V1 API format; its tool-result round trip is not supported.
+
 ## Prerequisites
 
 In order to use this integration you will need the following:
@@ -85,7 +90,8 @@ pnpm test
 The integration tests make real OCI Generative AI calls for both Cohere and
 generic models. Configure OCI API-key authentication in `~/.oci/config` (the
 `DEFAULT` profile is used by default), then set the compartment and the two
-model IDs before running them:
+model IDs before running them. They target Phoenix by default; override the
+region and endpoint together when testing another region:
 
 ```bash
 export OCI_GENAI_INTEGRATION_TESTS_COMPARTMENT_ID='<compartment-ocid>'
@@ -93,7 +99,30 @@ export OCI_GENAI_INTEGRATION_TESTS_COMPARTMENT_ID='<compartment-ocid>'
 # when testing a legacy Cohere V1 model or compatible dedicated endpoint.
 export OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID='<legacy-cohere-v1-model-id>'
 export OCI_GENAI_INTEGRATION_TESTS_GENERIC_ON_DEMAND_MODEL_ID='meta.llama-3.3-70b-instruct'
+# Optional: enable the opt-in text-embeddings integration test with an
+# embedding model available in this tenancy and region.
+# export OCI_GENAI_INTEGRATION_TESTS_EMBEDDING_ON_DEMAND_MODEL_ID='cohere.embed-v4.0'
+# Optional: choose a non-default OCI config file or profile.
+export OCI_CONFIG_FILE="$HOME/.oci/config"
+export OCI_CONFIG_PROFILE='DEFAULT'
+# Optional: use a non-Phoenix OCI GenAI endpoint.
+# export OCI_REGION='us-chicago-1'
+# export OCI_ENDPOINT='https://inference.generativeai.us-chicago-1.oci.oraclecloud.com'
+# Optional: run only one model family. This is useful when the tenancy does not
+# offer a legacy Cohere V1 model.
+# export OCI_GENAI_INTEGRATION_TESTS_CHAT_MODELS='generic'
 pnpm test:int
+```
+
+To run the real Generic LangGraph tool-round-trip test in Phoenix with xAI Grok,
+set the compartment ID (and optionally override the model or endpoint), then run
+the focused command:
+
+```bash
+export OCI_COMPARTMENT_ID='<compartment-ocid>'
+export OCI_MODEL_ID='xai.grok-3'
+export OCI_ENDPOINT='https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com'
+pnpm test:langgraph:int
 ```
 
 Use model IDs available to your tenancy and region. To use a non-default OCI
@@ -291,6 +320,33 @@ AIMessage { “content”: “Why did the beagle cross the road?he was tied to
 the chicken!hope you enjoyed the joke! Would you like to hear another
 one?”, “additional_kwargs”: {}, “response_metadata”: {}, “tool_calls”:
 \[\], “invalid_tool_calls”: \[\] }
+
+## Embeddings
+
+`OciGenAiEmbeddings` provides text embeddings through OCI's `embedText` API.
+It supports on-demand models and dedicated endpoints, batches documents (up to
+96 strings per request by default), and uses the same authentication and client
+lifecycle options as the chat integrations. Set `inputType` when the selected
+model requires a purpose such as `SEARCH_DOCUMENT` or `SEARCH_QUERY`.
+
+```ts
+import { OciGenAiEmbeddings } from "@oracle/langchain-oci";
+import { models } from "oci-generativeaiinference";
+
+const embeddings = new OciGenAiEmbeddings({
+  compartmentId: "oci.compartment...",
+  onDemandModelId: "cohere.embed-v4.0",
+  inputType: models.EmbedTextDetails.InputType.SearchDocument,
+});
+
+const documentVectors = await embeddings.embedDocuments([
+  "OCI Generative AI provides embedding models.",
+  "LangChain uses vectors for retrieval.",
+]);
+const queryVector = await embeddings.embedQuery("What does OCI provide?");
+
+await embeddings.close();
+```
 
 ## Additional information
 

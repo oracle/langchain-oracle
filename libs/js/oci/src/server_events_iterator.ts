@@ -7,8 +7,11 @@ import { IterableReadableStream } from "@langchain/core/utils/stream";
 export class JsonServerEventsIterator {
   static readonly _DATA_FIELD = "data:";
 
-  // Guard against an upstream stream that never emits an SSE event delimiter.
-  static readonly _MAX_BUFFER_LENGTH = 1024 * 1024;
+  static readonly _DONE_SENTINEL = "[DONE]";
+
+  // Guard against an upstream stream that never emits an SSE delimiter. This
+  // is a JavaScript string length, measured in UTF-16 code units, not bytes.
+  static readonly _MAX_BUFFERED_TEXT_LENGTH = 1024 * 1024;
 
   _eventsStream: IterableReadableStream<Uint8Array>;
 
@@ -39,11 +42,7 @@ export class JsonServerEventsIterator {
     // The SSE parsing algorithm dispatches a final event at EOF even when it
     // is not followed by a blank line.
     if (this._textBuffer.trim() !== "") {
-      const event = this._parseMessage(this._textBuffer);
-      this._textBuffer = "";
-      if (event !== undefined) {
-        yield event;
-      }
+      yield* this._parseFinalMessage();
     }
   }
 
@@ -51,15 +50,14 @@ export class JsonServerEventsIterator {
     while (true) {
       // Consume every complete event while retaining a trailing partial event
       // for the next transport chunk.
-      const delimiterIndex = this._findEventDelimiter();
-      if (delimiterIndex === -1) {
+      const delimiter = this._findEventDelimiter();
+      if (!delimiter) {
         return;
       }
 
-      const delimiterLength = this._getDelimiterLength(delimiterIndex);
-      const eventText = this._textBuffer.slice(0, delimiterIndex);
+      const eventText = this._textBuffer.slice(0, delimiter.index);
       this._textBuffer = this._textBuffer.slice(
-        delimiterIndex + delimiterLength
+        delimiter.index + delimiter.length
       );
 
       if (eventText.trim() !== "") {
@@ -71,27 +69,24 @@ export class JsonServerEventsIterator {
     }
   }
 
-  private _findEventDelimiter(): number {
-    const lfIndex = this._textBuffer.indexOf("\n\n");
-    const crlfIndex = this._textBuffer.indexOf("\r\n\r\n");
-    const crIndex = this._textBuffer.indexOf("\r\r");
-
-    const delimiterIndexes = [lfIndex, crlfIndex, crIndex].filter(
-      (index) => index !== -1
+  private _findEventDelimiter(): { index: number; length: number } | undefined {
+    // An SSE blank line is two complete line endings. Match the longest
+    // alternatives first so a CRLF is never mistaken for separate CR and LF
+    // endings when a server mixes newline styles.
+    const delimiter = this._textBuffer.match(
+      /\r\n\r\n|\r\n\r|\r\n\n|\r\r\n|\n\r\n|\r\r|\n\r|\n\n/
     );
-    return delimiterIndexes.length > 0 ? Math.min(...delimiterIndexes) : -1;
-  }
-
-  private _getDelimiterLength(index: number): number {
-    if (this._textBuffer.startsWith("\r\n\r\n", index)) {
-      return 4;
+    if (!delimiter || delimiter.index === undefined) {
+      return undefined;
     }
-    return 2;
+    return { index: delimiter.index, length: delimiter[0].length };
   }
 
   private _parseMessage(eventText: string): unknown | undefined {
     // SSE permits multiple data lines; join them according to the SSE format
-    // before treating their contents as the OCI JSON payload.
+    // before treating their contents as the OCI JSON payload. OCI chat
+    // streaming consumes only data payloads, so event, id, and retry fields
+    // are intentionally ignored.
     const dataLines = eventText
       .split(/\r\n|\r|\n/)
       .filter((line) => line.startsWith(JsonServerEventsIterator._DATA_FIELD));
@@ -110,12 +105,36 @@ export class JsonServerEventsIterator {
         return data.startsWith(" ") ? data.substring(1) : data;
       })
       .join("\n");
+    // OCI's native stream is JSON-only, but compatible SSE gateways may use
+    // the conventional OpenAI-style terminal sentinel.
+    if (jsonText.trim() === JsonServerEventsIterator._DONE_SENTINEL) {
+      return undefined;
+    }
     return this._tryParseTextToJson(jsonText);
   }
 
+  private *_parseFinalMessage(): Generator<unknown> {
+    try {
+      const event = this._parseMessage(this._textBuffer);
+      this._textBuffer = "";
+      if (event !== undefined) {
+        yield event;
+      }
+    } catch (error) {
+      // Do not silently discard a partial terminal frame: callers need a
+      // distinct error when a connection ends during an SSE JSON payload.
+      throw new Error("Stream ended with an incomplete server-sent event", {
+        cause: error,
+      });
+    }
+  }
+
   private _assertBufferLength(): void {
-    if (this._textBuffer.length > JsonServerEventsIterator._MAX_BUFFER_LENGTH) {
-      throw new Error("Server-sent event exceeds maximum buffered size");
+    if (
+      this._textBuffer.length >
+      JsonServerEventsIterator._MAX_BUFFERED_TEXT_LENGTH
+    ) {
+      throw new Error("Server-sent event exceeds maximum buffered text length");
     }
   }
 

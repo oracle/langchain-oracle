@@ -3,6 +3,7 @@ import { expect, test, vi } from "vitest";
 
 import {
   AIMessage,
+  AIMessageChunk,
   BaseMessage,
   HumanMessage,
   HumanMessage as LangChainHumanMessage,
@@ -39,6 +40,7 @@ type Message = models.Message;
 type CohereMessage = models.CohereMessage;
 type CohereChatRequest = models.CohereChatRequest;
 type GenericChatRequest = models.GenericChatRequest;
+type GenericChatResponse = models.GenericChatResponse;
 type TextContent = models.TextContent;
 type CohereChatBotMessage = models.CohereChatBotMessage;
 type CohereSystemMessage = models.CohereSystemMessage;
@@ -73,6 +75,7 @@ const invalidServerEvents: string[][] = [
 const invalidEventDataErrors = new RegExp(
   "Event text is empty, too short or malformed|" +
     "Incomplete server-sent event at end of stream|" +
+    "Stream ended with an incomplete server-sent event|" +
     "Event data is empty or too short to be valid|" +
     "Could not parse event data as JSON|" +
     "Event data could not be parsed into an object"
@@ -181,10 +184,45 @@ test("JsonServerEventsIterator parses CRLF framing", async () => {
   expect(events).toEqual([{ text: "hello" }]);
 });
 
+test("JsonServerEventsIterator parses a CRLF delimiter split across chunks", async () => {
+  const events = await collectServerEvents([
+    'data: {"text":"hello"}\r\n\r',
+    "\n",
+  ]);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator handles JSON and delimiter fragmentation together", async () => {
+  const events = await collectServerEvents([
+    'data: {"text":"hello"}\n\ndata: {"text":"wor',
+    'ld"}\n',
+    "\n",
+  ]);
+
+  expect(events).toEqual([{ text: "hello" }, { text: "world" }]);
+});
+
+test("JsonServerEventsIterator parses mixed newline framing", async () => {
+  const events = await collectServerEvents([
+    'data: {"text":"one"}\r\n\ndata: {"text":"two"}\n\r\n',
+  ]);
+
+  expect(events).toEqual([{ text: "one" }, { text: "two" }]);
+});
+
 test("JsonServerEventsIterator accepts data fields without a space", async () => {
   const events = await collectServerEvents(['data:{"text":"hello"}\n\n']);
 
   expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator joins multiple data fields in one event", async () => {
+  const events = await collectServerEvents([
+    'event: message\nid: 123\ndata: {"text":"hello",\ndata: "done":true}\n\n',
+  ]);
+
+  expect(events).toEqual([{ text: "hello", done: true }]);
 });
 
 test("JsonServerEventsIterator ignores comments and control-only events", async () => {
@@ -197,10 +235,24 @@ test("JsonServerEventsIterator ignores comments and control-only events", async 
   expect(events).toEqual([{ text: "hello" }]);
 });
 
+test("JsonServerEventsIterator ignores the standard done sentinel", async () => {
+  const events = await collectServerEvents([
+    'data: {"text":"hello"}\n\ndata: [DONE]\n\n',
+  ]);
+
+  expect(events).toEqual([{ text: "hello" }]);
+});
+
 test("JsonServerEventsIterator dispatches a final event at end of stream", async () => {
   const events = await collectServerEvents(['data: {"text":"hello"}']);
 
   expect(events).toEqual([{ text: "hello" }]);
+});
+
+test("JsonServerEventsIterator identifies incomplete data at end of stream", async () => {
+  await expect(collectServerEvents(['data: {"text":"partial'])).rejects.toThrow(
+    "Stream ended with an incomplete server-sent event"
+  );
 });
 
 test("JsonServerEventsIterator parses CR-only framing", async () => {
@@ -213,10 +265,10 @@ test("JsonServerEventsIterator bounds incomplete events", async () => {
   await expect(
     collectServerEvents([
       `data: {"text":"${"x".repeat(
-        JsonServerEventsIterator._MAX_BUFFER_LENGTH
+        JsonServerEventsIterator._MAX_BUFFERED_TEXT_LENGTH
       )}`,
     ])
-  ).rejects.toThrow("Server-sent event exceeds maximum buffered size");
+  ).rejects.toThrow("Server-sent event exceeds maximum buffered text length");
 });
 
 /*
@@ -371,12 +423,9 @@ test("OCI GenAI chat rejects both serving modes", async () => {
   );
 });
 
-test("OCI GenAI chat accepts text content blocks", () => {
+test("OCI GenAI chat accepts text-only content blocks", () => {
   const message = new LangChainHumanMessage({
-    content: [
-      { type: "text", text: "hello" },
-      { type: "reasoning", reasoning: "ignored" },
-    ],
+    content: [{ type: "text", text: "hello" }],
   } as any);
 
   expect(OciGenAiBaseChat._contentToText(message.content)).toBe("hello");
@@ -389,6 +438,22 @@ test("OCI GenAI chat accepts text content blocks", () => {
       },
     ],
   });
+});
+
+test("OCI GenAI chat rejects mixed text and multimodal content blocks", () => {
+  const message = new LangChainHumanMessage({
+    content: [
+      { type: "text", text: "describe this image" },
+      { type: "image_url", image_url: "data:image/png;base64,blah" },
+    ],
+  } as any);
+
+  expect(() => OciGenAiBaseChat._contentToText(message.content)).toThrow(
+    "Unsupported message content"
+  );
+  expect(() =>
+    new OciGenAiGenericChat(createParams)._prepareRequest([message], {}, false)
+  ).toThrow("Unsupported message content");
 });
 
 test("OCI GenAI chat identifies itself for tracing", () => {
@@ -1012,6 +1077,112 @@ test("OCI GenAI Generic parses usage-only stream events", () => {
       total_tokens: 15,
     },
   });
+});
+
+test("OCI GenAI Generic ignores reasoning-only stream events", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+
+  // Reasoning-capable OCI models can emit this before their visible content.
+  // The text-first adapter intentionally does not expose chain-of-thought.
+  expect(
+    chat._parseStreamedResponseChunk({
+      index: 0,
+      message: {
+        role: "ASSISTANT",
+        reasoningContent: "Let me think through this.",
+      },
+      serviceTier: "DEFAULT",
+    })
+  ).toBeUndefined();
+});
+
+test("OCI GenAI Generic reconstructs streamed tool-call arguments", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+  const firstDelta = chat._parseStreamedResponseChunk({
+    message: {
+      toolCalls: [
+        {
+          id: "call-weather",
+          type: "FUNCTION",
+          name: "get_weather",
+          arguments: '{"ci',
+        },
+      ],
+    },
+  });
+  const secondDelta = chat._parseStreamedResponseChunk({
+    message: {
+      toolCalls: [
+        {
+          type: "FUNCTION",
+          arguments: 'ty":"London"}',
+        },
+      ],
+    },
+  });
+
+  if (!firstDelta?.toolCallChunks || !secondDelta?.toolCallChunks) {
+    throw new Error("Expected tool call chunks from Generic stream deltas");
+  }
+
+  const merged = new AIMessageChunk({
+    content: "",
+    tool_call_chunks: firstDelta.toolCallChunks,
+  }).concat(
+    new AIMessageChunk({
+      content: "",
+      tool_call_chunks: secondDelta.toolCallChunks,
+    })
+  );
+
+  expect(merged.tool_call_chunks).toEqual([
+    {
+      type: "tool_call_chunk",
+      id: "call-weather",
+      name: "get_weather",
+      args: '{"city":"London"}',
+      index: 0,
+    },
+  ]);
+  expect(merged.tool_calls).toEqual([
+    {
+      type: "tool_call",
+      id: "call-weather",
+      name: "get_weather",
+      args: { city: "London" },
+    },
+  ]);
+});
+
+test("OCI GenAI Generic rejects completed tool calls without IDs", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+
+  expect(() =>
+    chat._parseResponse({
+      choices: [
+        {
+          message: {
+            toolCalls: [
+              {
+                type: "FUNCTION",
+                name: "get_weather",
+                arguments: "{}",
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as GenericChatResponse)
+  ).toThrow("OCI tool call 'get_weather' did not contain a tool call id");
+
+  expect(() =>
+    OciGenAiGenericChat._convertBaseMessagesToGenericMessages([
+      new AIMessage({
+        content: "",
+        tool_calls: [{ name: "get_weather", args: {} }],
+      }),
+    ])
+  ).toThrow("LangChain tool call 'get_weather' did not contain a tool call id");
 });
 
 const invalidCohereStreamedChunks = [

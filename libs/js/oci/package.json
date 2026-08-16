@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "description": "OCI Generative AI integration for LangChain.js",
   "type": "module",
+  "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=18"
   },
@@ -57,6 +58,7 @@
     "eslint-plugin-import": "^2.27.5",
     "eslint-plugin-no-instanceof": "^1.0.1",
     "eslint-plugin-prettier": "^4.2.1",
+    "oci-generativeai": "^2.139.1",
     "prettier": "^2.8.3",
     "release-it": "^15.10.1",
     "rollup": "^4.5.2",
