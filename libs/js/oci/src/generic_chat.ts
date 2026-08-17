@@ -25,6 +25,10 @@ const {
   GenericChatRequest,
   SystemMessage,
   TextContent,
+  ToolChoiceAuto,
+  ToolChoiceFunction,
+  ToolChoiceNone,
+  ToolChoiceRequired,
   ToolMessage,
   UserMessage,
 } = models;
@@ -40,6 +44,21 @@ export type GenericCallOptions = Omit<
   "apiFormat" | "messages" | "isStream" | "stop"
 >;
 
+/** Standard LangChain tool-choice forms accepted by Generic chat bindings. */
+export type OciGenAiGenericToolChoice =
+  | "auto"
+  | "none"
+  | "required"
+  | "any"
+  | boolean
+  | { type: "function"; function: { name: string } };
+
+type OciGenAiGenericBindToolsOptions = Partial<
+  OciGenAiModelCallOptions<GenericCallOptions>
+> & {
+  tool_choice?: OciGenAiGenericToolChoice;
+};
+
 /** OCI Generic chat model, including LangChain tool-call and tool-result turns. */
 export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
   override _createRequest(
@@ -49,10 +68,12 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
   ): GenericChatRequest {
     const requestParams = options.requestParams ?? {};
     return <GenericChatRequest>{
+      // Keep provider tuning options, but do not allow untyped JS callers to
+      // override the adapter-owned API format or converted message history.
+      ...requestParams,
       apiFormat: GenericChatRequest.apiFormat,
       messages:
         OciGenAiGenericChat._convertBaseMessagesToGenericMessages(messages),
-      ...requestParams,
       isStream: !!stream,
       stop: options.stop,
     };
@@ -125,6 +146,12 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     };
   }
 
+  /**
+   * Converts LangChain messages into OCI Generic message objects for the outgoing
+   * model request, validating tool-call/tool-result relationships along the way.
+   *
+   * A ToolMessage must reference exactly one earlier model-generated tool-call ID.
+   */
   static _convertBaseMessagesToGenericMessages(
     messages: BaseMessage[]
   ): Message[] {
@@ -139,6 +166,9 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
           message as { tool_calls?: Array<{ id?: string }> }
         ).tool_calls ?? []) {
           if (toolCall.id) {
+            if (outstandingToolCallIds.has(toolCall.id)) {
+              throw new Error(`Duplicate tool call id '${toolCall.id}'`);
+            }
             outstandingToolCallIds.add(toolCall.id);
           }
         }
@@ -146,7 +176,10 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
 
       if (message.getType() === "tool") {
         const toolCallId = (message as LangChainToolMessage).tool_call_id;
-        if (!toolCallId || !outstandingToolCallIds.has(toolCallId)) {
+        // A tool-result turn has a one-to-one relationship with the unique
+        // model-generated call ID. delete() validates and consumes it, so a
+        // duplicate ToolMessage cannot silently reuse an earlier call.
+        if (!toolCallId || !outstandingToolCallIds.delete(toolCallId)) {
           throw new Error(
             `ToolMessage references unknown tool call '${toolCallId ?? ""}'`
           );
@@ -197,8 +230,7 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
           tool_calls?: Array<{ id?: string; name: string; args: unknown }>;
         }
       ).tool_calls ?? [];
-    // Python skips assistant calls lacking an ID. JS instead fails before the
-    // request because silently removing a call can orphan a later ToolMessage.
+    // Fails before the request because silently removing a call can orphan a later ToolMessage.
     for (const toolCall of toolCalls) {
       if (!toolCall.id) {
         throw new Error(
@@ -206,8 +238,16 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
         );
       }
     }
+    const content =
+      text || toolCalls.length === 0
+        ? { content: OciGenAiGenericChat._createTextContent(text) }
+        : {};
+
     return {
       role: AssistantMessage.role,
+      // OCI Generic supports assistant content alongside tool calls. Retain
+      // non-empty text so an agent history round trip does not lose it.
+      ...content,
       ...(toolCalls.length > 0
         ? {
             toolCalls: toolCalls.map((toolCall) => ({
@@ -217,7 +257,7 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
               arguments: JSON.stringify(toolCall.args ?? {}),
             })),
           }
-        : { content: OciGenAiGenericChat._createTextContent(text) }),
+        : {}),
     } as Message;
   }
 
@@ -243,13 +283,17 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     return (
       response !== null &&
       typeof response === "object" &&
-      this._isValidChoicesArray((<GenericChatResponse>response).choices)
+      this._isValidChoicesArray((<GenericChatResponse>response).choices) &&
+      OciGenAiGenericChat._isValidOptionalUsage(
+        (response as { usage?: unknown }).usage
+      )
     );
   }
 
   static _isValidChoicesArray(choices: unknown): choices is ChatChoice[] {
     return (
       Array.isArray(choices) &&
+      choices.length > 0 &&
       choices.every(OciGenAiGenericChat._isValidChatChoice)
     );
   }
@@ -258,6 +302,12 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     return (
       choice !== null &&
       typeof choice === "object" &&
+      OciGenAiGenericChat._isValidOptionalFinishReason(
+        (choice as { finishReason?: unknown }).finishReason
+      ) &&
+      OciGenAiGenericChat._isValidOptionalUsage(
+        (choice as { usage?: unknown }).usage
+      ) &&
       (OciGenAiGenericChat._isValidMessage((<ChatChoice>choice).message) ||
         OciGenAiGenericChat._isFinalChunk(choice))
     );
@@ -268,7 +318,52 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
       message !== null &&
       typeof message === "object" &&
       (OciGenAiGenericChat._isValidContentArray((<Message>message).content) ||
-        Array.isArray((message as { toolCalls?: unknown }).toolCalls))
+        OciGenAiGenericChat._isValidToolCalls(
+          (message as { toolCalls?: unknown }).toolCalls
+        ))
+    );
+  }
+
+  static _isValidToolCalls(toolCalls: unknown): boolean {
+    return (
+      Array.isArray(toolCalls) &&
+      toolCalls.length > 0 &&
+      toolCalls.every(
+        (toolCall) =>
+          toolCall !== null &&
+          typeof toolCall === "object" &&
+          typeof (toolCall as { id?: unknown }).id === "string" &&
+          (toolCall as { id: string }).id.length > 0 &&
+          typeof (toolCall as { name?: unknown }).name === "string" &&
+          (toolCall as { name: string }).name.length > 0 &&
+          ((toolCall as { arguments?: unknown }).arguments === undefined ||
+            typeof (toolCall as { arguments?: unknown }).arguments === "string")
+      )
+    );
+  }
+
+  static _isValidOptionalFinishReason(value: unknown): boolean {
+    return value === undefined || typeof value === "string";
+  }
+
+  static _isValidOptionalUsage(value: unknown): boolean {
+    if (value === undefined) {
+      return true;
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+
+    // OCI Usage token counters are optional, but every supplied counter must
+    // be a finite number before it is surfaced as LangChain usage metadata.
+    return ["promptTokens", "completionTokens", "totalTokens"].every(
+      (field) => {
+        const tokenCount = (value as Record<string, unknown>)[field];
+        return (
+          tokenCount === undefined ||
+          (typeof tokenCount === "number" && Number.isFinite(tokenCount))
+        );
+      }
     );
   }
 
@@ -313,7 +408,7 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
       .map((toolCall) => {
         // Completed OCI calls need a service-provided ID. Never synthesize one:
         // it must match the ToolMessage.tool_call_id sent in the next turn.
-        if (!toolCall.id) {
+        if (typeof toolCall.id !== "string" || !toolCall.id) {
           throw new Error(
             `OCI tool call '${toolCall.name}' did not contain a tool call id`
           );
@@ -354,22 +449,37 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     );
   }
 
+  /**
+   * Binds tool definitions (Zod schemas, structured tools, or raw JSON schemas)
+   * to this chat model instance for function calling.
+   *
+   * @param tools - Array of LangChain tools, OpenAI-format tool definitions, or schemas to bind.
+   * @param kwargs - Additional call options to attach (e.g., tool_choice, custom request parameters).
+   * @returns A `RunnableBinding` wrapping this model with pre-configured OCI tool schemas.
+   */
   bindTools(
     tools: BindToolsInput[],
-    kwargs: Partial<this["ParsedCallOptions"]> = {}
+    kwargs: OciGenAiGenericBindToolsOptions = {}
   ): Runnable<
     BaseLanguageModelInput,
     AIMessageChunk,
     OciGenAiModelCallOptions<GenericCallOptions>
   > {
+    const { tool_choice: toolChoice, requestParams, ...callOptions } = kwargs;
+
     // LangChain tools use the OpenAI-compatible schema; OCI Generic function
     // definitions use the same JSON Schema payload with provider field names.
+    // Normalize standard tool_choice forms into OCI's requestParams.toolChoice
+    // field rather than leaking an unsupported snake_case option downstream.
     return new RunnableBinding({
       bound: this,
       kwargs: {
-        ...kwargs,
+        ...callOptions,
         requestParams: {
-          ...(kwargs.requestParams ?? {}),
+          ...(requestParams ?? {}),
+          ...(toolChoice !== undefined
+            ? { toolChoice: OciGenAiGenericChat._convertToolChoice(toolChoice) }
+            : {}),
           tools: OciGenAiGenericChat._convertTools(
             tools.map(convertToOpenAITool)
           ),
@@ -390,6 +500,42 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     }));
   }
 
+  static _convertToolChoice(
+    toolChoice: OciGenAiGenericToolChoice
+  ):
+    | models.ToolChoiceFunction
+    | models.ToolChoiceNone
+    | models.ToolChoiceAuto
+    | models.ToolChoiceRequired {
+    if (toolChoice === "auto") {
+      return { type: ToolChoiceAuto.type };
+    }
+    if (toolChoice === "none" || toolChoice === false) {
+      return { type: ToolChoiceNone.type };
+    }
+    if (
+      toolChoice === "required" ||
+      toolChoice === "any" ||
+      toolChoice === true
+    ) {
+      return { type: ToolChoiceRequired.type };
+    }
+    if (typeof toolChoice === "string") {
+      // Match Python's Generic provider: an otherwise unreserved string is a
+      // request to call the named function.
+      return { type: ToolChoiceFunction.type, name: toolChoice };
+    }
+    if (
+      toolChoice.type === "function" &&
+      typeof toolChoice.function?.name === "string" &&
+      toolChoice.function.name.length > 0
+    ) {
+      return { type: ToolChoiceFunction.type, name: toolChoice.function.name };
+    }
+
+    throw new Error("Invalid tool_choice for OCI Generic chat");
+  }
+
   static _isFinalChunk(chunkData: unknown) {
     return (
       chunkData !== null &&
@@ -405,15 +551,26 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
 
     const candidate = chunk as Partial<ChatChoice>;
     return (
-      (candidate.message !== undefined &&
+      ((candidate.message !== undefined &&
         OciGenAiGenericChat._isValidStreamMessage(candidate.message)) ||
-      candidate.finishReason !== undefined ||
-      candidate.usage !== undefined
+        candidate.finishReason !== undefined ||
+        candidate.usage !== undefined) &&
+      OciGenAiGenericChat._isValidOptionalFinishReason(
+        candidate.finishReason
+      ) &&
+      OciGenAiGenericChat._isValidOptionalUsage(candidate.usage)
     );
   }
 
   static _isValidStreamMessage(message: unknown): message is Message {
-    if (OciGenAiGenericChat._isValidMessage(message)) {
+    if (
+      message !== null &&
+      typeof message === "object" &&
+      (OciGenAiGenericChat._isValidContentArray((message as Message).content) ||
+        OciGenAiGenericChat._isValidStreamToolCalls(
+          (message as { toolCalls?: unknown }).toolCalls
+        ))
+    ) {
       return true;
     }
 
@@ -428,15 +585,33 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
     );
   }
 
+  static _isValidStreamToolCalls(toolCalls: unknown): boolean {
+    return (
+      Array.isArray(toolCalls) &&
+      toolCalls.length > 0 &&
+      toolCalls.every(
+        (toolCall) =>
+          toolCall !== null &&
+          typeof toolCall === "object" &&
+          ((toolCall as { id?: unknown }).id === undefined ||
+            typeof (toolCall as { id?: unknown }).id === "string") &&
+          ((toolCall as { name?: unknown }).name === undefined ||
+            typeof (toolCall as { name?: unknown }).name === "string") &&
+          ((toolCall as { arguments?: unknown }).arguments === undefined ||
+            typeof (toolCall as { arguments?: unknown }).arguments === "string")
+      )
+    );
+  }
+
   override getLsParams(options: this["ParsedCallOptions"]): LangSmithParams {
     return {
       ls_provider: "oci_genai_generic",
       ls_model_name:
         this._params.onDemandModelId || this._params.dedicatedEndpointId || "",
       ls_model_type: "chat",
-      ls_temperature: options.requestParams?.temperature || 0,
-      ls_max_tokens: options.requestParams?.maxTokens || 0,
-      ls_stop: options.stop || [],
+      ls_temperature: options.requestParams?.temperature ?? 0,
+      ls_max_tokens: options.requestParams?.maxTokens ?? 0,
+      ls_stop: options.stop ?? [],
     };
   }
 }

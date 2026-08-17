@@ -59,8 +59,18 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
 > {
   _sdkClient: OciGenAiSdkClient | undefined;
 
+  // Single-flight lazy initialization prevents concurrent invocations from
+  // constructing multiple SDK clients, one of which could become orphaned.
+  _sdkClientPromise: Promise<OciGenAiSdkClient> | undefined;
+
   // A caller-injected SDK client remains caller-owned and must not be closed.
   _ownsSdkClient = false;
+
+  _closed = false;
+
+  // Concurrent close() callers share the same cleanup, including any client
+  // construction that was already in progress when shutdown began.
+  _closePromise: Promise<void> | undefined;
 
   _params: Partial<OciGenAiModelBaseParams>;
 
@@ -115,19 +125,36 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
     };
   }
 
+  /**
+   * Streams chat generation chunks incrementally from the OCI Generative AI service.
+   *
+   * @param messages - Array of LangChain chat history messages.
+   * @param options - Provider call options (e.g., temperature, maxTokens, stop).
+   * @param runManager - Optional callback manager to trigger stream events (e.g., handleLLMNewToken).
+   * @returns An async generator yielding standardized LangChain `ChatGenerationChunk` instances.
+   */
   override async *_streamResponseChunks(
     messages: BaseMessage[],
     options: this["ParsedCallOptions"],
     runManager?: CallbackManagerForLLMRun
   ): AsyncGenerator<ChatGenerationChunk> {
+    // Sends the HTTP POST request to the OCI GenAI service with stream: true.
+    // response has ReadableStream<Uint8Array> yielding incoming
+    // binary network packets over HTTP.
     const response: ReadableStream<Uint8Array> = await this._makeRequest(
       messages,
       options,
       true
     );
+
+    // Initialize the Server-Sent Events (SSE) framing iterator.
     const responseChunkIterator = new JsonServerEventsIterator(response);
 
+    // Iterate through incoming parsed SSE JSON events as they arrive over the wire.
     for await (const responseChunk of responseChunkIterator) {
+      // Normalize provider-specific delta JSON into LangChain `ChatGenerationChunk`s,
+      // invoke active tracer callbacks (e.g., LangSmith / token callbacks), and
+      // delegate-yield the standardized chunks directly to the consumer.
       yield* this._streamResponseChunk(responseChunk, runManager);
     }
   }
@@ -169,16 +196,63 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
     return (await this._chat(request)) as ResponseType;
   }
 
-  async _setupClient() {
+  async _setupClient(): Promise<void> {
+    if (this._closed) {
+      throw new Error("OciGenAiBaseChat is closed");
+    }
+
     if (this._sdkClient) {
       return;
     }
 
-    this._sdkClient = await OciGenAiSdkClient.create(this._params);
-    this._ownsSdkClient = !this._params.client;
+    if (!this._sdkClientPromise) {
+      this._sdkClientPromise = OciGenAiSdkClient.create(this._params)
+        .then((client) => {
+          // close() can begin while asynchronous client construction is in
+          // flight. Close an owned client rather than installing it afterward.
+          if (this._closed) {
+            if (!this._params.client) {
+              client.close();
+            }
+            throw new Error("OciGenAiBaseChat is closed");
+          }
+
+          this._sdkClient = client;
+          this._ownsSdkClient = !this._params.client;
+          return client;
+        })
+        .finally(() => {
+          this._sdkClientPromise = undefined;
+        });
+    }
+
+    const clientPromise = this._sdkClientPromise;
+    if (clientPromise === undefined) {
+      throw new Error("OCI SDK client initialization was not started");
+    }
+    await clientPromise;
   }
 
   async close(): Promise<void> {
+    if (this._closePromise) {
+      return this._closePromise;
+    }
+
+    this._closed = true;
+    this._closePromise = this._closeClient();
+    return this._closePromise;
+  }
+
+  private async _closeClient(): Promise<void> {
+    const clientPromise = this._sdkClientPromise;
+    if (clientPromise) {
+      try {
+        await clientPromise;
+      } catch {
+        // A closed in-flight client intentionally rejects after cleanup.
+      }
+    }
+
     // Only close a client this model created; an injected SDK client may be
     // shared by the application and remains the caller's responsibility.
     if (this._sdkClient && this._ownsSdkClient) {
@@ -245,11 +319,15 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
           typeof block.text === "string"
       );
 
+      // Only accept arrays consisting entirely of text blocks. Reject mixed or
+      // non-text payloads (e.g. image_url, audio) early to prevent partial or
+      // silent content drops until OCI multimodal support is explicitly implemented.
       if (textBlocks.length === content.length && textBlocks.length > 0) {
         return textBlocks.map((block) => block.text).join("");
       }
     }
 
+    // Fail fast if content is empty or contains unsupported/multimodal block types.
     throw new Error("Unsupported message content");
   }
 
@@ -323,13 +401,16 @@ export abstract class OciGenAiBaseChat<RequestType> extends BaseChatModel<
   async _callChat(
     chatRequest: OciGenAiSupportedRequestType
   ): Promise<OciGenAiChatCallResponseType> {
-    if (!OciGenAiBaseChat._isSdkClient(this._sdkClient)) {
+    const sdkClient = this._sdkClient;
+    if (!OciGenAiBaseChat._isSdkClient(sdkClient)) {
       throw new Error("OCI SDK client not initialized");
     }
 
     const fullChatRequest: requests.ChatRequest =
       this._composeFullRequest(chatRequest);
-    return await this._sdkClient.client.chat(fullChatRequest);
+    // Delegate retries and instance-wide concurrency to LangChain's
+    // AsyncCaller rather than duplicating that policy around the OCI SDK.
+    return this.caller.call(() => sdkClient.client.chat(fullChatRequest));
   }
 
   _composeFullRequest(

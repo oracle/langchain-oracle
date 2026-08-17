@@ -28,7 +28,7 @@ test("OCI Generic completes a LangGraph tool round-trip", async () => {
     compartmentId: "test-compartment",
     onDemandModelId: "test-model",
     client: {
-      chat: (request: unknown) => {
+      chat: async (request: unknown) => {
         callCount += 1;
         const { chatRequest } = (
           request as { chatDetails: { chatRequest: OciGenericChatRequest } }

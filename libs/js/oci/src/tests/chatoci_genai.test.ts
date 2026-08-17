@@ -361,10 +361,14 @@ const dedicatedEndpointId = "oci.dedicated.oci";
 const createParams = {
   compartmentId,
   onDemandModelId,
+  // Unit-test service failures must not spend time in production retry backoff.
+  maxRetries: 0,
 };
 
 const DummyClient = {
-  chat() {},
+  async chat() {
+    return undefined;
+  },
 };
 
 test("OCI GenAI chat models creation", async () => {
@@ -478,6 +482,73 @@ test("OCI GenAI chat closes only clients it owns", async () => {
   expect(closeOwned).toHaveBeenCalledOnce();
   expect(closeExternal).not.toHaveBeenCalled();
   expect(ownedChat._sdkClient).toBeUndefined();
+});
+
+test("OCI GenAI chat initializes one owned SDK client for concurrent calls", async () => {
+  const sdkClient = {
+    client: { chat: vi.fn() },
+    close: vi.fn(),
+  } as unknown as OciGenAiSdkClient;
+  const createClientSpy = vi
+    .spyOn(OciGenAiSdkClient, "create")
+    .mockResolvedValue(sdkClient);
+  const chat = new OciGenAiGenericChat(createParams);
+
+  try {
+    await Promise.all([chat._setupClient(), chat._setupClient()]);
+
+    expect(createClientSpy).toHaveBeenCalledOnce();
+    expect(chat._sdkClient).toBe(sdkClient);
+    await chat.close();
+    expect(sdkClient.close).toHaveBeenCalledOnce();
+  } finally {
+    createClientSpy.mockRestore();
+  }
+});
+
+test("OCI GenAI chat closes an owned client created after close", async () => {
+  const sdkClient = {
+    client: { chat: vi.fn() },
+    close: vi.fn(),
+  } as unknown as OciGenAiSdkClient;
+  let resolveClient: ((client: OciGenAiSdkClient) => void) | undefined;
+  const createClientSpy = vi.spyOn(OciGenAiSdkClient, "create").mockReturnValue(
+    new Promise((resolve) => {
+      resolveClient = resolve;
+    })
+  );
+  const chat = new OciGenAiGenericChat(createParams);
+
+  try {
+    const setup = chat._setupClient();
+    const rejectedSetup = expect(setup).rejects.toThrow(
+      "OciGenAiBaseChat is closed"
+    );
+    await vi.waitFor(() => expect(resolveClient).toBeDefined());
+    const close = chat.close();
+    resolveClient!(sdkClient);
+
+    await Promise.all([close, rejectedSetup]);
+    expect(sdkClient.close).toHaveBeenCalledOnce();
+  } finally {
+    createClientSpy.mockRestore();
+  }
+});
+
+test("OCI GenAI chat delegates OCI invocations through AsyncCaller", async () => {
+  const response = { chatResult: { chatResponse: { choices: [] } } };
+  const client = {
+    chat: vi.fn().mockResolvedValue(response),
+  };
+  const chat = new OciGenAiGenericChat(createParams);
+  chat._sdkClient = { client } as unknown as OciGenAiSdkClient;
+  const callerCallSpy = vi.spyOn(chat.caller, "call");
+
+  await expect(
+    chat._callChat(chat._createRequest([new HumanMessage("hello")], {}, false))
+  ).resolves.toBe(response);
+  expect(callerCallSpy).toHaveBeenCalledOnce();
+  expect(client.chat).toHaveBeenCalledOnce();
 });
 
 const chatClassReturnValues = [
@@ -619,6 +690,28 @@ test("OCI GenAI Generic streaming usage is opt-in", () => {
   expect(withUsage.streamOptions).toEqual({ isIncludeUsage: true });
 });
 
+test("OCI GenAI Generic request params cannot override adapter invariants", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+  const request = chat._createRequest(
+    [new HumanMessage("hello")],
+    {
+      requestParams: {
+        apiFormat: "COHERE",
+        messages: [],
+      } as unknown as GenericChatRequest,
+    },
+    false
+  );
+
+  expect(request.apiFormat).toBe(GenericChatRequest.apiFormat);
+  expect(request.messages).toEqual([
+    {
+      role: GenericUserMessage.role,
+      content: [{ type: TextContent.type, text: "hello" }],
+    },
+  ]);
+});
+
 test("only Generic chat exposes LangChain tool binding", () => {
   expect(typeof new OciGenAiGenericChat(createParams).bindTools).toBe(
     "function"
@@ -695,6 +788,7 @@ test("OCI GenAI Cohere parse valid response", async () => {
 });
 
 const invalidCGenericResponseValues = [
+  { choices: [] },
   undefined,
   null,
   {},
@@ -752,6 +846,54 @@ const invalidCGenericResponseValues = [
       {
         message: {
           content: null,
+        },
+      },
+    ],
+  },
+  {
+    choices: [
+      {
+        message: {
+          toolCalls: [],
+        },
+      },
+    ],
+  },
+  {
+    choices: [
+      {
+        finishReason: 123,
+        message: {
+          content: [{ type: TextContent.type, text: "some text" }],
+        },
+      },
+    ],
+  },
+  {
+    choices: [
+      {
+        usage: "garbage",
+        message: {
+          content: [{ type: TextContent.type, text: "some text" }],
+        },
+      },
+    ],
+  },
+  {
+    usage: "garbage",
+    choices: [
+      {
+        message: {
+          content: [{ type: TextContent.type, text: "some text" }],
+        },
+      },
+    ],
+  },
+  {
+    choices: [
+      {
+        message: {
+          toolCalls: [42],
         },
       },
     ],
@@ -951,7 +1093,7 @@ test("OCI GenAI Generic invoke preserves tool calls and usage metadata", async (
   const chat = new OciGenAiGenericChat({
     ...createParams,
     client: {
-      chat: () => ({
+      chat: async () => ({
         chatResult: {
           chatResponse: {
             choices: [
@@ -1006,7 +1148,7 @@ test("OCI GenAI Generic bindTools sends OCI function definitions", async () => {
   const chat = new OciGenAiGenericChat({
     ...createParams,
     client: {
-      chat: (request: unknown) => {
+      chat: async (request: unknown) => {
         requests.push(request);
         return {
           chatResult: {
@@ -1054,6 +1196,51 @@ test("OCI GenAI Generic bindTools sends OCI function definitions", async () => {
             },
           },
         ],
+      },
+    },
+  });
+});
+
+test("OCI GenAI Generic bindTools normalizes LangChain tool_choice", async () => {
+  const requests: any[] = [];
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: {
+      chat: async (request: unknown) => {
+        requests.push(request);
+        return {
+          chatResult: {
+            chatResponse: {
+              choices: [{ finishReason: "STOP", message: { content: [] } }],
+            },
+          },
+        };
+      },
+    } as any,
+  });
+  const tool = {
+    type: "function" as const,
+    function: {
+      name: "get_weather",
+      description: "Get weather for a city",
+      parameters: { type: "object" },
+    },
+  };
+
+  await chat.bindTools([tool], { tool_choice: "required" }).invoke("weather?");
+  await chat
+    .bindTools([tool], {
+      tool_choice: { type: "function", function: { name: "get_weather" } },
+    })
+    .invoke("weather?");
+
+  expect(requests[0]).toMatchObject({
+    chatDetails: { chatRequest: { toolChoice: { type: "REQUIRED" } } },
+  });
+  expect(requests[1]).toMatchObject({
+    chatDetails: {
+      chatRequest: {
+        toolChoice: { type: "FUNCTION", name: "get_weather" },
       },
     },
   });
@@ -1173,7 +1360,7 @@ test("OCI GenAI Generic rejects completed tool calls without IDs", () => {
         },
       ],
     } as unknown as GenericChatResponse)
-  ).toThrow("OCI tool call 'get_weather' did not contain a tool call id");
+  ).toThrow("Invalid GenericChatResponse object");
 
   expect(() =>
     OciGenAiGenericChat._convertBaseMessagesToGenericMessages([
@@ -1183,6 +1370,36 @@ test("OCI GenAI Generic rejects completed tool calls without IDs", () => {
       }),
     ])
   ).toThrow("LangChain tool call 'get_weather' did not contain a tool call id");
+});
+
+test("OCI GenAI Generic preserves malformed tool-call arguments safely", () => {
+  const chat = new OciGenAiGenericChat(createParams);
+
+  expect(
+    chat._parseResponse({
+      choices: [
+        {
+          message: {
+            toolCalls: [
+              {
+                id: "call-weather",
+                type: "FUNCTION",
+                name: "get_weather",
+                arguments: '{"city":',
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as GenericChatResponse).toolCalls
+  ).toEqual([
+    {
+      type: "tool_call",
+      id: "call-weather",
+      name: "get_weather",
+      args: {},
+    },
+  ]);
 });
 
 const invalidCohereStreamedChunks = [
@@ -1246,6 +1463,19 @@ const invalidGenericStreamedChunks = [
   },
   {
     apiFormat: CohereChatRequest.apiFormat,
+  },
+  { finishReason: 123 },
+  { usage: "garbage" },
+  {
+    message: {
+      toolCalls: [],
+    },
+  },
+  {
+    message: {
+      content: [{ type: TextContent.type, text: "valid text" }],
+    },
+    usage: "garbage",
   },
 ];
 
@@ -1457,6 +1687,12 @@ test("OCI GenAI chat generic _convertBaseMessagesToGenericMessages", () => {
       expectedOutput: [
         {
           role: GenericAssistantMessage.role,
+          content: [
+            {
+              text: "Hello",
+              type: TextContent.type,
+            },
+          ],
           toolCalls: [
             {
               id: "id",
@@ -1486,6 +1722,31 @@ test("OCI GenAI chat generic _convertBaseMessagesToGenericMessages", () => {
           ],
         },
       ],
+    },
+    {
+      input: [
+        new AIMessage({
+          content: "",
+          tool_calls: [
+            { id: "call-1", name: "get_weather", args: { city: "London" } },
+          ],
+        }),
+        new ToolMessage("London", "call-1"),
+        new ToolMessage("London again", "call-1"),
+      ],
+      expectedError: "ToolMessage references unknown tool call 'call-1'",
+    },
+    {
+      input: [
+        new AIMessage({
+          content: "",
+          tool_calls: [
+            { id: "call-1", name: "get_weather", args: {} },
+            { id: "call-1", name: "get_forecast", args: {} },
+          ],
+        }),
+      ],
+      expectedError: "Duplicate tool call id 'call-1'",
     },
   ];
 
@@ -1600,7 +1861,7 @@ test("OCI GenAI chat generic _isGenericResponse", () => {
         choices: [],
         apiFormat: "v1",
       },
-      expectedOutput: true,
+      expectedOutput: false,
     },
     {
       input: {
@@ -1628,8 +1889,9 @@ test("OCI GenAI chat models invoke + check sdkClient cache logic", async () => {
       const chatClass = new ChatClassType({
         compartmentId,
         onDemandModelId,
+        maxRetries: 0,
         client: {
-          chat: () => parameter,
+          chat: async () => parameter,
         },
       });
 
@@ -1648,8 +1910,9 @@ test("OCI GenAI chat models invoke API fail", async () => {
       const chatClass = new ChatClassType({
         compartmentId,
         onDemandModelId,
+        maxRetries: 0,
         client: {
-          chat: () => {
+          chat: async () => {
             throw new Error("API error");
           },
         },
@@ -1672,8 +1935,9 @@ test("OCI GenAI chat preserves the original API error as its cause", async () =>
   const chat = new OciGenAiGenericChat({
     compartmentId,
     onDemandModelId,
+    maxRetries: 0,
     client: {
-      chat: () => {
+      chat: async () => {
         throw originalError;
       },
     } as any,
@@ -1699,7 +1963,7 @@ test("OCI GenAI chat models invoke with with no initialized SDK client", async (
         compartmentId,
         dedicatedEndpointId,
         client: {
-          chat: () => true,
+          chat: async () => true,
         },
       });
 
@@ -1719,7 +1983,7 @@ test("OCI GenAI chat models invoke with sdk client uninitialized", async () => {
         compartmentId,
         dedicatedEndpointId,
         client: {
-          chat: () => true,
+          chat: async () => true,
         },
       });
 
@@ -1739,7 +2003,7 @@ test("OCI GenAI chat models invoke with dedicated endpoint", async () => {
         compartmentId,
         dedicatedEndpointId,
         client: {
-          chat: () => params,
+          chat: async () => params,
         },
       });
 
@@ -1773,7 +2037,7 @@ test("OCI GenAI chat models stream", async () => {
         compartmentId,
         onDemandModelId,
         client: {
-          chat: () => {
+          chat: async () => {
             numApiCalls += 1;
             return createStreamFromStringArray(parameter);
           },
