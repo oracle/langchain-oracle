@@ -183,6 +183,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         arbitrary_types_allowed=True,
     )
 
+    use_responses_api: bool = False
+    """Whether to use the Responses API instead of the Chat API."""
+
     # Cached provider instance (not a Pydantic field to avoid serialization)
     _cached_provider_instance: Optional[Provider] = None
 
@@ -206,9 +209,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
     def _provider(self) -> Any:
         """Get the internal provider object (cached for stateful providers)."""
         if self._cached_provider_instance is None:
-            self._cached_provider_instance = self._get_provider(
-                provider_map=self._provider_map
-            )
+            if self.use_responses_api:
+                self._cached_provider_instance = GenericProvider()
+            else:
+                self._cached_provider_instance = self._get_provider(
+                    provider_map=self._provider_map
+                )
         return self._cached_provider_instance
 
     def _prepare_request(
@@ -505,7 +511,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
-        response = self._chat_with_param_retry(request)
+        if self.use_responses_api:
+            response = self._call_responses_api(request, stream=False)
+        else:
+            response = self._chat_with_param_retry(request)
 
         content = self._provider.chat_response_to_text(response)
 
@@ -574,6 +583,270 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     raise
         raise RuntimeError("unreachable")  # pragma: no cover
 
+    def _get_oci_signer(self) -> Any:
+        """Get or create the OCI request signer for HTTP REST requests."""
+        signer = getattr(getattr(self, "client", None), "base_client", None)
+        if signer is not None and hasattr(signer, "signer"):
+            return signer.signer
+
+        from langchain_oci.common.auth import create_oci_client_kwargs
+
+        client_kwargs = create_oci_client_kwargs(
+            auth_type=self.auth_type or "API_KEY",
+            service_endpoint=self.service_endpoint,
+            auth_file_location=self.auth_file_location or "~/.oci/config",
+            auth_profile=self.auth_profile or "DEFAULT",
+        )
+        signer = client_kwargs.get("signer")
+        if signer is None and client_kwargs.get("config"):
+            import oci
+
+            signer = oci.signer.Signer.from_config(client_kwargs["config"])
+        return signer
+
+    def _call_responses_api(self, request_details: Any, stream: bool = False) -> Any:
+        """Call OCI Responses REST API endpoint (/v1/responses) directly via HTTP.
+
+        Builds an OpenAI Responses-compatible payload:
+        - ``input`` (not ``messages``)
+        - ``max_output_tokens`` (not ``max_tokens``)
+        - ``compartment_id`` / ``top_k`` stay out of the body; the compartment
+          is conveyed only via the ``opc-compartment-id`` header.
+        """
+        import requests as _requests
+
+        endpoint = (
+            self.service_endpoint
+            or "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+        ).rstrip("/")
+        url = f"{endpoint}/v1/responses"
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self.compartment_id:
+            headers["opc-compartment-id"] = self.compartment_id
+
+        signer = self._get_oci_signer()
+
+        chat_req = getattr(request_details, "chat_request", None)
+        payload: Dict[str, Any] = {
+            "model": self.model_id,
+            "stream": stream,
+        }
+
+        if chat_req:
+            # Build ``input`` (OpenAI Responses schema) from SDK messages.
+            if hasattr(chat_req, "messages") and chat_req.messages:
+                formatted_input: List[Dict[str, Any]] = []
+                for msg in chat_req.messages:
+                    role = str(getattr(msg, "role", "user")).lower()
+                    content = getattr(msg, "content", "")
+                    # Flatten content list / SDK objects to plain text.
+                    if isinstance(content, list):
+                        parts_text: List[str] = []
+                        for part in content:
+                            if isinstance(part, dict):
+                                parts_text.append(part.get("text", ""))
+                            elif isinstance(part, str):
+                                parts_text.append(part)
+                            else:
+                                parts_text.append(getattr(part, "text", str(part)))
+                        content = "".join(parts_text)
+                    formatted_input.append({"role": role, "content": content})
+                payload["input"] = formatted_input
+
+            # Map max_tokens -> max_output_tokens; skip top_k / compartment_id.
+            _param_map = {
+                "max_tokens": "max_output_tokens",
+                "temperature": "temperature",
+                "top_p": "top_p",
+                "frequency_penalty": "frequency_penalty",
+                "presence_penalty": "presence_penalty",
+            }
+            for sdk_attr, api_key in _param_map.items():
+                val = getattr(chat_req, sdk_attr, None)
+                if val is not None:
+                    payload[api_key] = val
+
+        res = _requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            auth=signer,
+            stream=stream,
+            timeout=240,
+        )
+        res.raise_for_status()
+
+        if stream:
+            return res
+        else:
+            return self._process_responses_api_response(res.json(), res.headers)
+
+    @staticmethod
+    def _extract_responses_api_text(data_dict: Dict[str, Any]) -> str:
+        """Extract the assistant text from an OpenAI Responses API JSON body.
+
+        The actual schema nests text at::
+
+            output[].content[].text   (where content[].type == "output_text")
+        """
+        texts: List[str] = []
+        for item in data_dict.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for part in item.get("content", []):
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "output_text"
+                    and "text" in part
+                ):
+                    texts.append(part["text"])
+        return "".join(texts)
+
+    def _process_responses_api_response(
+        self, data_dict: Dict[str, Any], headers: Any
+    ) -> Any:
+        """Wrap REST API response JSON into an OCI-compatible response object.
+
+        Uses ``types.SimpleNamespace`` instead of ``unittest.mock.MagicMock``
+        so attribute access is explicit and missing fields raise
+        ``AttributeError`` immediately (instead of silently returning new mocks).
+        """
+        from types import SimpleNamespace
+
+        model_id = data_dict.get("model", self.model_id or "")
+        model_version = data_dict.get("model_version", "1.0")
+
+        # --- extract text from the Responses schema ---
+        content_text = self._extract_responses_api_text(data_dict)
+
+        # Build an object graph compatible with GenericProvider expectations:
+        #   response.data.chat_response.choices[0].message.content[0].text
+        #   response.data.chat_response.choices[0].message.tool_calls
+        #   response.data.chat_response.choices[0].finish_reason
+        part = SimpleNamespace(text=content_text)
+        msg_obj = SimpleNamespace(
+            content=[part],
+            tool_calls=None,
+            reasoning_content=None,
+        )
+        choice_obj = SimpleNamespace(
+            message=msg_obj,
+            finish_reason="stop",
+        )
+
+        # Usage: Responses API returns input_tokens / output_tokens.
+        raw_usage = data_dict.get("usage", {})
+        usage = SimpleNamespace(
+            input_tokens=raw_usage.get("input_tokens", 0),
+            output_tokens=raw_usage.get("output_tokens", 0),
+            total_tokens=raw_usage.get(
+                "total_tokens",
+                raw_usage.get("input_tokens", 0) + raw_usage.get("output_tokens", 0),
+            ),
+        )
+
+        chat_response = SimpleNamespace(
+            choices=[choice_obj],
+            usage=usage,
+            time_created=None,
+        )
+
+        response_data = SimpleNamespace(
+            model_id=model_id,
+            model_version=model_version,
+            chat_response=chat_response,
+        )
+
+        response_wrapper = SimpleNamespace(
+            data=response_data,
+            request_id=headers.get(
+                "opc-request-id", headers.get("x-request-id", "req-1")
+            ),
+            headers={"content-length": str(headers.get("content-length", "0"))},
+        )
+
+        return response_wrapper
+
+    def _stream_responses_api(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """Stream via the OCI Responses REST API with SSE parsing.
+
+        The Responses API emits Server-Sent Events with typed event names:
+        - ``response.output_text.delta``  — incremental text tokens
+        - ``response.completed``          — final event with full response
+        - other lifecycle events are acknowledged but not surfaced as chunks.
+        """
+        request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
+        raw_response = self._call_responses_api(request, stream=True)
+
+        # The service sends ``text/event-stream`` without a charset, so
+        # requests would fall back to ISO-8859-1 and garble multi-byte
+        # UTF-8 characters. SSE is always UTF-8.
+        raw_response.encoding = "utf-8"
+
+        event_type: Optional[str] = None
+        for raw_line in raw_response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                # Blank line = end of SSE event frame; reset.
+                event_type = None
+                continue
+
+            if raw_line.startswith("event:"):
+                event_type = raw_line[len("event:") :].strip()
+                continue
+
+            if raw_line.startswith("data:"):
+                data_str = raw_line[len("data:") :].strip()
+                if data_str == "[DONE]":
+                    break
+
+                try:
+                    event_data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                # Extract event type from data JSON if present (or fallback
+                # to event_type header line).
+                current_event_type = event_data.get("type", event_type)
+
+                if (
+                    current_event_type == "response.output_text.delta"
+                    or "delta" in event_data
+                ):
+                    delta = event_data.get("delta", "")
+                    if delta:
+                        chunk = ChatGenerationChunk(
+                            message=AIMessageChunk(content=delta)
+                        )
+                        if run_manager:
+                            run_manager.on_llm_new_token(delta, chunk=chunk)
+                        yield chunk
+
+                elif current_event_type == "response.completed":
+                    # Final event carries the full response; extract usage.
+                    resp = event_data.get("response", event_data)
+                    raw_usage = resp.get("usage", {})
+                    generation_info: Dict[str, Any] = {}
+                    if raw_usage:
+                        generation_info["usage"] = raw_usage
+                    generation_info["status"] = resp.get("status", "completed")
+                    generation_info["response_id"] = resp.get("id", "")
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(
+                            content="",
+                            additional_kwargs=generation_info,
+                        ),
+                        generation_info=generation_info,
+                    )
+
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -586,6 +859,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
         Processes each event and yields chunks until the stream ends.
         """
+        if self.use_responses_api:
+            yield from self._stream_responses_api(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )
+            return
+
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
         response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
