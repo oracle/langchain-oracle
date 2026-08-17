@@ -62,7 +62,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           # pnpm 11 requires Node.js 22.13+ (and relies on node:sqlite).
           node-version: "22"
