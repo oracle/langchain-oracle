@@ -52,6 +52,8 @@ export class JsonServerEventsIterator {
       // for the next transport chunk.
       const delimiter = this._findEventDelimiter();
       if (!delimiter) {
+        // No blank-line boundary yet: this is an incomplete SSE frame. Keep
+        // it buffered and append the next network chunk before parsing it.
         return;
       }
 
@@ -61,7 +63,7 @@ export class JsonServerEventsIterator {
       );
 
       if (eventText.trim() !== "") {
-        const event = this._parseMessage(eventText);
+        const event = this._parseSingleEvent(eventText);
         if (event !== undefined) {
           yield event;
         }
@@ -82,7 +84,9 @@ export class JsonServerEventsIterator {
     return { index: delimiter.index, length: delimiter[0].length };
   }
 
-  private _parseMessage(eventText: string): unknown | undefined {
+  // Parses one complete SSE frame after the iterator has separated it from
+  // arbitrary network chunks.
+  private _parseSingleEvent(eventText: string): unknown | undefined {
     // SSE permits multiple data lines; join them according to the SSE format
     // before treating their contents as the OCI JSON payload. OCI chat
     // streaming consumes only data payloads, so event, id, and retry fields
@@ -115,7 +119,7 @@ export class JsonServerEventsIterator {
 
   private *_parseFinalMessage(): Generator<unknown> {
     try {
-      const event = this._parseMessage(this._textBuffer);
+      const event = this._parseSingleEvent(this._textBuffer);
       this._textBuffer = "";
       if (event !== undefined) {
         yield event;
