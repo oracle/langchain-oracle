@@ -99,9 +99,9 @@ export OCI_GENAI_INTEGRATION_TESTS_COMPARTMENT_ID='<compartment-ocid>'
 # when testing a legacy Cohere V1 model or compatible dedicated endpoint.
 export OCI_GENAI_INTEGRATION_TESTS_COHERE_ON_DEMAND_MODEL_ID='<legacy-cohere-v1-model-id>'
 export OCI_GENAI_INTEGRATION_TESTS_GENERIC_ON_DEMAND_MODEL_ID='meta.llama-3.3-70b-instruct'
-# Optional: enable the opt-in text-embeddings integration test with an
-# embedding model available in this tenancy and region.
-# export OCI_GENAI_INTEGRATION_TESTS_EMBEDDING_ON_DEMAND_MODEL_ID='cohere.embed-v4.0'
+# Optional: prefer a specific embedding model. In Phoenix, use a Cohere Embed
+# V3 model; the test falls back to the documented V3 public model IDs on 404.
+# export OCI_GENAI_INTEGRATION_TESTS_EMBEDDING_ON_DEMAND_MODEL_ID='cohere.embed-english-v3.0'
 # Optional: choose a non-default OCI config file or profile.
 export OCI_CONFIG_FILE="$HOME/.oci/config"
 export OCI_CONFIG_PROFILE='DEFAULT'

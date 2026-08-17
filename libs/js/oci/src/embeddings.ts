@@ -26,24 +26,52 @@ export interface OciGenAiEmbeddingsParams
 /**
  * LangChain text embeddings backed by OCI Generative AI's `embedText` API.
  *
- * This first phase deliberately accepts strings only. It shares the chat
- * integration's authenticated SDK-client lifecycle while leaving OCI Embed v4
- * multimodal `embedContents` support for a later provider-specific extension.
+ * This integration currently exposes text-only embeddings. OCI Embed 4 also
+ * supports multimodal `embedContents`, which can be added in a later
+ * provider-specific extension. It shares the chat integration's authenticated
+ * SDK-client lifecycle.
  */
 export class OciGenAiEmbeddings extends Embeddings {
+  // OCI EmbedText supports at most 96 text inputs per request.
   static readonly _DEFAULT_BATCH_SIZE = 96;
 
-  _sdkClient: OciGenAiSdkClient | undefined;
+  // Conservative default for OCI request concurrency. Callers can increase it
+  // through EmbeddingsParams.maxConcurrency when service capacity permits.
+  static readonly _DEFAULT_MAX_CONCURRENCY = 2;
+
+  private _sdkClient: OciGenAiSdkClient | undefined;
+
+  // Single-flight lazy initialization prevents concurrent calls from creating
+  // multiple SDK clients, one of which would otherwise be unreachable to close.
+  private _sdkClientPromise: Promise<OciGenAiSdkClient> | undefined;
 
   // A caller-injected SDK client may be shared and is never closed here.
-  _ownsSdkClient = false;
+  private _ownsSdkClient = false;
 
-  private _params: OciGenAiEmbeddingsParams;
+  private _closed = false;
+
+  // Concurrent close() callers share one cleanup operation and therefore all
+  // observe completion of an in-flight client initialization cleanup.
+  private _closePromise: Promise<void> | undefined;
+
+  private readonly _params: OciGenAiEmbeddingsParams;
+
+  private readonly _batchSize: number;
+
+  private readonly _maxConcurrency: number;
 
   constructor(params: OciGenAiEmbeddingsParams) {
-    super(params);
     OciGenAiEmbeddings._validateParams(params);
-    this._params = params;
+    const maxConcurrency =
+      params.maxConcurrency ?? OciGenAiEmbeddings._DEFAULT_MAX_CONCURRENCY;
+    const batchSize =
+      params.batchSize ?? OciGenAiEmbeddings._DEFAULT_BATCH_SIZE;
+    super({ ...params, maxConcurrency });
+    this._batchSize = batchSize;
+    this._maxConcurrency = maxConcurrency;
+    // Retain a top-level copy so later caller mutation cannot alter serving or
+    // lifecycle behavior after the embeddings instance is constructed.
+    this._params = { ...params, batchSize, maxConcurrency };
   }
 
   async embedDocuments(documents: string[]): Promise<number[][]> {
@@ -51,22 +79,61 @@ export class OciGenAiEmbeddings extends Embeddings {
       return [];
     }
 
-    const embeddings: number[][] = [];
-    const batchSize =
-      this._params.batchSize ?? OciGenAiEmbeddings._DEFAULT_BATCH_SIZE;
+    const results = new Array<number[]>(documents.length);
+    let nextStartIndex = 0;
+    let workerFailed = false;
+    const workerCount = Math.min(
+      this._maxConcurrency,
+      Math.ceil(documents.length / this._batchSize)
+    );
 
-    // Keep batches ordered so the returned vector index always matches the
-    // corresponding LangChain document index.
-    for (let start = 0; start < documents.length; start += batchSize) {
-      const inputs = documents.slice(start, start + batchSize);
-      embeddings.push(...(await this._embedInputs(inputs)));
-    }
+    // The worker window bounds promises created by this invocation. The shared
+    // LangChain AsyncCaller additionally enforces maxConcurrency across all
+    // concurrent embedDocuments() and embedQuery() calls on this instance.
+    // Each worker writes directly to the final result array by document index,
+    // preserving order without retaining a batches array or flattening results.
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextStartIndex < documents.length && !workerFailed) {
+          const startIndex = nextStartIndex;
+          nextStartIndex += this._batchSize;
+          const batch = documents.slice(
+            startIndex,
+            startIndex + this._batchSize
+          );
+          let batchEmbeddings: number[][];
+          try {
+            batchEmbeddings = await this._embedInputs(batch);
+          } catch (error) {
+            // OCI requests already in flight cannot be cancelled by the SDK,
+            // but other workers must not start additional batches after this
+            // invocation has failed.
+            workerFailed = true;
+            throw error;
+          }
 
-    return embeddings;
+          if (workerFailed) {
+            return;
+          }
+
+          for (let index = 0; index < batchEmbeddings.length; index += 1) {
+            const embedding = batchEmbeddings[index];
+            if (embedding === undefined) {
+              throw new Error(
+                `Missing embedding for document at index ${startIndex + index}`
+              );
+            }
+            results[startIndex + index] = embedding;
+          }
+        }
+      })
+    );
+
+    return results;
   }
 
-  async embedQuery(document: string): Promise<number[]> {
-    const embeddings = await this._embedInputs([document]);
+  async embedQuery(text: string): Promise<number[]> {
+    const embeddings = await this._embedInputs([text]);
     const embedding = embeddings[0];
 
     if (!embedding) {
@@ -76,21 +143,50 @@ export class OciGenAiEmbeddings extends Embeddings {
     return embedding;
   }
 
-  /** Closes an SDK client only when this integration created it. */
+  /**
+   * Shuts down an SDK client only when this integration created it.
+   * Call close() after active embedding operations complete: closing the OCI
+   * SDK client may interrupt requests that are already in flight.
+   */
   async close(): Promise<void> {
-    if (this._sdkClient && this._ownsSdkClient) {
-      this._sdkClient.close();
-      this._sdkClient = undefined;
-      this._ownsSdkClient = false;
+    if (this._closePromise) {
+      return this._closePromise;
+    }
+
+    this._closed = true;
+    this._closePromise = this._closeClient();
+    return this._closePromise;
+  }
+
+  private async _closeClient(): Promise<void> {
+    const clientPromise = this._sdkClientPromise;
+
+    // Await construction so close() does not resolve before a client created
+    // in the background has either failed or been closed by _setupClient().
+    if (clientPromise) {
+      try {
+        await clientPromise;
+      } catch {
+        // A closed in-flight client intentionally rejects setup after cleanup.
+      }
+    }
+
+    const client = this._sdkClient;
+    const ownsClient = this._ownsSdkClient;
+    this._sdkClient = undefined;
+    this._ownsSdkClient = false;
+
+    if (client && ownsClient) {
+      client.close();
     }
   }
 
   private async _embedInputs(inputs: string[]): Promise<number[][]> {
-    await this._setupClient();
+    const sdkClient = await this._setupClient();
 
     try {
       const response = await this.caller.call(() =>
-        this._sdkClient!.client.embedText({
+        sdkClient.client.embedText({
           embedTextDetails: {
             inputs,
             compartmentId: this._params.compartmentId,
@@ -120,19 +216,47 @@ export class OciGenAiEmbeddings extends Embeddings {
         typeof error.message === "string"
           ? error.message
           : String(error);
-      throw new Error(`Error executing embedding API, error: ${message}`, {
+      throw new Error(`OCI embedding request failed: ${message}`, {
         cause: error,
       });
     }
   }
 
-  private async _setupClient(): Promise<void> {
-    if (this._sdkClient) {
-      return;
+  private async _setupClient(): Promise<OciGenAiSdkClient> {
+    if (this._closed) {
+      throw new Error("OciGenAiEmbeddings is closed");
     }
 
-    this._sdkClient = await OciGenAiSdkClient.create(this._params);
-    this._ownsSdkClient = !this._params.client;
+    if (this._sdkClient) {
+      return this._sdkClient;
+    }
+
+    if (!this._sdkClientPromise) {
+      this._sdkClientPromise = OciGenAiSdkClient.create(this._params)
+        .then((client) => {
+          // close() may run while the asynchronous client construction is in
+          // flight. An owned client must be closed instead of resurrected.
+          if (this._closed) {
+            if (!this._params.client) {
+              client.close();
+            }
+            throw new Error("OciGenAiEmbeddings is closed");
+          }
+
+          this._sdkClient = client;
+          this._ownsSdkClient = !this._params.client;
+          return client;
+        })
+        .finally(() => {
+          this._sdkClientPromise = undefined;
+        });
+    }
+
+    const clientPromise = this._sdkClientPromise;
+    if (clientPromise === undefined) {
+      throw new Error("OCI SDK client initialization was not started");
+    }
+    return clientPromise;
   }
 
   private _getServingMode():
@@ -145,9 +269,14 @@ export class OciGenAiEmbeddings extends Embeddings {
       };
     }
 
+    const modelId = this._params.onDemandModelId;
+    if (typeof modelId !== "string" || modelId.trim().length === 0) {
+      throw new Error("Invalid onDemandModelId");
+    }
+
     return {
       servingType: OnDemandServingMode.servingType,
-      modelId: this._params.onDemandModelId!,
+      modelId,
     };
   }
 
@@ -161,12 +290,13 @@ export class OciGenAiEmbeddings extends Embeddings {
       !embeddings.every(
         (embedding) =>
           Array.isArray(embedding) &&
-          embedding.every((value) => typeof value === "number")
+          embedding.length > 0 &&
+          embedding.every(
+            (value) => typeof value === "number" && Number.isFinite(value)
+          )
       )
     ) {
-      throw new Error(
-        "OCI embedding response did not contain numeric embeddings"
-      );
+      throw new Error("OCI embedding response contained invalid embeddings");
     }
 
     return embeddings;
@@ -186,8 +316,7 @@ export class OciGenAiEmbeddings extends Embeddings {
     const hasEndpointId =
       typeof params.dedicatedEndpointId === "string" &&
       params.dedicatedEndpointId.trim().length > 0;
-    const servingModeCount = Number(hasModelId) + Number(hasEndpointId);
-    if (servingModeCount !== 1) {
+    if (hasModelId === hasEndpointId) {
       throw new Error(
         "Exactly one of onDemandModelId or dedicatedEndpointId must be provided"
       );
@@ -200,6 +329,13 @@ export class OciGenAiEmbeddings extends Embeddings {
         params.batchSize > OciGenAiEmbeddings._DEFAULT_BATCH_SIZE)
     ) {
       throw new Error("batchSize must be an integer between 1 and 96");
+    }
+
+    if (
+      params.maxConcurrency !== undefined &&
+      (!Number.isInteger(params.maxConcurrency) || params.maxConcurrency < 1)
+    ) {
+      throw new Error("maxConcurrency must be a positive integer");
     }
   }
 }
