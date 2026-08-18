@@ -77,9 +77,7 @@ class FakeNativeClient:
     async def embed_text(self, details: Dict[str, Any], **kwargs: Any) -> FakeResponse:
         return await self._op("embed_text", details)
 
-    async def rerank_text(
-        self, details: Dict[str, Any], **kwargs: Any
-    ) -> FakeResponse:
+    async def rerank_text(self, details: Dict[str, Any], **kwargs: Any) -> FakeResponse:
         return await self._op("rerank_text", details)
 
     async def generate_text(
@@ -118,9 +116,7 @@ class TestNativeConstruction:
         # Responses must stay camelCase wire dicts for the shared parsers.
         assert native.kwargs["skip_deserialization"] is True
 
-    def test_no_native_class_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_native_class_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             async_support, "_load_native_async_client_cls", lambda: None
         )
@@ -377,6 +373,6 @@ class TestChatModelThroughNativeClient:
 
         chunks = [chunk async for chunk in llm._astream([HumanMessage(content="Hi")])]
 
-        content = "".join(c.message.content for c in chunks)
+        content = "".join(str(c.message.content) for c in chunks)
         assert content == "Hello, world!"
         assert native.stream_calls[0]["resource_path"] == "/actions/chat"
