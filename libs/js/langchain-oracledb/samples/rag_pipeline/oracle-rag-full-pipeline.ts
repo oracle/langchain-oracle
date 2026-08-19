@@ -35,7 +35,8 @@ type RagConfig = {
 };
 
 function resolvePath(filePath: string): string {
-  if (filePath.startsWith("~")) {
+  // Expand only "~" or "~/" rather than paths such as "~my-folder".
+  if (/^~(?=$|\/|\\)/.test(filePath)) {
     return path.join(os.homedir(), filePath.slice(1));
   }
 
@@ -43,6 +44,7 @@ function resolvePath(filePath: string): string {
 }
 
 function makeStableChunkId(source: string, chunkId: number): string {
+  // OracleVS external_id is VARCHAR2(36), so keep the generated ID <= 36 chars.
   return createHash("sha256")
     .update(`${source}:${chunkId}`)
     .digest("hex")
@@ -156,7 +158,7 @@ async function ingestDocuments(
     model: config.embeddingModel,
   });
 
-  console.log("📄 Loading documents...");
+  console.log(`📄 Loading documents from: ${config.documentsFolder}`);
 
   const rawDocs = await loader.load();
 
@@ -201,14 +203,9 @@ async function ingestDocuments(
     `📚 Loaded ${rawDocs.length} documents and created ${chunks.length} chunks.`,
   );
 
-  // ---------------------------------------------------------------------
-  // Prepare vector store
-  // ---------------------------------------------------------------------
+  console.log(`🧹 Resetting vector table: ${config.tableName}`);
 
-  if (config.resetVectorStore) {
-    console.log(`🧹 Resetting vector table ${config.tableName}...`);
-    await dropTablePurge(conn, config.tableName);
-  }
+  await dropTablePurge(conn, config.tableName);
 
   const deterministicIds = chunks.map((chunk) => {
     const sourcePath = String(chunk.metadata.source ?? "doc");
@@ -234,24 +231,22 @@ async function ingestDocuments(
     },
   );
 
-  console.log("✅ Oracle vector store is ready.");
+  console.log("✅ Oracle vector store populated.");
 
   // ---------------------------------------------------------------------
-  // Optional vector index
-  // ---------------------------------------------------------------------
+  // Optional IVF vector index
   //
-  // IVF is used in this basic sample instead of HNSW for portability.
+  // IVF is used here rather than HNSW because this is an introductory
+  // sample intended to run across a broad range of Oracle environments.
+  //
   // HNSW uses Oracle's Vector Memory Pool for its in-memory neighbor graph
-  // and can therefore require additional database-specific memory
-  // configuration.
+  // and can therefore introduce additional database-specific memory
+  // requirements. This sample is intended to demonstrate the RAG and
+  // OracleVS APIs rather than vector-index tuning.
   //
-  // This example is intended to demonstrate the basic OracleVS/RAG APIs,
-  // not database vector-index tuning. The vector index is therefore an
-  // optimization and is not allowed to prevent the core RAG example from
-  // running.
-  //
-  // Production applications should benchmark IVF and HNSW for their
-  // particular data size, latency, recall, and database configuration.
+  // If index creation is unavailable or fails, the sample continues with
+  // vector retrieval rather than treating index creation as a prerequisite
+  // for demonstrating RAG.
   // ---------------------------------------------------------------------
 
   try {
@@ -270,6 +265,36 @@ async function ingestDocuments(
   }
 
   return vectorStore;
+}
+
+async function getOrInitVectorStore(
+  conn: oracledb.Connection,
+  pool: oracledb.Pool,
+  config: RagConfig,
+): Promise<OracleVS> {
+  const embedder = new OracleEmbeddings(conn, {
+    provider: "database",
+    model: config.embeddingModel,
+  });
+
+  if (!config.resetVectorStore) {
+    console.log(
+      `📦 Connecting to existing vector store: ${config.tableName}`,
+    );
+
+    // Reuse the existing OracleVS table without reading documents
+    // or generating embeddings again.
+    const vectorStore = new OracleVS(embedder, {
+      client: pool,
+      tableName: config.tableName,
+      query: "Initialization query",
+      distanceStrategy: DistanceStrategy.COSINE,
+    });
+
+    return vectorStore;
+  }
+
+  return ingestDocuments(conn, pool, config);
 }
 
 async function answerQuestion(
@@ -299,7 +324,9 @@ async function answerQuestion(
     Rank: idx + 1,
     "Vector Distance": Number(score).toFixed(4),
     Source: `${doc.metadata.sourceFile} (Chunk #${doc.metadata.chunkId})`,
-    "Content Snippet": doc.pageContent.replace(/\s+/g, " ").slice(0, 300),
+    "Content Snippet": doc.pageContent
+      .replace(/\s+/g, " ")
+      .slice(0, 300),
   }));
 
   console.table(tableRows);
@@ -364,13 +391,11 @@ Answer:
 
   console.log("🤖 Querying OCI Generative AI...\n");
 
-  const answer = await chatWithOci(
+  return chatWithOci(
     ociClient,
     formattedPrompt,
     ociConfig,
   );
-
-  return answer;
 }
 
 async function runCompleteRagPipeline() {
@@ -433,6 +458,12 @@ async function runCompleteRagPipeline() {
     console.log("  🚀 END-TO-END ORACLE AI + LANGCHAIN RAG PIPELINE");
     console.log("=======================================================\n");
 
+    console.log(
+      `🔧 Vector store mode: ${
+        ragConfig.resetVectorStore ? "REBUILD" : "REUSE"
+      }`,
+    );
+
     // ---------------------------------------------------------------------
     // Database connection
     // ---------------------------------------------------------------------
@@ -452,10 +483,17 @@ async function runCompleteRagPipeline() {
     const ociClient = getOciClient(ociConfig);
 
     // ---------------------------------------------------------------------
-    // Ingest documents and create/reuse the vector store
+    // Vector store
+    //
+    // REBUILD:
+    //   Documents are loaded, split, embedded, and stored.
+    //
+    // REUSE:
+    //   Existing vector table is opened directly. No document loading
+    //   or re-embedding occurs.
     // ---------------------------------------------------------------------
 
-    const vectorStore = await ingestDocuments(
+    const vectorStore = await getOrInitVectorStore(
       conn,
       pool,
       ragConfig,
@@ -479,35 +517,31 @@ async function runCompleteRagPipeline() {
     console.log("\n-------------------------------------------------------");
     console.log("FINAL ANSWER");
     console.log("-------------------------------------------------------");
+
     console.log(generatedResponse);
 
     console.log("\n✅ RAG pipeline completed successfully.");
-
-    if (!ragConfig.resetVectorStore) {
-      console.log(
-        `📦 Vector store ${ragConfig.tableName} was preserved.`,
-      );
-    } else {
-      console.log(
-        `📦 Vector store ${ragConfig.tableName} remains available after this run.`,
-      );
-    }
+    console.log(
+      `📦 Vector store '${ragConfig.tableName}' remains available.`,
+    );
   } catch (err) {
     console.error("\n❌ Pipeline Error:", err);
     throw err;
   } finally {
     console.log("\n🧹 Closing database resources...");
 
-    // Intentionally do NOT drop the vector table here.
+    // Deliberately do NOT drop the vector table here.
     //
-    // The table is reusable between runs. Set RESET_VECTOR_STORE=true
-    // when you explicitly want to rebuild the demo vector store.
+    // Use RESET_VECTOR_STORE=true when you explicitly want to rebuild it.
 
     if (conn) {
       try {
         await conn.close();
       } catch (err) {
-        console.warn("⚠️ Error closing database connection:", err);
+        console.warn(
+          "⚠️ Error closing database connection:",
+          err,
+        );
       }
     }
 
@@ -515,7 +549,10 @@ async function runCompleteRagPipeline() {
       try {
         await pool.close(10);
       } catch (err) {
-        console.warn("⚠️ Error closing connection pool:", err);
+        console.warn(
+          "⚠️ Error closing connection pool:",
+          err,
+        );
       }
     }
 
