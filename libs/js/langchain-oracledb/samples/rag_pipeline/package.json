@@ -1,25 +1,24 @@
 {
-  "name": "verifypkg",
+  "name": "oracle-rag-demo",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "description": "Basic Oracle AI Vector Search and OCI Generative AI RAG example",
+  "private": true,
   "type": "module",
+  "scripts": {
+    "start": "tsx oracle-rag-full-pipeline.ts",
+    "rag": "tsx oracle-rag-full-pipeline.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
-    "@langchain/core": "^1.1.26",
-    "@oracle/langchain-oracledb": "^1.0.0",
-    "oci-common": "^2.139.0",
-    "oci-generativeaiinference": "^2.139.0"
+    "@langchain/core": "1.1.26",
+    "@oracle/langchain-oracledb": "1.0.0",
+    "oci-common": "2.139.0",
+    "oci-generativeaiinference": "2.139.0",
+    "oracledb": "^6.10.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
-    "@types/oracledb": "^6.10.1",
-    "ts-node": "^10.9.2",
+    "tsx": "^4.20.3",
     "typescript": "^5.9.3"
   }
 }
