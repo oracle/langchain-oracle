@@ -5,16 +5,58 @@
 
 This module provides async HTTP request handling for OCI services,
 enabling true async/await support without thread pool wrappers.
+
+When the installed ``oci`` SDK ships the native
+``AsyncGenerativeAiInferenceClient`` (aiohttp-based), all operations
+delegate to it so signing, retries, and error handling come from the SDK.
+Older SDKs fall back to the aiohttp transport implemented here.
 """
 
 import json
+import logging
 import ssl
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Optional
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Optional,
+)
 
 import aiohttp
 import certifi
 import requests
+from oci.exceptions import ServiceError
+
+logger = logging.getLogger(__name__)
+
+
+def _load_native_async_client_cls() -> Optional[type]:
+    """Return the SDK's native async GenAI client class, or None.
+
+    ``AsyncGenerativeAiInferenceClient`` was added to the ``oci`` SDK after
+    2.184.2; on older SDKs the import fails and callers use the fallback
+    aiohttp transport in this module.
+    """
+    try:
+        from oci.generative_ai_inference import AsyncGenerativeAiInferenceClient
+    except (ImportError, AttributeError):
+        return None
+    return AsyncGenerativeAiInferenceClient
+
+
+def _service_error_body(error: ServiceError) -> str:
+    """Rebuild the OCI error envelope from a ServiceError.
+
+    Produces the same ``{"code": ..., "message": ...}`` JSON the REST
+    fallback surfaces as :attr:`OCIAsyncRequestError.body`, so structured
+    handling (e.g. the parameter-compatibility retry in
+    ``common/param_compat.py``) works identically on both transports.
+    """
+    return json.dumps({"code": error.code, "message": error.message})
 
 
 def _get_oci_genai_api_version() -> str:
@@ -56,11 +98,18 @@ class OCIAsyncRequestError(RuntimeError):
 class OCIAsyncClient:
     """Async HTTP client for OCI Generative AI services.
 
-    This client handles OCI request signing and async HTTP requests
-    using aiohttp, enabling true async support for LLM operations.
+    When the installed ``oci`` SDK provides the native
+    ``AsyncGenerativeAiInferenceClient``, every operation delegates to it
+    (constructed with ``skip_deserialization=True`` so responses stay the
+    camelCase wire dicts this module has always yielded). On older SDKs the
+    client signs and sends requests itself with aiohttp.
 
     The client reuses aiohttp.ClientSession for connection pooling and
     performance. Call close() or use as async context manager to cleanup.
+
+    Note: per-call ``timeout`` arguments only apply on the fallback
+    transport; the native client uses the SDK's client-level timeout
+    (same 300s default).
     """
 
     def __init__(
@@ -81,6 +130,75 @@ class OCIAsyncClient:
         self.config = config or {}
         self._session: Optional[aiohttp.ClientSession] = None
         self._ensure_signer()
+        self._native = self._build_native_client()
+
+    def _build_native_client(self) -> Optional[Any]:
+        """Construct the SDK's native async client when available.
+
+        Mirrors the arguments the sync client was built with (same config,
+        signer, and endpoint), so authentication behaves identically. Any
+        construction failure falls back to the aiohttp transport rather
+        than breaking async support.
+        """
+        native_cls = _load_native_async_client_cls()
+        if native_cls is None:
+            return None
+        try:
+            return native_cls(
+                dict(self.config),
+                signer=self.signer,
+                service_endpoint=self.service_endpoint,
+                skip_deserialization=True,
+            )
+        except Exception as e:
+            logger.debug(
+                "Falling back to built-in async transport; native "
+                "AsyncGenerativeAiInferenceClient construction failed: %s",
+                e,
+            )
+            return None
+
+    async def _native_call(
+        self,
+        op: Callable[[Dict[str, Any]], Awaitable[Any]],
+        details: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Run a non-streaming native operation, translating errors.
+
+        Returns the raw response dict (``skip_deserialization=True`` keeps
+        the SDK from turning it into model objects).
+        """
+        try:
+            response = await op(details)
+        except ServiceError as e:
+            raise OCIAsyncRequestError(e.status, _service_error_body(e)) from e
+        data: Dict[str, Any] = response.data
+        return data
+
+    async def _native_stream(
+        self,
+        resource_path: str,
+        body: Dict[str, Any],
+        operation_name: str,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Stream SSE events through the native client, translating errors.
+
+        The SDK's generated operations are non-streaming; SSE is exposed on
+        ``AsyncBaseClient.call_api_stream``, which yields parsed event dicts
+        (the same shape ``_parse_sse_async`` yields on the fallback path).
+        """
+        assert self._native is not None
+        stream = self._native.async_base_client.call_api_stream(
+            resource_path=resource_path,
+            method="POST",
+            body=body,
+            operation_name=operation_name,
+        )
+        try:
+            async for event in stream:
+                yield event
+        except ServiceError as e:
+            raise OCIAsyncRequestError(e.status, _service_error_body(e)) from e
 
     def _ensure_signer(self) -> None:
         """Ensure we have a signer for request signing."""
@@ -110,6 +228,8 @@ class OCIAsyncClient:
 
     async def close(self) -> None:
         """Close the HTTP session and release resources."""
+        if self._native is not None:
+            await self._native.close()
         if self._session is not None and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -243,14 +363,21 @@ class OCIAsyncClient:
             For streaming: SSE event dictionaries.
             For non-streaming: Single response dictionary.
         """
-        url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/chat"
-
         body = {
             "compartmentId": compartment_id,
             "servingMode": serving_mode_dict,
             "chatRequest": chat_request_dict,
         }
 
+        if self._native is not None:
+            if stream:
+                async for event in self._native_stream("/actions/chat", body, "chat"):
+                    yield event
+            else:
+                yield await self._native_call(self._native.chat, body)
+            return
+
+        url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/chat"
         headers = self._sign_headers("POST", url, body, stream=stream)
 
         async with self._arequest("POST", url, headers, body, timeout) as response:
@@ -282,6 +409,11 @@ class OCIAsyncClient:
             The embed-text response dictionary (``embeddings`` key holds the
             vectors).
         """
+        if self._native is not None:
+            return await self._native_call(
+                self._native.embed_text, embed_text_details_dict
+            )
+
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/embedText"
         headers = self._sign_headers("POST", url, embed_text_details_dict)
 
@@ -311,6 +443,11 @@ class OCIAsyncClient:
             The rerank response dictionary (``documentRanks`` key holds the
             per-document scores).
         """
+        if self._native is not None:
+            return await self._native_call(
+                self._native.rerank_text, rerank_text_details_dict
+            )
+
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/rerankText"
         headers = self._sign_headers("POST", url, rerank_text_details_dict)
 
@@ -342,6 +479,18 @@ class OCIAsyncClient:
             For streaming: SSE event dictionaries.
             For non-streaming: a single response dictionary.
         """
+        if self._native is not None:
+            if stream:
+                async for event in self._native_stream(
+                    "/actions/generateText", generate_text_details_dict, "generateText"
+                ):
+                    yield event
+            else:
+                yield await self._native_call(
+                    self._native.generate_text, generate_text_details_dict
+                )
+            return
+
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/generateText"
         headers = self._sign_headers(
             "POST", url, generate_text_details_dict, stream=stream
