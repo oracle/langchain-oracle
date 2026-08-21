@@ -1,6 +1,6 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
 
 import oracledb from "oracledb";
 import * as common from "oci-common";
@@ -41,14 +41,6 @@ function resolvePath(filePath: string): string {
   }
 
   return path.resolve(filePath);
-}
-
-function makeStableChunkId(source: string, chunkId: number): string {
-  // OracleVS external_id is VARCHAR2(36), so keep the generated ID <= 36 chars.
-  return createHash("sha256")
-    .update(`${source}:${chunkId}`)
-    .digest("hex")
-    .slice(0, 36);
 }
 
 function getOciClient(
@@ -101,7 +93,13 @@ async function chatWithOci(
     },
   });
 
-  const chatResponse = response?.chatResult?.chatResponse;
+  // client.chat() is typed as ChatResponse | ReadableStream because the same
+  // call serves streaming requests; this request sets isStream: false.
+  if (!response || !("chatResult" in response)) {
+    throw new Error("OCI returned no usable chat response");
+  }
+
+  const chatResponse = response.chatResult?.chatResponse;
 
   if (!chatResponse) {
     throw new Error("OCI returned no valid chat response");
@@ -141,10 +139,6 @@ async function ingestDocuments(
   console.log("DOCUMENT INGESTION");
   console.log("-------------------------------------------------------");
 
-  const loader = new OracleDocLoader(conn, {
-    dir: config.documentsFolder,
-  });
-
   const splitter = new OracleTextSplitter(conn, {
     by: "words",
     max: 200,
@@ -160,7 +154,28 @@ async function ingestDocuments(
 
   console.log(`📄 Loading documents from: ${config.documentsFolder}`);
 
-  const rawDocs = await loader.load();
+  // Load each file individually so its real filename can be attached as
+  // metadata. OracleDocLoader's directory mode extracts text inside the
+  // database, which never sees the file path, so it cannot provide one.
+  const files = fs
+    .readdirSync(config.documentsFolder, {
+      recursive: true,
+      withFileTypes: true,
+    })
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(entry.parentPath, entry.name));
+
+  const rawDocs: Document[] = [];
+
+  for (const file of files) {
+    const loader = new OracleDocLoader(conn, { file });
+    const [doc] = await loader.load();
+
+    if (doc) {
+      doc.metadata.source = file;
+      rawDocs.push(doc);
+    }
+  }
 
   if (rawDocs.length === 0) {
     throw new Error(
@@ -207,29 +222,15 @@ async function ingestDocuments(
 
   await dropTablePurge(conn, config.tableName);
 
-  const deterministicIds = chunks.map((chunk) => {
-    const sourcePath = String(chunk.metadata.source ?? "doc");
-    const chunkId = Number(chunk.metadata.chunkId ?? 0);
-
-    return makeStableChunkId(sourcePath, chunkId);
-  });
-
   console.log("🧠 Generating embeddings and populating OracleVS...");
 
-  const vectorStore = await OracleVS.fromDocuments(
-    chunks,
-    embedder,
-    {
-      client: pool,
-      tableName: config.tableName,
-      distanceStrategy: DistanceStrategy.COSINE,
-      query: "Initialization query",
-    },
-    {
-      ids: deterministicIds,
-      mutateOnDuplicate: true,
-    },
-  );
+  // The table was just dropped, so let OracleVS generate the row IDs.
+  const vectorStore = await OracleVS.fromDocuments(chunks, embedder, {
+    client: pool,
+    tableName: config.tableName,
+    distanceStrategy: DistanceStrategy.COSINE,
+    query: "Initialization query",
+  });
 
   console.log("✅ Oracle vector store populated.");
 

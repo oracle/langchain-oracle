@@ -11,13 +11,14 @@
   },
   "dependencies": {
     "@langchain/core": "1.1.26",
-    "@oracle/langchain-oracledb": "1.0.0",
+    "@oracle/langchain-oracledb": "^1.0.0",
     "oci-common": "2.139.0",
     "oci-generativeaiinference": "2.139.0",
     "oracledb": "^6.10.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
+    "@types/oracledb": "^7.0.2",
     "tsx": "^4.20.3",
     "typescript": "^5.9.3"
   }
