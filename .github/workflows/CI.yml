@@ -48,9 +48,37 @@ jobs:
       working-directory: ${{ matrix.working-directory }}
     secrets: inherit
 
+  js_oci:
+    # This package is standalone (not part of the Python Poetry matrix), so it
+    # needs an explicit CI job for its TypeScript checks.
+    name: "libs/js/oci"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: libs/js/oci
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # pnpm 11 requires Node.js 22.13+ (and relies on node:sqlite).
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Lint, test, and build
+        run: pnpm lint && pnpm test && pnpm build
+
   ci_success:
     name: "CI Success"
-    needs: [lint, test]
+    needs: [lint, test, js_oci]
     if: |
       always()
     runs-on: ubuntu-latest

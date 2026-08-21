@@ -1,0 +1,87 @@
+{
+  "name": "@oracle/langchain-oci",
+  "version": "0.0.1",
+  "description": "OCI Generative AI integration for LangChain.js",
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oracle/langchain-oracle.git",
+    "directory": "libs/js/oci"
+  },
+  "homepage": "https://github.com/oracle/langchain-oracle/tree/main/libs/js/oci",
+  "scripts": {
+    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:types:cjs && pnpm build:entrypoints",
+    "build:esm": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist/ && rm -rf dist/tests dist/**/tests",
+    "build:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist-cjs/ -p tsconfig.cjs.json && node scripts/move-cjs-to-dist.js && rm -rf dist-cjs",
+    "build:types:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.types.cjs.json && node scripts/rename-cjs-dts.js",
+    "build:entrypoints": "node scripts/create-entrypoints.js",
+    "lint:eslint": "NODE_OPTIONS=--max-old-space-size=4096 eslint --cache --ext .ts,.js src/",
+    "lint:dpdm": "dpdm --exit-code circular:1 --no-warning --no-tree src/*.ts src/**/*.ts",
+    "lint": "pnpm lint:eslint && pnpm lint:dpdm",
+    "lint:fix": "pnpm lint:eslint --fix && pnpm lint:dpdm",
+    "clean": "rm -rf dist/ dist-types-cjs && node scripts/create-entrypoints.js pre",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:int": "vitest run --mode int",
+    "test:langgraph:int": "vitest run --mode int src/tests/langgraph_tool_roundtrip.int.test.ts",
+    "format": "prettier --config .prettierrc --write \"src\"",
+    "format:check": "prettier --config .prettierrc --check \"src\""
+  },
+  "author": "Oracle",
+  "license": "MIT",
+  "dependencies": {
+    "oci-common": "^2.107.2",
+    "oci-generativeaiinference": "^2.107.2"
+  },
+  "peerDependencies": {
+    "@langchain/core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@langchain/core": "^1.0.0",
+    "@langchain/langgraph": "^1.4.9",
+    "@swc/core": "^1.3.90",
+    "@tsconfig/recommended": "^1.0.3",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "dotenv": "^16.3.1",
+    "dpdm": "^3.12.0",
+    "eslint": "^8.33.0",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-no-instanceof": "^1.0.1",
+    "eslint-plugin-prettier": "^4.2.1",
+    "oci-generativeai": "^2.139.1",
+    "prettier": "^2.8.3",
+    "release-it": "^15.10.1",
+    "rollup": "^4.5.2",
+    "typescript": "<5.2.0",
+    "vitest": "^3.2.4",
+    "zod": "^3.25.32"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "index.cjs",
+    "index.js",
+    "index.d.ts",
+    "index.d.cts"
+  ]
+}

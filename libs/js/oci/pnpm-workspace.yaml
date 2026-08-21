@@ -1,0 +1,6 @@
+# pnpm v10+ requires an explicit review before a dependency can run an
+# install-time build script. These native tooling dependencies are required by
+# Vitest and the TypeScript test/build workflow.
+allowBuilds:
+  "@swc/core": true
+  esbuild: true

@@ -212,8 +212,8 @@ class TestResponseParsing:
 
     def test_empty_output(self, chat_model: Any) -> None:
         """Empty output should produce empty text, not crash."""
-        data = {"output": [], "usage": {}}
-        headers = {}
+        data: dict[str, Any] = {"output": [], "usage": {}}
+        headers: dict[str, str] = {}
 
         result = chat_model._process_responses_api_response(data, headers)
         assert result.data.chat_response.choices[0].message.content[0].text == ""
@@ -278,7 +278,7 @@ class TestResponseParsing:
             ],
             "usage": {"input_tokens": 5, "output_tokens": 4},
         }
-        headers = {}
+        headers: dict[str, str] = {}
 
         result = chat_model._process_responses_api_response(data, headers)
         assert (
