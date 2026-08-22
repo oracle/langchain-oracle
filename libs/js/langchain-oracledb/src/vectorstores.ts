@@ -709,24 +709,55 @@ export class OracleVS extends VectorStore {
         throwError(ErrorCode.VECTOR_INVALID_VALUE, "Sparse vectors must supply full-dimension arrays for conversion.");
       }
 
-      let sparseInput: number[] | Float32Array | Float64Array | Int8Array = vector;
+      // The dense-input SparseVector constructor stores its values as a
+      // Float64Array regardless of the typed array passed in, so FLOAT32 and
+      // INT8 query vectors reach the database as FLOAT64 and VECTOR_DISTANCE()
+      // fails with ORA-51812 against a non-FLOAT64 sparse column. The
+      // object-form constructor preserves the values' typed array, so build
+      // the nonzero indices/values explicitly and use that form.
+      const indices: number[] = [];
+      const nonzero: number[] = [];
       if (format === VectorElementFormat.INT8) {
-        const clamped = new Int8Array(vector.length);
         for (let i = 0; i < vector.length; i += 1) {
           const rounded = Math.round(vector[i]);
           if (rounded < -128 || rounded > 127) {
             throwError(ErrorCode.VECTOR_INVALID_VALUE, "INT8 sparse vector values must be within [-128, 127].");
           }
-          clamped[i] = rounded;
+          if (rounded !== 0) {
+            indices.push(i);
+            nonzero.push(rounded);
+          }
         }
-        sparseInput = clamped;
-      } else if (format === VectorElementFormat.FLOAT64) {
-        sparseInput = new Float64Array(vector);
       } else if (format === VectorElementFormat.FLOAT32) {
-        sparseInput = new Float32Array(vector);
+        for (let i = 0; i < vector.length; i += 1) {
+          if (Math.fround(vector[i]) !== 0) {
+            indices.push(i);
+            nonzero.push(vector[i]);
+          }
+        }
+      } else {
+        for (let i = 0; i < vector.length; i += 1) {
+          if (vector[i] !== 0) {
+            indices.push(i);
+            nonzero.push(vector[i]);
+          }
+        }
       }
 
-      return new oracledb.SparseVector(sparseInput);
+      let values: Float32Array | Float64Array | Int8Array;
+      if (format === VectorElementFormat.INT8) {
+        values = new Int8Array(nonzero);
+      } else if (format === VectorElementFormat.FLOAT64) {
+        values = new Float64Array(nonzero);
+      } else {
+        values = new Float32Array(nonzero);
+      }
+
+      return new oracledb.SparseVector({
+        values,
+        indices,
+        numDimensions: vector.length,
+      });
     }
 
     if (vector.length !== dimension) {

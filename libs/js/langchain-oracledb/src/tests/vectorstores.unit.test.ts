@@ -4,6 +4,8 @@ import type oracledb from "oracledb";
 import {
   DistanceStrategy,
   OracleVS,
+  VectorElementFormat,
+  VectorType,
   type OracleDBVSArgs,
   type Metadata,
 } from "../vectorstores.js";
@@ -77,5 +79,82 @@ describe("OracleVS SQL generation", () => {
       'SELECT /*+ VECTOR_INDEX_TRANSFORM("My Vector Table") */'
     );
     expect(sql).toContain(`FROM ${quoted}`);
+  });
+});
+
+describe("sparse vector element format (#297)", () => {
+  // The dense-input oracledb.SparseVector constructor stores values as
+  // Float64Array regardless of the typed array passed in, which made FLOAT32
+  // and INT8 sparse query vectors fail with ORA-51812. These tests pin the
+  // object-form construction that preserves the element format.
+  const makeStore = (format: VectorElementFormat) => {
+    const connection = {
+      execute: vi.fn(),
+      close: vi.fn(),
+    } as unknown as oracledb.Connection;
+    const embeddings = {
+      embedDocuments: vi.fn(),
+      embedQuery: vi.fn(),
+    } as unknown as EmbeddingsInterface;
+    return new OracleVS(embeddings, {
+      client: connection,
+      tableName: "SPARSE_FORMAT_TEST",
+      query: "probe",
+      vectorType: VectorType.SPARSE,
+      format,
+    });
+  };
+
+  const prepare = (store: OracleVS, vector: number[]) =>
+    (
+      store as unknown as {
+        prepareVectorForStorage(vector: number[]): {
+          values: Float32Array | Float64Array | Int8Array;
+          indices: Uint32Array | number[];
+          numDimensions: number;
+        };
+      }
+    ).prepareVectorForStorage(vector);
+
+  test("FLOAT32 sparse vectors keep Float32Array values", () => {
+    const sv = prepare(makeStore(VectorElementFormat.FLOAT32), [1, 0, 2, 0.5]);
+
+    expect(sv.values).toBeInstanceOf(Float32Array);
+    expect(Array.from(sv.indices)).toEqual([0, 2, 3]);
+    expect(Array.from(sv.values)).toEqual([1, 2, 0.5]);
+    expect(sv.numDimensions).toBe(4);
+  });
+
+  test("FLOAT64 sparse vectors keep Float64Array values", () => {
+    const sv = prepare(makeStore(VectorElementFormat.FLOAT64), [0, 1.25, 0]);
+
+    expect(sv.values).toBeInstanceOf(Float64Array);
+    expect(Array.from(sv.indices)).toEqual([1]);
+    expect(Array.from(sv.values)).toEqual([1.25]);
+    expect(sv.numDimensions).toBe(3);
+  });
+
+  test("INT8 sparse vectors keep Int8Array values and drop rounded zeros", () => {
+    const sv = prepare(makeStore(VectorElementFormat.INT8), [1.4, 0.3, -2, 0]);
+
+    expect(sv.values).toBeInstanceOf(Int8Array);
+    // 0.3 rounds to 0 and is dropped, matching the dense representation.
+    expect(Array.from(sv.indices)).toEqual([0, 2]);
+    expect(Array.from(sv.values)).toEqual([1, -2]);
+    expect(sv.numDimensions).toBe(4);
+  });
+
+  test("INT8 sparse vectors reject out-of-range values", () => {
+    expect(() => prepare(makeStore(VectorElementFormat.INT8), [1, 300, 0])).toThrow(
+      /INT8 sparse vector values/
+    );
+  });
+
+  test("all-zero sparse vectors produce empty indices and values", () => {
+    const sv = prepare(makeStore(VectorElementFormat.FLOAT32), [0, 0, 0]);
+
+    expect(Array.from(sv.indices)).toEqual([]);
+    expect(Array.from(sv.values)).toEqual([]);
+    expect(sv.numDimensions).toBe(3);
   });
 });
