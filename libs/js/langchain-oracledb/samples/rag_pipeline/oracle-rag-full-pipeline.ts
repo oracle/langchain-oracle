@@ -3,8 +3,6 @@ import os from "node:os";
 import path from "node:path";
 
 import oracledb from "oracledb";
-import * as common from "oci-common";
-import * as generative_ai_inference from "oci-generativeaiinference";
 
 import { Document } from "@langchain/core/documents";
 import { PromptTemplate } from "@langchain/core/prompts";
@@ -18,6 +16,10 @@ import {
   dropTablePurge,
   OracleVS,
 } from "@oracle/langchain-oracledb";
+import {
+  OciGenAiGenericChat,
+  OciGenAiNewClientAuthType,
+} from "@oracle/langchain-oci";
 
 type OciChatConfig = {
   compartmentId: string;
@@ -43,91 +45,38 @@ function resolvePath(filePath: string): string {
   return path.resolve(filePath);
 }
 
-function getOciClient(
-  config: OciChatConfig,
-): generative_ai_inference.GenerativeAiInferenceClient {
-  const provider = new common.ConfigFileAuthenticationDetailsProvider(
-    resolvePath(config.configFile),
-    config.profile,
-  );
-
-  const client = new generative_ai_inference.GenerativeAiInferenceClient({
-    authenticationDetailsProvider: provider,
-  });
-
-  client.endpoint = config.endpoint;
-
-  return client;
-}
-
-async function chatWithOci(
-  client: generative_ai_inference.GenerativeAiInferenceClient,
-  prompt: string,
-  config: OciChatConfig,
-): Promise<string> {
-  const response = await client.chat({
-    chatDetails: {
-      compartmentId: config.compartmentId,
-      servingMode: {
-        servingType: "ON_DEMAND",
-        modelId: config.modelId,
-      },
-      chatRequest: {
-        apiFormat: "GENERIC",
-        messages: [
-          {
-            role: "USER",
-            content: [
-              {
-                type: "TEXT",
-                text: prompt,
-              } as generative_ai_inference.models.TextContent,
-            ],
-          },
-        ],
-        temperature: 0.2,
-        topP: 0.9,
-        maxTokens: Number(process.env.OCI_MAX_TOKENS ?? 1000),
-        isStream: false,
+function getOciClient(config: OciChatConfig): OciGenAiGenericChat {
+  return new OciGenAiGenericChat({
+    compartmentId: config.compartmentId,
+    onDemandModelId: config.modelId,
+    newClientParams: {
+      authType: OciGenAiNewClientAuthType.ConfigFile,
+      serviceEndpoint: config.endpoint,
+      authParams: {
+        clientConfigFilePath: resolvePath(config.configFile),
+        clientProfile: config.profile,
       },
     },
   });
+}
 
-  // client.chat() is typed as ChatResponse | ReadableStream because the same
-  // call serves streaming requests; this request sets isStream: false.
-  if (!response || !("chatResult" in response)) {
-    throw new Error("OCI returned no usable chat response");
-  }
+async function chatWithOci(
+  client: OciGenAiGenericChat,
+  prompt: string,
+): Promise<string> {
+  const response = await client.invoke(prompt, {
+    requestParams: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxTokens: Number(process.env.OCI_MAX_TOKENS ?? 1000),
+    },
+  });
 
-  const chatResponse = response.chatResult?.chatResponse;
-
-  if (!chatResponse) {
-    throw new Error("OCI returned no valid chat response");
-  }
-
-  if (!("choices" in chatResponse)) {
-    throw new Error("OCI returned a non-GENERIC chat response");
-  }
-
-  const choice = chatResponse.choices?.[0];
-
-  if (!choice?.message?.content) {
-    throw new Error("OCI returned no generated message content");
-  }
-
-  const text = choice.message.content
-    .filter(
-      (content): content is generative_ai_inference.models.TextContent =>
-        content.type === "TEXT" && "text" in content,
-    )
-    .map((content) => content.text ?? "")
-    .join("");
-
-  if (!text.trim()) {
+  if (typeof response.content !== "string" || !response.content.trim()) {
     throw new Error("OCI returned an empty chat response");
   }
 
-  return text.trim();
+  return response.content.trim();
 }
 
 async function ingestDocuments(
@@ -300,8 +249,7 @@ async function getOrInitVectorStore(
 
 async function answerQuestion(
   vectorStore: OracleVS,
-  ociClient: generative_ai_inference.GenerativeAiInferenceClient,
-  ociConfig: OciChatConfig,
+  ociClient: OciGenAiGenericChat,
   question: string,
 ): Promise<string> {
   // ---------------------------------------------------------------------
@@ -392,11 +340,7 @@ Answer:
 
   console.log("🤖 Querying OCI Generative AI...\n");
 
-  return chatWithOci(
-    ociClient,
-    formattedPrompt,
-    ociConfig,
-  );
+  return chatWithOci(ociClient, formattedPrompt);
 }
 
 async function runCompleteRagPipeline() {
@@ -453,6 +397,7 @@ async function runCompleteRagPipeline() {
 
   let pool: oracledb.Pool | undefined;
   let conn: oracledb.Connection | undefined;
+  let ociClient: OciGenAiGenericChat | undefined;
 
   try {
     console.log("\n=======================================================");
@@ -481,7 +426,7 @@ async function runCompleteRagPipeline() {
     // OCI client
     // ---------------------------------------------------------------------
 
-    const ociClient = getOciClient(ociConfig);
+    ociClient = getOciClient(ociConfig);
 
     // ---------------------------------------------------------------------
     // Vector store
@@ -511,7 +456,6 @@ async function runCompleteRagPipeline() {
     const generatedResponse = await answerQuestion(
       vectorStore,
       ociClient,
-      ociConfig,
       userQuery,
     );
 
@@ -555,6 +499,10 @@ async function runCompleteRagPipeline() {
           err,
         );
       }
+    }
+
+    if (ociClient) {
+      await ociClient.close();
     }
 
     console.log("✨ Execution complete.\n");
