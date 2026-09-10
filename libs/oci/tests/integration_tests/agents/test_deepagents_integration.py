@@ -943,7 +943,7 @@ class TestDeepAgentBackend:
 
         agent = create_deepagents_agent(
             tools=[search_knowledge_base],
-            backend=StateBackend,
+            backend=StateBackend(),
             **_make_oci_kwargs(),
         )
         try:
@@ -966,7 +966,7 @@ class TestDeepAgentBackend:
         store = InMemoryStore()
         agent = create_deepagents_agent(
             tools=[search_knowledge_base],
-            backend=lambda rt: StoreBackend(rt),
+            backend=StoreBackend(namespace=lambda rt: ("agent-files",)),
             store=store,
             checkpointer=MemorySaver(),
             **_make_oci_kwargs(),
@@ -982,15 +982,16 @@ class TestDeepAgentBackend:
         finally:
             _cleanup_agent(agent)
 
-    def test_backend_factory_lambda(self) -> None:
-        """Test backend as a lambda factory (common user pattern)."""
+    def test_composite_backend_explicit(self) -> None:
+        """Test a CompositeBackend instance (deepagents>=0.7 removed factories)."""
+        from deepagents.backends import CompositeBackend
         from deepagents.backends.state import StateBackend
 
         from langchain_oci import create_deepagents_agent
 
         agent = create_deepagents_agent(
             tools=[search_knowledge_base],
-            backend=lambda rt: StateBackend(rt),
+            backend=CompositeBackend(default=StateBackend(), routes={}),
             **_make_oci_kwargs(),
         )
         try:
@@ -1266,7 +1267,7 @@ class TestDeepAgentAllParamsCombined:
         store = InMemoryStore()
         agent = create_deepagents_agent(
             tools=[search_knowledge_base, get_statistics],
-            backend=lambda rt: StoreBackend(rt),
+            backend=StoreBackend(namespace=lambda rt: ("agent-files",)),
             store=store,
             cache=InMemoryCache(),
             checkpointer=MemorySaver(),
