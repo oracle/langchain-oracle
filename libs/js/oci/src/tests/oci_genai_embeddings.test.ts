@@ -1,24 +1,30 @@
-import { expect, test, vi } from "vitest";
+import { expect, test, vi, type Mock } from "vitest";
 
 import {
   models,
   type GenerativeAiInferenceClient,
+  type requests,
 } from "oci-generativeaiinference";
 
 import { OciGenAiEmbeddings } from "../embeddings.js";
 import { OciGenAiSdkClient } from "../oci_genai_sdk_client.js";
 
+// vitest 4 types `vi.fn()` as a void-returning procedure, so the mock must
+// carry the real async signature for `mockImplementation` callbacks that
+// return promises (otherwise @typescript-eslint/no-misused-promises fires).
+type EmbedTextMock = Mock<
+  (request: requests.EmbedTextRequest) => Promise<unknown>
+>;
+
 function createClient(
   embeddings: number[][] = [[1, 2]]
-): GenerativeAiInferenceClient & { embedText: ReturnType<typeof vi.fn> } {
+): GenerativeAiInferenceClient & { embedText: EmbedTextMock } {
+  const embedText: EmbedTextMock = vi.fn();
+  embedText.mockResolvedValue({ embedTextResult: { embeddings } });
   return {
-    embedText: vi.fn().mockResolvedValue({
-      embedTextResult: { embeddings },
-    }),
+    embedText,
     close: vi.fn(),
-  } as unknown as GenerativeAiInferenceClient & {
-    embedText: ReturnType<typeof vi.fn>;
-  };
+  } as unknown as GenerativeAiInferenceClient & { embedText: EmbedTextMock };
 }
 
 function createEmbeddings(client = createClient()): OciGenAiEmbeddings {
