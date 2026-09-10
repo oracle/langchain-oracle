@@ -221,8 +221,13 @@ class TestDeepAgentCompatibilityIntegration:
 
         schema = agent.output_schema
 
-        assert "messages" in schema.model_fields
-        assert "structured_response" in schema.model_fields
+        # `output_schema` is typed as a pydantic v2 *or* v1 model class in
+        # recent langgraph; read the field names in a version-agnostic way.
+        fields = getattr(schema, "model_fields", None) or getattr(
+            schema, "__fields__", {}
+        )
+        assert "messages" in fields
+        assert "structured_response" in fields
 
     @pytest.mark.xfail(
         reason=(
