@@ -10,10 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@langchain/core": "1.1.26",
+    "@langchain/core": "^1.2.10",
+    "@oracle/langchain-oci": "^0.0.1",
     "@oracle/langchain-oracledb": "^1.0.0",
-    "oci-common": "2.139.0",
-    "oci-generativeaiinference": "2.139.0",
     "oracledb": "^6.10.0"
   },
   "devDependencies": {
