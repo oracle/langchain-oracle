@@ -64,7 +64,7 @@
     "release-it": "^15.10.1",
     "rollup": "^4.5.2",
     "typescript": "<5.2.0",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.11",
     "zod": "^3.25.32"
   },
   "publishConfig": {
