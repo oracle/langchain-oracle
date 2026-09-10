@@ -16,7 +16,7 @@ importers:
         version: 2.139.2
     devDependencies:
       '@langchain/core':
-        specifier: ^1.0.0
+        specifier: ^1.2.0
         version: 1.2.3
       '@langchain/langgraph':
         specifier: ^1.4.9

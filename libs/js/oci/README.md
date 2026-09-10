@@ -16,7 +16,9 @@ This package provides LangChain.js integrations for OCI Generative AI:
 
 `OciGenAiGenericChat` supports text chat, streaming, token usage and finish metadata, LangChain tool binding, and tool-message turns. This enables the standard LangChain structured-output flow for OCI Generic models.
 
-> [!NOTE] > `OciGenAiCohereChat` uses OCI's legacy Cohere V1 API format. Current Cohere chat models that require the V2 API are not supported by this class, and tool-result round trips are not supported for the legacy Cohere integration.
+> [!NOTE]
+>
+> `OciGenAiCohereChat` uses OCI's legacy Cohere V1 API format. Current Cohere chat models that require the V2 API are not supported by this class, and tool-result round trips are not supported for the legacy Cohere integration.
 
 ## Prerequisites
 
