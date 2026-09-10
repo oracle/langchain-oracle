@@ -33,6 +33,13 @@ class FakeResponse:
 class FakeAsyncBaseClient:
     def __init__(self, owner: "FakeNativeClient"):
         self._owner = owner
+        self.retry_strategy: Any = None
+        self.timeout: Any = owner.kwargs.get("timeout")
+
+    def get_preferred_retry_strategy(
+        self, operation_retry_strategy: Any, client_retry_strategy: Any
+    ) -> Any:
+        return operation_retry_strategy or client_retry_strategy
 
     def call_api_stream(self, **kwargs: Any) -> Any:
         self._owner.stream_calls.append(kwargs)
@@ -140,6 +147,61 @@ class TestNativeConstruction:
         native = _native(client)
         await client.close()
         assert native.closed is True
+        # The closed client is dropped, not left behind as a dead reference.
+        assert client._native is None
+
+    async def test_reuse_after_close_rebuilds_native(
+        self, client: OCIAsyncClient
+    ) -> None:
+        """``async with`` reuse and double close must both keep working."""
+        first = _native(client)
+        await client.close()
+        await client.close()  # idempotent
+        async with client:
+            await client.embed_text_async({"inputs": ["x"]})
+        rebuilt = FakeNativeClient.last_instance
+        assert rebuilt is not first and rebuilt.calls == [
+            ("embed_text", {"inputs": ["x"]})
+        ]
+        assert first.closed is True and rebuilt.closed is True
+        assert client._native is None
+
+    async def test_close_does_not_revive_missing_native(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            async_support, "_load_native_async_client_cls", lambda: None
+        )
+        client = OCIAsyncClient(service_endpoint=ENDPOINT, signer=MagicMock())
+        await client.close()
+        assert client._native_client() is None
+
+    def test_native_client_gets_sync_style_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The native client is built with the same (connect, read) budget
+        the sync client uses, so long-context calls don't hit the SDK's
+        generic default and ``OCI_REQUEST_TIMEOUT`` keeps working async."""
+        monkeypatch.setattr(
+            async_support, "_load_native_async_client_cls", lambda: FakeNativeClient
+        )
+        monkeypatch.delenv("OCI_REQUEST_TIMEOUT", raising=False)
+
+        def build(**kwargs: Any) -> Tuple[int, int]:
+            OCIAsyncClient(service_endpoint=ENDPOINT, signer=MagicMock(), **kwargs)
+            return FakeNativeClient.last_instance.kwargs["timeout"]
+
+        assert build() == (10, 240)
+        assert build(timeout=90) == (10, 90)
+        assert build(timeout=(5, 30)) == (5, 30)
+        monkeypatch.setenv("OCI_REQUEST_TIMEOUT", "600")
+        assert build() == (10, 600)
+
+    def test_fallback_timeout_defaults_to_read_timeout(
+        self, client: OCIAsyncClient
+    ) -> None:
+        assert client._fallback_timeout(None) == client.timeout[1] == 240
+        assert client._fallback_timeout(7) == 7
 
 
 class TestNativeChat:
@@ -207,7 +269,11 @@ class TestNativeChat:
 
         assert exc_info.value.status == 400
         body = json.loads(exc_info.value.body)
-        assert body == {"code": "400", "message": "temperature not supported"}
+        # The envelope carries the SDK's full details dict; code/message are
+        # the fields the fallback transport has always exposed.
+        assert body["code"] == "400"
+        assert body["message"] == "temperature not supported"
+        assert body["status"] == 400
 
     async def test_stream_service_error_translated(
         self, client: OCIAsyncClient
@@ -231,21 +297,25 @@ class TestNativeChat:
     ) -> None:
         """A gpt-5-style 400 keeps working with the param-compat retry.
 
-        OCI double-encodes the OpenAI-style error inside the envelope's
-        ``message`` string; the translated body must round-trip through
-        ``adjust_request_for_param_error`` exactly like the fallback path.
+        For OpenAI-style bodies the SDK leaves ``ServiceError.message`` as
+        ``None`` and merges the nested ``{"error": {...}}`` payload into the
+        exception's details dict; the translated body must still round-trip
+        through ``adjust_request_for_param_error`` like the fallback path.
         """
         native = _native(client)
-        inner = json.dumps(
-            {
+        native.error = ServiceError(
+            400,
+            "400",
+            {},
+            None,
+            deserialized_data={
                 "error": {
                     "param": "temperature",
                     "code": "unsupported_value",
                     "message": "temperature does not support 0.5",
                 }
-            }
+            },
         )
-        native.error = ServiceError(400, "400", {}, inner)
 
         with pytest.raises(OCIAsyncRequestError) as exc_info:
             async for _ in client.chat_async(
@@ -259,6 +329,82 @@ class TestNativeChat:
         chat_request = {"temperature": 0.5}
         assert adjust_request_for_param_error(exc_info.value.body, chat_request)
         assert "temperature" not in chat_request
+
+
+class TestNativeErrorEnvelope:
+    async def test_error_body_keeps_full_service_details(
+        self, client: OCIAsyncClient
+    ) -> None:
+        """Nothing the service returned is dropped from the translated body."""
+        native = _native(client)
+        native.error = ServiceError(
+            400,
+            None,
+            {},
+            None,
+            deserialized_data={"error": {"param": "temperature", "code": "bad"}},
+            operation_name="chat",
+            request_endpoint="POST /20231130/actions/chat",
+        )
+        native.error.args[0]["opc-request-id"] = "req-123"
+
+        with pytest.raises(OCIAsyncRequestError) as exc_info:
+            await client.embed_text_async({})
+
+        body = json.loads(exc_info.value.body)
+        assert body["error"] == {"param": "temperature", "code": "bad"}
+        assert body["opc-request-id"] == "req-123"
+        assert body["operation_name"] == "chat"
+        assert body["status"] == 400
+        assert exc_info.value.status == 400
+
+    async def test_error_body_without_details_still_has_code_and_message(
+        self, client: OCIAsyncClient
+    ) -> None:
+        native = _native(client)
+        err = ServiceError(429, "TooManyRequests", {}, "slow down")
+        err.args = ("not a dict",)
+        native.error = err
+        with pytest.raises(OCIAsyncRequestError) as exc_info:
+            await client.embed_text_async({})
+        assert json.loads(exc_info.value.body) == {
+            "code": "TooManyRequests",
+            "message": "slow down",
+        }
+
+
+class TestNativeStreamParity:
+    async def test_stream_uses_default_retry_strategy(
+        self, client: OCIAsyncClient
+    ) -> None:
+        from oci import retry
+
+        native = _native(client)
+        native.stream_events = [{"finishReason": "stop"}]
+        async for _ in client.chat_async("c", {}, {}, stream=True):
+            pass
+        assert native.stream_calls[0]["retry_strategy"] is retry.DEFAULT_RETRY_STRATEGY
+
+    async def test_stream_prefers_client_level_retry_strategy(
+        self, client: OCIAsyncClient
+    ) -> None:
+        native = _native(client)
+        sentinel = object()
+        native.async_base_client.retry_strategy = sentinel
+        native.stream_events = [{"finishReason": "stop"}]
+        async for _ in client.chat_async("c", {}, {}, stream=True):
+            pass
+        assert native.stream_calls[0]["retry_strategy"] is sentinel
+
+    async def test_generate_text_stream_operation_name_matches_sdk(
+        self, client: OCIAsyncClient
+    ) -> None:
+        native = _native(client)
+        native.stream_events = [{"text": "hi"}]
+        async for _ in client.generate_text_async({}, stream=True):
+            pass
+        assert native.stream_calls[0]["operation_name"] == "generate_text"
+        assert native.stream_calls[0]["resource_path"] == "/actions/generateText"
 
 
 class TestNativeOtherOps:
@@ -319,6 +465,7 @@ class TestChatModelThroughNativeClient:
         mock_oci_client.base_client = MagicMock()
         mock_oci_client.base_client.signer = MagicMock()
         mock_oci_client.base_client.config = {}
+        mock_oci_client.base_client.timeout = (10, 240)
         mock_oci_client.base_client.sanitize_for_serialization = (
             BaseClient.sanitize_for_serialization.__get__(
                 mock_oci_client.base_client, type(mock_oci_client.base_client)
@@ -331,6 +478,11 @@ class TestChatModelThroughNativeClient:
             service_endpoint=ENDPOINT,
             client=mock_oci_client,
         )
+
+    def test_sync_client_timeout_is_forwarded(self, llm: ChatOCIGenAI) -> None:
+        llm._async_client
+        assert FakeNativeClient.last_instance.kwargs["timeout"] == (10, 240)
+        assert llm._async_client.timeout == (10, 240)
 
     async def test_agenerate(self, llm: ChatOCIGenAI) -> None:
         llm._async_client  # instantiate the adapter (and the fake native client)

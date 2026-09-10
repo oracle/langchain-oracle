@@ -24,6 +24,8 @@ from typing import (
     Callable,
     Dict,
     Optional,
+    Tuple,
+    Union,
 )
 
 import aiohttp
@@ -31,14 +33,18 @@ import certifi
 import requests
 from oci.exceptions import ServiceError
 
+from langchain_oci.common.auth import _resolve_timeout
+
 logger = logging.getLogger(__name__)
 
 
 def _load_native_async_client_cls() -> Optional[type]:
     """Return the SDK's native async GenAI client class, or None.
 
-    ``AsyncGenerativeAiInferenceClient`` was added to the ``oci`` SDK after
-    2.184.2; on older SDKs the import fails and callers use the fallback
+    ``AsyncGenerativeAiInferenceClient`` ships in ``oci>=2.185.0``, which is
+    this package's floor on Python 3.10+. Python 3.9 keeps the older floor
+    (oci 2.185's pyOpenSSL requirement excludes 3.9.0/3.9.1), so on 3.9 an
+    SDK without the class is still possible; callers then use the fallback
     aiohttp transport in this module.
     """
     try:
@@ -51,12 +57,22 @@ def _load_native_async_client_cls() -> Optional[type]:
 def _service_error_body(error: ServiceError) -> str:
     """Rebuild the OCI error envelope from a ServiceError.
 
-    Produces the same ``{"code": ..., "message": ...}`` JSON the REST
-    fallback surfaces as :attr:`OCIAsyncRequestError.body`, so structured
-    handling (e.g. the parameter-compatibility retry in
-    ``common/param_compat.py``) works identically on both transports.
+    The REST fallback surfaces the raw response body as
+    :attr:`OCIAsyncRequestError.body`. The SDK does not keep that body as a
+    string, but ``ServiceError.__init__`` merges the deserialized payload
+    into its ``args[0]`` details dict (alongside ``code``/``message``,
+    ``opc-request-id``, ``operation_name`` ...). Serialising that dict keeps
+    every field the service returned -- including OpenAI-style nested
+    ``{"error": {...}}`` bodies whose top-level ``code``/``message`` are
+    ``None`` -- so structured handling such as the parameter-compatibility
+    retry in ``common/param_compat.py`` behaves identically on both
+    transports, and diagnostics are never reduced to ``null``/``null``.
     """
-    return json.dumps({"code": error.code, "message": error.message})
+    details = error.args[0] if error.args and isinstance(error.args[0], dict) else {}
+    body: Dict[str, Any] = dict(details)
+    body.setdefault("code", error.code)
+    body.setdefault("message", error.message)
+    return json.dumps(body, default=str)
 
 
 def _get_oci_genai_api_version() -> str:
@@ -107,9 +123,12 @@ class OCIAsyncClient:
     The client reuses aiohttp.ClientSession for connection pooling and
     performance. Call close() or use as async context manager to cleanup.
 
-    Note: per-call ``timeout`` arguments only apply on the fallback
-    transport; the native client uses the SDK's client-level timeout
-    (same 300s default).
+    Timeouts follow the sync client: ``timeout`` (or the
+    ``OCI_REQUEST_TIMEOUT`` environment variable) resolves through
+    :func:`langchain_oci.common.auth._resolve_timeout` to a
+    ``(connect, read)`` pair -- ``(10, 240)`` by default -- and is passed
+    to the native client at construction. On the fallback transport the
+    read timeout bounds each request unless a per-call ``timeout`` is given.
     """
 
     def __init__(
@@ -117,6 +136,7 @@ class OCIAsyncClient:
         service_endpoint: str,
         signer: Any,
         config: Optional[Dict[str, Any]] = None,
+        timeout: Optional[Union[int, float, Tuple[int, int]]] = None,
     ):
         """Initialize the async client.
 
@@ -124,21 +144,38 @@ class OCIAsyncClient:
             service_endpoint: The OCI service endpoint URL.
             signer: OCI signer for request authentication.
             config: OCI config dictionary (used for API_KEY auth when signer is None).
+            timeout: Request timeout -- a read timeout in seconds or a
+                ``(connect, read)`` tuple, exactly as accepted by
+                ``create_oci_client_kwargs``. Defaults to the
+                ``OCI_REQUEST_TIMEOUT`` environment variable, then (10, 240).
+                Pass the sync client's ``base_client.timeout`` so both
+                transports share one setting.
         """
         self.service_endpoint = service_endpoint.rstrip("/")
         self.signer = signer
         self.config = config or {}
+        self.timeout: Tuple[int, int] = _resolve_timeout(timeout)
         self._session: Optional[aiohttp.ClientSession] = None
         self._ensure_signer()
         self._native = self._build_native_client()
+        # Remember whether the native client is usable at all, so a closed
+        # client can be rebuilt lazily (``async with`` reuse) without ever
+        # retrying construction on SDKs that lack the class.
+        self._native_available = self._native is not None
+
+    def _native_client(self) -> Optional[Any]:
+        """Return the native client, rebuilding it after :meth:`close`."""
+        if self._native is None and self._native_available:
+            self._native = self._build_native_client()
+        return self._native
 
     def _build_native_client(self) -> Optional[Any]:
         """Construct the SDK's native async client when available.
 
         Mirrors the arguments the sync client was built with (same config,
-        signer, and endpoint), so authentication behaves identically. Any
-        construction failure falls back to the aiohttp transport rather
-        than breaking async support.
+        signer, endpoint and ``(connect, read)`` timeout), so authentication
+        and time budgets behave identically. Any construction failure falls
+        back to the aiohttp transport rather than breaking async support.
         """
         native_cls = _load_native_async_client_cls()
         if native_cls is None:
@@ -149,6 +186,7 @@ class OCIAsyncClient:
                 signer=self.signer,
                 service_endpoint=self.service_endpoint,
                 skip_deserialization=True,
+                timeout=self.timeout,
             )
         except Exception as e:
             logger.debug(
@@ -186,19 +224,45 @@ class OCIAsyncClient:
         The SDK's generated operations are non-streaming; SSE is exposed on
         ``AsyncBaseClient.call_api_stream``, which yields parsed event dicts
         (the same shape ``_parse_sse_async`` yields on the fallback path).
+        The retry strategy is resolved the way the generated operations do
+        it (operation > client > ``DEFAULT_RETRY_STRATEGY``) so establishing
+        a stream retries exactly like the sync client's streaming calls.
         """
-        assert self._native is not None
-        stream = self._native.async_base_client.call_api_stream(
+        native = self._native_client()
+        assert native is not None
+        base = native.async_base_client
+        stream = base.call_api_stream(
             resource_path=resource_path,
             method="POST",
             body=body,
             operation_name=operation_name,
+            retry_strategy=self._stream_retry_strategy(base),
         )
         try:
             async for event in stream:
                 yield event
         except ServiceError as e:
             raise OCIAsyncRequestError(e.status, _service_error_body(e)) from e
+
+    @staticmethod
+    def _stream_retry_strategy(base: Any) -> Any:
+        """Mirror the generated operations' retry-strategy resolution."""
+        from oci import retry
+
+        client_strategy = getattr(base, "retry_strategy", None)
+        preferred = getattr(base, "get_preferred_retry_strategy", None)
+        strategy = (
+            preferred(
+                operation_retry_strategy=None, client_retry_strategy=client_strategy
+            )
+            if callable(preferred)
+            else client_strategy
+        )
+        return strategy if strategy is not None else retry.DEFAULT_RETRY_STRATEGY
+
+    def _fallback_timeout(self, timeout: Optional[int]) -> int:
+        """Per-call timeout for the aiohttp transport (read timeout default)."""
+        return int(timeout) if timeout is not None else int(self.timeout[1])
 
     def _ensure_signer(self) -> None:
         """Ensure we have a signer for request signing."""
@@ -227,9 +291,15 @@ class OCIAsyncClient:
         return self._session
 
     async def close(self) -> None:
-        """Close the HTTP session and release resources."""
+        """Close the HTTP session and release resources.
+
+        Safe to call more than once. The client stays usable afterwards:
+        the native client is dropped here and rebuilt on the next call,
+        mirroring how the fallback transport re-creates its aiohttp session.
+        """
         if self._native is not None:
-            await self._native.close()
+            native, self._native = self._native, None
+            await native.close()
         if self._session is not None and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -348,7 +418,7 @@ class OCIAsyncClient:
         chat_request_dict: Dict[str, Any],
         serving_mode_dict: Dict[str, Any],
         stream: bool = False,
-        timeout: int = 300,
+        timeout: Optional[int] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Make async chat request to OCI GenAI.
 
@@ -357,7 +427,8 @@ class OCIAsyncClient:
             chat_request_dict: Chat request as dictionary.
             serving_mode_dict: Serving mode as dictionary.
             stream: Whether to stream the response.
-            timeout: Request timeout in seconds.
+            timeout: Fallback-transport request timeout in seconds; defaults
+                to the client's resolved read timeout.
 
         Yields:
             For streaming: SSE event dictionaries.
@@ -369,18 +440,21 @@ class OCIAsyncClient:
             "chatRequest": chat_request_dict,
         }
 
-        if self._native is not None:
+        native = self._native_client()
+        if native is not None:
             if stream:
                 async for event in self._native_stream("/actions/chat", body, "chat"):
                     yield event
             else:
-                yield await self._native_call(self._native.chat, body)
+                yield await self._native_call(native.chat, body)
             return
 
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/chat"
         headers = self._sign_headers("POST", url, body, stream=stream)
 
-        async with self._arequest("POST", url, headers, body, timeout) as response:
+        async with self._arequest(
+            "POST", url, headers, body, self._fallback_timeout(timeout)
+        ) as response:
             if response.status != 200:
                 error_text = await response.text()
                 raise OCIAsyncRequestError(response.status, error_text)
@@ -395,7 +469,7 @@ class OCIAsyncClient:
     async def embed_text_async(
         self,
         embed_text_details_dict: Dict[str, Any],
-        timeout: int = 300,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Make async embed-text request to OCI GenAI.
 
@@ -403,22 +477,26 @@ class OCIAsyncClient:
             embed_text_details_dict: Serialized EmbedTextDetails (includes
                 compartmentId, servingMode, inputs, ...), as produced by the
                 SDK's ``sanitize_for_serialization``.
-            timeout: Request timeout in seconds.
+            timeout: Fallback-transport request timeout in seconds; defaults
+                to the client's resolved read timeout.
 
         Returns:
             The embed-text response dictionary (``embeddings`` key holds the
             vectors).
         """
-        if self._native is not None:
-            return await self._native_call(
-                self._native.embed_text, embed_text_details_dict
-            )
+        native = self._native_client()
+        if native is not None:
+            return await self._native_call(native.embed_text, embed_text_details_dict)
 
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/embedText"
         headers = self._sign_headers("POST", url, embed_text_details_dict)
 
         async with self._arequest(
-            "POST", url, headers, embed_text_details_dict, timeout
+            "POST",
+            url,
+            headers,
+            embed_text_details_dict,
+            self._fallback_timeout(timeout),
         ) as response:
             if response.status != 200:
                 error_text = await response.text()
@@ -429,7 +507,7 @@ class OCIAsyncClient:
     async def rerank_text_async(
         self,
         rerank_text_details_dict: Dict[str, Any],
-        timeout: int = 300,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Make async rerank request to OCI GenAI.
 
@@ -437,22 +515,26 @@ class OCIAsyncClient:
             rerank_text_details_dict: Serialized RerankTextDetails (includes
                 compartmentId, servingMode, input, documents, ...), as
                 produced by the SDK's ``sanitize_for_serialization``.
-            timeout: Request timeout in seconds.
+            timeout: Fallback-transport request timeout in seconds; defaults
+                to the client's resolved read timeout.
 
         Returns:
             The rerank response dictionary (``documentRanks`` key holds the
             per-document scores).
         """
-        if self._native is not None:
-            return await self._native_call(
-                self._native.rerank_text, rerank_text_details_dict
-            )
+        native = self._native_client()
+        if native is not None:
+            return await self._native_call(native.rerank_text, rerank_text_details_dict)
 
         url = f"{self.service_endpoint}/{OCI_GENAI_API_VERSION}/actions/rerankText"
         headers = self._sign_headers("POST", url, rerank_text_details_dict)
 
         async with self._arequest(
-            "POST", url, headers, rerank_text_details_dict, timeout
+            "POST",
+            url,
+            headers,
+            rerank_text_details_dict,
+            self._fallback_timeout(timeout),
         ) as response:
             if response.status != 200:
                 error_text = await response.text()
@@ -464,7 +546,7 @@ class OCIAsyncClient:
         self,
         generate_text_details_dict: Dict[str, Any],
         stream: bool = False,
-        timeout: int = 300,
+        timeout: Optional[int] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Make async generate-text (completion) request to OCI GenAI.
 
@@ -473,21 +555,23 @@ class OCIAsyncClient:
                 (includes compartmentId, servingMode, inferenceRequest), as
                 produced by the SDK's ``sanitize_for_serialization``.
             stream: Whether to stream the response.
-            timeout: Request timeout in seconds.
+            timeout: Fallback-transport request timeout in seconds; defaults
+                to the client's resolved read timeout.
 
         Yields:
             For streaming: SSE event dictionaries.
             For non-streaming: a single response dictionary.
         """
-        if self._native is not None:
+        native = self._native_client()
+        if native is not None:
             if stream:
                 async for event in self._native_stream(
-                    "/actions/generateText", generate_text_details_dict, "generateText"
+                    "/actions/generateText", generate_text_details_dict, "generate_text"
                 ):
                     yield event
             else:
                 yield await self._native_call(
-                    self._native.generate_text, generate_text_details_dict
+                    native.generate_text, generate_text_details_dict
                 )
             return
 
@@ -497,7 +581,11 @@ class OCIAsyncClient:
         )
 
         async with self._arequest(
-            "POST", url, headers, generate_text_details_dict, timeout
+            "POST",
+            url,
+            headers,
+            generate_text_details_dict,
+            self._fallback_timeout(timeout),
         ) as response:
             if response.status != 200:
                 error_text = await response.text()
