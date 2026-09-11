@@ -14,7 +14,13 @@ import {
 } from "@langchain/core/messages";
 
 import { GenerativeAiInferenceClient, models } from "oci-generativeaiinference";
-import { MaxAttemptsTerminationStrategy } from "oci-common";
+import {
+  InstancePrincipalsAuthenticationDetailsProviderBuilder,
+  MaxAttemptsTerminationStrategy,
+  Region,
+  ResourcePrincipalAuthenticationDetailsProvider,
+} from "oci-common";
+import { z } from "zod";
 
 import { OciGenAiBaseChat } from "../index.js";
 import { OciGenAiCohereChat } from "../cohere_chat.js";
@@ -276,6 +282,9 @@ test("JsonServerEventsIterator bounds incomplete events", async () => {
  */
 
 const authenticationDetailsProvider = {
+  getRegion() {
+    return Region.US_PHOENIX_1;
+  },
   getPassphrase() {
     return "";
   },
@@ -310,7 +319,7 @@ const defaultClient = {
 
 test("OciGenAiSdkClient create default client", async () => {
   const sdkClient = await OciGenAiSdkClient.create(defaultClient);
-  testSdkClient(sdkClient, OciGenAiSdkClient._DEFAULT_REGION_ID, 0);
+  testSdkClient(sdkClient, Region.US_PHOENIX_1.regionId, 0);
 });
 
 test("OciGenAiSdkClient create client based on parameters", async () => {
@@ -333,7 +342,60 @@ test("OciGenAiSdkClient create client based on parameters", async () => {
 
 test("OciGenAiSdkClient create client based on some parameters #2", async () => {
   const sdkClient = await OciGenAiSdkClient.create(defaultClient);
-  testSdkClient(sdkClient, OciGenAiSdkClient._DEFAULT_REGION_ID, 0);
+  testSdkClient(sdkClient, Region.US_PHOENIX_1.regionId, 0);
+});
+
+test("OciGenAiSdkClient creates an Instance Principal client", async () => {
+  const build = vi
+    .spyOn(
+      InstancePrincipalsAuthenticationDetailsProviderBuilder.prototype,
+      "build"
+    )
+    .mockResolvedValue(authenticationDetailsProvider as any);
+
+  try {
+    const sdkClient = await OciGenAiSdkClient.create({
+      newClientParams: {
+        authType: OciGenAiNewClientAuthType.InstancePrincipal,
+        regionId: Region.SA_SAOPAULO_1.regionId,
+        clientConfiguration: {
+          retryConfiguration: {
+            terminationStrategy: new MaxAttemptsTerminationStrategy(3),
+          },
+        },
+      },
+    });
+
+    expect(build).toHaveBeenCalledOnce();
+    expect((<any>sdkClient.client)._authProvider).toBe(
+      authenticationDetailsProvider
+    );
+    testSdkClient(sdkClient, Region.SA_SAOPAULO_1.regionId, 2);
+  } finally {
+    build.mockRestore();
+  }
+});
+
+test("OciGenAiSdkClient creates a Resource Principal client", async () => {
+  const builder = vi
+    .spyOn(ResourcePrincipalAuthenticationDetailsProvider, "builder")
+    .mockReturnValue(authenticationDetailsProvider as any);
+
+  try {
+    const sdkClient = await OciGenAiSdkClient.create({
+      newClientParams: {
+        authType: OciGenAiNewClientAuthType.ResourcePrincipal,
+      },
+    });
+
+    expect(builder).toHaveBeenCalledOnce();
+    expect((<any>sdkClient.client)._authProvider).toBe(
+      authenticationDetailsProvider
+    );
+    testSdkClient(sdkClient, Region.US_PHOENIX_1.regionId, 0);
+  } finally {
+    builder.mockRestore();
+  }
 });
 
 test("OciGenAiSdkClient pre-configured client", async () => {
@@ -349,6 +411,46 @@ test("OciGenAiSdkClient pre-configured client", async () => {
   client.regionId = "venus";
   const sdkClient = await OciGenAiSdkClient.create({ client });
   testSdkClient(sdkClient, "venus", 9);
+});
+
+test("OCI GenAI Generic chat uses a caller-owned SDK client", async () => {
+  const client = new GenerativeAiInferenceClient({
+    authenticationDetailsProvider,
+  });
+  const callChat = vi.spyOn(client, "chat").mockResolvedValue({
+    chatResult: {
+      chatResponse: {
+        choices: [
+          {
+            message: {
+              content: [{ type: TextContent.type, text: "hello" }],
+              role: "ASSISTANT",
+            },
+          },
+        ],
+      },
+    },
+  } as any);
+  const closeClient = vi.spyOn(client, "close");
+  const chat = new OciGenAiGenericChat({
+    compartmentId: "oci.compartment.ocid",
+    onDemandModelId: "oci.model.ocid",
+    maxRetries: 0,
+    client,
+  });
+
+  try {
+    const response = await chat.invoke("Say hello");
+    expect(response.content).toBe("hello");
+    expect(callChat).toHaveBeenCalledOnce();
+
+    await chat.close();
+    expect(closeClient).not.toHaveBeenCalled();
+  } finally {
+    client.close();
+    callChat.mockRestore();
+    closeClient.mockRestore();
+  }
 });
 
 /*
@@ -1201,6 +1303,179 @@ test("OCI GenAI Generic bindTools sends OCI function definitions", async () => {
   });
 });
 
+test("OCI GenAI Generic supports LangChain structured output", async () => {
+  const requests: any[] = [];
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: {
+      chat: async (request: unknown) => {
+        requests.push(request);
+        return {
+          chatResult: {
+            chatResponse: {
+              choices: [
+                {
+                  finishReason: "TOOL_CALLS",
+                  message: {
+                    toolCalls: [
+                      {
+                        id: "call-extract",
+                        type: "FUNCTION",
+                        name: "describe_oci",
+                        arguments:
+                          '{"name":"OCI Generative AI","description":"A managed AI service."}',
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        };
+      },
+    } as any,
+  });
+
+  const structuredModel = chat.withStructuredOutput(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+    }),
+    { name: "describe_oci" }
+  );
+
+  await expect(
+    structuredModel.invoke("Describe OCI Generative AI.")
+  ).resolves.toEqual({
+    name: "OCI Generative AI",
+    description: "A managed AI service.",
+  });
+  expect(requests[0]).toMatchObject({
+    chatDetails: {
+      chatRequest: {
+        tools: [{ type: "FUNCTION", name: "describe_oci" }],
+        toolChoice: { type: "FUNCTION", name: "describe_oci" },
+      },
+    },
+  });
+
+  const rawStructuredModel = chat.withStructuredOutput(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+    }),
+    { name: "describe_oci", includeRaw: true }
+  );
+  await expect(
+    rawStructuredModel.invoke("Describe OCI Generative AI.")
+  ).resolves.toMatchObject({
+    parsed: {
+      name: "OCI Generative AI",
+      description: "A managed AI service.",
+    },
+    raw: { tool_calls: [{ id: "call-extract", name: "describe_oci" }] },
+  });
+});
+
+test("OCI GenAI Generic validates Zod structured output", async () => {
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: {
+      chat: async () => ({
+        chatResult: {
+          chatResponse: {
+            choices: [
+              {
+                finishReason: "TOOL_CALLS",
+                message: {
+                  toolCalls: [
+                    {
+                      id: "call-extract",
+                      type: "FUNCTION",
+                      name: "extract",
+                      arguments: '{"name":123,"description":false}',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      }),
+    } as any,
+  });
+
+  const structuredModel = chat.withStructuredOutput(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+    })
+  );
+
+  await expect(
+    structuredModel.invoke("Describe OCI Generative AI.")
+  ).rejects.toThrow("Failed to parse");
+
+  const rawStructuredModel = chat.withStructuredOutput(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+    }),
+    { includeRaw: true }
+  );
+  await expect(
+    rawStructuredModel.invoke("Describe OCI Generative AI.")
+  ).resolves.toMatchObject({
+    parsed: null,
+    raw: { tool_calls: [{ id: "call-extract", name: "extract" }] },
+  });
+});
+
+test("OCI GenAI Generic rejects unsupported structured-output methods", () => {
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: { chat: async () => ({}) } as any,
+  });
+  const schema = z.object({ name: z.string() });
+
+  expect(() =>
+    chat.withStructuredOutput(schema, { method: "jsonMode" })
+  ).toThrow('"jsonMode" is not implemented by the OCI Generic chat adapter');
+  expect(() =>
+    chat.withStructuredOutput(schema, { method: "jsonSchema" })
+  ).toThrow('"jsonSchema" is not implemented by the OCI Generic chat adapter');
+});
+
+test("OCI GenAI Generic reconstructs streamed structured-output arguments", async () => {
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: {
+      chat: async () =>
+        createStreamFromStringArray([
+          'data: {"message":{"toolCalls":[{"id":"call-extract","type":"FUNCTION","name":"extract","arguments":"{\\"name\\":\\"OCI"}]}}\n\n',
+          'data: {"message":{"toolCalls":[{"type":"FUNCTION","arguments":" Generative AI\\",\\"description\\":\\"A managed AI service.\\"}"}]}}\n\n',
+        ]),
+    } as any,
+  });
+  const structuredModel = chat.withStructuredOutput(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+    })
+  );
+  const results = [];
+  const stream = await structuredModel.stream("Describe OCI Generative AI.");
+
+  for await (const result of stream) {
+    results.push(result);
+  }
+
+  expect(results.at(-1)).toEqual({
+    name: "OCI Generative AI",
+    description: "A managed AI service.",
+  });
+});
+
 test("OCI GenAI Generic bindTools normalizes LangChain tool_choice", async () => {
   const requests: any[] = [];
   const chat = new OciGenAiGenericChat({
@@ -1233,6 +1508,9 @@ test("OCI GenAI Generic bindTools normalizes LangChain tool_choice", async () =>
       tool_choice: { type: "function", function: { name: "get_weather" } },
     })
     .invoke("weather?");
+  await chat
+    .bindTools([tool], { tool_choice: "get_weather" })
+    .invoke("weather?");
 
   expect(requests[0]).toMatchObject({
     chatDetails: { chatRequest: { toolChoice: { type: "REQUIRED" } } },
@@ -1244,6 +1522,40 @@ test("OCI GenAI Generic bindTools normalizes LangChain tool_choice", async () =>
       },
     },
   });
+  expect(requests[2]).toMatchObject({
+    chatDetails: {
+      chatRequest: {
+        toolChoice: { type: "FUNCTION", name: "get_weather" },
+      },
+    },
+  });
+});
+
+test("OCI GenAI Generic bindTools rejects a named choice for an unbound tool", () => {
+  const chat = new OciGenAiGenericChat({
+    ...createParams,
+    client: { chat: async () => ({}) } as any,
+  });
+  const tool = {
+    type: "function" as const,
+    function: {
+      name: "get_weather",
+      description: "Get weather for a city",
+      parameters: { type: "object" },
+    },
+  };
+
+  expect(() =>
+    chat.bindTools([tool], { tool_choice: "does_not_exist" })
+  ).toThrow("tool_choice references unbound function 'does_not_exist'");
+  expect(() =>
+    chat.bindTools([tool], {
+      tool_choice: {
+        type: "function",
+        function: { name: "does_not_exist" },
+      },
+    })
+  ).toThrow("tool_choice references unbound function 'does_not_exist'");
 });
 
 test("OCI GenAI Generic parses usage-only stream events", () => {
@@ -2142,7 +2454,15 @@ function testSdkClient(
   maxAttempts: number
 ) {
   expect(OciGenAiBaseChat._isSdkClient(sdkClient)).toBe(true);
-  expect((<any>sdkClient.client)._regionId).toBe(regionId);
+  // OCI's `region` setter stores a Region object, whereas `regionId` stores a
+  // string. Consult the last setter so an explicit regionId override takes
+  // precedence over the Region object retained from the auth provider.
+  const client = <any>sdkClient.client;
+  expect(
+    client._lastSetRegionOrRegionId === "regionId"
+      ? client._regionId
+      : client._region?.regionId
+  ).toBe(regionId);
   expect(
     (<any>sdkClient.client)._clientConfiguration?.retryConfiguration
       ?.terminationStrategy?._maxAttempts

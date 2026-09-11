@@ -31,20 +31,20 @@
     "test:watch": "vitest",
     "test:int": "vitest run --mode int",
     "test:langgraph:int": "vitest run --mode int src/tests/langgraph_tool_roundtrip.int.test.ts",
-    "format": "prettier --config .prettierrc --write \"src\"",
-    "format:check": "prettier --config .prettierrc --check \"src\""
+    "format": "prettier --config .prettierrc --write \"src\" README.md",
+    "format:check": "prettier --config .prettierrc --check \"src\" README.md"
   },
   "author": "Oracle",
   "license": "MIT",
   "dependencies": {
-    "oci-common": "^2.107.2",
-    "oci-generativeaiinference": "^2.107.2"
+    "oci-common": "^2.139.1",
+    "oci-generativeaiinference": "^2.139.1"
   },
   "peerDependencies": {
-    "@langchain/core": "^1.0.0"
+    "@langchain/core": "^1.2.0"
   },
   "devDependencies": {
-    "@langchain/core": "^1.0.0",
+    "@langchain/core": "^1.2.0",
     "@langchain/langgraph": "^1.4.9",
     "@swc/core": "^1.3.90",
     "@tsconfig/recommended": "^1.0.3",
@@ -58,12 +58,13 @@
     "eslint-plugin-import": "^2.27.5",
     "eslint-plugin-no-instanceof": "^1.0.1",
     "eslint-plugin-prettier": "^4.2.1",
+    "langchain": "1.4.0",
     "oci-generativeai": "^2.139.1",
     "prettier": "^2.8.3",
     "release-it": "^15.10.1",
     "rollup": "^4.5.2",
     "typescript": "<5.2.0",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.11",
     "zod": "^3.25.32"
   },
   "publishConfig": {

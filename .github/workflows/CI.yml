@@ -73,8 +73,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Lint, test, and build
-        run: pnpm lint && pnpm test && pnpm build
+      - name: Format, lint, test, and build
+        run: pnpm format:check && pnpm lint && pnpm test && pnpm build
 
   ci_success:
     name: "CI Success"

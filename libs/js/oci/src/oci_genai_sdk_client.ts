@@ -6,7 +6,6 @@ import {
   InstancePrincipalsAuthenticationDetailsProviderBuilder,
   SessionAuthDetailProvider,
   MaxAttemptsTerminationStrategy,
-  Region,
   ResourcePrincipalAuthenticationDetailsProvider,
 } from "oci-common";
 
@@ -20,8 +19,6 @@ import {
 
 /** Owns the OCI SDK client created from the integration's auth configuration. */
 export class OciGenAiSdkClient {
-  static readonly _DEFAULT_REGION_ID = Region.US_CHICAGO_1.regionId;
-
   private _client: GenerativeAiInferenceClient;
 
   private constructor(client: GenerativeAiInferenceClient) {
@@ -60,9 +57,9 @@ export class OciGenAiSdkClient {
       params
     );
 
-    if (!params.newClientParams?.regionId) {
-      client.regionId = this._DEFAULT_REGION_ID;
-    } else {
+    if (params.newClientParams?.regionId) {
+      // Without an explicit override, the OCI SDK preserves the region exposed
+      // by a region-aware auth provider, such as the default config profile.
       client.regionId = params.newClientParams.regionId;
     }
 

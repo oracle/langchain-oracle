@@ -1,24 +1,30 @@
-import { expect, test, vi } from "vitest";
+import { expect, test, vi, type Mock } from "vitest";
 
 import {
   models,
   type GenerativeAiInferenceClient,
+  type requests,
 } from "oci-generativeaiinference";
 
 import { OciGenAiEmbeddings } from "../embeddings.js";
 import { OciGenAiSdkClient } from "../oci_genai_sdk_client.js";
 
+// vitest 4 types `vi.fn()` as a void-returning procedure, so the mock must
+// carry the real async signature for `mockImplementation` callbacks that
+// return promises (otherwise @typescript-eslint/no-misused-promises fires).
+type EmbedTextMock = Mock<
+  (request: requests.EmbedTextRequest) => Promise<unknown>
+>;
+
 function createClient(
   embeddings: number[][] = [[1, 2]]
-): GenerativeAiInferenceClient & { embedText: ReturnType<typeof vi.fn> } {
+): GenerativeAiInferenceClient & { embedText: EmbedTextMock } {
+  const embedText: EmbedTextMock = vi.fn();
+  embedText.mockResolvedValue({ embedTextResult: { embeddings } });
   return {
-    embedText: vi.fn().mockResolvedValue({
-      embedTextResult: { embeddings },
-    }),
+    embedText,
     close: vi.fn(),
-  } as unknown as GenerativeAiInferenceClient & {
-    embedText: ReturnType<typeof vi.fn>;
-  };
+  } as unknown as GenerativeAiInferenceClient & { embedText: EmbedTextMock };
 }
 
 function createEmbeddings(client = createClient()): OciGenAiEmbeddings {
@@ -139,6 +145,57 @@ test("OciGenAiEmbeddings embeds one query and supports dedicated serving", async
         endpointId: "ocid1.generativeaiendpoint.oc1..example",
         servingType: "DEDICATED",
       }),
+    }),
+  });
+});
+
+test("OciGenAiEmbeddings sends SEARCH_QUERY for query embeddings", async () => {
+  const client = createClient([[0.1, 0.2, 0.3]]);
+  const embeddings = new OciGenAiEmbeddings({
+    client,
+    compartmentId: "ocid1.compartment.oc1..example",
+    onDemandModelId: "cohere.embed-v4.0",
+    inputType: models.EmbedTextDetails.InputType.SearchQuery,
+  });
+
+  await expect(
+    embeddings.embedQuery("What does OCI provide?")
+  ).resolves.toEqual([0.1, 0.2, 0.3]);
+  expect(client.embedText).toHaveBeenCalledWith({
+    embedTextDetails: expect.objectContaining({
+      inputs: ["What does OCI provide?"],
+      inputType: "SEARCH_QUERY",
+    }),
+  });
+});
+
+test("OciGenAiEmbeddings applies an explicit input type to documents and queries", async () => {
+  const client = createClient();
+  client.embedText
+    .mockResolvedValueOnce({ embedTextResult: { embeddings: [[1]] } })
+    .mockResolvedValueOnce({ embedTextResult: { embeddings: [[2]] } });
+  const embeddings = new OciGenAiEmbeddings({
+    client,
+    compartmentId: "ocid1.compartment.oc1..example",
+    onDemandModelId: "cohere.embed-v4.0",
+    inputType: models.EmbedTextDetails.InputType.SearchDocument,
+  });
+
+  await expect(
+    embeddings.embedDocuments(["indexed document"])
+  ).resolves.toEqual([[1]]);
+  await expect(embeddings.embedQuery("search query")).resolves.toEqual([2]);
+
+  expect(client.embedText).toHaveBeenNthCalledWith(1, {
+    embedTextDetails: expect.objectContaining({
+      inputs: ["indexed document"],
+      inputType: "SEARCH_DOCUMENT",
+    }),
+  });
+  expect(client.embedText).toHaveBeenNthCalledWith(2, {
+    embedTextDetails: expect.objectContaining({
+      inputs: ["search query"],
+      inputType: "SEARCH_DOCUMENT",
     }),
   });
 });

@@ -7,8 +7,25 @@ import {
   LangSmithParams,
   type BindToolsInput,
 } from "@langchain/core/language_models/chat_models";
-import type { BaseLanguageModelInput } from "@langchain/core/language_models/base";
+import type {
+  BaseLanguageModelInput,
+  StructuredOutputMethodOptions,
+} from "@langchain/core/language_models/base";
+import {
+  assembleStructuredOutputPipeline,
+  createFunctionCallingParser,
+} from "@langchain/core/language_models/structured_output";
 import { convertToOpenAITool } from "@langchain/core/utils/function_calling";
+import { toJsonSchema } from "@langchain/core/utils/json_schema";
+import {
+  isSerializableSchema,
+  type SerializableSchema,
+} from "@langchain/core/utils/standard_schema";
+import {
+  getSchemaDescription,
+  isInteropZodSchema,
+  type InteropZodType,
+} from "@langchain/core/utils/types";
 import { RunnableBinding, type Runnable } from "@langchain/core/runnables";
 
 import { models } from "oci-generativeaiinference";
@@ -44,12 +61,17 @@ export type GenericCallOptions = Omit<
   "apiFormat" | "messages" | "isStream" | "stop"
 >;
 
+type OciGenAiNamedToolChoice = string & Record<never, never>;
+
 /** Standard LangChain tool-choice forms accepted by Generic chat bindings. */
 export type OciGenAiGenericToolChoice =
   | "auto"
   | "none"
   | "required"
   | "any"
+  // Preserve autocomplete for the standard literals while allowing a bound
+  // function name such as `tool_choice: "get_weather"`.
+  | OciGenAiNamedToolChoice
   | boolean
   | { type: "function"; function: { name: string } };
 
@@ -61,6 +83,100 @@ type OciGenAiGenericBindToolsOptions = Partial<
 
 /** OCI Generic chat model, including LangChain tool-call and tool-result turns. */
 export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
+  withStructuredOutput<
+    RunOutput extends Record<string, unknown> = Record<string, unknown>
+  >(
+    outputSchema:
+      | InteropZodType<RunOutput>
+      | SerializableSchema<RunOutput>
+      | Record<string, unknown>,
+    config?: StructuredOutputMethodOptions<false>
+  ): Runnable<BaseLanguageModelInput, RunOutput>;
+
+  withStructuredOutput<
+    RunOutput extends Record<string, unknown> = Record<string, unknown>
+  >(
+    outputSchema:
+      | InteropZodType<RunOutput>
+      | SerializableSchema<RunOutput>
+      | Record<string, unknown>,
+    config: StructuredOutputMethodOptions<true>
+  ): Runnable<BaseLanguageModelInput, { raw: BaseMessage; parsed: RunOutput }>;
+
+  override withStructuredOutput<
+    RunOutput extends Record<string, unknown> = Record<string, unknown>
+  >(
+    outputSchema:
+      | InteropZodType<RunOutput>
+      | SerializableSchema<RunOutput>
+      | Record<string, unknown>,
+    config?: StructuredOutputMethodOptions<boolean>
+  ):
+    | Runnable<BaseLanguageModelInput, RunOutput>
+    | Runnable<
+        BaseLanguageModelInput,
+        { raw: BaseMessage; parsed: RunOutput }
+      > {
+    if (config?.strict) {
+      throw new Error(
+        '"strict" mode is not implemented by the OCI Generic chat adapter.'
+      );
+    }
+    if (config?.method !== undefined && config.method !== "functionCalling") {
+      throw new Error(
+        `"${config.method}" is not implemented by the OCI Generic chat adapter; structured output currently uses function calling.`
+      );
+    }
+
+    const functionName =
+      config?.name ??
+      (!isInteropZodSchema(outputSchema) &&
+      !isSerializableSchema(outputSchema) &&
+      typeof outputSchema.name === "string"
+        ? outputSchema.name
+        : "extract");
+    const parameters =
+      isInteropZodSchema(outputSchema) || isSerializableSchema(outputSchema)
+        ? toJsonSchema(outputSchema)
+        : outputSchema;
+    const tools = [
+      {
+        type: "function" as const,
+        function: {
+          name: functionName,
+          description:
+            getSchemaDescription(outputSchema) ??
+            "A function available to call.",
+          parameters,
+        },
+      },
+    ];
+    // Force the generated extraction function: binding tools alone permits a
+    // normal text response, which cannot satisfy a structured-output request.
+    // The Core parser also validates Zod and Standard Schema results at runtime.
+    const outputParser = createFunctionCallingParser(
+      outputSchema,
+      functionName
+    );
+
+    return assembleStructuredOutputPipeline(
+      this.bindTools(tools, {
+        tool_choice: {
+          type: "function",
+          function: { name: functionName },
+        },
+      }),
+      outputParser,
+      config?.includeRaw,
+      config?.includeRaw ? "StructuredOutputRunnable" : "StructuredOutput"
+    ) as
+      | Runnable<BaseLanguageModelInput, RunOutput>
+      | Runnable<
+          BaseLanguageModelInput,
+          { raw: BaseMessage; parsed: RunOutput }
+        >;
+  }
+
   override _createRequest(
     messages: BaseMessage[],
     options: this["ParsedCallOptions"],
@@ -467,6 +583,33 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
   > {
     const { tool_choice: toolChoice, requestParams, ...callOptions } = kwargs;
 
+    // Convert once to OCI-native representations. Besides avoiding duplicate
+    // conversion below, this lets us validate a named tool choice against the
+    // exact set of functions that will be sent to OCI.
+    const ociTools = OciGenAiGenericChat._convertTools(
+      tools.map(convertToOpenAITool)
+    );
+    const ociToolChoice =
+      toolChoice === undefined
+        ? undefined
+        : OciGenAiGenericChat._convertToolChoice(toolChoice);
+
+    // A function-specific tool choice must name one of the tools in this binding.
+    // Fail locally with a clear error instead of sending inconsistent `tools` and
+    // `toolChoice` values to OCI and relying on service-side validation.
+    const functionName =
+      ociToolChoice?.type === models.ToolChoiceFunction.type
+        ? (ociToolChoice as models.ToolChoiceFunction).name
+        : undefined;
+    if (
+      functionName !== undefined &&
+      !ociTools.some((tool) => tool.name === functionName)
+    ) {
+      throw new Error(
+        `tool_choice references unbound function '${functionName}'`
+      );
+    }
+
     // LangChain tools use the OpenAI-compatible schema; OCI Generic function
     // definitions use the same JSON Schema payload with provider field names.
     // Normalize standard tool_choice forms into OCI's requestParams.toolChoice
@@ -477,12 +620,10 @@ export class OciGenAiGenericChat extends OciGenAiBaseChat<GenericCallOptions> {
         ...callOptions,
         requestParams: {
           ...(requestParams ?? {}),
-          ...(toolChoice !== undefined
-            ? { toolChoice: OciGenAiGenericChat._convertToolChoice(toolChoice) }
-            : {}),
-          tools: OciGenAiGenericChat._convertTools(
-            tools.map(convertToOpenAITool)
-          ),
+          // Explicit LangChain tool_choice takes precedence over the raw OCI option.
+          ...(ociToolChoice !== undefined ? { toolChoice: ociToolChoice } : {}),
+          // bindTools owns the tool definitions sent with this binding.
+          tools: ociTools,
         },
       },
       config: {},

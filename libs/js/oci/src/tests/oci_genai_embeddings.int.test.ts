@@ -1,6 +1,7 @@
 /* eslint-disable no-process-env */
 
 import { expect, test } from "vitest";
+import { models } from "oci-generativeaiinference";
 
 import { OciGenAiEmbeddings } from "../embeddings.js";
 import { OciGenAiNewClientAuthType } from "../types.js";
@@ -34,31 +35,41 @@ test.skipIf(!compartmentId)(
     let unavailableModelError: unknown;
 
     for (const modelId of modelIds) {
-      const embeddings = new OciGenAiEmbeddings({
+      const newClientParams = {
+        authType: OciGenAiNewClientAuthType.ConfigFile,
+        regionId,
+        serviceEndpoint:
+          process.env.OCI_ENDPOINT ??
+          "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com",
+        authParams:
+          configFilePath || configProfile
+            ? {
+                clientConfigFilePath: configFilePath ?? "",
+                clientProfile: configProfile ?? "DEFAULT",
+              }
+            : undefined,
+      };
+      const documentEmbeddings = new OciGenAiEmbeddings({
         compartmentId: compartmentId!,
         onDemandModelId: modelId,
-        newClientParams: {
-          authType: OciGenAiNewClientAuthType.ConfigFile,
-          regionId,
-          serviceEndpoint:
-            process.env.OCI_ENDPOINT ??
-            "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com",
-          authParams:
-            configFilePath || configProfile
-              ? {
-                  clientConfigFilePath: configFilePath ?? "",
-                  clientProfile: configProfile ?? "DEFAULT",
-                }
-              : undefined,
-        },
+        // Document and query vectors deliberately use distinct input types.
+        // This exercises the two retrieval examples in the README against OCI.
+        inputType: models.EmbedTextDetails.InputType.SearchDocument,
+        newClientParams,
+      });
+      const queryEmbeddings = new OciGenAiEmbeddings({
+        compartmentId: compartmentId!,
+        onDemandModelId: modelId,
+        inputType: models.EmbedTextDetails.InputType.SearchQuery,
+        newClientParams,
       });
 
       try {
-        const documentVectors = await embeddings.embedDocuments([
+        const documentVectors = await documentEmbeddings.embedDocuments([
           "OCI Generative AI supports text embedding models.",
           "LangChain retrieval uses document and query vectors.",
         ]);
-        const queryVector = await embeddings.embedQuery(
+        const queryVector = await queryEmbeddings.embedQuery(
           "What does OCI Generative AI support?"
         );
 
@@ -75,7 +86,8 @@ test.skipIf(!compartmentId)(
           `OCI embedding integration model '${modelId}' is unavailable; trying the next listed model.`
         );
       } finally {
-        await embeddings.close();
+        await documentEmbeddings.close();
+        await queryEmbeddings.close();
       }
     }
 
