@@ -9,6 +9,8 @@ Included files:
 2. `adb_multi_store_huggingface_example.py`
 3. `opensearch_multi_index_huggingface_tutorial.md`
 4. `opensearch_multi_index_huggingface_example.py`
+5. `persistence_oracle_example.py`
+6. `local_docker_oracle_deepagents.ipynb`
 
 These samples show the full workflow:
 
@@ -124,3 +126,19 @@ Use these for the detailed explanation of each path:
 
 1. `samples/11-deepagents/adb_multi_store_huggingface_tutorial.md`
 2. `samples/11-deepagents/opensearch_multi_index_huggingface_tutorial.md`
+
+### 6. Persistence Sample
+
+`persistence_oracle_example.py` shows Oracle-backed thread persistence with
+`OracleSaver` from `langgraph-oracledb` (installed by the `[deepagents]`
+extra): two invokes on the same `thread_id` resume the conversation, then the
+stored checkpoints are listed. It needs either `ORACLE_CONN_STRING` or the
+`ADB_*` variables from step 3, plus the OCI settings from step 2:
+
+```bash
+PYTHONPATH=libs/oci python samples/11-deepagents/persistence_oracle_example.py \
+  --thread-id persistence-demo-01
+```
+
+Full persistence documentation (checkpoints, `OracleStore`, `StoreBackend`):
+`libs/oci/docs/deepagents/persistence.md`.

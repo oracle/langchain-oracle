@@ -132,7 +132,6 @@ class ADB(VectorDataStore):
 
     def _initialize_oraclevs_backend(self) -> None:
         try:
-            from langchain_community.vectorstores.utils import DistanceStrategy
             from langchain_oracledb.document_loaders.oracleai import (
                 OracleTextSplitter,
             )
@@ -142,6 +141,7 @@ class ADB(VectorDataStore):
             from langchain_oracledb.vectorstores.oraclevs import (
                 OracleVS,
             )
+            from langchain_oracledb.vectorstores.utils import DistanceStrategy
         except ImportError as e:
             raise ImportError(
                 "langchain-oracledb required for ADB datastore integration. "

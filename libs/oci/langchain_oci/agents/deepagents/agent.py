@@ -201,15 +201,24 @@ def create_deepagents_agent(
         store: LangGraph store for long-term memory.
         backend: State backend for the deep agent (e.g., StoreBackend).
         cache: LangGraph cache for caching LLM calls.
-        interrupt_before: Node names to interrupt before (lightweight path).
-        interrupt_after: Node names to interrupt after (lightweight path).
-        interrupt_on: Mapping of tool names to interrupt configs.
+        interrupt_before: Node names to interrupt before (lightweight path
+            only; ignored on the deep path — use ``interrupt_on`` there).
+        interrupt_after: Node names to interrupt after (lightweight path
+            only; ignored on the deep path — use ``interrupt_on`` there).
+        interrupt_on: Mapping of tool names to interrupt configs for
+            human-in-the-loop approval. Deep path only; setting it forces
+            the deep path.
         debug: Enable debug mode.
         name: Name for the agent.
         temperature: Model temperature.
         max_tokens: Maximum output tokens (e.g., 65536 for Gemini 2.5 Pro).
         max_input_tokens: Ignored. Input limits are model-determined.
         **model_kwargs: Additional model kwargs.
+
+    Note:
+        Upstream ``deepagents.create_deep_agent`` parameters not listed here
+        (e.g. ``state_schema``) are not exposed by this factory. Full guides:
+        ``libs/oci/docs/deepagents/``.
 
     Returns:
         CompiledStateGraph: A compiled deepagents agent.
