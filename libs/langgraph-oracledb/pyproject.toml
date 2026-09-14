@@ -24,7 +24,9 @@ optional = true
 [tool.poetry.group.test.dependencies]
 pytest = "^9.0.3"
 anyio = "^4.0.0"
-pytest-asyncio = "^0.23.2"
+# pytest-asyncio 0.23 cannot collect under pytest 9 ("'Package' object has no
+# attribute 'obj'"), which broke the release workflow's `make tests`.
+pytest-asyncio = "^1.4.0"
 pytest-mock = "^3.15.0"
 pytest-dotenv = "^0.5.2"
 python-dotenv = "^1.0.0"
