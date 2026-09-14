@@ -62,7 +62,11 @@ from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
 )
-from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, OCIUtils
+from langchain_oci.common.utils import (
+    CUSTOM_ENDPOINT_PREFIX,
+    OCIUtils,
+    is_sse_sentinel,
+)
 from langchain_oci.llms.oci_generative_ai import OCIGenAIBase
 from langchain_oci.llms.utils import enforce_stop_tokens
 
@@ -108,18 +112,6 @@ def _build_chat_completions_headers(compartment_id: str) -> Dict[str, str]:
     sent on this path.
     """
     return {COMPARTMENT_ID_HEADER: compartment_id}
-
-
-def _is_sse_sentinel(data: Optional[str]) -> bool:
-    """Return True for SSE frames that carry no JSON payload.
-
-    The OCI GenAI streaming endpoint emits a terminal ``data: [DONE]`` frame
-    for some models (seen live on ``meta.llama-3.3-70b-instruct`` and
-    ``meta.llama-4-maverick-17b-128e-instruct-fp8`` in September 2026).
-    Empty frames are treated the same way so keep-alives never reach
-    ``json.loads``.
-    """
-    return data is None or data.strip() in ("", "[DONE]")
 
 
 class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
@@ -906,7 +898,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             # models) with an OpenAI-style ``data: [DONE]`` sentinel that is
             # not JSON. Skip it (and empty keep-alive frames) instead of
             # failing the whole stream with a JSONDecodeError.
-            if _is_sse_sentinel(event.data):
+            if is_sse_sentinel(event.data):
                 continue
             event_data = json.loads(event.data)
 
