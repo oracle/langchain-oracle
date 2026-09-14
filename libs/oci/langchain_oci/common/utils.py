@@ -17,6 +17,19 @@ except ImportError:
     UsageMetadata = None  # type: ignore[assignment,misc,unused-ignore]
 
 
+def is_sse_sentinel(data: Optional[str]) -> bool:
+    """Return True for SSE frames that carry no JSON payload.
+
+    The OCI GenAI streaming endpoint emits a terminal ``data: [DONE]`` frame
+    for some models (seen live on ``meta.llama-3.3-70b-instruct`` and
+    ``meta.llama-4-maverick-17b-128e-instruct-fp8`` in September 2026).
+    Empty frames are treated the same way so keep-alives never reach
+    ``json.loads``. Shared by the ``ChatOCIGenAI`` and ``OCIGenAI`` sync
+    stream loops.
+    """
+    return data is None or data.strip() in ("", "[DONE]")
+
+
 class OCIUtils:
     """Utility functions for OCI Generative AI integration."""
 
