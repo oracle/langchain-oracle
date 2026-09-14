@@ -31,7 +31,17 @@ walk(typesDir, (fullPath) => {
     const relative = path.relative(typesDir, fullPath);
     const destination = path.join(outDir, relative);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.copyFileSync(fullPath, destination);
+    const contents = fs
+      .readFileSync(fullPath, "utf8")
+      .replace(
+        /(\bfrom\s+["'])(\.\.?\/[^"']+)\.js(["'])/g,
+        "$1$2.cjs$3"
+      )
+      .replace(
+        /(\bimport\s*\(\s*["'])(\.\.?\/[^"']+)\.js(["'])/g,
+        "$1$2.cjs$3"
+      );
+    fs.writeFileSync(destination, contents);
   }
 });
 
