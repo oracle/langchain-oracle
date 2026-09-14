@@ -357,6 +357,10 @@ class OCIGenAI(LLM, OCIGenAIBase):
         response = self.client.generate_text(invocation_obj)
 
         for event in response.data.events():
+            # Skip the non-JSON ``data: [DONE]`` terminal frame / empty frames
+            # (see ChatOCIGenAI._stream) instead of raising JSONDecodeError.
+            if event.data is None or event.data.strip() in ("", "[DONE]"):
+                continue
             json_load = json.loads(event.data)
             if "text" in json_load:
                 event_data_text = json_load["text"]
