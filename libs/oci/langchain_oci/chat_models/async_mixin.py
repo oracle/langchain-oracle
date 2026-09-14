@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, Tool
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
+from langchain_oci.chat_models.providers.generic import normalize_logprobs
 from langchain_oci.common.async_support import OCIAsyncClient, OCIAsyncRequestError
 from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
@@ -319,6 +320,12 @@ class ChatOCIGenAIAsyncMixin:
             "finish_reason": chat_response.get("finishReason"),
         }
 
+        # Token log probabilities (Generic API; requested via logprobs/top_logprobs)
+        choices = chat_response.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            logprobs = normalize_logprobs(choices[0].get("logprobs"))
+            if logprobs is not None:
+                info["logprobs"] = logprobs
         # Cohere-specific fields
         if "documents" in chat_response:
             info["documents"] = chat_response["documents"]
