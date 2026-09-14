@@ -5601,4 +5601,4 @@ deepagents = ["deepagents", "langchain-oracledb", "langgraph-oracledb", "opensea
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4.0"
-content-hash = "9aebd96c8d65d23baf65a40c26d2bc17cf75bf1d54b412ba04afc32fb5a557b6"
+content-hash = "f0e93ee35d6b83cb620926fc9ebc0c645f577084b0611c86e051580cfebad2d1"
