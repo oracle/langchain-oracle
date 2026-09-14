@@ -17,15 +17,16 @@ const generateFiles = () => {
       const nrOfDots = key.split("/").length - 1;
       const relativePath = "../".repeat(nrOfDots) || "./";
       const compiledPath = `${relativePath}dist/${value}.js`;
-      const declarationPath = `${relativePath}dist/${value}.js`;
+      const esmDeclarationPath = `${relativePath}dist/${value}.d.ts`;
+      const cjsDeclarationPath = `${relativePath}dist/${value}.d.cts`;
       return [
         [
           `${key}.cjs`,
           `module.exports = require('${relativePath}dist/${value}.cjs');`,
         ],
         [`${key}.js`, `export * from '${compiledPath}'`],
-        [`${key}.d.ts`, `export * from '${compiledPath}'`],
-        [`${key}.d.cts`, `export * from '${declarationPath}'`],
+        [`${key}.d.ts`, `export * from '${esmDeclarationPath}'`],
+        [`${key}.d.cts`, `export * from '${cjsDeclarationPath}'`],
       ];
     }
   );
@@ -43,9 +44,14 @@ const updateConfig = () => {
       Object.fromEntries(
         [...Object.keys(entrypoints)].map((key) => {
           const entryPoint = {
-            types: `./${key}.d.ts`,
-            import: `./${key}.js`,
-            require: `./${key}.cjs`,
+            import: {
+              types: `./${key}.d.ts`,
+              default: `./${key}.js`,
+            },
+            require: {
+              types: `./${key}.d.cts`,
+              default: `./${key}.cjs`,
+            },
           };
 
           return [key === "index" ? "." : `./${key}`, entryPoint];
