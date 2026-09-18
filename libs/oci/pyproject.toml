@@ -13,7 +13,9 @@ dependencies = [
     "oci>=2.173.0",
     "pydantic>=2,<3",
     "aiohttp>=3.12.14",
-    "openai>=2.6.1",
+    # openai 3.x changes how a custom httpx auth is accepted; oci-openai's
+    # OciSessionAuth is rejected with TypeError: Invalid "auth" argument.
+    "openai>=2.6.1,<3",
     "oci-openai>=1.0.0",
     "langchain-openai>=0.3.35,<1.0.0; python_version < '3.10'",
     "langchain-openai>=1.1.0,<2.0.0; python_version >= '3.10'",
