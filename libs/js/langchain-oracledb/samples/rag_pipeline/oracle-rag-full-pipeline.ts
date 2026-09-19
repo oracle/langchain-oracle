@@ -27,6 +27,7 @@ type OciChatConfig = {
   endpoint: string;
   configFile: string;
   profile: string;
+  authType: OciGenAiNewClientAuthType;
 };
 
 type RagConfig = {
@@ -45,12 +46,30 @@ function resolvePath(filePath: string): string {
   return path.resolve(filePath);
 }
 
+/**
+ * Map OCI_AUTH_TYPE to the langchain-oci auth type. "ConfigFile" (default) is
+ * API-key auth from the config file; "Session" uses the profile's
+ * security_token_file (e.g. a profile created by `oci session authenticate`).
+ */
+function resolveAuthType(value: string | undefined): OciGenAiNewClientAuthType {
+  const normalized = (value ?? "ConfigFile").trim().toLowerCase();
+  if (normalized === "configfile" || normalized === "config_file") {
+    return OciGenAiNewClientAuthType.ConfigFile;
+  }
+  if (normalized === "session" || normalized === "security_token") {
+    return OciGenAiNewClientAuthType.Session;
+  }
+  throw new Error(
+    `Unsupported OCI_AUTH_TYPE "${value}". Use "ConfigFile" or "Session".`,
+  );
+}
+
 function getOciClient(config: OciChatConfig): OciGenAiGenericChat {
   return new OciGenAiGenericChat({
     compartmentId: config.compartmentId,
     onDemandModelId: config.modelId,
     newClientParams: {
-      authType: OciGenAiNewClientAuthType.ConfigFile,
+      authType: config.authType,
       serviceEndpoint: config.endpoint,
       authParams: {
         clientConfigFilePath: resolvePath(config.configFile),
@@ -361,6 +380,7 @@ async function runCompleteRagPipeline() {
       "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com",
     configFile: process.env.OCI_CONFIG_FILE || "~/.oci/config",
     profile: process.env.OCI_CONFIG_PROFILE || "DEFAULT",
+    authType: resolveAuthType(process.env.OCI_AUTH_TYPE),
   };
 
   const ragConfig: RagConfig = {

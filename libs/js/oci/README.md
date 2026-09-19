@@ -372,6 +372,17 @@ Use structured output when the application needs model responses that conform to
 function calling. LangChain `jsonMode`, `jsonSchema`, and `strict`
 structured-output options are not implemented by this adapter.
 
+Structured output is implemented by binding one function named after the
+schema (or `extract` when the schema has no name) and forcing the model to
+call it. If your schema has a top-level field literally called `name`, pass an
+explicit function name so smaller models do not confuse the two:
+
+```ts
+const structuredModel = model.withStructuredOutput(personSchema, {
+  name: "extract_person",
+});
+```
+
 ## Embeddings
 
 `OciGenAiEmbeddings` provides text embeddings through OCI's `embedText` API.

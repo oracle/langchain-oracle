@@ -18,6 +18,7 @@ Here are the environment variables to be set:
 | `OCI_ENDPOINT` | OCI Generative AI inference endpoint | `https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com` |
 | `OCI_CONFIG_FILE` | Path to the OCI configuration file used by `ConfigFileAuthenticationDetailsProvider` | `~/.oci/config` |
 | `OCI_CONFIG_PROFILE` | OCI configuration profile used for authentication | `DEFAULT` |
+| `OCI_AUTH_TYPE` | `ConfigFile` for API-key auth from the config file, or `Session` for a profile with a `security_token_file` (created by `oci session authenticate`) | `ConfigFile` |
 | `OCI_MAX_TOKENS` | Maximum number of tokens the model may generate | `1000` |
 | `RESET_VECTOR_STORE` | `true` rebuilds the vector table from `DOCUMENTS_FOLDER`; `false` reuses the existing table without re-ingesting | `true` |
 
