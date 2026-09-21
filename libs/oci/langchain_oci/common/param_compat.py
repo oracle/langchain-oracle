@@ -33,6 +33,7 @@ _OCI_PARAM_TO_ATTR = {
     "maxCompletionTokens": "max_completion_tokens",
     "frequencyPenalty": "frequency_penalty",
     "presencePenalty": "presence_penalty",
+    "streamOptions": "stream_options",
 }
 
 # When OCI rejects a parameter outright, prefer renaming its value to the

@@ -253,6 +253,11 @@ class ChatOCIGenAIAsyncMixin:
                 return
 
         async for event_data in _events_with_param_retry():
+            usage_chunk = self._stream_usage_chunk(event_data)  # type: ignore[attr-defined]
+            if usage_chunk is not None:
+                yield usage_chunk
+                continue
+
             if not self._provider.is_chat_stream_end(event_data):  # type: ignore[attr-defined]
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(  # type: ignore[attr-defined]
