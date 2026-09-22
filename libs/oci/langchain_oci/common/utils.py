@@ -311,6 +311,32 @@ class OCIUtils:
         return UsageMetadata(**usage_kwargs)  # type: ignore
 
     @staticmethod
+    def usage_metadata_from_dict(usage: Optional[Dict[str, Any]]) -> Optional[Any]:
+        """Create UsageMetadata from a raw OCI usage payload (JSON dict).
+
+        Counterpart of :meth:`create_usage_metadata` for streaming events, which
+        arrive as camelCase JSON instead of SDK objects. Token details are not
+        mapped: OCI did not include them in streamed usage payloads.
+
+        Args:
+            usage: Payload with ``promptTokens``, ``completionTokens`` and
+                ``totalTokens``.
+
+        Returns:
+            UsageMetadata with the token counts, or None if usage is not available.
+        """
+        if not usage or UsageMetadata is None:
+            return None
+
+        input_tokens = usage.get("promptTokens") or 0
+        output_tokens = usage.get("completionTokens") or 0
+        return UsageMetadata(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=usage.get("totalTokens") or input_tokens + output_tokens,
+        )
+
+    @staticmethod
     def flatten_parallel_tool_calls(
         messages: List[BaseMessage],
     ) -> List[BaseMessage]:

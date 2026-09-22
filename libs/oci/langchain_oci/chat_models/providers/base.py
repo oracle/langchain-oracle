@@ -90,6 +90,27 @@ class Provider(ABC):
         """Extract generation metadata from a chat stream event."""
         ...
 
+    def chat_stream_usage(self, event_data: Dict) -> Optional[Dict[str, Any]]:
+        """Return the raw token usage carried by a usage-only stream event.
+
+        When the request sets ``stream_options.is_include_usage`` OCI sends the
+        token counts as one extra event *after* the finish event, with nothing
+        but the usage in it::
+
+            {"usage": {"promptTokens": 18, "completionTokens": 4, "totalTokens": 22}}
+
+        Returns that ``usage`` payload, or ``None`` for any other event (content
+        deltas, the finish event, ...). Override it for a provider that reports
+        streaming usage differently.
+        """
+        if (
+            "usage" in event_data
+            and "message" not in event_data
+            and not self.is_chat_stream_end(event_data)
+        ):
+            return event_data["usage"]
+        return None
+
     def chat_stream_to_reasoning(self, event_data: Dict) -> str:
         """Extract incremental reasoning text from a streaming event.
 
