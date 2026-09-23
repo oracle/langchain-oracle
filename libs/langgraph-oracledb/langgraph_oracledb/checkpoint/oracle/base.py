@@ -543,8 +543,12 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
             _values_dict = channel_values_dict.get((thread_id, checkpoint_ns), {})
 
             for channel, version in _values_dict:
+                # Versions are stored as VARCHAR in checkpoint_blobs but kept in
+                # their native JSON type in checkpoints.channel_versions. Savers
+                # that assign numeric versions (LangGraph.js's default) would
+                # otherwise never match their own blobs, so compare as text.
                 if (channel in channel_versions) and (
-                    channel_versions[channel] == version
+                    str(channel_versions[channel]) == str(version)
                 ):
                     checkpoint_channel_values.append(_values_dict[(channel, version)])
 
