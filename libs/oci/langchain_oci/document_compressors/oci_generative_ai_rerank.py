@@ -124,6 +124,7 @@ class OCIGenAIRerank(BaseDocumentCompressor):
             service_endpoint=self.service_endpoint,  # type: ignore[arg-type]
             signer=base_client.signer,
             config=getattr(base_client, "config", {}),
+            timeout=getattr(base_client, "timeout", None),
         )
 
     async def aclose(self) -> None:
