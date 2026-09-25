@@ -131,6 +131,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             Id of the OCIGenAI chat model to use, e.g., cohere.command-r-16k.
         is_stream: bool
             Whether to stream back partial progress
+        stream_usage: bool
+            Whether streamed responses report token usage in the final chunk's
+            ``usage_metadata`` (default True), matching non-streaming calls.
         model_kwargs: Optional[Dict]
             Keyword arguments to pass to the specific model used, e.g., temperature, max_tokens.
 
@@ -191,6 +194,16 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
     use_responses_api: bool = False
     """Whether to use the Responses API instead of the Chat API."""
+
+    stream_usage: bool = True
+    """Whether streamed responses report token usage.
+
+    When True, streaming requests set ``stream_options.is_include_usage`` so
+    OCI returns the token counts, which land in ``usage_metadata`` on the
+    final streamed chunk; the merged message then matches what ``invoke``
+    returns. A ``stream_options`` passed via ``model_kwargs`` takes
+    precedence. Set to False to send streaming requests exactly as before.
+    """
 
     temperature: Optional[float] = None
     """Sampling temperature. Takes precedence over model_kwargs["temperature"]."""
@@ -370,6 +383,20 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             # Use V1 API: Standard text-only chat requests
             # Used by all models that don't require multimodal capabilities
             chat_request = self._provider.oci_chat_request(**chat_params)
+
+        # OCI reports token usage on a chat stream only when asked to via
+        # stream_options.is_include_usage: GENERIC-format models then send one
+        # usage-only event after the finish event, COHERE-format models put it
+        # on the finish event (see Provider.chat_stream_usage). An explicit
+        # stream_options from model_kwargs wins; the param-compat retry drops
+        # the option if a model ever rejects it.
+        if (
+            stream
+            and self.stream_usage
+            and "stream_options" in getattr(chat_request, "swagger_types", {})
+            and getattr(chat_request, "stream_options", None) is None
+        ):
+            chat_request.stream_options = models.StreamOptions(is_include_usage=True)
 
         request = models.ChatDetails(
             compartment_id=self.compartment_id,
@@ -966,6 +993,16 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                         generation_info=generation_info,
                     )
 
+    def _stream_usage_metadata(self, event_data: Dict[str, Any]) -> Optional[Any]:
+        """Token usage carried by a stream event, as ``UsageMetadata`` (or None).
+
+        Shared by ``_stream`` and ``_astream``. The provider decides which
+        events carry usage (``Provider.chat_stream_usage``); the camelCase
+        wire payload is mapped like the non-streaming path maps SDK objects.
+        """
+        usage = self._provider.chat_stream_usage(event_data)
+        return OCIUtils.usage_metadata_from_dict(usage) if usage else None
+
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -1017,6 +1054,21 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 continue
             event_data = json.loads(event.data)
 
+            if self._provider.is_chat_stream_usage_only(event_data):
+                # GENERIC-format models report token usage (requested via
+                # stream_options.is_include_usage in _prepare_request) as one
+                # extra usage-only event after the finish event. Surface it on
+                # an empty chunk so the merged message carries usage_metadata
+                # like invoke does, instead of routing it through the content
+                # path as a spurious empty delta that drops the counts.
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        usage_metadata=self._stream_usage_metadata(event_data),
+                    )
+                )
+                continue
+
             if not self._provider.is_chat_stream_end(event_data):
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(event_data, **state_kwargs)
@@ -1065,6 +1117,8 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     message=AIMessageChunk(
                         content="",
                         additional_kwargs=generation_info,
+                        # COHERE-format models attach usage to the finish event.
+                        usage_metadata=self._stream_usage_metadata(event_data),
                     ),
                     generation_info=generation_info,
                 )
