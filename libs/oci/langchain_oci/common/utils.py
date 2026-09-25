@@ -311,6 +311,69 @@ class OCIUtils:
         return UsageMetadata(**usage_kwargs)  # type: ignore
 
     @staticmethod
+    def usage_metadata_from_dict(usage: Optional[Dict[str, Any]]) -> Optional[Any]:
+        """Create UsageMetadata from a raw OCI usage payload (camelCase wire dict).
+
+        Counterpart of :meth:`create_usage_metadata` for the streaming and async
+        paths, where OCI responses are JSON dicts rather than SDK objects::
+
+            {
+                "promptTokens": 14,
+                "completionTokens": 2,
+                "totalTokens": 16,
+                "promptTokensDetails": {"cachedTokens": 0},
+                "completionTokensDetails": {"reasoningTokens": 0},
+            }
+
+        Token-detail keys are snake_cased so the result matches what the
+        non-streaming path produces for the same response; ``None``-valued
+        details are dropped because ``UsageMetadata`` arithmetic (e.g.
+        ``add_usage`` when merging chunks or totalling calls) only accepts
+        ints. A missing ``totalTokens`` falls back to the sum of the two
+        counts, and a missing ``completionTokens`` counts as 0 (seen live on
+        Gemini when the whole output budget went to reasoning).
+
+        Args:
+            usage: Payload with ``promptTokens``, ``completionTokens``,
+                ``totalTokens`` and optional ``*TokensDetails`` sub-dicts.
+
+        Returns:
+            UsageMetadata with the token counts, or None if usage is not available.
+        """
+        if not usage or UsageMetadata is None:
+            return None
+
+        def _snake_case_details(details: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): value
+                for key, value in details.items()
+                if value is not None
+            }
+
+        input_tokens = usage.get("promptTokens") or 0
+        output_tokens = usage.get("completionTokens") or 0
+        total_tokens = usage.get("totalTokens")
+        usage_kwargs: Dict[str, Any] = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": (
+                total_tokens
+                if total_tokens is not None
+                else input_tokens + output_tokens
+            ),
+        }
+        prompt_details = usage.get("promptTokensDetails")
+        if isinstance(prompt_details, dict):
+            usage_kwargs["input_token_details"] = _snake_case_details(prompt_details)
+        completion_details = usage.get("completionTokensDetails")
+        if isinstance(completion_details, dict):
+            usage_kwargs["output_token_details"] = _snake_case_details(
+                completion_details
+            )
+
+        return UsageMetadata(**usage_kwargs)  # type: ignore
+
+    @staticmethod
     def flatten_parallel_tool_calls(
         messages: List[BaseMessage],
     ) -> List[BaseMessage]:
