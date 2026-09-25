@@ -43,6 +43,7 @@ This is the official repository for the LangChain integrations with [Oracle Clou
 | [`langchain-oracledb`](./libs/oracledb) | [![PyPI](https://img.shields.io/pypi/v/langchain-oracledb?label=%20&logo=pypi&logoColor=white)](https://pypi.org/project/langchain-oracledb/) | `pip install -U langchain-oracledb` | **Oracle AI Vector Search.** Vector store (`OracleVS`), hybrid & text-search retrievers, document loaders (`OracleDocLoader`), text splitter, in-database embeddings and summaries, semantic cache, and chat message history — all powered by Oracle Database. |
 | [`langgraph-oracledb`](./libs/langgraph-oracledb) | [![PyPI](https://img.shields.io/pypi/v/langgraph-oracledb?label=%20&logo=pypi&logoColor=white)](https://pypi.org/project/langgraph-oracledb/) | `pip install -U langgraph-oracledb` | **LangGraph persistence on Oracle Database.** Checkpointers (`OracleSaver`, `AsyncOracleSaver`) for durable graph state and a key/value store (`OracleStore`, `AsyncOracleStore`) with optional vector search for long-term agent memory. |
 | [`@oracle/langchain-oracledb`](./libs/js/langchain-oracledb) | [![npm](https://img.shields.io/npm/v/%40oracle%2Flangchain-oracledb?label=%20&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@oracle/langchain-oracledb) | `npm install @oracle/langchain-oracledb` | **LangChain.js for Oracle Database.** TypeScript/JavaScript counterparts of the Vector Search components: `OracleVS`, `OracleDocLoader`, `OracleEmbeddings`, `OracleSummary`, and `OracleTextSplitter`. |
+| [`@oracle/langgraph-checkpoint-oracledb`](./libs/js/langgraph-checkpoint-oracledb) | — | `npm install @oracle/langgraph-checkpoint-oracledb` | **LangGraph.js persistence for Oracle Database.** Oracle checkpoints and long-term store, with optional Oracle VECTOR search. |
 
 > [!NOTE]
 > This project merges and replaces the earlier OCI and Oracle AI Vector Search integrations from `langchain-community`. All packages assume you have credentials configured for the OCI and/or Oracle Database services you use.
@@ -128,6 +129,7 @@ The [`samples/`](./samples) directory is a numbered, hands-on learning path — 
 - [`libs/oracledb/README.md`](./libs/oracledb/README.md) — full `langchain-oracledb` guide: connecting with `python-oracledb`, `OracleVS` with chunking and indexing, loaders, splitter, embeddings, and summaries
 - [`libs/langgraph-oracledb/README.md`](./libs/langgraph-oracledb/README.md) — checkpointer and store quickstarts (sync and async), plus vector-search store configuration
 - [`libs/js/langchain-oracledb/README.md`](./libs/js/langchain-oracledb/README.md) — LangChain.js usage for every component, with build and test instructions
+- [`libs/js/langgraph-checkpoint-oracledb/README.md`](./libs/js/langgraph-checkpoint-oracledb/README.md) — LangGraph.js checkpoint and Store usage, with Oracle VECTOR support
 - [`samples/README.md`](./samples/README.md) — the learning path index, feature coverage matrix, and prerequisites
 
 ## 💁 Contributing
