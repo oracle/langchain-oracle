@@ -42,11 +42,15 @@ from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages.ai import add_usage
 from oci.exceptions import ServiceError
 from oci.generative_ai_inference.models import (
     CohereChatRequest,
+    CompletionTokensDetails,
     GenericChatRequest,
+    PromptTokensDetails,
     StreamOptions,
+    Usage,
 )
 
 from langchain_oci.chat_models import ChatOCIGenAI
@@ -561,3 +565,107 @@ def test_drop_stream_options_on_wire_dict() -> None:
     wire = {"isStream": True, "streamOptions": {"isIncludeUsage": True}}
     assert drop_unsupported_param(wire, "streamOptions") is True
     assert wire == {"isStream": True}
+
+
+# ---------------------------------------------------------------------------
+# Non-streaming parity: SDK usage objects map to the same summable shape
+# ---------------------------------------------------------------------------
+
+
+class _Attr(dict):
+    """dict whose keys are also attributes, mimicking deserialized SDK objects."""
+
+    def __getattr__(self, name: str) -> Any:
+        return self.get(name)
+
+
+def _sdk_usage_with_details() -> Usage:
+    """The OpenAI-on-OCI usage object; unset detail fields deserialize as None."""
+    return Usage(
+        prompt_tokens=14,
+        completion_tokens=2,
+        total_tokens=16,
+        prompt_tokens_details=PromptTokensDetails(cached_tokens=0),
+        completion_tokens_details=CompletionTokensDetails(
+            accepted_prediction_tokens=0, reasoning_tokens=0
+        ),
+    )
+
+
+def _invoke_response(model_id: str, usage: Usage, text: str = "ok") -> _Attr:
+    """A non-streaming SDK chat response for a GENERIC-format model."""
+    return _Attr(
+        status=200,
+        request_id="req-1",
+        headers=_Attr({"content-length": "10"}),
+        data=_Attr(
+            model_id=model_id,
+            model_version="1.0",
+            chat_response=_Attr(
+                api_format="GENERIC",
+                time_created="2026-01-01T00:00:00+00:00",
+                usage=usage,
+                choices=[
+                    _Attr(
+                        finish_reason="stop",
+                        message=_Attr(
+                            role="ASSISTANT",
+                            content=[_Attr(text=text, type="TEXT")],
+                            tool_calls=[],
+                        ),
+                    )
+                ],
+            ),
+        ),
+    )
+
+
+def test_create_usage_metadata_drops_none_details_and_matches_wire_mapper() -> None:
+    from_sdk = OCIUtils.create_usage_metadata(_sdk_usage_with_details())
+    assert from_sdk == OPENAI_USAGE_METADATA
+    assert from_sdk == OCIUtils.usage_metadata_from_dict(OPENAI_USAGE["usage"])
+
+
+def test_create_usage_metadata_omits_all_none_details() -> None:
+    usage = Usage(
+        prompt_tokens=1,
+        completion_tokens=1,
+        total_tokens=2,
+        completion_tokens_details=CompletionTokensDetails(),
+    )
+    assert OCIUtils.create_usage_metadata(usage) == {
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+    }
+
+
+def test_usage_metadata_with_details_can_be_summed() -> None:
+    usage = OCIUtils.create_usage_metadata(_sdk_usage_with_details())
+    total = add_usage(usage, usage)
+    assert total["input_tokens"] == 28
+    assert total["output_tokens"] == 4
+    assert total["total_tokens"] == 32
+    assert total["input_token_details"] == {"cached_tokens": 0}
+    assert total["output_token_details"] == {
+        "accepted_prediction_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+
+
+@pytest.mark.requires("oci")
+def test_usage_callback_totals_invokes_with_token_details() -> None:
+    """UsageMetadataCallbackHandler sums per model via add_usage; it used to
+    raise (and log) on the None details, silently keeping one call's numbers."""
+    usage_cb = pytest.importorskip("langchain_core.callbacks.usage")
+    llm = _llm(OPENAI)
+    llm.client.chat.return_value = _invoke_response(OPENAI, _sdk_usage_with_details())
+
+    with usage_cb.get_usage_metadata_callback() as cb:
+        first = llm.invoke("hi")
+        llm.invoke("hi")
+
+    assert first.usage_metadata == OPENAI_USAGE_METADATA
+    assert cb.usage_metadata[OPENAI]["input_tokens"] == 28
+    assert cb.usage_metadata[OPENAI]["output_tokens"] == 4
+    assert cb.usage_metadata[OPENAI]["total_tokens"] == 32

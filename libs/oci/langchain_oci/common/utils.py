@@ -30,6 +30,24 @@ def is_sse_sentinel(data: Optional[str]) -> bool:
     return data is None or data.strip() in ("", "[DONE]")
 
 
+def _clean_token_details(details: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a token-details payload for ``UsageMetadata``.
+
+    Keys are snake_cased (the SDK's ``to_dict`` already is; the streaming wire
+    payload is camelCase) and ``None`` values are dropped: LangChain's
+    ``input_token_details`` / ``output_token_details`` must hold ints, and
+    ``langchain_core.messages.ai.add_usage`` (used by
+    ``UsageMetadataCallbackHandler`` and when merging ``AIMessageChunk``s)
+    raises ``ValueError`` on ``None``. OCI leaves unset detail fields as
+    ``None`` (e.g. ``rejected_prediction_tokens`` on OpenAI responses).
+    """
+    return {
+        re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): value
+        for key, value in details.items()
+        if value is not None
+    }
+
+
 class OCIUtils:
     """Utility functions for OCI Generative AI integration."""
 
@@ -280,6 +298,12 @@ class OCIUtils:
         """
         Create UsageMetadata from OCI SDK usage object.
 
+        Token details (``prompt_tokens_details`` / ``completion_tokens_details``)
+        are included when present, with unset (``None``) fields dropped so the
+        result can be summed with ``add_usage``; an all-``None`` details object
+        is omitted entirely. :meth:`usage_metadata_from_dict` produces the same
+        shape from the camelCase wire payload of streaming and async responses.
+
         Args:
             usage: OCI SDK usage object containing token counts and details
 
@@ -302,11 +326,13 @@ class OCIUtils:
         if (
             prompt_details := getattr(usage, "prompt_tokens_details", None)
         ) is not None:
-            usage_kwargs["input_token_details"] = to_dict(prompt_details)
+            if cleaned := _clean_token_details(to_dict(prompt_details)):
+                usage_kwargs["input_token_details"] = cleaned
         if (
             completion_details := getattr(usage, "completion_tokens_details", None)
         ) is not None:
-            usage_kwargs["output_token_details"] = to_dict(completion_details)
+            if cleaned := _clean_token_details(to_dict(completion_details)):
+                usage_kwargs["output_token_details"] = cleaned
 
         return UsageMetadata(**usage_kwargs)  # type: ignore
 
@@ -325,13 +351,13 @@ class OCIUtils:
                 "completionTokensDetails": {"reasoningTokens": 0},
             }
 
-        Token-detail keys are snake_cased so the result matches what the
-        non-streaming path produces for the same response; ``None``-valued
-        details are dropped because ``UsageMetadata`` arithmetic (e.g.
-        ``add_usage`` when merging chunks or totalling calls) only accepts
-        ints. A missing ``totalTokens`` falls back to the sum of the two
-        counts, and a missing ``completionTokens`` counts as 0 (seen live on
-        Gemini when the whole output budget went to reasoning).
+        Token details go through the same normalisation as
+        :meth:`create_usage_metadata` (snake_case keys, ``None`` values
+        dropped, empty details omitted) so streaming, async and non-streaming
+        responses yield identical, summable ``usage_metadata``. A missing
+        ``totalTokens`` falls back to the sum of the two counts, and a missing
+        ``completionTokens`` counts as 0 (seen live on Gemini when the whole
+        output budget went to reasoning).
 
         Args:
             usage: Payload with ``promptTokens``, ``completionTokens``,
@@ -342,13 +368,6 @@ class OCIUtils:
         """
         if not usage or UsageMetadata is None:
             return None
-
-        def _snake_case_details(details: Dict[str, Any]) -> Dict[str, Any]:
-            return {
-                re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): value
-                for key, value in details.items()
-                if value is not None
-            }
 
         input_tokens = usage.get("promptTokens") or 0
         output_tokens = usage.get("completionTokens") or 0
@@ -364,12 +383,12 @@ class OCIUtils:
         }
         prompt_details = usage.get("promptTokensDetails")
         if isinstance(prompt_details, dict):
-            usage_kwargs["input_token_details"] = _snake_case_details(prompt_details)
+            if cleaned := _clean_token_details(prompt_details):
+                usage_kwargs["input_token_details"] = cleaned
         completion_details = usage.get("completionTokensDetails")
         if isinstance(completion_details, dict):
-            usage_kwargs["output_token_details"] = _snake_case_details(
-                completion_details
-            )
+            if cleaned := _clean_token_details(completion_details):
+                usage_kwargs["output_token_details"] = cleaned
 
         return UsageMetadata(**usage_kwargs)  # type: ignore
 
