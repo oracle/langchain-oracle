@@ -12,7 +12,11 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessag
 from langchain_core.utils.pydantic import is_basemodel_subclass
 
 try:
-    from langchain_core.messages import UsageMetadata
+    # Imported from its defining module: langchain-core 0.3.x (the floor for
+    # Python 3.9) does not re-export UsageMetadata from langchain_core.messages,
+    # and a failed import here would silently turn every usage helper below
+    # into a no-op that returns None.
+    from langchain_core.messages.ai import UsageMetadata
 except ImportError:
     UsageMetadata = None  # type: ignore[assignment,misc,unused-ignore]
 

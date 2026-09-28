@@ -665,6 +665,8 @@ def test_usage_callback_totals_invokes_with_token_details() -> None:
         first = llm.invoke("hi")
         llm.invoke("hi")
 
+    # invoke() is typed as returning BaseMessage on langchain-core 0.3.x
+    assert isinstance(first, AIMessage)
     assert first.usage_metadata == OPENAI_USAGE_METADATA
     assert cb.usage_metadata[OPENAI]["input_tokens"] == 28
     assert cb.usage_metadata[OPENAI]["output_tokens"] == 4
