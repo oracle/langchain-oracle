@@ -138,3 +138,28 @@ The repository's tests will skip automatically if an Oracle instance is not reac
 This repository includes tests that validate the examples above:
 - Async checkpoint setup works
 - Async store put/get/search works
+
+## Metadata filter semantics
+
+`list(config, filter=...)` matches checkpoint metadata by **containment**, the
+same way `PostgresSaver` (`metadata @> filter`) and the LangGraph.js Oracle
+saver do:
+
+- Every key in the filter must be present in the stored metadata with a value
+  of the **same JSON type**: `True` matches the JSON boolean `true` but not the
+  string `"true"`, `5` matches the number `5` but not `"5"`, and `None` matches
+  an explicit JSON `null` but not an absent key.
+- Nested dicts match partially: `{"user": {"id": 1}}` matches
+  `{"user": {"id": 1, "role": "admin"}}`. `{}` matches any object and no
+  scalar.
+- Lists match by containment, order-insensitive: `{"tags": ["b"]}` matches
+  `{"tags": ["a", "b"]}`; `[]` matches any array.
+- Keys are literal member names at every depth, so `{"a.b": 1}` addresses a
+  member named `a.b`, not a nested `a` -> `b` path. Keys may only contain
+  letters, digits, underscores and dots.
+
+> **Behaviour change (this release):** earlier versions compared booleans and
+> numbers by their string form and treated `None` as "key absent or null" and
+> `{}` as "key exists". Filters that relied on those looser matches -- for
+> example `{"active": True}` matching the string `"true"`, or `{"x": None}`
+> matching rows without an `x` key -- now return only exact-type matches.
