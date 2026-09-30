@@ -90,6 +90,40 @@ class Provider(ABC):
         """Extract generation metadata from a chat stream event."""
         ...
 
+    def chat_stream_usage(self, event_data: Dict) -> Optional[Dict[str, Any]]:
+        """Return the raw token-usage payload carried by a stream event, if any.
+
+        OCI reports usage on a chat stream only when the request sets
+        ``stream_options.is_include_usage`` (see ``ChatOCIGenAI.stream_usage``).
+        Where the counts land depends on the API format: GENERIC-format models
+        (Meta, OpenAI, Google, xAI) send one extra usage-only event *after* the
+        finish event, while COHERE-format models attach ``usage`` to the finish
+        event itself. Either way it is a camelCase wire dict::
+
+            {"usage": {"promptTokens": 18, "completionTokens": 4, "totalTokens": 22}}
+
+        Returns that ``usage`` dict, or ``None`` when the event carries none.
+        Override for a provider that reports streaming usage differently.
+        """
+        usage = event_data.get("usage")
+        return usage if isinstance(usage, dict) else None
+
+    def is_chat_stream_usage_only(self, event_data: Dict) -> bool:
+        """Whether a stream event carries nothing but token usage.
+
+        GENERIC-format models send such an event after the finish event. It
+        must be surfaced as a usage chunk rather than routed through the
+        content path, which would emit a spurious empty delta and drop the
+        counts. Events that carry content or a finish reason are never
+        usage-only, so they are handled exactly as before.
+        """
+        return (
+            self.chat_stream_usage(event_data) is not None
+            and "message" not in event_data
+            and "text" not in event_data
+            and not self.is_chat_stream_end(event_data)
+        )
+
     def chat_stream_to_reasoning(self, event_data: Dict) -> str:
         """Extract incremental reasoning text from a streaming event.
 

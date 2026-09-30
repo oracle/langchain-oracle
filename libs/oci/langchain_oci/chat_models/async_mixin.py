@@ -23,6 +23,7 @@ from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
 )
+from langchain_oci.common.utils import OCIUtils
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 
@@ -254,6 +255,21 @@ class ChatOCIGenAIAsyncMixin:
                 return
 
         async for event_data in _events_with_param_retry():
+            if self._provider.is_chat_stream_usage_only(event_data):  # type: ignore[attr-defined]
+                # GENERIC-format models report token usage (requested via
+                # stream_options.is_include_usage in _prepare_request) as one
+                # extra usage-only event after the finish event. Surface it on
+                # an empty chunk so the merged message carries usage_metadata
+                # like ainvoke does, instead of routing it through the content
+                # path as a spurious empty delta (see _stream).
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        usage_metadata=self._stream_usage_metadata(event_data),  # type: ignore[attr-defined]
+                    )
+                )
+                continue
+
             if not self._provider.is_chat_stream_end(event_data):  # type: ignore[attr-defined]
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(  # type: ignore[attr-defined]
@@ -301,6 +317,8 @@ class ChatOCIGenAIAsyncMixin:
                     message=AIMessageChunk(
                         content="",
                         additional_kwargs=generation_info,
+                        # COHERE-format models attach usage to the finish event.
+                        usage_metadata=self._stream_usage_metadata(event_data),  # type: ignore[attr-defined]
                     ),
                     generation_info=generation_info,
                 )
@@ -443,16 +461,9 @@ class ChatOCIGenAIAsyncMixin:
     ) -> Optional[UsageMetadata]:
         """Extract usage metadata from async response data.
 
-        Uses LangChain's UsageMetadata directly for consistency.
+        Shares :meth:`OCIUtils.usage_metadata_from_dict` with the streaming
+        paths so token details (cached / reasoning tokens) are reported the
+        same way ``invoke`` reports them.
         """
         chat_response = response_data.get("chatResponse", {})
-        usage = chat_response.get("usage")
-
-        if usage:
-            return UsageMetadata(
-                input_tokens=usage.get("promptTokens", 0),
-                output_tokens=usage.get("completionTokens", 0),
-                total_tokens=usage.get("totalTokens", 0),
-            )
-
-        return None
+        return OCIUtils.usage_metadata_from_dict(chat_response.get("usage"))
