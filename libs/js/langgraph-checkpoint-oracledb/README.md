@@ -10,6 +10,8 @@ Oracle AI Database persistence for LangGraph.js. This package provides:
 - Node.js 18 or newer for runtime use.
 - Oracle Database connectivity through `oracledb`.
 - Oracle VECTOR support only when using `OracleStore` with an `index` configuration.
+- `langgraph-oracledb` 1.0.2 or newer when Python reads checkpoints written by
+  this saver.
 
 The integration tests use:
 
@@ -93,8 +95,32 @@ which remains readable in the database, for instance through
 `JSON_SERIALIZE(checkpoint)`. `jsonSizeThresholdMb` is retained for
 constructor compatibility but no longer controls checkpoint storage.
 
-The Python `langgraph-oracledb` saver can read this format because it already
-loads blob rows by channel version. It still writes legacy inline snapshots.
+The Python `langgraph-oracledb` saver reads this format from release 1.0.2
+onward, where blob versions are compared as text. Earlier releases return empty
+`channel_values` for checkpoints written here. Python still writes legacy inline
+snapshots; when this saver appends to a thread that Python wrote, it
+materialises every carried channel value into `checkpoint_blobs`, so both
+readers keep the full state.
+
+Reading a thread the other language wrote needs nothing further. Continuing
+one thread from both languages does: LangGraph.js assigns numeric channel
+versions and its `BaseCheckpointSaver.getNextVersion` throws on the string
+versions Python writes, while LangGraph in Python cannot order its string
+versions against the numbers a JavaScript run leaves behind. Emit Python's
+zero-padded string format from the first checkpoint of such a thread:
+
+```ts
+class SharedVersionSaver extends OracleCheckpointSaver {
+  // LangGraph.js types channel versions as numbers; emit Python's string format
+  // so a thread can be continued from either language.
+  getNextVersion(current: number | undefined): number {
+    const previous = Number.parseInt(String(current ?? 0), 10);
+    const random = Math.random().toString().slice(2, 18).padEnd(16, "0");
+    const next = `${String(previous + 1).padStart(32, "0")}.${random}`;
+    return next as unknown as number;
+  }
+}
+```
 
 Both components also accept Python's `user/password@dsn` connection string, so
 a `from_conn_string` snippet ports across unchanged:
