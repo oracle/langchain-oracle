@@ -40,11 +40,14 @@ def _default_index_name(table_name: str, session_id_key: str) -> str:
         f"idx_{_unqualified_identifier(table_name)}_"
         f"{_unqualified_identifier(session_id_key)}"
     )
-    if len(base_name) <= 128:
+    # Oracle limits identifiers to 128 bytes, not characters.
+    encoded = base_name.encode("utf-8")
+    if len(encoded) <= 128:
         return base_name
 
-    digest = hashlib.sha1(base_name.encode("utf-8")).hexdigest()[:8]
-    return f"{base_name[:119]}_{digest}"
+    digest = hashlib.sha1(encoded).hexdigest()[:8]
+    prefix = encoded[:119].decode("utf-8", errors="ignore")
+    return f"{prefix}_{digest}"
 
 
 def _message_payload(value: Any) -> str:
