@@ -261,7 +261,7 @@ class TestOCIReactAgentIntegration:
         "meta.llama-4-scout-17b-16e-instruct",
         "meta.llama-3.3-70b-instruct",
         "cohere.command-a-03-2025",
-        "xai.grok-3-mini-fast",
+        "xai.grok-4.20",
         "google.gemini-2.5-flash-lite",
     ],
 )
@@ -314,7 +314,7 @@ def test_multi_model_tool_calling(model_id: str) -> None:
         "meta.llama-4-scout-17b-16e-instruct",
         "meta.llama-3.3-70b-instruct",
         "cohere.command-a-03-2025",
-        "xai.grok-3-mini-fast",
+        "xai.grok-4.20",
         "google.gemini-2.5-flash-lite",
     ],
 )
