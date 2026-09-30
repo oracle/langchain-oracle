@@ -593,6 +593,17 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                             f"JSON_EXISTS(metadata, "
                             f"'{path}[*]?({predicate})'{passing_sql})"
                         )
+                elif isinstance(value, str) and value == "":
+                    # Oracle binds an empty string as SQL NULL, so
+                    # ``JSON_VALUE(...) = :bind`` can never be true for "".
+                    # Compare against the JSON string literal "" inside a path
+                    # filter instead (as _element_predicate does for list
+                    # elements), which also keeps "" distinct from JSON null
+                    # and from an absent member.
+                    filter_conditions.append(
+                        f"JSON_EXISTS(metadata, "
+                        f'\'{path}?(@.type() == "string" && @ == "")\')'
+                    )
                 else:
                     # For string values, use direct comparison
                     param_name = _next_param()

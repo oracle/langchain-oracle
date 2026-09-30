@@ -122,6 +122,25 @@ def test_top_level_non_finite_numbers_are_rejected() -> None:
             _where({"nested": {"score": bad}})
 
 
+def test_empty_string_leaves_use_typed_json_exists() -> None:
+    """Oracle binds "" as SQL NULL, so "" leaves compare against the JSON literal.
+
+    ``JSON_VALUE(...) = :bind`` can never be true for an empty string; the
+    nested case used to work through JSON_EQUAL before flattening, so it must
+    keep working. Nested and top-level leaves take the same path.
+    """
+    where, params = _where({"nested": {"name": ""}, "top": ""})
+    assert (
+        'JSON_EXISTS(metadata, \'$."nested"."name"?(@.type() == "string" && @ == "")\')'
+        in where
+    )
+    assert (
+        'JSON_EXISTS(metadata, \'$."top"?(@.type() == "string" && @ == "")\')' in where
+    )
+    assert "JSON_VALUE" not in where
+    assert params == {}
+
+
 def test_scalar_filters_unchanged() -> None:
     where, params = _where({"source": "loop", "step": 2, "active": True})
     assert "JSON_VALUE(metadata, '$.\"source\"') = :" in where
@@ -278,3 +297,71 @@ async def test_async_partial_nested_filter(saver_name: str, test_data) -> None:
         ]
         assert len(results) == 1
         assert results[0].metadata["kind"] == "match"
+
+
+# Stored metadata exercising every neighbour of an empty-string leaf. Only the
+# first two rows contain {"nested": {"name": ""}}; only "top-identical"
+# contains {"name": ""}.
+_EMPTY_STRING_METADATAS = [
+    {"nested": {"name": ""}, "kind": "identical"},
+    {"nested": {"name": "", "extra": 1}, "kind": "superset"},
+    {"nested": {"extra": 1}, "kind": "missing-member"},
+    {"nested": {"name": None}, "kind": "json-null"},
+    {"nested": {"name": "x"}, "kind": "non-empty"},
+    {"nested": {"name": ["", "x"]}, "kind": "array"},
+    {"name": "", "kind": "top-identical"},
+    {"name": "x", "kind": "top-non-empty"},
+]
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+def test_nested_empty_string_matches_identical_metadata(
+    saver_name: str, test_data
+) -> None:
+    """Regression: an empty-string leaf keeps matching identical metadata.
+
+    Before this PR the nested object was compared with JSON_EQUAL; flattening
+    it to ``JSON_VALUE(...) = :bind`` silently matched nothing because Oracle
+    binds "" as SQL NULL. The typed JSON_EXISTS predicate restores the match
+    while keeping "" distinct from JSON null, an absent member, a non-empty
+    string, and an array.
+    """
+    with _sync_saver(saver_name) as saver:
+        _put_checkpoints(saver, "thread-empty-string", _EMPTY_STRING_METADATAS)
+
+        results = list(saver.list(None, filter={"nested": {"name": ""}}))
+        assert sorted(r.metadata["kind"] for r in results) == ["identical", "superset"]
+
+        # Top-level "" went through the same NULL bind and never matched
+        # before either; it now matches exactly the identical row.
+        results = list(saver.list(None, filter={"name": ""}))
+        assert [r.metadata["kind"] for r in results] == ["top-identical"]
+
+        # Non-empty strings are unaffected.
+        results = list(saver.list(None, filter={"nested": {"name": "x"}}))
+        assert [r.metadata["kind"] for r in results] == ["non-empty"]
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+async def test_async_nested_empty_string_matches_identical_metadata(
+    saver_name: str, test_data
+) -> None:
+    """alist() shares _search_where with list(): same empty-string semantics."""
+    async with _async_saver(saver_name) as saver:
+        thread_id = "thread-empty-string-async"
+        for metadata in _EMPTY_STRING_METADATAS:
+            checkpoint = empty_checkpoint()
+            cfg = {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "checkpoint_ns": "",
+                    "checkpoint_id": checkpoint["id"],
+                }
+            }
+            await saver.aput(cfg, checkpoint, metadata, {})
+
+        results = [c async for c in saver.alist(None, filter={"nested": {"name": ""}})]
+        assert sorted(r.metadata["kind"] for r in results) == ["identical", "superset"]
+
+        results = [c async for c in saver.alist(None, filter={"name": ""})]
+        assert [r.metadata["kind"] for r in results] == ["top-identical"]
