@@ -109,6 +109,78 @@ def _should_allow_more_tool_calls(
     return True
 
 
+def normalize_logprobs_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Map LangChain-style ``logprobs`` / ``top_logprobs`` to OCI ``log_probs``.
+
+    ``ChatOpenAI`` and ``ChatOCIModelDeployment*`` accept ``logprobs`` (bool)
+    and ``top_logprobs`` (int). The OCI Generic chat request has a single
+    integer, ``log_probs``: the number of most-likely tokens to return per
+    position, alongside the chosen token's log probability. The mapping is:
+
+    - ``top_logprobs=N`` -> ``log_probs=N`` (requires ``logprobs`` not False)
+    - ``logprobs=True`` (no ``top_logprobs``) -> ``log_probs=1``
+    - ``logprobs=False`` / ``None`` -> nothing is sent
+
+    An explicit ``log_probs`` passes through untouched.
+    """
+    result = dict(params)
+    logprobs = result.pop("logprobs", None)
+    top_logprobs = result.pop("top_logprobs", None)
+    if top_logprobs is not None:
+        if logprobs is False:
+            raise ValueError("top_logprobs was set but logprobs is False.")
+        result.setdefault("log_probs", int(top_logprobs))
+    elif logprobs:
+        result.setdefault("log_probs", 1)
+    return result
+
+
+def normalize_logprobs(raw: Any) -> Optional[Dict[str, Any]]:
+    """Normalise OCI logprobs (SDK ``Logprobs`` object or JSON dict) to one dict.
+
+    Returns ``{"tokens", "token_logprobs", "top_logprobs", "text_offset"}``
+    with snake_case keys and numeric values, or ``None`` when absent. The
+    JSON form (async transport, streaming) uses camelCase keys and encodes
+    ``topLogprobs`` values as strings; both are converted.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        tokens = raw.get("tokens")
+        token_logprobs = raw.get("token_logprobs", raw.get("tokenLogprobs"))
+        top_logprobs = raw.get("top_logprobs", raw.get("topLogprobs"))
+        text_offset = raw.get("text_offset", raw.get("textOffset"))
+    else:
+        tokens = getattr(raw, "tokens", None)
+        token_logprobs = getattr(raw, "token_logprobs", None)
+        top_logprobs = getattr(raw, "top_logprobs", None)
+        text_offset = getattr(raw, "text_offset", None)
+    if tokens is None and token_logprobs is None and top_logprobs is None:
+        return None
+
+    def _num(value: Any) -> Any:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return value
+
+    return {
+        "tokens": list(tokens) if tokens is not None else None,
+        "token_logprobs": (
+            [_num(v) for v in token_logprobs] if token_logprobs is not None else None
+        ),
+        "top_logprobs": (
+            [
+                {str(k): _num(v) for k, v in (entry or {}).items()}
+                for entry in top_logprobs
+            ]
+            if top_logprobs is not None
+            else None
+        ),
+        "text_offset": list(text_offset) if text_offset is not None else None,
+    }
+
+
 class GenericProvider(Provider):
     """Provider for models using generic API spec."""
 
@@ -119,7 +191,7 @@ class GenericProvider(Provider):
 
         Subclasses can override for provider-specific transformations.
         """
-        return params
+        return normalize_logprobs_params(params)
 
     @property
     def supports_tool_choice(self) -> bool:
@@ -326,11 +398,25 @@ class GenericProvider(Provider):
                 response.data.chat_response.usage.total_tokens
             )
 
+        # Token log probabilities, when requested via logprobs/top_logprobs.
+        if choices:
+            logprobs = normalize_logprobs(getattr(choices[0], "logprobs", None))
+            if logprobs is not None:
+                generation_info["logprobs"] = logprobs
         return generation_info
 
     def chat_stream_generation_info(self, event_data: Dict) -> Dict[str, Any]:
-        """Extract generation metadata from Meta chat stream event."""
-        return {"finish_reason": event_data["finishReason"]}
+        """Extract generation metadata from a Generic chat stream event.
+
+        The service does not currently include log probabilities in streaming
+        events even when ``log_probs`` is requested; if it ever does, they are
+        surfaced under ``logprobs`` in the same normalised shape as invoke.
+        """
+        info: Dict[str, Any] = {"finish_reason": event_data["finishReason"]}
+        logprobs = normalize_logprobs(event_data.get("logprobs"))
+        if logprobs is not None:
+            info["logprobs"] = logprobs
+        return info
 
     def chat_stream_to_reasoning(self, event_data: Dict) -> str:
         """Extract incremental reasoning text from a Generic stream event.
@@ -1096,7 +1182,7 @@ class OpenAIProvider(GenericProvider):
         elif "max_tokens" in result and "max_completion_tokens" in result:
             # Both provided - prefer the OpenAI-native key and drop the legacy one
             result.pop("max_tokens")
-        return result
+        return super().normalize_params(result)
 
 
 def _to_gemini_compatible_schema(schema: Any) -> Any:
