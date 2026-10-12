@@ -48,6 +48,17 @@ jobs:
       working-directory: ${{ matrix.working-directory }}
     secrets: inherit
 
+  test_langgraph_oracledb:
+    # langgraph-oracledb requires Python >=3.10, so it can't share the matrix
+    # above (whose default Python list includes 3.9). Database tests skip
+    # without an Oracle instance; the unit tests and the skip list still run.
+    name: cd libs/langgraph-oracledb
+    uses: ./.github/workflows/_test.yml
+    with:
+      working-directory: libs/langgraph-oracledb
+      python-versions: '["3.10", "3.12", "3.13"]'
+    secrets: inherit
+
   js_oci:
     # This package is standalone (not part of the Python Poetry matrix), so it
     # needs an explicit CI job for its TypeScript checks.
@@ -103,7 +114,7 @@ jobs:
 
   ci_success:
     name: "CI Success"
-    needs: [lint, test, js_oci, js_langgraph_checkpoint_oracledb]
+    needs: [lint, test, test_langgraph_oracledb, js_oci, js_langgraph_checkpoint_oracledb]
     if: |
       always()
     runs-on: ubuntu-latest
