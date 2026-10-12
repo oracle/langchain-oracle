@@ -393,7 +393,8 @@ print(response.response_metadata["logprobs"]["top_logprobs"][0])
 Notes: log probabilities are returned for `invoke`/`ainvoke` only (the service
 does not include them in streaming events); some models do not produce them
 (xAI Grok returns none), in which case the key is simply absent; Cohere models
-have no log-probability option and raise a `ValueError` if you request them.
+have no log-probability option, and Gemini models accept the option but never
+return log probabilities, so both raise a `ValueError` if you request them.
 
 ## Deepagents + Datastores (Integration Points)
 

@@ -1260,8 +1260,20 @@ class GeminiProvider(GenericProvider):
         return definition
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize Gemini parameters with warnings for mapped keys."""
-        result = params.copy()
+        """Normalize Gemini parameters with warnings for mapped keys.
+
+        Gemini models on OCI Generative AI accept ``log_probs`` but never
+        return log probabilities, so ``logprobs`` / ``top_logprobs`` /
+        ``log_probs`` raise a clear error instead of being silently ignored.
+        ``logprobs=False`` is accepted and removed.
+        """
+        result = normalize_logprobs_params(params)
+        if result.pop("log_probs", None):
+            raise ValueError(
+                "Gemini models on OCI Generative AI do not return logprobs; "
+                "remove logprobs/top_logprobs or use a model that does "
+                "(e.g. meta.llama-*, openai.*)."
+            )
 
         if "max_output_tokens" in result:
             if "max_tokens" not in result:

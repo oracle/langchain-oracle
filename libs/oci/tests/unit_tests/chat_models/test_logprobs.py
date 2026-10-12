@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_oci.chat_models.providers.cohere import CohereProvider
 from langchain_oci.chat_models.providers.generic import (
+    GeminiProvider,
     GenericProvider,
     OpenAIProvider,
     normalize_logprobs,
@@ -50,6 +51,21 @@ class TestNormalizeLogprobsParams:
         assert OpenAIProvider().normalize_params(
             {"max_tokens": 9, "logprobs": True, "top_logprobs": 2}
         ) == {"max_completion_tokens": 9, "log_probs": 2}
+
+    def test_gemini_rejects_logprobs_clearly(self) -> None:
+        # OCI accepts log_probs for Gemini but never returns logprobs
+        for params in (
+            {"logprobs": True},
+            {"logprobs": True, "top_logprobs": 2},
+            {"top_logprobs": 2},
+            {"log_probs": 2},
+        ):
+            with pytest.raises(ValueError, match="Gemini .* do not return logprobs"):
+                GeminiProvider().normalize_params(params)
+        # logprobs=False is a no-op, not an error
+        assert GeminiProvider().normalize_params(
+            {"logprobs": False, "max_tokens": 9}
+        ) == {"max_tokens": 9}
 
     def test_cohere_rejects_logprobs_clearly(self) -> None:
         with pytest.raises(ValueError, match="Cohere .* do not support logprobs"):
@@ -188,3 +204,16 @@ class TestGenerationInfo:
             stream=False,
         )
         assert request.chat_request.log_probs == 2
+
+    def test_gemini_request_with_logprobs_raises(self) -> None:
+        llm = ChatOCIGenAI(
+            model_id="google.gemini-2.5-flash",
+            client=MagicMock(),
+            model_kwargs={"logprobs": True, "top_logprobs": 2},
+        )
+        with pytest.raises(ValueError, match="Gemini"):
+            llm._prepare_request(
+                [HumanMessage(content="hi")],
+                stop=None,
+                stream=False,
+            )
