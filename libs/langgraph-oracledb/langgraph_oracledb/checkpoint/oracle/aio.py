@@ -4,7 +4,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 import oracledb
 from langchain_core.runnables import RunnableConfig
@@ -165,7 +165,7 @@ class AsyncOracleSaver(BaseOracleSaver):
                 return
 
             # Convert Oracle rows to dictionary-like structure
-            columns = [desc[0].lower() for desc in cur.description]
+            columns = [desc[0].lower() for desc in cast(list, cur.description)]
             values = [dict(zip(columns, row)) for row in values_fetch]
             # Oracle JSON columns return numbers as Decimal; coerce so downstream
             # LangGraph code (e.g. metadata["step"] in uuid6) sees int/float.
@@ -282,7 +282,7 @@ class AsyncOracleSaver(BaseOracleSaver):
             if values_fetch is None:
                 return None
 
-            columns = [desc[0].lower() for desc in cur.description]
+            columns = [desc[0].lower() for desc in cast(list, cur.description)]
             value = dict(zip(columns, values_fetch))
             # See alist(): decimals from Oracle JSON columns break downstream.
             value["checkpoint"] = self._coerce_decimals(value["checkpoint"])
@@ -392,7 +392,7 @@ class AsyncOracleSaver(BaseOracleSaver):
                 )
 
             if "channel_versions" not in copy:
-                copy["channel_versions"] = {}
+                copy["channel_versions"] = {}  # type: ignore[unreachable]  # defensive: key is required by Checkpoint
             copy["channel_versions"].update(new_versions)
 
             cur.setinputsizes(
