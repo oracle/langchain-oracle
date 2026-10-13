@@ -322,7 +322,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
         checkpoint_ns: str,
         values: dict[str, Any],
         versions: ChannelVersions,
-    ) -> list[tuple[str, str, str, str, str, bytes | None]]:
+    ) -> list[dict[str, Any]]:
         """Prepare blob data for database storage."""
 
         if not versions:
@@ -366,15 +366,15 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
         task_id: str,
         task_path: str,
         writes: Sequence[tuple[str, Any]],
-    ) -> list[tuple[str, str, str, str, str, int, str, str, bytes]]:
-        result = []
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         for idx, (channel, value) in enumerate(writes):
             # Always serialize the value, even if it's None
             type_str, blob_data = self.serde.dumps_typed(value)
 
             # Ensure blob is never None
             if blob_data is None:
-                blob_data = b""
+                blob_data = b""  # type: ignore[unreachable]  # defensive: serde may return None
 
             result.append(
                 {
@@ -391,7 +391,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
             )
         return result
 
-    def get_next_version(self, current: str | None, channel: None) -> str:
+    def get_next_version(self, current: str | int | None, channel: None) -> str:
         if current is None:
             current_v = 0
         elif isinstance(current, int):
@@ -510,7 +510,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
         )
 
     def _get_channel_values(self, all_channel_values, all_values):
-        channel_values_dict = {}
+        channel_values_dict: dict[tuple[Any, Any], dict[tuple[Any, Any], Any]] = {}
 
         for (
             thread_id,
@@ -528,7 +528,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                 blob,
             )
 
-        channel_values = []
+        channel_values: list[list[Any] | None] = []
 
         # For all checkpoints filtered
         for v in all_values:
@@ -560,7 +560,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
         return channel_values
 
     def _get_pending_writes(self, res, values):
-        pending_writes_dict = {}
+        pending_writes_dict: dict[Any, Any] = {}
 
         for (
             thread_id,

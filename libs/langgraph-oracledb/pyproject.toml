@@ -95,12 +95,39 @@ warn_unreachable = true
 warn_unused_configs = true
 warn_unused_ignores = true
 disable_error_code = "typeddict-item, return-value"
+# langgraph_oracledb/, checkpoint/ and store/ are namespace packages; resolve
+# modules from the project root so checkpoint.oracle and store.oracle differ.
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "."
 
 [[tool.mypy.overrides]]
 module = [
     "oracledb.*",
 ]
 ignore_missing_imports = true
+
+# Tests lean on dynamic patterns mypy can't follow cheaply: monkeypatched
+# methods (method-assign), fixtures re-exported from conftest_checkpointer
+# (attr-defined), loosely typed fixture data/generators (arg-type, index,
+# call-overload, union-attr, operator, assignment, var-annotated), fake
+# connection subclasses (override) and intentionally unreachable asserts.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+warn_unused_ignores = false
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "call-overload",
+    "index",
+    "method-assign",
+    "operator",
+    "override",
+    "union-attr",
+    "unreachable",
+    "var-annotated",
+]
 
 [tool.coverage.run]
 omit = ["tests/*"]

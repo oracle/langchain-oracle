@@ -533,6 +533,8 @@ class BaseOracleStore(Generic[C]):
     table_names: dict[str, str]
     detected_dims: int | None
     db_model_name: str | None
+    # Set by subclasses from _ensure_index_config (Embeddings | str | None).
+    embeddings: Any
 
     @staticmethod
     def _validate_json_path_key(key: str) -> None:
@@ -559,12 +561,13 @@ class BaseOracleStore(Generic[C]):
 
         results = []
         for namespace, items in namespace_groups.items():
-            _, keys = zip(*items, strict=False)
-            keys = list(keys)
+            _, keys_tuple = zip(*items, strict=False)
+            keys = list(keys_tuple)
             this_refresh_ttls = refresh_ttls[namespace]
 
             filtered_keys = [x for i, x in enumerate(keys) if this_refresh_ttls[i]]
 
+            placeholders: list[str] | str
             if len(filtered_keys) > 0:
                 placeholders = [f":key{i}" for i in range(len(filtered_keys))]
                 params = {
@@ -601,7 +604,7 @@ class BaseOracleStore(Generic[C]):
     def _prepare_batch_PUT_queries(
         self,
         put_ops: Sequence[tuple[int, PutOp]],
-    ) -> tuple[list[tuple[str, Sequence]], tuple[str, Sequence] | None]:
+    ) -> tuple[list[tuple[str, Any]], tuple[str, list[dict[str, Any]]] | None]:
         """Prepare PUT queries for batch operations."""
         dedupped_ops: dict[tuple[tuple[str, ...], str], PutOp] = {}
         for _, op in put_ops:
@@ -615,7 +618,7 @@ class BaseOracleStore(Generic[C]):
             else:
                 inserts.append(op)
 
-        queries: list[tuple[str, Sequence]] = []
+        queries: list[tuple[str, Any]] = []
 
         if deletes:
             namespace_groups: dict[tuple[str, ...], list[str]] = defaultdict(list)
@@ -624,16 +627,14 @@ class BaseOracleStore(Generic[C]):
             for namespace, keys in namespace_groups.items():
                 placeholders = ",".join([f":key{i}" for i in range(len(keys))])
                 query = f"DELETE FROM {self.table_names['store']} WHERE prefix = :namespace AND key IN ({placeholders})"
-                params = {"namespace": _namespace_to_text(namespace)}
+                params: dict[str, Any] = {"namespace": _namespace_to_text(namespace)}
                 for i, key in enumerate(keys):
                     params[f"key{i}"] = key
                 queries.append((query, params))
 
-        embedding_request: (
-            tuple[tuple[str, str], Sequence[tuple[str, str, str, str]]] | None
-        ) = None
+        embedding_request: tuple[str, list[dict[str, Any]]] | None = None
         if inserts:
-            embedding_request_params = []
+            embedding_request_params: list[dict[str, Any]] = []
 
             # First handle main store insertions
             for op in inserts:
@@ -900,13 +901,13 @@ class BaseOracleStore(Generic[C]):
     def _get_batch_list_namespaces_queries(
         self,
         list_ops: Sequence[tuple[int, ListNamespacesOp]],
-    ) -> list[tuple[str, Sequence]]:
+    ) -> list[tuple[str, Any]]:
         """Prepare list namespaces queries for batch operations."""
-        queries: list[tuple[str, Sequence]] = []
+        queries: list[tuple[str, Any]] = []
 
         for _, op in list_ops:
             where_clauses = []
-            params = {}
+            params: dict[str, Any] = {}
             param_count = 0
 
             # Handle match conditions
@@ -925,7 +926,7 @@ class BaseOracleStore(Generic[C]):
                         suffix_text = suffix_text.replace("*", "%")
                         params[f"match_param{param_count}"] = f"%{suffix_text}"
                     else:
-                        logger.warning(
+                        logger.warning(  # type: ignore[unreachable]  # defensive: match_type is a Literal
                             f"Unknown match_type in list_namespaces: {condition.match_type}"
                         )
 
@@ -983,7 +984,9 @@ class BaseOracleStore(Generic[C]):
         return queries
 
     def _prepare_statements(self, grouped_ops):
-        prepared_statements = {}
+        prepared_statements: dict[str, Any] = {}
+        queries: Any
+        embedding_requests: Any
 
         if GetOp in grouped_ops:
             get_ops = cast(Sequence[tuple[int, GetOp]], grouped_ops[GetOp])
@@ -1187,7 +1190,7 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
                 )
 
             # Validate distance type
-            index_type_config = new_config.get("index_type", {})
+            index_type_config = cast(dict[str, Any], new_config.get("index_type", {}))
             new_distance = index_type_config.get("distance_metric", "cosine").upper()
             if new_distance != existing_distance:
                 raise ValueError(
@@ -1236,9 +1239,11 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             detected_dims = _detect_dimensions(config)
 
             # Insert new configuration
-            index_type_config = config.get("index_type", {})
+            index_type_config = cast(dict[str, Any], config.get("index_type", {}))
             distance_type = index_type_config.get("distance_metric", "cosine").upper()
-            dict_params = config.get("index_type", {"type": "hnsw"})
+            dict_params = cast(
+                dict[str, Any], config.get("index_type", {"type": "hnsw"})
+            )
             dict_params["accuracy"] = config.get("accuracy", None)
             index_params = json.dumps(dict_params, sort_keys=True)
             dict_params.pop("accuracy")
@@ -1294,7 +1299,7 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             )
 
             try:
-                store = cls(conn=pool, index=index, ttl=ttl, table_suffix=table_suffix)
+                store = cls(conn=pool, index=index, ttl=ttl, table_suffix=table_suffix)  # type: ignore[arg-type]  # pools are accepted at runtime
                 yield store
             finally:
                 pool.close()
@@ -1521,7 +1526,7 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
                 continue
 
             rows = cur.fetchall()
-            columns = [col.name for col in cur.description]
+            columns = [col.name for col in cast(list, cur.description)]
             rows = [
                 {columns[i].lower(): row[i] for i in range(len(row))} for row in rows
             ]
@@ -1561,7 +1566,7 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             cur.execute(query, params)
             rows = cur.fetchall()
 
-            col_names = [desc[0].lower() for desc in cur.description]
+            col_names = [desc[0].lower() for desc in cast(list, cur.description)]
             dict_rows = [dict(zip(col_names, row)) for row in rows]
 
             items = []
@@ -1609,7 +1614,7 @@ class OracleStore(BaseStore, BaseOracleStore[oracledb.Connection]):
             cur.execute(query, params)
             rows = cur.fetchall()
 
-            col_names = [desc[0].lower() for desc in cur.description]
+            col_names = [desc[0].lower() for desc in cast(list, cur.description)]
             dict_rows = [dict(zip(col_names, row)) for row in rows]
 
             results[idx] = [
@@ -1821,8 +1826,8 @@ def _ensure_index_config(
     tokenized: list[tuple[str, Literal["$"] | list[str]]] = []
     tot = 0
     fields = index_config.get("fields") or ["$"]
-    if isinstance(fields, str):
-        fields = [fields]
+    if isinstance(fields, str):  # type: ignore[unreachable]  # defensive runtime check
+        fields = [fields]  # type: ignore[unreachable]
     if not isinstance(fields, list):
         raise ValueError(f"Text fields must be a list or a string. Got {fields}")
     for p in fields:
