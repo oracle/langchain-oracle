@@ -6,9 +6,8 @@ import {
 } from "vitest/config";
 
 export default defineConfig((env) => {
-  const hasOracleCredentials = Boolean(
-    process.env.ORACLE_USERNAME && process.env.ORACLE_PASSWORD
-  );
+  const { ORACLE_USERNAME, ORACLE_PASSWORD, ORACLE_DSN } = process.env;
+  const hasOracleCredentials = ORACLE_USERNAME && ORACLE_PASSWORD && ORACLE_DSN;
   const excludeIntegrationTests = hasOracleCredentials
     ? configDefaults.exclude
     : [...configDefaults.exclude, "**/*.int.test.ts"];
@@ -44,7 +43,7 @@ export default defineConfig((env) => {
         ...common.test,
         testTimeout: 100_000,
         exclude: excludeIntegrationTests,
-        passWithNoTests: !hasOracleCredentials,
+        passWithNoTests: false,
         include: ["**/*.standard.int.test.ts"],
         name: "standard-int",
         environment: "node",
@@ -59,7 +58,7 @@ export default defineConfig((env) => {
         globals: false,
         testTimeout: 100_000,
         exclude: excludeIntegrationTests,
-        passWithNoTests: !hasOracleCredentials,
+        passWithNoTests: false,
         include: ["**/*.int.test.ts"],
         name: "int",
         environment: "node",
