@@ -15,8 +15,7 @@ export const ErrorCode = {
   SYSTEM_ERROR: "SYSTEM_ERROR",
 } as const;
 
-export type ErrorCode =
-  (typeof ErrorCode)[keyof typeof ErrorCode];
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 const LANGCHAIN_ORACLE_ERROR_BRAND = Symbol.for(
   "@oracle/langchain-oracledb/LangChainOracleError"
@@ -92,7 +91,9 @@ const errorMessageFactories: {
   [ErrorCode.VALIDATION_INVALID_IDENTIFIER]: (identifier) =>
     `Identifier name ${identifier} is not valid.`,
   [ErrorCode.FILTER_INVALID_METADATA_KEY]: (column) =>
-    `Invalid metadata key '${String(column)}'. Only letters, numbers, underscores, nesting via '.', and array wildcards '[*]' are allowed.`,
+    `Invalid metadata key '${String(
+      column
+    )}'. Only letters, numbers, underscores, nesting via '.', and array wildcards '[*]' are allowed.`,
   [ErrorCode.FILTER_INVALID_VALUE]: (message) => message,
   [ErrorCode.FILTER_UNSUPPORTED_OPERATOR]: (operator) =>
     `Unsupported operator: ${operator}`,

@@ -129,7 +129,10 @@ function generateOperatorCondition(
 
     case "$between": {
       if (!Array.isArray(value) || value.length !== 2) {
-        throwError(ErrorCode.FILTER_INVALID_VALUE, "$between requires [low, high]");
+        throwError(
+          ErrorCode.FILTER_INVALID_VALUE,
+          "$between requires [low, high]"
+        );
       }
       const [low, high] = value;
       bindValues.push(low, high);
@@ -238,9 +241,7 @@ function handleError(error: unknown): never {
   );
 }
 
-function isPool(
-  client: OracleDBClient
-): client is oracledb.Pool {
+function isPool(client: OracleDBClient): client is oracledb.Pool {
   return "getConnection" in client;
 }
 
@@ -290,7 +291,6 @@ type StoredEmbedding =
   | Uint8Array
   | oracledb.SparseVector;
 
-
 const isFloat32Array = (value: unknown): value is Float32Array =>
   // eslint-disable-next-line no-instanceof/no-instanceof
   value instanceof Float32Array;
@@ -338,7 +338,7 @@ function normalizeVectorTypeValue(value?: string): VectorType {
 
 function normalizeVectorFormat(
   value: VectorElementFormat | undefined,
-  vectorType: VectorType,
+  vectorType: VectorType
 ): VectorElementFormat {
   if (!value) {
     return VectorElementFormat.FLOAT32;
@@ -349,13 +349,21 @@ function normalizeVectorFormat(
       ? VectorElementFormat.FLEX
       : (value.toUpperCase() as VectorElementFormat);
 
-  const validFormats = Object.values(VectorElementFormat) as VectorElementFormat[];
+  const validFormats = Object.values(
+    VectorElementFormat
+  ) as VectorElementFormat[];
   const format = validFormats.includes(normalizedValue)
     ? normalizedValue
     : VectorElementFormat.FLOAT32;
 
-  if (vectorType === VectorType.SPARSE && format === VectorElementFormat.BINARY) {
-    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "BINARY format is not supported for SPARSE vectors.");
+  if (
+    vectorType === VectorType.SPARSE &&
+    format === VectorElementFormat.BINARY
+  ) {
+    throwError(
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+      "BINARY format is not supported for SPARSE vectors."
+    );
   }
 
   return format;
@@ -363,25 +371,37 @@ function normalizeVectorFormat(
 
 function buildVectorColumnDefinition(
   embeddingDim?: number | null,
-  customization?: TableCustomization,
+  customization?: TableCustomization
 ): string {
   if (embeddingDim === undefined || embeddingDim === null) {
-    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "Embedding dimension is required to create the vector column.");
+    throwError(
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+      "Embedding dimension is required to create the vector column."
+    );
   }
   if (!Number.isInteger(embeddingDim) || embeddingDim <= 0) {
-    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "Embedding dimension must be a positive integer.");
+    throwError(
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+      "Embedding dimension must be a positive integer."
+    );
   }
 
   const vectorType = normalizeVectorTypeValue(customization?.vectorType);
 
   if (vectorType === VectorType.SPARSE && customization?.format === undefined) {
-    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "Sparse vector type requires a vector format to be specified.");
+    throwError(
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+      "Sparse vector type requires a vector format to be specified."
+    );
   }
 
   const format = normalizeVectorFormat(customization?.format, vectorType);
 
   if (format === VectorElementFormat.BINARY && embeddingDim % 8 !== 0) {
-    throwError(ErrorCode.VECTOR_INVALID_CONFIGURATION, "BINARY vector format requires dimensions to be a multiple of 8.");
+    throwError(
+      ErrorCode.VECTOR_INVALID_CONFIGURATION,
+      "BINARY vector format requires dimensions to be a multiple of 8."
+    );
   }
 
   const dimensionSegment = String(embeddingDim);
@@ -433,7 +453,7 @@ export async function createTable(
     if (tableDescription) {
       const escapedDescription = escapeCommentText(tableDescription);
       statements.push(
-        `EXECUTE IMMEDIATE 'COMMENT ON TABLE ${tableIdentifier} IS ''${escapedDescription}''';`,
+        `EXECUTE IMMEDIATE 'COMMENT ON TABLE ${tableIdentifier} IS ''${escapedDescription}''';`
       );
     }
 
@@ -450,7 +470,7 @@ export async function createTable(
         )}`;
         const escapedNote = escapeCommentText(trimmedNote);
         statements.push(
-          `EXECUTE IMMEDIATE 'COMMENT ON COLUMN ${normalizedColumnIdentifier} IS ''${escapedNote}''';`,
+          `EXECUTE IMMEDIATE 'COMMENT ON COLUMN ${normalizedColumnIdentifier} IS ''${escapedNote}''';`
         );
       }
     }
@@ -485,7 +505,7 @@ function packBinaryVector(bits: number[]): Uint8Array {
 // Converts a dense numeric vector into the typed array that matches the configured element format.
 function convertDenseVectorForFormat(
   values: number[],
-  format: VectorElementFormat,
+  format: VectorElementFormat
 ): Float32Array | Float64Array | Int8Array | Uint8Array {
   switch (format) {
     case VectorElementFormat.FLOAT32:
@@ -498,7 +518,10 @@ function convertDenseVectorForFormat(
       for (let i = 0; i < values.length; i += 1) {
         const rounded = Math.round(values[i]);
         if (rounded < -128 || rounded > 127) {
-          throwError(ErrorCode.VECTOR_INVALID_VALUE, "INT8 vector values must be within [-128, 127].");
+          throwError(
+            ErrorCode.VECTOR_INVALID_VALUE,
+            "INT8 vector values must be within [-128, 127]."
+          );
         }
         clamped[i] = rounded;
       }
@@ -513,7 +536,7 @@ function convertDenseVectorForFormat(
 
 function unpackBinaryVector(
   bytesLike: ArrayLike<number>,
-  dimension: number,
+  dimension: number
 ): Float32Array {
   const bytes = isUint8Array(bytesLike)
     ? (bytesLike as Uint8Array)
@@ -536,9 +559,17 @@ export async function createIndex(
   const idxType = (params?.idxType ?? "HNSW").toUpperCase();
 
   if (idxType === "IVF") {
-    await createIVFIndex(client, vectorStore, params as IVFIndexParams | undefined);
+    await createIVFIndex(
+      client,
+      vectorStore,
+      params as IVFIndexParams | undefined
+    );
   } else {
-    await createHNSWIndex(client, vectorStore, params as HNSWIndexParams | undefined);
+    await createHNSWIndex(
+      client,
+      vectorStore,
+      params as HNSWIndexParams | undefined
+    );
   }
 }
 
@@ -684,18 +715,29 @@ export class OracleVS extends VectorStore {
   }
 
   private getActiveVectorType(): VectorType {
-    return this.vectorType ? normalizeVectorTypeValue(this.vectorType) : VectorType.DENSE;
+    return this.vectorType
+      ? normalizeVectorTypeValue(this.vectorType)
+      : VectorType.DENSE;
   }
 
   private ensureEmbeddingDimension(): number {
-    if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
-      throwError(ErrorCode.STATE_INVALID, "Embedding dimension is not initialized for this vector store.");
+    if (
+      this.embeddingDimension === undefined ||
+      this.embeddingDimension === null
+    ) {
+      throwError(
+        ErrorCode.STATE_INVALID,
+        "Embedding dimension is not initialized for this vector store."
+      );
     }
     return this.embeddingDimension;
   }
 
   private prepareVectorForStorage(vector: number[]): StoredEmbedding {
-    if (this.embeddingDimension === undefined || this.embeddingDimension === null) {
+    if (
+      this.embeddingDimension === undefined ||
+      this.embeddingDimension === null
+    ) {
       this.embeddingDimension = vector.length;
     }
     const dimension = this.ensureEmbeddingDimension();
@@ -706,7 +748,10 @@ export class OracleVS extends VectorStore {
 
     if (vectorType === VectorType.SPARSE) {
       if (vector.length !== dimension) {
-        throwError(ErrorCode.VECTOR_INVALID_VALUE, "Sparse vectors must supply full-dimension arrays for conversion.");
+        throwError(
+          ErrorCode.VECTOR_INVALID_VALUE,
+          "Sparse vectors must supply full-dimension arrays for conversion."
+        );
       }
 
       // The dense-input SparseVector constructor stores its values as a
@@ -724,7 +769,7 @@ export class OracleVS extends VectorStore {
           if (!Number.isFinite(value) || rounded < -128 || rounded > 127) {
             throwError(
               ErrorCode.VECTOR_INVALID_VALUE,
-              "INT8 sparse vector values must be finite and within [-128, 127].",
+              "INT8 sparse vector values must be finite and within [-128, 127]."
             );
           }
           if (rounded !== 0) {
@@ -765,7 +810,10 @@ export class OracleVS extends VectorStore {
     }
 
     if (vector.length !== dimension) {
-      throwError(ErrorCode.VECTOR_INVALID_VALUE, "Vector length does not match the embedding dimension.");
+      throwError(
+        ErrorCode.VECTOR_INVALID_VALUE,
+        "Vector length does not match the embedding dimension."
+      );
     }
 
     return convertDenseVectorForFormat(vector, format);
@@ -781,7 +829,10 @@ export class OracleVS extends VectorStore {
     if (isSparseVector(value)) {
       const dense = value.dense?.();
       if (!dense) {
-        throwError(ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION, "Unable to expand sparse vector to dense representation.");
+        throwError(
+          ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION,
+          "Unable to expand sparse vector to dense representation."
+        );
       }
       if (isFloat32Array(dense)) {
         return dense;
@@ -797,13 +848,21 @@ export class OracleVS extends VectorStore {
       }
       return Float32Array.from(dense as ArrayLike<number>);
     }
-    if (isFloat32Array(value) || isFloat64Array(value) || isInt8Array(value) || isUint8Array(value)) {
+    if (
+      isFloat32Array(value) ||
+      isFloat64Array(value) ||
+      isInt8Array(value) ||
+      isUint8Array(value)
+    ) {
       return value as ReturnedEmbedding;
     }
     if (Array.isArray(value)) {
       return value as number[];
     }
-    throwError(ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION, "Received unsupported vector representation from the database.");
+    throwError(
+      ErrorCode.VECTOR_UNSUPPORTED_REPRESENTATION,
+      "Received unsupported vector representation from the database."
+    );
   }
 
   // Normalizes any supported vector representation into Float32Array so downstream math
@@ -827,7 +886,9 @@ export class OracleVS extends VectorStore {
     if (Array.isArray(value)) {
       return Float32Array.from(value);
     }
-    return this.coerceEmbeddingToFloat32(this.normalizeReturnedEmbedding(value));
+    return this.coerceEmbeddingToFloat32(
+      this.normalizeReturnedEmbedding(value)
+    );
   }
 
   async getEmbeddingDimension(query: string): Promise<number> {
@@ -844,7 +905,7 @@ export class OracleVS extends VectorStore {
         description: this.description,
         annotations: this.annotations,
         vectorType: this.vectorType,
-        format: this.vectorFormat
+        format: this.vectorFormat,
       });
     } catch (error: unknown) {
       handleError(error);
@@ -854,9 +915,7 @@ export class OracleVS extends VectorStore {
   }
 
   private async resolveClient(): Promise<OracleDBClient> {
-    return isClientProvider(this.client)
-      ? await this.client()
-      : this.client;
+    return isClientProvider(this.client) ? await this.client() : this.client;
   }
 
   public async getConnection(): Promise<oracledb.Connection> {
@@ -901,7 +960,10 @@ export class OracleVS extends VectorStore {
     options?: AddDocumentOptions
   ): Promise<string[] | undefined> {
     if (vectors.length === 0) {
-      throwError(ErrorCode.VALIDATION_INVALID_INPUT, "Vectors input null. Nothing to add...");
+      throwError(
+        ErrorCode.VALIDATION_INVALID_INPUT,
+        "Vectors input null. Nothing to add..."
+      );
     }
 
     const inputIds = options?.ids;
@@ -910,7 +972,10 @@ export class OracleVS extends VectorStore {
     try {
       // Ensure there are IDs for all documents
       if (inputIds !== undefined && inputIds.length !== vectors.length) {
-        throwError(ErrorCode.VALIDATION_INVALID_INPUT, "The number of ids must match the number of vectors provided.");
+        throwError(
+          ErrorCode.VALIDATION_INVALID_INPUT,
+          "The number of ids must match the number of vectors provided."
+        );
       }
 
       const finalIds: string[] = [];
@@ -923,9 +988,7 @@ export class OracleVS extends VectorStore {
         const externalId =
           inputIds?.[index] ?? doc.metadata.id ?? crypto.randomUUID();
         finalIds.push(externalId);
-        const preparedEmbedding = this.prepareVectorForStorage(
-          vectors[index],
-        );
+        const preparedEmbedding = this.prepareVectorForStorage(vectors[index]);
         const row = {
           ext_id: externalId,
           text: doc.pageContent,
@@ -1141,10 +1204,12 @@ export class OracleVS extends VectorStore {
       ([document]) => document
     );
     const scores: number[] = docsScoresEmbeddings.map(([, score]) => score);
-    const consistentEmbeddings: number[][] = docsScoresEmbeddings.map(([, , emb]) =>
-      Array.from(this.coerceEmbeddingToFloat32(emb))
+    const consistentEmbeddings: number[][] = docsScoresEmbeddings.map(
+      ([, , emb]) => Array.from(this.coerceEmbeddingToFloat32(emb))
     );
-    const queryEmbedding: number[] = Array.from(this.coerceEmbeddingToFloat32(embedding));
+    const queryEmbedding: number[] = Array.from(
+      this.coerceEmbeddingToFloat32(embedding)
+    );
 
     // Ensure lambdaMult has a default value if not provided
     const lambdaMult = options.lambda ?? 0.5;
