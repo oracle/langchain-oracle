@@ -1,0 +1,127 @@
+# Builds, verifies and publishes one of the JS packages under libs/js to npm.
+# Manually dispatched; the Python packages are released by _release.yml.
+
+name: Build and Publish JS Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      working-directory:
+        description: JS package directory to build and publish
+        required: true
+        type: choice
+        options:
+          - libs/js/oci
+          - libs/js/langchain-oracledb
+          - libs/js/langgraph-checkpoint-oracledb
+      dry-run:
+        description: Build, verify and pack only; skip npm publish
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  # @arethetypeswrong/cli, used to gate publishing on correct ESM/CJS typings
+  # (both entrypoint layouts have regressed before: #312, #318).
+  ATTW_VERSION: "0.18.5"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    outputs:
+      pkg-name: ${{ steps.meta.outputs.name }}
+      version: ${{ steps.meta.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Read package metadata
+        id: meta
+        run: |
+          echo "name=$(node -p 'require("./package.json").name')" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Check the version is not already published
+        env:
+          PKG: ${{ steps.meta.outputs.name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          if npm view "$PKG@$VERSION" version --registry=https://registry.npmjs.org/ 2>/dev/null | grep -q .; then
+            echo "::error::$PKG@$VERSION is already on npm; bump the version in package.json"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format, lint, test, and build
+        run: pnpm format:check && pnpm lint && pnpm test && pnpm build
+
+      - name: Pack
+        id: pack
+        run: |
+          tarball="$(pnpm pack --pack-destination "$RUNNER_TEMP/pkg" | tail -n 1)"
+          echo "tarball=$(basename "$tarball")" >> "$GITHUB_OUTPUT"
+          tar -tzf "$tarball" | sort
+
+      - name: Check published types (attw)
+        run: npx --yes "@arethetypeswrong/cli@${ATTW_VERSION}" --pack "$RUNNER_TEMP/pkg/${{ steps.pack.outputs.tarball }}"
+
+      - name: Upload package tarball
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/pkg/${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/${{ needs.build.outputs.pkg-name }}/v/${{ needs.build.outputs.version }}
+    permissions:
+      contents: read
+      id-token: write # npm provenance / trusted publishing
+    steps:
+      - name: Download package tarball
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-package
+          path: pkg
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org/
+
+      # npm >= 11.5 is required for trusted publishing (OIDC). When the
+      # package has a trusted publisher configured on npmjs.com, no token is
+      # needed; otherwise NPM_TOKEN must be set in the `npm` environment.
+      - name: Install npm 11
+        run: npm install -g npm@11
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TARBALL: pkg/${{ needs.build.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public
