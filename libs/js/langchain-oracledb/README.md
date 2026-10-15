@@ -100,6 +100,48 @@ await oraclevs.addDocuments(docs);
 const results = await oraclevs.similaritySearch("hello!", 3);
 ```
 
+## Exact Cache
+
+This package includes an exact cache for storing and retrieving model generations by prompt and model configuration key.
+
+```typescript
+import {OracleCache} from "@oracle/langchain-oracledb";
+
+const cache = new OracleCache(conn);
+await cache.initialize();
+
+await cache.update(prompt, llmKey, generations);
+const cachedGenerations = await cache.lookup(prompt, llmKey);
+```
+
+## Semantic Cache
+
+This package includes a semantic cache for retrieving model generations using vector similarity between prompts.
+
+```typescript
+import {OracleSemanticCache} from "@oracle/langchain-oracledb";
+
+const cache = new OracleSemanticCache(embedder, dbConfig, {scoreThreshold: 0.2});
+await cache.initialize();
+
+await cache.update(prompt, llmKey, generations);
+const cachedGenerations = await cache.lookup(prompt, llmKey);
+```
+
+## Chat Message History
+
+This package includes a chat message history for storing and retrieving conversation messages by session in the database.
+
+```typescript
+import {OracleChatMessageHistory} from "@oracle/langchain-oracledb";
+
+await OracleChatMessageHistory.createTables({client: conn});
+const history = new OracleChatMessageHistory({client: conn, sessionId: "session-1"});
+
+await history.addMessages(messages);
+const storedMessages = await history.getMessages();
+```
+
 ## Development
 
 To develop the `@oracle/langchain-oracledb` package, you'll need to follow these instructions:

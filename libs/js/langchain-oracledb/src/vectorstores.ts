@@ -10,10 +10,17 @@ import { maximalMarginalRelevance } from "@langchain/core/utils/math";
 import {
   LangChainOracleError,
   ErrorCode,
-  createErrorFromCodeWithCause,
   isLangChainOracleError,
   throwError,
+  handleError
 } from "./errors.js";
+import { 
+  OracleDBClient, 
+  OracleDBClientProvider, 
+  quoteIdentifier
+} from "./utils.js"
+
+export type { OracleDBClient, OracleDBClientProvider };
 
 export type Metadata = Record<string, unknown>;
 interface AddDocumentOptions {
@@ -182,12 +189,6 @@ export const VectorElementFormat = {
 export type VectorElementFormat =
   (typeof VectorElementFormat)[keyof typeof VectorElementFormat];
 
-export type OracleDBClient = oracledb.Pool | oracledb.Connection;
-
-// Allows callers to resolve the OracleDB client lazily, for example when the
-// pool/connection is created asynchronously or managed outside OracleVS.
-export type OracleDBClientProvider = () => Promise<OracleDBClient>;
-
 export interface OracleDBVSArgs {
   tableName: string;
   schemaName?: string | null;
@@ -213,31 +214,6 @@ export const DistanceStrategy = {
 export type DistanceStrategy =
   (typeof DistanceStrategy)[keyof typeof DistanceStrategy];
 
-function handleError(error: unknown): never {
-  // Preserve LangChainOracleError instances created by this package instead of
-  // wrapping them again as generic SYSTEM_ERROR failures.
-  if (isLangChainOracleError(error)) {
-    throw error;
-  }
-
-  // Preserve a useful message for both real Error instances and thrown
-  // object literals shaped like { message: string }.
-  const details =
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-      ? error.message
-      : String(error);
-
-  // Normalize all underlying anomalies into a unified telemetry payload.
-  throw createErrorFromCodeWithCause(
-    ErrorCode.SYSTEM_ERROR,
-    error,
-    `An unexpected error occurred during the operation. ${details}`
-  );
-}
-
 function isPool(
   client: OracleDBClient
 ): client is oracledb.Pool {
@@ -248,25 +224,6 @@ function isClientProvider(
   client: OracleDBClient | OracleDBClientProvider
 ): client is OracleDBClientProvider {
   return typeof client === "function";
-}
-
-function quoteIdentifier(identifier: string) {
-  const name = identifier.trim();
-
-  const validateRegex = /^(?:"[^"]+"|[^".]+)(?:\.(?:"[^"]+"|[^".]+))*$/;
-  if (!validateRegex.test(name)) {
-    throwError(ErrorCode.VALIDATION_INVALID_IDENTIFIER, identifier);
-  }
-
-  // extracts parts of the identifier with quoted and unquoted.
-  const matchRegex = /"([^"]+)"|([^".]+)/g;
-  const groups = [];
-
-  for (const match of name.matchAll(matchRegex)) {
-    groups.push(match[1] || match[2]);
-  }
-  const quotedParts = groups.map((g) => `"${g}"`);
-  return quotedParts.join(".");
 }
 
 type TableCustomization = {
@@ -327,6 +284,8 @@ interface IVFIndexParams {
   accuracy?: number;
   parallel?: number;
 }
+
+export type IndexParams = HNSWIndexParams | IVFIndexParams;
 
 function normalizeVectorTypeValue(value?: string): VectorType {
   const normalized = value?.toUpperCase() as VectorType | undefined;
