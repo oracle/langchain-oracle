@@ -78,6 +78,136 @@ def test_message_payload_rejects_non_string_values() -> None:
         _message_payload({"not": "a string"})
 
 
+def _fake_history_connection(
+    events: list[tuple[str, object, object] | str],
+    *,
+    existing_index_names: set[str] | None = None,
+    indexed_columns: set[tuple[str, str]] | None = None,
+):
+    existing_index_names = existing_index_names or set()
+    indexed_columns = indexed_columns or set()
+
+    class FakeCursor:
+        def __init__(self) -> None:
+            self._query = ""
+            self._binds: dict[str, object] = {}
+
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def execute(self, query: str, params: object = None, **binds: object) -> None:
+            if not binds and isinstance(params, dict):
+                binds = params
+            self._query = query
+            self._binds = binds
+            events.append(("execute", query, binds or params))
+
+        def fetchone(self) -> object:
+            query = self._query.lower()
+            if "all_indexes" in query:
+                name = self._binds.get("idx_name")
+                if name in existing_index_names:
+                    return (name,)
+                return None
+            if "all_ind_columns" in query:
+                table_name = self._binds.get("table_name")
+                column_name = self._binds.get("column_name")
+                if (table_name, column_name) in indexed_columns:
+                    return (1,)
+                return None
+            return None
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            events.append("commit")
+
+        def rollback(self) -> None:
+            events.append("rollback")
+
+    return FakeConnection()
+
+
+def test_create_tables_skips_index_when_legacy_session_index_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, object, object] | str] = []
+    table_name = "customer_support_chat"
+    session_column = "session_id"
+    legacy_index_name = f"idx_{table_name}_{session_column}"
+
+    @contextmanager
+    def fake_get_connection(client: object):
+        assert client is fake_client
+        yield _fake_history_connection(
+            events,
+            existing_index_names={legacy_index_name},
+            indexed_columns={(table_name, session_column)},
+        )
+
+    fake_client = object()
+    monkeypatch.setattr(chat_message_histories, "_get_connection", fake_get_connection)
+
+    OracleChatMessageHistory(
+        session_id="session-1",
+        client=fake_client,
+        table_name=table_name,
+        session_id_key=session_column,
+        create_table=False,
+        create_index=True,
+    )
+
+    create_index_statements = [
+        query
+        for event in events
+        if isinstance(event, tuple) and event[0] == "execute"
+        for query in [event[1]]
+        if isinstance(query, str) and "CREATE INDEX" in query.upper()
+    ]
+    assert create_index_statements == []
+
+
+def test_create_tables_creates_hashed_index_when_session_column_unindexed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, object, object] | str] = []
+    table_name = "customer_support_chat"
+    session_column = "session_id"
+    hashed_index_name = _default_index_name(table_name, session_column)
+
+    @contextmanager
+    def fake_get_connection(client: object):
+        assert client is fake_client
+        yield _fake_history_connection(events)
+
+    fake_client = object()
+    monkeypatch.setattr(chat_message_histories, "_get_connection", fake_get_connection)
+
+    OracleChatMessageHistory(
+        session_id="session-1",
+        client=fake_client,
+        table_name=table_name,
+        session_id_key=session_column,
+        create_table=False,
+        create_index=True,
+    )
+
+    create_index_statements = [
+        query
+        for event in events
+        if isinstance(event, tuple) and event[0] == "execute"
+        for query in [event[1]]
+        if isinstance(query, str) and "CREATE INDEX" in query.upper()
+    ]
+    assert len(create_index_statements) == 1
+    assert hashed_index_name in create_index_statements[0]
+
+
 def test_messages_setter_rolls_back_when_insert_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
