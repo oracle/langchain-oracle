@@ -78,14 +78,27 @@ def test_message_payload_rejects_non_string_values() -> None:
         _message_payload({"not": "a string"})
 
 
+def _create_index_statements(
+    events: list[tuple[str, object, object] | str],
+) -> list[str]:
+    return [
+        query
+        for event in events
+        if isinstance(event, tuple) and event[0] == "execute"
+        for query in [event[1]]
+        if isinstance(query, str) and "CREATE INDEX" in query.upper()
+    ]
+
+
 def _fake_history_connection(
     events: list[tuple[str, object, object] | str],
     *,
     existing_index_names: set[str] | None = None,
-    indexed_columns: set[tuple[str, str]] | None = None,
+    indexed_columns: list[dict[str, object]] | None = None,
+    current_schema: str = "TEST_SCHEMA",
 ):
     existing_index_names = existing_index_names or set()
-    indexed_columns = indexed_columns or set()
+    indexed_columns = indexed_columns or []
 
     class FakeCursor:
         def __init__(self) -> None:
@@ -115,7 +128,20 @@ def _fake_history_connection(
             if "all_ind_columns" in query:
                 table_name = self._binds.get("table_name")
                 column_name = self._binds.get("column_name")
-                if (table_name, column_name) in indexed_columns:
+                owner = self._binds.get("owner")
+                filters_owner = "table_owner" in query
+                filters_position = "column_position" in query
+                if owner is None and "sys_context" in query:
+                    owner = current_schema
+                for entry in indexed_columns:
+                    if entry["table_name"] != table_name:
+                        continue
+                    if entry["column_name"] != column_name:
+                        continue
+                    if filters_owner and entry["owner"] != owner:
+                        continue
+                    if filters_position and entry["column_position"] != 1:
+                        continue
                     return (1,)
                 return None
             return None
@@ -147,7 +173,6 @@ def test_create_tables_skips_index_when_legacy_session_index_exists(
         yield _fake_history_connection(
             events,
             existing_index_names={legacy_index_name},
-            indexed_columns={(table_name, session_column)},
         )
 
     fake_client = object()
@@ -162,14 +187,7 @@ def test_create_tables_skips_index_when_legacy_session_index_exists(
         create_index=True,
     )
 
-    create_index_statements = [
-        query
-        for event in events
-        if isinstance(event, tuple) and event[0] == "execute"
-        for query in [event[1]]
-        if isinstance(query, str) and "CREATE INDEX" in query.upper()
-    ]
-    assert create_index_statements == []
+    assert _create_index_statements(events) == []
 
 
 def test_create_tables_creates_hashed_index_when_session_column_unindexed(
@@ -197,13 +215,87 @@ def test_create_tables_creates_hashed_index_when_session_column_unindexed(
         create_index=True,
     )
 
-    create_index_statements = [
-        query
-        for event in events
-        if isinstance(event, tuple) and event[0] == "execute"
-        for query in [event[1]]
-        if isinstance(query, str) and "CREATE INDEX" in query.upper()
-    ]
+    create_index_statements = _create_index_statements(events)
+    assert len(create_index_statements) == 1
+    assert hashed_index_name in create_index_statements[0]
+
+
+def test_create_tables_indexes_when_session_column_indexed_in_other_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, object, object] | str] = []
+    table_name = "customer_support_chat"
+    session_column = "session_id"
+    hashed_index_name = _default_index_name(table_name, session_column)
+
+    @contextmanager
+    def fake_get_connection(client: object):
+        assert client is fake_client
+        yield _fake_history_connection(
+            events,
+            indexed_columns=[
+                {
+                    "owner": "OTHER_SCHEMA",
+                    "table_name": table_name,
+                    "column_name": session_column,
+                    "column_position": 1,
+                }
+            ],
+        )
+
+    fake_client = object()
+    monkeypatch.setattr(chat_message_histories, "_get_connection", fake_get_connection)
+
+    OracleChatMessageHistory(
+        session_id="session-1",
+        client=fake_client,
+        table_name=table_name,
+        session_id_key=session_column,
+        create_table=False,
+        create_index=True,
+    )
+
+    create_index_statements = _create_index_statements(events)
+    assert len(create_index_statements) == 1
+    assert hashed_index_name in create_index_statements[0]
+
+
+def test_create_tables_indexes_when_session_column_is_not_leading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, object, object] | str] = []
+    table_name = "customer_support_chat"
+    session_column = "session_id"
+    hashed_index_name = _default_index_name(table_name, session_column)
+
+    @contextmanager
+    def fake_get_connection(client: object):
+        assert client is fake_client
+        yield _fake_history_connection(
+            events,
+            indexed_columns=[
+                {
+                    "owner": "TEST_SCHEMA",
+                    "table_name": table_name,
+                    "column_name": session_column,
+                    "column_position": 2,
+                }
+            ],
+        )
+
+    fake_client = object()
+    monkeypatch.setattr(chat_message_histories, "_get_connection", fake_get_connection)
+
+    OracleChatMessageHistory(
+        session_id="session-1",
+        client=fake_client,
+        table_name=table_name,
+        session_id_key=session_column,
+        create_table=False,
+        create_index=True,
+    )
+
+    create_index_statements = _create_index_statements(events)
     assert len(create_index_statements) == 1
     assert hashed_index_name in create_index_statements[0]
 

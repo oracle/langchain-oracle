@@ -35,6 +35,13 @@ def _unqualified_identifier(name: str) -> str:
     return name.replace('"', "").split(".")[-1]
 
 
+def _identifier_schema(name: str) -> Optional[str]:
+    parts = name.replace('"', "").split(".")
+    if len(parts) > 1:
+        return parts[-2]
+    return None
+
+
 def _legacy_index_name(table_name: str, session_id_key: str) -> str:
     return (
         f"idx_{_unqualified_identifier(table_name)}_"
@@ -50,6 +57,8 @@ def _session_column_is_indexed(
         FROM all_ind_columns
         WHERE table_name = :table_name
           AND column_name = :column_name
+          AND table_owner = NVL(:owner, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))
+          AND column_position = 1
           AND ROWNUM < 2
         """
     with connection.cursor() as cursor:
@@ -57,6 +66,7 @@ def _session_column_is_indexed(
             query,
             table_name=_unqualified_identifier(table_name),
             column_name=_unqualified_identifier(session_id_key),
+            owner=_identifier_schema(table_name),
         )
         return cursor.fetchone() is not None
 
