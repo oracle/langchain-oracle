@@ -51,6 +51,28 @@ def test_chat_history_default_index_name_is_truncated_when_needed() -> None:
     assert index_name.startswith("idx_")
 
 
+def test_chat_history_default_index_name_avoids_table_column_collisions() -> None:
+    first = _default_index_name("customer_support_chat", "session_id")
+    second = _default_index_name("customer_support", "chat_session_id")
+    first_again = _default_index_name("customer_support_chat", "session_id")
+
+    long_name = _default_index_name("table_" + ("x" * 80), "session_" + ("y" * 80))
+    multibyte = _default_index_name("T_" + ("é" * 50), "S_" + ("x" * 70))
+    boundary = _default_index_name(("T" * 114) + "éé", "x" * 20)
+
+    assert first != second
+    assert first == first_again
+    for name in (first, second, long_name, multibyte, boundary):
+        encoded = name.encode("utf-8")
+        assert len(encoded) <= 128
+        prefix, sep, digest = name.rpartition("_")
+        assert sep == "_"
+        assert len(digest) == 8
+        assert len(prefix.encode("utf-8")) <= 119
+        assert "\ufffd" not in name
+        assert name.startswith("idx_")
+
+
 def test_message_payload_rejects_non_string_values() -> None:
     with pytest.raises(TypeError, match="Expected Oracle chat history payload"):
         _message_payload({"not": "a string"})

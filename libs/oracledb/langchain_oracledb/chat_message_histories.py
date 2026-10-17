@@ -40,11 +40,15 @@ def _default_index_name(table_name: str, session_id_key: str) -> str:
         f"idx_{_unqualified_identifier(table_name)}_"
         f"{_unqualified_identifier(session_id_key)}"
     )
-    if len(base_name) <= 128:
-        return base_name
-
-    digest = hashlib.sha1(base_name.encode("utf-8")).hexdigest()[:8]
-    return f"{base_name[:119]}_{digest}"
+    # Always hash the original table/column pair so concatenations such as
+    # ("customer_support_chat", "session_id") and
+    # ("customer_support", "chat_session_id") cannot collide. Oracle limits
+    # identifiers to 128 bytes; keep a 119-byte prefix plus "_" and 8 hex chars.
+    digest = hashlib.sha1(
+        json.dumps([table_name, session_id_key]).encode("utf-8")
+    ).hexdigest()[:8]
+    prefix = base_name.encode("utf-8")[:119].decode("utf-8", errors="ignore")
+    return f"{prefix}_{digest}"
 
 
 def _message_payload(value: Any) -> str:
