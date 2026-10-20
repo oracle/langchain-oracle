@@ -4,20 +4,12 @@
 
 """Integration tests for multimodal image embedding with OCI GenAI.
 
-These tests verify embedding capabilities across all supported embedding
-models in OCI Generative AI, covering both text-only and multimodal
-(text + image) models:
-
-**Text embedding models** (text only):
-- Cohere Embed v4.0 (1536-d)
-- Cohere Embed English v3.0 (1024-d)
-- Cohere Embed English Light v3.0 (384-d)
-- Cohere Embed Multilingual v3.0 (1024-d)
-- Cohere Embed Multilingual Light v3.0 (384-d)
-
-**Multimodal embedding models** (text + image, same vector space):
-- Cohere Embed v4.0 (1536-d)
-- Cohere Embed Multilingual Image v3.0 (1024-d)
+These tests verify embedding capabilities across the embedding models the
+OCI Generative AI catalog currently serves, covering both text-only and
+multimodal (text + image) models. Models are discovered at collection time
+(see ``live_models.py``); pin them with ``OCI_EMBEDDING_MODELS`` /
+``OCI_IMAGE_EMBEDDING_MODELS``. Vector sizes differ per model, so tests check
+that dimensions are positive and consistent rather than hard-coding them.
 
 ## Test Organization
 
@@ -27,7 +19,7 @@ Tests are organized into consistent groups:
 2. **TestCrossModalSimilarity** - Text and image in the same vector space
 3. **TestOutputDimensions** - output_dimensions parameter (256-1536)
 4. **TestInputType** - All text input_type values
-5. **TestMultiModelTextEmbedding** - Text embedding across all 5 models
+5. **TestMultiModelTextEmbedding** - Text embedding across live text models
 6. **TestMultiModelImageEmbedding** - Image embedding across multimodal models
 
 ## Prerequisites
@@ -54,18 +46,20 @@ Run multi-model tests:
     pytest tests/integration_tests/embeddings/ -k "MultiModel" -v
 
 Run tests for a specific model:
-    pytest tests/integration_tests/embeddings/ -k "embed-v4" -v
+    pytest tests/integration_tests/embeddings/ -k "<model-id>" -v
 """
 
 import io
 import math
 import os
-from typing import List
+from typing import List, Optional
 
 import pytest
 
 from langchain_oci.embeddings.oci_generative_ai import OCIGenAIEmbeddings
 from langchain_oci.utils.vision import IMAGE_EMBEDDING_MODELS
+
+from ..live_models import embedding_models, image_embedding_models, is_live
 
 try:
     from PIL import Image
@@ -130,13 +124,24 @@ def create_test_image(color: tuple, size: tuple = (64, 64)) -> bytes:
     return buffer.getvalue()
 
 
-def make_embeddings(
-    model_id: str = "cohere.embed-v4.0", **kwargs
-) -> OCIGenAIEmbeddings:
+def _default_image_model() -> str:
+    models = image_embedding_models()
+    return models[0] if models else pytest.skip("no live image embedding model")
+
+
+def _output_dimensions_model() -> str:
+    """A live Cohere Embed v4+ model (the family with ``output_dimensions``)."""
+    return next(
+        (m for m in image_embedding_models() if m.startswith("cohere.embed-v4")),
+        None,
+    ) or pytest.skip("no live Cohere Embed v4 model")
+
+
+def make_embeddings(model_id: Optional[str] = None, **kwargs) -> OCIGenAIEmbeddings:
     """Create an OCIGenAIEmbeddings instance from environment config.
 
     Args:
-        model_id: The embedding model to use.
+        model_id: The embedding model to use (default: a live image model).
         **kwargs: Additional parameters passed to OCIGenAIEmbeddings.
 
     Returns:
@@ -144,7 +149,7 @@ def make_embeddings(
     """
     config = get_config()
     return OCIGenAIEmbeddings(
-        model_id=model_id,
+        model_id=model_id or _default_image_model(),
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_type=config["auth_type"],
@@ -157,21 +162,13 @@ def make_embeddings(
 # Model registries
 # =============================================================================
 
-# All available text embedding models and their default dimensions
-TEXT_EMBEDDING_MODELS = [
-    ("cohere.embed-v4.0", 1536),
-    ("cohere.embed-english-v3.0", 1024),
-    ("cohere.embed-english-light-v3.0", 384),
-    ("cohere.embed-multilingual-v3.0", 1024),
-    ("cohere.embed-multilingual-light-v3.0", 384),
-]
+TEXT_EMBEDDING_MODELS = embedding_models()
 
 # Models that support image embedding via input_type="IMAGE".
 # These embed text and images into the same vector space.
-IMAGE_MODELS_WITH_DIMS = [
-    ("cohere.embed-v4.0", 1536),
-    ("cohere.embed-multilingual-image-v3.0", 1024),
-]
+IMAGE_MODELS = image_embedding_models()
+
+LIVE_REGISTRY_IMAGE_MODELS = [m for m in IMAGE_EMBEDDING_MODELS if is_live(m)]
 
 
 # =============================================================================
@@ -181,10 +178,10 @@ IMAGE_MODELS_WITH_DIMS = [
 
 @pytest.mark.requires("oci")
 class TestImageEmbedding:
-    """Core image embedding tests with embed-v4.0.
+    """Core image embedding tests with a live multimodal model.
 
     Verifies that images can be embedded from raw bytes, file paths,
-    and data URI strings, producing the expected 1536-d vectors.
+    and data URI strings, producing vectors the size of the model's text ones.
     """
 
     @pytest.fixture
@@ -201,10 +198,11 @@ class TestImageEmbedding:
         assert all(isinstance(v, float) for v in vector)
 
     def test_embed_image_dimensions(self, embeddings: OCIGenAIEmbeddings) -> None:
-        """embed-v4.0 produces 1536-dimensional vectors for images."""
-        img = create_test_image((0, 128, 255))
-        vector = embeddings.embed_image(img)
-        assert len(vector) == 1536
+        """Image vectors have one fixed, positive dimension per model."""
+        first = embeddings.embed_image(create_test_image((0, 128, 255)))
+        second = embeddings.embed_image(create_test_image((255, 128, 0)))
+        assert len(first) > 0
+        assert len(first) == len(second)
 
     def test_embed_multiple_images(self, embeddings: OCIGenAIEmbeddings) -> None:
         """embed_image_batch handles multiple images."""
@@ -216,8 +214,8 @@ class TestImageEmbedding:
         vectors = embeddings.embed_image_batch(images)
 
         assert len(vectors) == 3
-        for v in vectors:
-            assert len(v) == 1536
+        assert len(vectors[0]) > 0
+        assert {len(v) for v in vectors} == {len(vectors[0])}
 
     def test_embed_image_data_uri(self, embeddings: OCIGenAIEmbeddings) -> None:
         """Image can be passed as a data URI string."""
@@ -228,7 +226,8 @@ class TestImageEmbedding:
         data_uri = block["image_url"]["url"]
 
         vector = embeddings.embed_image(data_uri)
-        assert len(vector) == 1536
+        assert len(vector) > 0
+        assert len(vector) == len(embeddings.embed_query("a yellow square"))
 
     def test_embed_image_from_file(
         self, embeddings: OCIGenAIEmbeddings, tmp_path
@@ -238,7 +237,8 @@ class TestImageEmbedding:
         img_file.write_bytes(create_test_image((64, 64, 64)))
 
         vector = embeddings.embed_image(str(img_file))
-        assert len(vector) == 1536
+        assert len(vector) > 0
+        assert len(vector) == len(embeddings.embed_query("a grey square"))
 
 
 # =============================================================================
@@ -250,7 +250,7 @@ class TestImageEmbedding:
 class TestCrossModalSimilarity:
     """Verify that text and images live in the same vector space.
 
-    Multimodal models like embed-v4.0 produce vectors where semantically
+    Multimodal embedding models produce vectors where semantically
     related text and images are closer together, enabling cross-modal
     retrieval (e.g., search images with text queries).
     """
@@ -297,8 +297,8 @@ class TestCrossModalSimilarity:
         text_vec = embeddings.embed_query("a blue sky")
         img_vec = embeddings.embed_image(create_test_image((135, 206, 235)))
 
+        assert len(text_vec) > 0
         assert len(text_vec) == len(img_vec)
-        assert len(text_vec) == 1536
 
 
 # =============================================================================
@@ -308,23 +308,23 @@ class TestCrossModalSimilarity:
 
 @pytest.mark.requires("oci")
 class TestOutputDimensions:
-    """Test output_dimensions parameter with embed-v4.0.
+    """Test output_dimensions parameter with Cohere Embed v4.
 
-    Embed-v4.0 supports configurable output dimensions: 256, 512,
+    Embed v4 supports configurable output dimensions: 256, 512,
     1024, or 1536 (default). This works for both text and image inputs.
     """
 
     @pytest.mark.parametrize("dims", [256, 512, 1024, 1536])
     def test_text_output_dimensions(self, dims: int) -> None:
         """Text embeddings respect output_dimensions."""
-        emb = make_embeddings(output_dimensions=dims)
+        emb = make_embeddings(_output_dimensions_model(), output_dimensions=dims)
         vector = emb.embed_query("test dimensionality")
         assert len(vector) == dims
 
     @pytest.mark.parametrize("dims", [256, 1536])
     def test_image_output_dimensions(self, dims: int) -> None:
         """Image embeddings respect output_dimensions."""
-        emb = make_embeddings(output_dimensions=dims)
+        emb = make_embeddings(_output_dimensions_model(), output_dimensions=dims)
         img = create_test_image((100, 200, 50))
         vector = emb.embed_image(img)
         assert len(vector) == dims
@@ -357,7 +357,7 @@ class TestInputType:
         """All text input_type values produce valid embeddings."""
         emb = make_embeddings(input_type=input_type)
         vector = emb.embed_query("test input type")
-        assert len(vector) == 1536
+        assert len(vector) > 0
         assert all(isinstance(v, float) for v in vector)
 
 
@@ -371,27 +371,21 @@ class TestMultiModelTextEmbedding:
     """Test text embedding across all available models.
 
     Runs dimension, batch, and semantic relevance tests against
-    each of the 5 text embedding models to ensure consistent behavior.
+    each live text embedding model to ensure consistent behavior.
     """
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        TEXT_EMBEDDING_MODELS,
-        ids=[m[0] for m in TEXT_EMBEDDING_MODELS],
-    )
-    def test_text_embedding_dimensions(self, model_id: str, expected_dims: int) -> None:
-        """Each model produces the expected vector dimensions."""
+    @pytest.mark.parametrize("model_id", TEXT_EMBEDDING_MODELS)
+    def test_text_embedding_dimensions(self, model_id: str) -> None:
+        """Each model produces vectors of one fixed, positive dimension."""
         emb = make_embeddings(model_id=model_id)
         vector = emb.embed_query("CPU usage is too high")
-        assert len(vector) == expected_dims
+        other = emb.embed_query("Disk latency spikes at midnight")
+        assert len(vector) > 0
+        assert len(vector) == len(other)
         assert all(isinstance(v, float) for v in vector)
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        TEXT_EMBEDDING_MODELS,
-        ids=[m[0] for m in TEXT_EMBEDDING_MODELS],
-    )
-    def test_batch_embedding(self, model_id: str, expected_dims: int) -> None:
+    @pytest.mark.parametrize("model_id", TEXT_EMBEDDING_MODELS)
+    def test_batch_embedding(self, model_id: str) -> None:
         """Each model handles batch embedding correctly."""
         emb = make_embeddings(model_id=model_id)
         texts = [
@@ -401,15 +395,11 @@ class TestMultiModelTextEmbedding:
         ]
         vectors = emb.embed_documents(texts)
         assert len(vectors) == 3
-        for v in vectors:
-            assert len(v) == expected_dims
+        assert len(vectors[0]) > 0
+        assert {len(v) for v in vectors} == {len(vectors[0])}
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        TEXT_EMBEDDING_MODELS,
-        ids=[m[0] for m in TEXT_EMBEDDING_MODELS],
-    )
-    def test_similarity_relevance(self, model_id: str, expected_dims: int) -> None:
+    @pytest.mark.parametrize("model_id", TEXT_EMBEDDING_MODELS)
+    def test_similarity_relevance(self, model_id: str) -> None:
         """Similar texts are closer than unrelated texts."""
         emb = make_embeddings(model_id=model_id)
         query = emb.embed_query("memory leak Java heap dump")
@@ -437,40 +427,26 @@ class TestMultiModelImageEmbedding:
     each multimodal model to verify text-image shared vector space.
     """
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        IMAGE_MODELS_WITH_DIMS,
-        ids=[m[0] for m in IMAGE_MODELS_WITH_DIMS],
-    )
-    def test_image_embedding_dimensions(
-        self, model_id: str, expected_dims: int
-    ) -> None:
-        """Each multimodal model produces expected dimensions."""
+    @pytest.mark.parametrize("model_id", IMAGE_MODELS)
+    def test_image_embedding_dimensions(self, model_id: str) -> None:
+        """Each multimodal model produces one fixed, positive dimension."""
         emb = make_embeddings(model_id=model_id)
-        img = create_test_image((50, 150, 250))
-        vector = emb.embed_image(img)
-        assert len(vector) == expected_dims
+        vector = emb.embed_image(create_test_image((50, 150, 250)))
+        other = emb.embed_image(create_test_image((250, 150, 50)))
+        assert len(vector) > 0
+        assert len(vector) == len(other)
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        IMAGE_MODELS_WITH_DIMS,
-        ids=[m[0] for m in IMAGE_MODELS_WITH_DIMS],
-    )
-    def test_cross_modal_same_dimensions(
-        self, model_id: str, expected_dims: int
-    ) -> None:
+    @pytest.mark.parametrize("model_id", IMAGE_MODELS)
+    def test_cross_modal_same_dimensions(self, model_id: str) -> None:
         """Text and image vectors have the same dimensions."""
         emb = make_embeddings(model_id=model_id)
         text_vec = emb.embed_query("a green forest")
         img_vec = emb.embed_image(create_test_image((34, 139, 34)))
-        assert len(text_vec) == len(img_vec) == expected_dims
+        assert len(text_vec) > 0
+        assert len(text_vec) == len(img_vec)
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        IMAGE_MODELS_WITH_DIMS,
-        ids=[m[0] for m in IMAGE_MODELS_WITH_DIMS],
-    )
-    def test_cross_modal_relevance(self, model_id: str, expected_dims: int) -> None:
+    @pytest.mark.parametrize("model_id", IMAGE_MODELS)
+    def test_cross_modal_relevance(self, model_id: str) -> None:
         """Image is more similar to matching text than unrelated."""
         emb = make_embeddings(model_id=model_id)
         blue_img = create_test_image((0, 0, 255))
@@ -484,12 +460,8 @@ class TestMultiModelImageEmbedding:
             f"{model_id}: blue={sim_blue:.4f} should be > food={sim_food:.4f}"
         )
 
-    @pytest.mark.parametrize(
-        ("model_id", "expected_dims"),
-        IMAGE_MODELS_WITH_DIMS,
-        ids=[m[0] for m in IMAGE_MODELS_WITH_DIMS],
-    )
-    def test_multiple_images(self, model_id: str, expected_dims: int) -> None:
+    @pytest.mark.parametrize("model_id", IMAGE_MODELS)
+    def test_multiple_images(self, model_id: str) -> None:
         """embed_image_batch works with each multimodal model."""
         emb = make_embeddings(model_id=model_id)
         images = [
@@ -498,8 +470,8 @@ class TestMultiModelImageEmbedding:
         ]
         vectors = emb.embed_image_batch(images)
         assert len(vectors) == 2
-        for v in vectors:
-            assert len(v) == expected_dims
+        assert len(vectors[0]) > 0
+        assert len(vectors[0]) == len(vectors[1])
 
 
 # =============================================================================
@@ -511,15 +483,11 @@ class TestMultiModelImageEmbedding:
 class TestImageEmbeddingModelsRegistry:
     """Verify the IMAGE_EMBEDDING_MODELS registry is accurate.
 
-    Each model listed in the registry should actually support
-    image embedding via the OCI API.
+    Each live model listed in the registry should actually support
+    image embedding via the OCI API (retired entries are skipped).
     """
 
-    @pytest.mark.parametrize(
-        "model_id",
-        IMAGE_EMBEDDING_MODELS,
-        ids=IMAGE_EMBEDDING_MODELS,
-    )
+    @pytest.mark.parametrize("model_id", LIVE_REGISTRY_IMAGE_MODELS)
     def test_registry_model_supports_images(self, model_id: str) -> None:
         """Each registered model can embed an image."""
         emb = make_embeddings(model_id=model_id)

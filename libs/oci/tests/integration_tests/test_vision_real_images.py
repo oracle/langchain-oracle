@@ -8,7 +8,7 @@ vision models can correctly identify them.
 
 Requirements:
 1. Valid OCI credentials configured
-2. Access to OCI Generative AI service in Phoenix region
+2. Access to OCI Generative AI service in OCI_REGION (default us-chicago-1)
 
 Setup:
     export OCI_COMPARTMENT_ID=<your-compartment-id>
@@ -28,17 +28,21 @@ from langchain_core.messages import HumanMessage
 
 from langchain_oci import ChatOCIGenAI, encode_image
 
+from .live_models import chat_model
+
 
 def get_config():
     """Get test configuration from environment variables."""
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
     if not compartment_id:
         pytest.skip("OCI_COMPARTMENT_ID not set")
+    # Same region the live-model catalog is read from.
+    region = os.environ.get("OCI_REGION", "us-chicago-1")
     return {
         "compartment_id": compartment_id,
         "service_endpoint": os.environ.get(
             "OCI_GENAI_ENDPOINT",
-            "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com",
+            f"https://inference.generativeai.{region}.oci.oraclecloud.com",
         ),
         "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
         "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
@@ -66,8 +70,13 @@ def download_url(url: str) -> bytes:
 def gemini_llm():
     """Create a Gemini vision-capable ChatOCIGenAI instance."""
     config = get_config()
+    model_id = (
+        os.environ.get("OCI_MODEL_ID")
+        or chat_model("google")
+        or pytest.skip("no live Gemini chat model")
+    )
     return ChatOCIGenAI(
-        model_id="google.gemini-2.5-flash",
+        model_id=model_id,
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],

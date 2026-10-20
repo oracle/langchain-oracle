@@ -12,7 +12,7 @@ Prerequisites:
     export OCI_CONFIG_PROFILE=<profile>  # optional, defaults to DEFAULT
     export OCI_AUTH_TYPE=<API_KEY|SECURITY_TOKEN>  # optional, defaults to
                                                    # SECURITY_TOKEN
-    export OCI_OPENAI_MODEL_ID=<model-id>  # optional, defaults to openai.gpt-oss-20b
+    export OCI_OPENAI_MODEL_ID=<model-id>  # optional, defaults to a live gpt-oss
 
 Run:
     pytest tests/integration_tests/chat_models/test_oci_openai_responses_api.py -v
@@ -26,6 +26,8 @@ from oci_openai import OciSessionAuth, OciUserPrincipalAuth
 
 from langchain_oci import ChatOCIOpenAI
 
+from ..live_models import chat_model, family_models
+
 
 @pytest.fixture
 def oci_openai_config():
@@ -37,7 +39,12 @@ def oci_openai_config():
     auth_type = os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN").upper()
     auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
     region = os.environ.get("OCI_REGION", "us-chicago-1")
-    model_id = os.environ.get("OCI_OPENAI_MODEL_ID", "openai.gpt-oss-20b")
+    model_id = (
+        os.environ.get("OCI_OPENAI_MODEL_ID")
+        or next(iter(family_models(r"^openai\.gpt-oss-")), None)
+        or chat_model("openai")
+        or pytest.skip("no live OpenAI chat model")
+    )
 
     if auth_type == "API_KEY":
         auth = OciUserPrincipalAuth(profile_name=auth_profile)

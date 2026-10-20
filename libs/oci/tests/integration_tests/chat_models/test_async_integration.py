@@ -14,7 +14,7 @@ To run:
 Optional environment variables:
     OCI_AUTH_TYPE: API_KEY (default), SECURITY_TOKEN, INSTANCE_PRINCIPAL
     OCI_CONFIG_PROFILE: OCI config profile name (default: DEFAULT)
-    OCI_MODEL_ID: Model to test (default: meta.llama-3.3-70b-instruct)
+    OCI_MODEL_ID: Model to test (default: newest live Meta chat model)
 """
 
 import asyncio
@@ -24,6 +24,8 @@ from typing import List
 
 import pytest
 from langchain_core.messages import HumanMessage
+
+from ..live_models import chat_model
 
 # Skip all tests if compartment ID not set
 pytestmark = pytest.mark.skipif(
@@ -40,7 +42,11 @@ def get_llm():
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     auth_type = os.environ.get("OCI_AUTH_TYPE", "API_KEY")
     auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
-    model_id = os.environ.get("OCI_MODEL_ID", "meta.llama-3.3-70b-instruct")
+    model_id = (
+        os.environ.get("OCI_MODEL_ID")
+        or chat_model("meta")
+        or pytest.skip("no live Meta chat model")
+    )
 
     # Only set optional parameters for models that support them
     model_kwargs = {}

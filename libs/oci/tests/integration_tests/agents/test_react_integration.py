@@ -41,6 +41,20 @@ from langchain_core.tools import tool
 
 from langchain_oci import create_oci_agent
 
+from ..live_models import family_models, one_chat_model_per_vendor
+from .conftest import react_chat_model
+
+# OpenAI has its own GPT-5 tests below.
+MULTI_MODELS = one_chat_model_per_vendor(("meta", "cohere", "xai", "google"))
+
+
+def _gpt5_model() -> str:
+    """Prefer the legacy ``gpt-5`` the retry tests were written for."""
+    return next(
+        iter(family_models(r"^openai\.gpt-5$") or family_models(r"^openai\.gpt-5")),
+        None,
+    ) or pytest.skip("no live GPT-5 model")
+
 
 @tool
 def get_weather(city: str) -> str:
@@ -94,6 +108,10 @@ class TestOCIReactAgentIntegration:
         return f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
     @pytest.fixture
+    def model_id(self) -> str:
+        return react_chat_model()
+
+    @pytest.fixture
     def auth_type(self) -> str:
         """Get auth type from environment."""
         return os.environ.get("OCI_AUTH_TYPE", "API_KEY")
@@ -109,10 +127,11 @@ class TestOCIReactAgentIntegration:
         service_endpoint: str,
         auth_type: str,
         auth_profile: str,
+        model_id: str,
     ) -> None:
         """Test agent can make a simple tool call."""
         agent = create_oci_agent(
-            model_id="meta.llama-4-scout-17b-16e-instruct",
+            model_id=model_id,
             tools=[get_weather],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
@@ -150,10 +169,11 @@ class TestOCIReactAgentIntegration:
         service_endpoint: str,
         auth_type: str,
         auth_profile: str,
+        model_id: str,
     ) -> None:
         """Test agent with multiple tools."""
         agent = create_oci_agent(
-            model_id="meta.llama-4-scout-17b-16e-instruct",
+            model_id=model_id,
             tools=[get_weather, calculate],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
@@ -183,10 +203,11 @@ class TestOCIReactAgentIntegration:
         service_endpoint: str,
         auth_type: str,
         auth_profile: str,
+        model_id: str,
     ) -> None:
         """Test agent responds without tool call when not needed."""
         agent = create_oci_agent(
-            model_id="meta.llama-4-scout-17b-16e-instruct",
+            model_id=model_id,
             tools=[get_weather],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
@@ -212,13 +233,14 @@ class TestOCIReactAgentIntegration:
         service_endpoint: str,
         auth_type: str,
         auth_profile: str,
+        model_id: str,
     ) -> None:
         """Test agent with memory checkpointer for conversation persistence."""
         from langgraph.checkpoint.memory import MemorySaver
 
         checkpointer = MemorySaver()
         agent = create_oci_agent(
-            model_id="meta.llama-4-scout-17b-16e-instruct",
+            model_id=model_id,
             tools=[get_weather],
             compartment_id=compartment_id,
             service_endpoint=service_endpoint,
@@ -255,16 +277,7 @@ class TestOCIReactAgentIntegration:
     skip_if_no_oci_credentials(),
     reason="OCI credentials not available (OCI_COMPARTMENT_ID not set)",
 )
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "meta.llama-3.3-70b-instruct",
-        "cohere.command-a-03-2025",
-        "xai.grok-4.20",
-        "google.gemini-2.5-flash-lite",
-    ],
-)
+@pytest.mark.parametrize("model_id", MULTI_MODELS)
 def test_multi_model_tool_calling(model_id: str) -> None:
     """Test tool calling with different models."""
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID") or os.environ.get(
@@ -308,16 +321,7 @@ def test_multi_model_tool_calling(model_id: str) -> None:
     skip_if_no_oci_credentials(),
     reason="OCI credentials not available (OCI_COMPARTMENT_ID not set)",
 )
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "meta.llama-3.3-70b-instruct",
-        "cohere.command-a-03-2025",
-        "xai.grok-4.20",
-        "google.gemini-2.5-flash-lite",
-    ],
-)
+@pytest.mark.parametrize("model_id", MULTI_MODELS)
 def test_multi_model_support(model_id: str) -> None:
     """Test that create_oci_agent works with different models."""
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID") or os.environ.get(
@@ -358,7 +362,7 @@ def test_multi_model_support(model_id: str) -> None:
 def test_openai_gpt5_tool_calling() -> None:
     """GPT-5 tool calling works end-to-end despite unsupported params.
 
-    Legacy openai.gpt-5 rejects non-default temperature with a 400
+    Legacy GPT-5 rejects non-default temperature with a 400
     unsupported_value; the reactive parameter retry must absorb it.
     """
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID", "")
@@ -368,7 +372,7 @@ def test_openai_gpt5_tool_calling() -> None:
     auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
 
     agent = create_oci_agent(
-        model_id="openai.gpt-5",
+        model_id=_gpt5_model(),
         tools=[get_weather],
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
@@ -409,7 +413,7 @@ async def test_openai_gpt5_async_param_retry() -> None:
 
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     llm = ChatOCIGenAI(
-        model_id="openai.gpt-5",
+        model_id=_gpt5_model(),
         service_endpoint=(
             f"https://inference.generativeai.{region}.oci.oraclecloud.com"
         ),

@@ -14,7 +14,7 @@ Optional:
     OCI_AUTH_TYPE       -- auth type (default: API_KEY)
     OCI_CONFIG_PROFILE  -- ~/.oci/config profile (default: DEFAULT)
     OCI_STANDARD_TEST_MODEL_ID -- model to run the suite against
-                                  (default: meta.llama-3.3-70b-instruct)
+                                  (default: newest live Meta chat model)
 
 Capability flags are set for the default Meta model; some flags differ per
 provider (e.g. Cohere has no tool_choice, Gemini adds pdf/video/audio), so
@@ -28,6 +28,8 @@ import pytest
 from langchain_tests.integration_tests import ChatModelIntegrationTests
 
 from langchain_oci.chat_models.oci_generative_ai import ChatOCIGenAI
+
+from ..live_models import chat_model
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("OCI_COMPARTMENT_ID"),
@@ -45,10 +47,13 @@ class TestChatOCIGenAIStandardIntegration(ChatModelIntegrationTests):
     @property
     def chat_model_params(self) -> Dict[str, Any]:
         region = os.environ.get("OCI_REGION", "us-chicago-1")
+        model_id = (
+            os.environ.get("OCI_STANDARD_TEST_MODEL_ID")
+            or chat_model("meta")
+            or pytest.skip("no live Meta chat model")
+        )
         return {
-            "model_id": os.environ.get(
-                "OCI_STANDARD_TEST_MODEL_ID", "meta.llama-3.3-70b-instruct"
-            ),
+            "model_id": model_id,
             "compartment_id": os.environ["OCI_COMPARTMENT_ID"],
             "service_endpoint": (
                 f"https://inference.generativeai.{region}.oci.oraclecloud.com"

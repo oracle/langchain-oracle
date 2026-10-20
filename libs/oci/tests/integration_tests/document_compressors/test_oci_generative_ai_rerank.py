@@ -3,16 +3,15 @@
 
 """Integration tests for OCIGenAIRerank against real OCI GenAI.
 
-Requires a tenancy where the rerankText action is enabled (some tenancies
-list the cohere.rerank-* models in the catalog but return 404 for on-demand
-rerankText, which typically means a dedicated AI cluster or an additional
-IAM policy is required).
+Some tenancies list the cohere.rerank-* models in the catalog but return 404
+for on-demand rerankText, which typically means a dedicated AI cluster or an
+additional IAM policy is required; pin a dedicated endpoint OCID there.
 
 Env vars:
     OCI_COMPARTMENT_ID   -- required
-    OCI_RERANK_MODEL_ID  -- required (e.g. cohere.rerank-v4.0-fast or a dedicated
-                            endpoint OCID); the test skips when unset so the
-                            suite stays green on tenancies without rerank.
+    OCI_RERANK_MODEL_ID  -- optional; a model id or dedicated endpoint OCID.
+                            Defaults to the newest live rerank model in the
+                            catalog, and the tests skip when there is none.
     OCI_REGION / OCI_AUTH_TYPE / OCI_CONFIG_PROFILE -- optional, as elsewhere.
 """
 
@@ -23,11 +22,11 @@ from langchain_core.documents import Document
 
 from langchain_oci import OCIGenAIRerank
 
+from ..live_models import rerank_model
+
 pytestmark = pytest.mark.skipif(
-    not (
-        os.environ.get("OCI_COMPARTMENT_ID") and os.environ.get("OCI_RERANK_MODEL_ID")
-    ),
-    reason="OCI_COMPARTMENT_ID and OCI_RERANK_MODEL_ID must be set",
+    not os.environ.get("OCI_COMPARTMENT_ID"),
+    reason="OCI_COMPARTMENT_ID must be set",
 )
 
 DOCS = [
@@ -41,9 +40,10 @@ QUERY = "How does Oracle support vector similarity search?"
 
 @pytest.fixture
 def reranker() -> OCIGenAIRerank:
+    model_id = rerank_model() or pytest.skip("no live rerank model")
     region = os.environ.get("OCI_REGION", "us-chicago-1")
     return OCIGenAIRerank(
-        model_id=os.environ["OCI_RERANK_MODEL_ID"],
+        model_id=model_id,
         compartment_id=os.environ["OCI_COMPARTMENT_ID"],
         service_endpoint=(
             f"https://inference.generativeai.{region}.oci.oraclecloud.com"

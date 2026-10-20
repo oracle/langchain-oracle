@@ -19,6 +19,10 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+from ..live_models import one_chat_model_per_vendor
+
+_MODELS = one_chat_model_per_vendor(("meta", "cohere", "google"))
+
 
 def _create_chat_model(model_id: str) -> ChatOCIGenAI:
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
@@ -71,14 +75,7 @@ VALID_FORMATS = {"json", "csv", "table"}
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "cohere.command-a-03-2025",
-        "google.gemini-2.5-flash",
-    ],
-)
+@pytest.mark.parametrize("model_id", _MODELS)
 def test_enum_constraints_respected(model_id: str):
     """Model should pick metric_name from the enum values, not hallucinate."""
     llm = _create_chat_model(model_id)
@@ -105,14 +102,7 @@ def test_enum_constraints_respected(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "cohere.command-a-03-2025",
-        "google.gemini-2.5-flash",
-    ],
-)
+@pytest.mark.parametrize("model_id", _MODELS)
 def test_numeric_range_constraints(model_id: str):
     """duration_hours should be within min=1, max=168."""
     llm = _create_chat_model(model_id)
@@ -141,14 +131,7 @@ def test_numeric_range_constraints(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "cohere.command-a-03-2025",
-        "google.gemini-2.5-flash",
-    ],
-)
+@pytest.mark.parametrize("model_id", _MODELS)
 def test_schema_sent_to_oci_has_constraints(model_id: str):
     """Verify the converted OCI tool definition actually contains constraints."""
     llm = _create_chat_model(model_id)

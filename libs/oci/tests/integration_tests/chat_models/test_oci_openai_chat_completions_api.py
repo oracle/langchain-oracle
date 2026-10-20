@@ -20,10 +20,10 @@ Prerequisites:
                                                    # SECURITY_TOKEN
     # Text-only model for the smoke + stream + tools tests; any
     # OpenAI-route model on OCI works (gpt-5, gpt-4o, gpt-oss-*, ...).
-    export OCI_OPENAI_CHAT_MODEL_ID=<model-id>  # defaults to openai.gpt-oss-20b
+    export OCI_OPENAI_CHAT_MODEL_ID=<model-id>  # defaults to a live gpt-oss
     # Audio-capable model for the input_audio test; must accept
     # `input_audio` content blocks.
-    export OCI_OPENAI_AUDIO_MODEL_ID=<model-id>  # defaults to openai.gpt-audio
+    export OCI_OPENAI_AUDIO_MODEL_ID=<model-id>  # defaults to a live gpt-audio
 
 Run::
 
@@ -46,6 +46,8 @@ from pydantic import BaseModel, Field
 
 from langchain_oci import ChatOCIOpenAI
 
+from ..live_models import chat_model, family_models, live_models
+
 
 @pytest.fixture
 def oci_openai_config():
@@ -57,8 +59,16 @@ def oci_openai_config():
     auth_type = os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN").upper()
     auth_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
     region = os.environ.get("OCI_REGION", "us-chicago-1")
-    chat_model_id = os.environ.get("OCI_OPENAI_CHAT_MODEL_ID", "openai.gpt-oss-20b")
-    audio_model_id = os.environ.get("OCI_OPENAI_AUDIO_MODEL_ID", "openai.gpt-audio")
+    chat_model_id = (
+        os.environ.get("OCI_OPENAI_CHAT_MODEL_ID")
+        or next(iter(family_models(r"^openai\.gpt-oss-")), None)
+        or chat_model("openai")
+        or pytest.skip("no live OpenAI chat model")
+    )
+    # Chat roles exclude audio variants, so pick one from the raw catalog.
+    audio_model_id = os.environ.get("OCI_OPENAI_AUDIO_MODEL_ID") or next(
+        (m for m in live_models("CHAT", "openai") if "audio" in m), None
+    )
 
     if auth_type == "API_KEY":
         auth = OciUserPrincipalAuth(profile_name=auth_profile)
@@ -188,6 +198,8 @@ def test_chat_completions_input_audio(oci_openai_config: dict):
     Completions transport against an audio-capable model. This call would
     fail on the Responses transport and on OCI's native chat endpoint —
     the assertion proves the new transport unlocks audio input."""
+    if not oci_openai_config["audio_model_id"]:
+        pytest.skip("no live OpenAI audio model")
     audio_b64 = base64.b64encode(_make_wav_bytes()).decode("ascii")
     client = _create_client(oci_openai_config, model_key="audio_model_id")
     response = client.invoke(
