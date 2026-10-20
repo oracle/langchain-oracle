@@ -32,7 +32,7 @@ def mock_client() -> MagicMock:
 @pytest.fixture
 def reranker(mock_client: MagicMock) -> OCIGenAIRerank:
     return OCIGenAIRerank(
-        model_id="cohere.rerank-v3.5",
+        model_id="cohere.rerank-v4.0-fast",
         compartment_id="test-compartment",
         service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
         client=mock_client,
@@ -64,7 +64,7 @@ def test_rerank_request_shape(reranker: OCIGenAIRerank, mock_client: MagicMock) 
     assert details.documents == [d.page_content for d in DOCS]
     assert details.top_n == 2
     assert details.compartment_id == "test-compartment"
-    assert details.serving_mode.model_id == "cohere.rerank-v3.5"
+    assert details.serving_mode.model_id == "cohere.rerank-v4.0-fast"
 
 
 @pytest.mark.requires("oci")
