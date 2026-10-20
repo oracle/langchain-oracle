@@ -159,6 +159,26 @@ def test_chat_completions_path_sends_only_compartment_header(fake_auth):
 
 
 @pytest.mark.requires("langchain_openai")
+@pytest.mark.parametrize("use_responses_api", [True, False])
+def test_both_transports_never_negotiate_zstd(fake_auth, use_responses_api):
+    """httpx 0.28 can't decode OCI's zstd-compressed responses ("cannot use a
+    decompressobj multiple times"), and it advertises zstd whenever
+    ``zstandard`` is installed. Both transports, sync and async, must ask for
+    gzip/deflate only."""
+    client = ChatOCIOpenAI(
+        auth=fake_auth,
+        compartment_id=COMPARTMENT_ID,
+        conversation_store_id=CONVERSATION_STORE_ID,
+        region=REGION,
+        model=TEXT_MODEL,
+        use_responses_api=use_responses_api,
+    )
+    for http_client in (client.http_client, client.http_async_client):
+        assert http_client is not None
+        assert http_client.headers.get("Accept-Encoding") == "gzip, deflate"
+
+
+@pytest.mark.requires("langchain_openai")
 def test_chat_completions_path_does_not_require_conversation_store_id(fake_auth):
     """Inverse of the default-path validation: the Chat Completions opt-in
     must construct cleanly without a conversation-store OCID."""
