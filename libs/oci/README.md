@@ -251,14 +251,14 @@ text_vector = embeddings.embed_query("a photo of a cat")
 <sub>**Note:** Image embeddings require a multimodal model. Use `IMAGE_EMBEDDING_MODELS` to check supported models.</sub>
 
 ### 3c. Rerank Documents
-`OCIGenAIRerank` is a document compressor backed by OCI GenAI rerank models (e.g. `cohere.rerank-v3.5`, `cohere.rerank-v4.0-fast`, `cohere.rerank-v4.0-pro`). Use it standalone via `rerank()`/`arerank()` or plug it into a `ContextualCompressionRetriever`.
+`OCIGenAIRerank` is a document compressor backed by OCI GenAI rerank models (e.g. `cohere.rerank-v4.0-fast`, `cohere.rerank-v4.0-pro`). Use it standalone via `rerank()`/`arerank()` or plug it into a `ContextualCompressionRetriever`.
 
 ```python
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain_oci import OCIGenAIRerank
 
 reranker = OCIGenAIRerank(
-    model_id="cohere.rerank-v3.5",
+    model_id="cohere.rerank-v4.0-fast",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxxxx",
     top_n=3,

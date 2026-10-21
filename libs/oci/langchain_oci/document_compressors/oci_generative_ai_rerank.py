@@ -21,7 +21,7 @@ class OCIGenAIRerank(BaseDocumentCompressor):
     """Document compressor using OCI Generative AI rerank models.
 
     Reranks documents against a query with an OCI-hosted rerank model
-    (e.g. ``cohere.rerank-v3.5``, ``cohere.rerank-v4.0-fast``,
+    (e.g. ``cohere.rerank-v4.0-fast``,
     ``cohere.rerank-v4.0-pro``) and keeps the ``top_n`` most relevant.
 
     To authenticate, the OCI client uses the methods described in
@@ -34,7 +34,7 @@ class OCIGenAIRerank(BaseDocumentCompressor):
             from langchain_oci import OCIGenAIRerank
 
             reranker = OCIGenAIRerank(
-                model_id="cohere.rerank-v3.5",
+                model_id="cohere.rerank-v4.0-fast",
                 service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
                 compartment_id="MY_OCID",
                 top_n=3,
@@ -47,7 +47,7 @@ class OCIGenAIRerank(BaseDocumentCompressor):
 
     client: Any = Field(default=None, exclude=True)  #: :meta private:
 
-    model_id: str = "cohere.rerank-v3.5"
+    model_id: str = "cohere.rerank-v4.0-fast"
     """Id of the OCI GenAI rerank model to use."""
 
     service_endpoint: Optional[str] = None

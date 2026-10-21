@@ -10,7 +10,7 @@ IAM policy is required).
 
 Env vars:
     OCI_COMPARTMENT_ID   -- required
-    OCI_RERANK_MODEL_ID  -- required (e.g. cohere.rerank-v3.5 or a dedicated
+    OCI_RERANK_MODEL_ID  -- required (e.g. cohere.rerank-v4.0-fast or a dedicated
                             endpoint OCID); the test skips when unset so the
                             suite stays green on tenancies without rerank.
     OCI_REGION / OCI_AUTH_TYPE / OCI_CONFIG_PROFILE -- optional, as elsewhere.
