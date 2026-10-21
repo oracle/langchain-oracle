@@ -76,6 +76,11 @@ API_KEY = "<NOTUSED>"
 COMPARTMENT_ID_HEADER = "opc-compartment-id"
 CONVERSATION_STORE_ID_HEADER = "opc-conversation-store-id"
 OUTPUT_VERSION = "responses/v1"
+# httpx advertises zstd whenever `zstandard` is importable (langsmith pulls it
+# in), and OCI's OpenAI endpoints then compress the response with zstd. httpx
+# 0.28's zstd decoder can't handle those bodies and fails with "cannot use a
+# decompressobj multiple times", so we ask for gzip/deflate only.
+ACCEPT_ENCODING = "gzip, deflate"
 
 
 def _build_headers(
@@ -1352,6 +1357,7 @@ class ChatOCIOpenAI(ChatOpenAI):
             default_headers = _build_chat_completions_headers(compartment_id)
             kwargs.pop("store", None)
             extra_super_kwargs = {}
+        default_headers["Accept-Encoding"] = ACCEPT_ENCODING
 
         super().__init__(
             model=model,
