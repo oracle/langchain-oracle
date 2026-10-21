@@ -18,13 +18,30 @@ export async function withConnection<T>(
   const isPool = "getConnection" in client;
   const connection = isPool ? await client.getConnection() : client;
 
+  let result: T;
+
   try {
-    return await fn(connection);
-  } finally {
+    result = await fn(connection);
+  } catch (error) {
     if (isPool) {
-      await connection.close();
+      try {
+        await connection.close();
+      } catch (closeError) {
+        throw new AggregateError(
+          [error, closeError],
+          "Operation failed, and connection cleanup failed."
+        );
+      }
     }
+
+    throw error;
   }
+
+  if (isPool) {
+    await connection.close();
+  }
+
+  return result;
 }
 
 export function quoteIdentifier(identifier: string) {

@@ -229,6 +229,24 @@ describe.skipIf(!hasCredentials).each(["exact", "semantic"] as const)(
         ]);
         expect(await cache.lookup("what is 2 + 2?", "l")).toBeNull();
       });
+
+      test("round-trips a large CLOB through insert and update", async () => {
+        const prompt = "large exact-cache payload";
+        const llmKey = "large-payload-model";
+        const insertedText = "é".repeat(100_000);
+        const updatedText = `${insertedText}y`;
+
+        await cache.update(prompt, llmKey, [{ text: insertedText }]);
+        expect((await cache.lookup(prompt, llmKey))?.[0].text).toBe(
+          insertedText
+        );
+
+        await cache.update(prompt, llmKey, [{ text: updatedText }]);
+        expect((await cache.lookup(prompt, llmKey))?.[0].text).toBe(
+          updatedText
+        );
+        expect(await countPrompt(prompt)).toBe(1);
+      });
     } else {
       test("uses the score threshold as a maximum distance", async () => {
         const bounded = new OracleSemanticCache(
@@ -262,7 +280,7 @@ describe.skipIf(!hasCredentials).each(["exact", "semantic"] as const)(
               pageContent: prompt,
               metadata: {
                 prompt_hash: defaultHashKeyEncoder(prompt),
-                llm_key_hash: defaultHashKeyEncoder(llmKey),
+                llm_string_hash: defaultHashKeyEncoder(llmKey),
                 return_val: "not-an-array",
               },
             }),
@@ -297,6 +315,31 @@ describe.skipIf(!hasCredentials).each(["exact", "semantic"] as const)(
           { outFormat: oracledb.OUT_FORMAT_OBJECT }
         );
         expect(result.rows).toEqual([{ INDEX_NAME: indexName }]);
+      });
+
+      test("creates the default vector index idempotently", async () => {
+        const indexed = new OracleSemanticCache(
+          embeddings,
+          { client: connection!, tableName, query: "test" },
+          {
+            createIndexIfMissing: true,
+            indexParams: { parallel: 1 },
+          }
+        );
+
+        await indexed.initialize();
+        await expect(indexed.initialize()).resolves.toBeUndefined();
+
+        const result = await connection!.execute<{ INDEX_COUNT: number }>(
+          `SELECT COUNT(*) AS index_count
+           FROM user_indexes
+           WHERE table_name = :table_name
+            AND index_type = 'VECTOR'`,
+          { table_name: tableName },
+          { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
+
+        expect(result.rows).toEqual([{ INDEX_COUNT: 1 }]);
       });
     }
   }

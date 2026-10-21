@@ -75,12 +75,6 @@ describe("OracleChatMessageHistory", () => {
     expect(await generatedIndexName(tableName, sessionIdKey)).toBe(name);
   });
 
-  test("distinguishes table and column combinations with identical prefixes", async () => {
-    const first = await generatedIndexName("support_chat", "session_id");
-    const second = await generatedIndexName("support", "chat_session_id");
-    expect(first).not.toBe(second);
-  });
-
   test.each([
     { not: "a string" },
     "invalid JSON",

@@ -12,12 +12,12 @@ import {
   ErrorCode,
   isLangChainOracleError,
   throwError,
-  handleError
+  handleError,
 } from "./errors.js";
 import { 
   OracleDBClient, 
   OracleDBClientProvider, 
-  quoteIdentifier
+  quoteIdentifier,
 } from "./utils.js"
 
 export type { OracleDBClient, OracleDBClientProvider };

@@ -28,7 +28,7 @@ import {
   OracleDBClientProvider,
 } from "./utils.js";
 
-const DEFAULT_TABLE_NAME = "langchain_semantic_cache";
+const DEFAULT_TABLE_NAME = "langchain_js_semantic_cache";
 const DISTANCE_EPSILON = 1e-12;
 
 export type OracleSemanticCacheDBConfig = Omit<OracleDBVSArgs, "tableName"> & {
@@ -144,7 +144,7 @@ function validateClearOptions(options: OracleCacheClearOptions) {
  * });
  * ```
  */
-export class OracleSemanticCache extends BaseCache<Generation[]> {
+export class OracleSemanticCache extends BaseCache {
   private readonly vectorStore: OracleVS;
 
   readonly createIndexIfMissing?: boolean;
@@ -152,7 +152,7 @@ export class OracleSemanticCache extends BaseCache<Generation[]> {
   readonly indexParams?: IndexParams;
   readonly scoreThreshold?: number;
 
-  private readonly LLM_HASH = "llm_key_hash";
+  private readonly LLM_HASH = "llm_string_hash";
   private readonly PROMPT_HASH = "prompt_hash";
   private readonly RETURN_VAL = "return_val";
 
@@ -166,8 +166,9 @@ export class OracleSemanticCache extends BaseCache<Generation[]> {
    *
    * @param {OracleSemanticCacheOptions} options Optional index and distance threshold settings.
    * @param {boolean} options.createIndexIfMissing Whether initialize() creates a vector index
-   * if it does not exist. Defaults to `false`.
-   * @param {number} options.scoreThreshold Maximum accepted vector distance.
+   *   if it does not exist. Defaults to `false`.
+   * @param {number} options.scoreThreshold Maximum vector distance accepted for a cache hit.
+   *   Lower distance values indicate closer matches.
    *
    * @throws If the client is missing, the table identifier is invalid,
    * or the distance threshold is negative.
@@ -229,6 +230,25 @@ export class OracleSemanticCache extends BaseCache<Generation[]> {
     } catch (error) {
       handleError(error);
     }
+  }
+
+  private cacheEntryId(prompt: string, llmKey: string): string {
+    const encoded = this.keyEncoder(JSON.stringify([prompt, llmKey])).slice(
+      0,
+      36
+    );
+    const byteLength = Buffer.byteLength(encoded, "utf8");
+
+    // OracleVS defines external_id as VARCHAR2(36), so the derived ID must
+    // fit within 36 UTF-8 bytes.
+    if (byteLength === 0 || byteLength > 36) {
+      throwError(
+        ErrorCode.VALIDATION_INVALID_INPUT,
+        "Semantic cache entry IDs must be between 1 and 36 UTF-8 bytes."
+      );
+    }
+
+    return encoded;
   }
 
   /**
@@ -304,7 +324,7 @@ export class OracleSemanticCache extends BaseCache<Generation[]> {
           }),
         ],
         {
-          ids: [this.keyEncoder(JSON.stringify([prompt, llmKey])).slice(0, 36)],
+          ids: [this.cacheEntryId(prompt, llmKey)],
           mutateOnDuplicate: true,
         }
       );
@@ -377,7 +397,7 @@ export class OracleSemanticCache extends BaseCache<Generation[]> {
   }
 }
 
-const DEFAULT_EXACT_TABLE_NAME = "langchain_exact_cache";
+const DEFAULT_EXACT_TABLE_NAME = "langchain_js_exact_cache";
 
 /**
  * Caches model generations by exact prompt and model configuration key in Oracle Database.
@@ -392,7 +412,7 @@ const DEFAULT_EXACT_TABLE_NAME = "langchain_exact_cache";
  * const generations = await cache.lookup("Hello", "model-config");
  * ```
  */
-export class OracleCache extends BaseCache<Generation[]> {
+export class OracleCache extends BaseCache {
   readonly client: OracleDBClient | OracleDBClientProvider;
 
   readonly tableName;
@@ -437,7 +457,7 @@ export class OracleCache extends BaseCache<Generation[]> {
       CREATE TABLE IF NOT EXISTS ${this.quotedTableName} (
         id VARCHAR2(64) PRIMARY KEY,
         prompt_hash VARCHAR2(64) NOT NULL,
-        llm_key_hash VARCHAR2(64) NOT NULL,
+        llm_string_hash VARCHAR2(64) NOT NULL,
         generations CLOB NOT NULL,
         created_at TIMESTAMP DEFAULT SYSTIMESTAMP
       )
@@ -447,6 +467,24 @@ export class OracleCache extends BaseCache<Generation[]> {
       await connection.execute(ddl);
       await connection.commit();
     });
+  }
+
+  private encodeKey(value: string): string {
+    const encoded = this.keyEncoder(value);
+    const byteLength = Buffer.byteLength(encoded, "utf8");
+
+    if (byteLength === 0 || byteLength > 64) {
+      throwError(
+        ErrorCode.VALIDATION_INVALID_INPUT,
+        "The cache key encoder must return between 1 and 64 UTF-8 bytes."
+      );
+    }
+
+    return encoded;
+  }
+
+  private cacheEntryId(prompt: string, llmKey: string): string {
+    return this.encodeKey(JSON.stringify([prompt, llmKey]));
   }
 
   /**
@@ -464,7 +502,7 @@ export class OracleCache extends BaseCache<Generation[]> {
           `SELECT generations AS "generations"
           FROM ${this.quotedTableName}
           WHERE id = :id`,
-          { id: this.keyEncoder(JSON.stringify([prompt, llmKey])) },
+          { id: this.cacheEntryId(prompt, llmKey) },
           {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             fetchInfo: {
@@ -512,15 +550,18 @@ export class OracleCache extends BaseCache<Generation[]> {
           t.generations = :generations,
           t.created_at = SYSTIMESTAMP
         WHEN NOT MATCHED THEN INSERT
-          (id, prompt_hash, llm_key_hash, generations)
-          VALUES (:id, :prompt_hash, :llm_key_hash, :generations)
+          (id, prompt_hash, llm_string_hash, generations)
+          VALUES (:id, :prompt_hash, :llm_string_hash, :generations)
       `;
 
-      const binds: Record<string, string> = {
-        id: this.keyEncoder(JSON.stringify([prompt, llmKey])),
-        prompt_hash: this.keyEncoder(prompt),
-        llm_key_hash: this.keyEncoder(llmKey),
-        generations: JSON.stringify(value.map(serializeGeneration)),
+      const binds: oracledb.BindParameters = {
+        id: this.cacheEntryId(prompt, llmKey),
+        prompt_hash: this.encodeKey(prompt),
+        llm_string_hash: this.encodeKey(llmKey),
+        generations: {
+          val: JSON.stringify(value.map(serializeGeneration)),
+          type: oracledb.DB_TYPE_CLOB,
+        },
       };
 
       await withConnection(this.client, async (connection) => {
@@ -551,12 +592,12 @@ export class OracleCache extends BaseCache<Generation[]> {
 
       if (prompt !== undefined) {
         conditions.push(`prompt_hash = :prompt_hash`);
-        binds.prompt_hash = this.keyEncoder(prompt);
+        binds.prompt_hash = this.encodeKey(prompt);
       }
 
       if (llmKey !== undefined) {
-        conditions.push(`llm_key_hash = :llm_hash`);
-        binds.llm_hash = this.keyEncoder(llmKey);
+        conditions.push(`llm_string_hash = :llm_hash`);
+        binds.llm_hash = this.encodeKey(llmKey);
       }
 
       if (conditions.length > 0) {
