@@ -14,11 +14,11 @@ import {
   throwError,
   handleError,
 } from "./errors.js";
-import { 
-  OracleDBClient, 
-  OracleDBClientProvider, 
+import {
+  OracleDBClient,
+  OracleDBClientProvider,
   quoteIdentifier,
-} from "./utils.js"
+} from "./utils.js";
 
 export type { OracleDBClient, OracleDBClientProvider };
 
