@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Oracle Database integration for LangChain.js",
   "type": "module",
+  "packageManager": "pnpm@11.20.0",
   "engines": {
     "node": ">=18"
   },

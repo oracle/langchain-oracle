@@ -145,16 +145,20 @@ describe("sparse vector element format (#297)", () => {
   });
 
   test("INT8 sparse vectors reject out-of-range values", () => {
-    expect(() => prepare(makeStore(VectorElementFormat.INT8), [1, 300, 0])).toThrow(
-      /INT8 sparse vector values/
-    );
+    expect(() =>
+      prepare(makeStore(VectorElementFormat.INT8), [1, 300, 0])
+    ).toThrow(/INT8 sparse vector values/);
   });
 
   test("INT8 sparse vectors reject non-finite values", () => {
-    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
-      expect(() => prepare(makeStore(VectorElementFormat.INT8), [1, bad, 0])).toThrow(
-        /INT8 sparse vector values must be finite/
-      );
+    for (const bad of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      expect(() =>
+        prepare(makeStore(VectorElementFormat.INT8), [1, bad, 0])
+      ).toThrow(/INT8 sparse vector values must be finite/);
     }
   });
 

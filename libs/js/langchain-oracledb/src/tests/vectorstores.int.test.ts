@@ -47,11 +47,11 @@ function formatTableNameForMetadata(tableName: string): string {
 
 async function getVectorColumnMetadata(
   connection: oracledb.Connection,
-  tableName: string,
+  tableName: string
 ): Promise<VectorColumnMetadata> {
   const normalized = formatTableNameForMetadata(tableName);
   const candidates = Array.from(
-    new Set([normalized, normalized.toUpperCase()]),
+    new Set([normalized, normalized.toUpperCase()])
   );
 
   let ddlResult: oracledb.Result<unknown> | undefined;
@@ -67,7 +67,7 @@ async function getVectorColumnMetadata(
           fetchInfo: {
             DDL: { type: oracledb.STRING },
           },
-        },
+        }
       );
       lastError = undefined;
       break;
@@ -80,15 +80,17 @@ async function getVectorColumnMetadata(
     throw lastError ?? new Error("Unable to fetch table metadata.");
   }
 
-  const ddlRow = ddlResult.rows?.[0] as { DDL?: string; ddl?: string } | undefined;
+  const ddlRow = ddlResult.rows?.[0] as
+    | { DDL?: string; ddl?: string }
+    | undefined;
   const ddlText = ddlRow?.DDL ?? ddlRow?.ddl ?? "";
   const match = ddlText.match(/"?(?:EMBEDDING)"?\s+VECTOR\(([^)]+)\)/i);
   if (!match) {
-    throw new Error(`Unable to parse vector definition from DDL: ${normalized}`);
+    throw new Error(
+      `Unable to parse vector definition from DDL: ${normalized}`
+    );
   }
-  const parts = match[1]
-    .split(",")
-    .map((part) => part.trim().toUpperCase());
+  const parts = match[1].split(",").map((part) => part.trim().toUpperCase());
 
   const [lengthPart, formatPart = "FLOAT32", storagePart = "DENSE"] = parts;
   const parsedLength =
@@ -101,7 +103,10 @@ async function getVectorColumnMetadata(
   };
 }
 
-function unpackBinaryVector(buffer: ArrayLike<number>, dimension: number): number[] {
+function unpackBinaryVector(
+  buffer: ArrayLike<number>,
+  dimension: number
+): number[] {
   const bytes = Uint8Array.from(buffer);
   const values = new Array<number>(dimension).fill(0);
   for (let i = 0; i < dimension; i += 1) {
@@ -173,7 +178,8 @@ describe("OracleVectorStore", () => {
       }
 
       if (creationError) {
-        const message = (creationError as Error).message ?? String(creationError);
+        const message =
+          (creationError as Error).message ?? String(creationError);
         expect(message).toMatch(/ORA-51962/);
         return;
       }
@@ -184,10 +190,11 @@ describe("OracleVectorStore", () => {
           tableName: hnswTable.toUpperCase(),
           indexName: "HNSW_VECTOR_IDX",
         },
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
-      const indexRow =
-        indexResult.rows?.[0] as { INDEX_NAME?: string; index_name?: string } | undefined;
+      const indexRow = indexResult.rows?.[0] as
+        | { INDEX_NAME?: string; index_name?: string }
+        | undefined;
       const indexName = indexRow?.INDEX_NAME ?? indexRow?.index_name;
       expect(indexName?.toUpperCase()).toBe("HNSW_VECTOR_IDX");
     } finally {
@@ -238,22 +245,19 @@ describe("OracleVectorStore", () => {
     expect(pool.connectionsInUse).toBe(baselineConnectionsInUse);
   });
 
-  test(
-    "returns provider pool connections from public getConnection and retConnection",
-    async () => {
-      const baselineConnectionsInUse = pool.connectionsInUse;
-      const providerPoolStore = new OracleVS(embedder, {
-        ...dbConfig,
-        client: async () => pool,
-      });
+  test("returns provider pool connections from public getConnection and retConnection", async () => {
+    const baselineConnectionsInUse = pool.connectionsInUse;
+    const providerPoolStore = new OracleVS(embedder, {
+      ...dbConfig,
+      client: async () => pool,
+    });
 
-      const providerConnection = await providerPoolStore.getConnection();
-      expect(pool.connectionsInUse).toBe(baselineConnectionsInUse + 1);
+    const providerConnection = await providerPoolStore.getConnection();
+    expect(pool.connectionsInUse).toBe(baselineConnectionsInUse + 1);
 
-      await providerPoolStore.retConnection(providerConnection);
-      expect(pool.connectionsInUse).toBe(baselineConnectionsInUse);
-    },
-  );
+    await providerPoolStore.retConnection(providerConnection);
+    expect(pool.connectionsInUse).toBe(baselineConnectionsInUse);
+  });
 
   test("Test vectorstore fromDocuments", async () => {
     let connection: oracledb.Connection | undefined;
@@ -307,7 +311,7 @@ describe("OracleVectorStore", () => {
       const queryEmbedding = await embedder.embedQuery("custom doc one");
       const matches = await oraclevs.similaritySearchVectorWithScore(
         queryEmbedding,
-        1,
+        1
       );
       expect(matches).toHaveLength(1);
       const [match] = matches[0];
@@ -316,10 +320,11 @@ describe("OracleVectorStore", () => {
       const rows = await connection.execute(
         `SELECT external_id FROM ${oraclevs.tableName}`,
         [],
-        { outFormat: oracledb.OUT_FORMAT_ARRAY },
+        { outFormat: oracledb.OUT_FORMAT_ARRAY }
       );
       const insertedIds =
-        rows.rows?.map((row) => (Array.isArray(row) ? row[0] : undefined)) ?? [];
+        rows.rows?.map((row) => (Array.isArray(row) ? row[0] : undefined)) ??
+        [];
       expect(new Set(insertedIds)).toEqual(new Set(ids));
     } finally {
       await connection?.close();
@@ -422,9 +427,8 @@ describe("OracleVectorStore", () => {
       expect(rowAfterFailedInsert?.TEXT ?? rowAfterFailedInsert?.text).toBe(
         "Original content"
       );
-      const metadataAfterFailedInsert = (
-        rowAfterFailedInsert?.METADATA ?? rowAfterFailedInsert?.metadata
-      ) as Metadata | undefined;
+      const metadataAfterFailedInsert = (rowAfterFailedInsert?.METADATA ??
+        rowAfterFailedInsert?.metadata) as Metadata | undefined;
       expect(metadataAfterFailedInsert?.version).toBe(1);
 
       await oraclevs.addDocuments(
@@ -460,7 +464,7 @@ describe("OracleVectorStore", () => {
       writeFileSync(
         filePath,
         "Oracle loader document content to validate id round-tripping.",
-        "utf8",
+        "utf8"
       );
 
       let loaderConnection: oracledb.Connection | undefined;
@@ -468,7 +472,9 @@ describe("OracleVectorStore", () => {
 
       try {
         loaderConnection = await pool.getConnection();
-        const loader = new OracleDocLoader(loaderConnection, { file: filePath });
+        const loader = new OracleDocLoader(loaderConnection, {
+          file: filePath,
+        });
         docs = await loader.load();
         expect(docs.length).toBeGreaterThan(0);
       } finally {
@@ -494,7 +500,7 @@ describe("OracleVectorStore", () => {
               ...doc.metadata,
               version: index + 2,
             },
-          }),
+          })
       );
 
       const upsertIds = await oraclevs.addDocuments(updatedDocs, {
@@ -513,15 +519,21 @@ describe("OracleVectorStore", () => {
           .map((_, index) => `:${index + 1}`)
           .join(", ");
         const selectSql = `SELECT external_id, text, id FROM "${tableName}" WHERE external_id IN (${placeholders}) ORDER BY external_id`;
-        const selectResult = await verificationConnection.execute(selectSql, storedIdsList, {
-          outFormat: oracledb.OUT_FORMAT_OBJECT,
-          fetchInfo: {
-            TEXT: { type: oracledb.STRING },
-            ID: { type: oracledb.BUFFER },
-          },
-        });
+        const selectResult = await verificationConnection.execute(
+          selectSql,
+          storedIdsList,
+          {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            fetchInfo: {
+              TEXT: { type: oracledb.STRING },
+              ID: { type: oracledb.BUFFER },
+            },
+          }
+        );
 
-        const rows = (selectResult.rows ?? []) as Array<Record<string, unknown>>;
+        const rows = (selectResult.rows ?? []) as Array<
+          Record<string, unknown>
+        >;
         expect(rows.length).toBe(docs.length);
 
         const internalIds: Buffer[] = [];
@@ -540,7 +552,7 @@ describe("OracleVectorStore", () => {
 
         const countResult = await verificationConnection.execute(
           `SELECT COUNT(*) FROM "${tableName}" WHERE external_id IN (${placeholders})`,
-          storedIdsList,
+          storedIdsList
         );
         const remaining = Array.isArray(countResult.rows)
           ? (countResult.rows[0] as unknown[])[0]
@@ -566,13 +578,13 @@ describe("OracleVectorStore", () => {
     await expect(
       oraclevs.addDocuments(docs, {
         ids: ["duplicate-external-id", "duplicate-external-id"],
-      }),
+      })
     ).rejects.toThrow(/unique constraint|ORA-00001|unexpected error/i);
 
     const connection = await pool.getConnection();
     try {
       const countResult = await connection.execute(
-        `SELECT COUNT(*) FROM "${tableName}"`,
+        `SELECT COUNT(*) FROM "${tableName}"`
       );
       const remaining = Array.isArray(countResult.rows)
         ? (countResult.rows[0] as unknown[])[0]
@@ -591,7 +603,9 @@ describe("OracleVectorStore", () => {
       pageContent: "valid payload",
       metadata: { idx: 1 },
     });
-    const cyclicMetadata: Record<string, unknown> & { self?: unknown } = { idx: 2 };
+    const cyclicMetadata: Record<string, unknown> & { self?: unknown } = {
+      idx: 2,
+    };
     cyclicMetadata.self = cyclicMetadata;
     const invalidDoc = new Document({
       pageContent: "invalid payload",
@@ -601,7 +615,7 @@ describe("OracleVectorStore", () => {
     await expect(
       oraclevs.addDocuments([validDoc, invalidDoc], {
         ids: ["rollback-no-upsert-1", "rollback-no-upsert-2"],
-      }),
+      })
     ).rejects.toThrow(/circular structure|unexpected error/i);
 
     const connection = await pool.getConnection();
@@ -609,7 +623,7 @@ describe("OracleVectorStore", () => {
       const countResult = await connection.execute(
         `SELECT COUNT(*) AS TOTAL FROM "${tableName}"`,
         [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
       const row = countResult.rows?.[0] as
         | { TOTAL?: number; total?: number; "COUNT(*)"?: number }
@@ -629,7 +643,9 @@ describe("OracleVectorStore", () => {
       pageContent: "valid payload",
       metadata: { idx: 1 },
     });
-    const cyclicMetadata: Record<string, unknown> & { self?: unknown } = { idx: 2 };
+    const cyclicMetadata: Record<string, unknown> & { self?: unknown } = {
+      idx: 2,
+    };
     cyclicMetadata.self = cyclicMetadata;
     const invalidDoc = new Document({
       pageContent: "invalid payload",
@@ -640,7 +656,7 @@ describe("OracleVectorStore", () => {
       oraclevs.addDocuments([validDoc, invalidDoc], {
         ids: ["rollback-upsert-1", "rollback-upsert-2"],
         mutateOnDuplicate: true,
-      }),
+      })
     ).rejects.toThrow(/circular structure|unexpected error/i);
 
     const connection = await pool.getConnection();
@@ -648,7 +664,7 @@ describe("OracleVectorStore", () => {
       const countResult = await connection.execute(
         `SELECT COUNT(*) AS TOTAL FROM "${tableName}"`,
         [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
       const row = countResult.rows?.[0] as
         | { TOTAL?: number; total?: number; "COUNT(*)"?: number }
@@ -662,14 +678,15 @@ describe("OracleVectorStore", () => {
 
   test("initialize applies table description and column annotations", async () => {
     const annotatedTable = `${tableName}_meta`;
-    const computedDimensions = (await embedder.embedQuery(dbConfig.query)).length;
+    const computedDimensions = (await embedder.embedQuery(dbConfig.query))
+      .length;
     const annotatedConfig: OracleDBVSArgs = {
       ...dbConfig,
       tableName: annotatedTable,
       description: "Integration test table description",
       annotations: {
         external_id: "External identifier for documents",
-        metadata: "JSON metadata payload"
+        metadata: "JSON metadata payload",
       },
       vectorType: VectorType.SPARSE,
       format: VectorElementFormat.FLOAT64,
@@ -716,7 +733,10 @@ describe("OracleVectorStore", () => {
       const metadataComment = await fetchColumnComment("METADATA");
       expect(metadataComment).toBe("JSON metadata payload");
 
-      const meta = await getVectorColumnMetadata(metaConnection, annotatedTable);
+      const meta = await getVectorColumnMetadata(
+        metaConnection,
+        annotatedTable
+      );
       expect(meta.vectorDimensions).toBe(computedDimensions);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
       expect((meta.vectorType ?? "").toUpperCase()).toBe("SPARSE");
@@ -724,10 +744,7 @@ describe("OracleVectorStore", () => {
       if (metaConnection) {
         await metaConnection.close();
       }
-      await dropTablePurge(
-        connection as oracledb.Connection,
-        annotatedTable
-      );
+      await dropTablePurge(connection as oracledb.Connection, annotatedTable);
     }
   });
 
@@ -744,14 +761,20 @@ describe("OracleVectorStore", () => {
     let metaConnection: oracledb.Connection | undefined;
     try {
       metaConnection = await pool.getConnection();
-      const meta = await getVectorColumnMetadata(metaConnection, defaultVectorTable);
+      const meta = await getVectorColumnMetadata(
+        metaConnection,
+        defaultVectorTable
+      );
       const expectedDim = defaultStore.embeddingDimension ?? 0;
       expect(meta.vectorDimensions).toBe(expectedDim);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT32");
       expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await metaConnection?.close();
-      await dropTablePurge(connection as oracledb.Connection, defaultVectorTable);
+      await dropTablePurge(
+        connection as oracledb.Connection,
+        defaultVectorTable
+      );
     }
   });
 
@@ -835,7 +858,7 @@ describe("OracleVectorStore", () => {
           metadata: {},
         }),
       ],
-      { ids: ["binary-1"] },
+      { ids: ["binary-1"] }
     );
 
     let metaConnection: oracledb.Connection | undefined;
@@ -843,7 +866,7 @@ describe("OracleVectorStore", () => {
       metaConnection = await pool.getConnection();
       const result = await metaConnection.execute(
         `SELECT embedding FROM ${binaryStore.tableName} WHERE external_id = :id`,
-        ["binary-1"],
+        ["binary-1"]
       );
       const row = result.rows?.[0] as unknown[] | undefined;
       const stored = row?.[0];
@@ -854,7 +877,7 @@ describe("OracleVectorStore", () => {
         ? new Uint8Array(
             (stored as ArrayBufferView).buffer,
             (stored as ArrayBufferView).byteOffset,
-            (stored as ArrayBufferView).byteLength,
+            (stored as ArrayBufferView).byteLength
           )
         : Uint8Array.from(stored as number[]);
       const unpacked = unpackBinaryVector(rawBytes, dimension);
@@ -890,7 +913,7 @@ describe("OracleVectorStore", () => {
           metadata: {},
         }),
       ],
-      { ids: ["sparse-1"] },
+      { ids: ["sparse-1"] }
     );
 
     let metaConnection: oracledb.Connection | undefined;
@@ -898,7 +921,7 @@ describe("OracleVectorStore", () => {
       metaConnection = await pool.getConnection();
       const result = await metaConnection.execute(
         `SELECT embedding FROM ${sparseStore.tableName} WHERE external_id = :id`,
-        ["sparse-1"],
+        ["sparse-1"]
       );
       const row = result.rows?.[0] as unknown[] | undefined;
       const stored = row?.[0] as oracledb.SparseVector;
@@ -943,7 +966,7 @@ describe("OracleVectorStore", () => {
           metadata: {},
         }),
       ],
-      { ids: ["int8-1"] },
+      { ids: ["int8-1"] }
     );
 
     try {
@@ -982,16 +1005,24 @@ describe("OracleVectorStore", () => {
       const result = await metaConnection.execute(
         `SELECT external_id, metadata FROM ${store.tableName}`,
         [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
       const row =
         (result.rows?.[0] as
-          | { EXTERNAL_ID?: string; external_id?: string; METADATA?: Metadata; metadata?: Metadata }
+          | {
+              EXTERNAL_ID?: string;
+              external_id?: string;
+              METADATA?: Metadata;
+              metadata?: Metadata;
+            }
           | undefined) ?? {};
       const persistedId = row.EXTERNAL_ID ?? row.external_id;
       const persistedMetadata = row.METADATA ?? row.metadata;
       expect(persistedId).toBe(docId);
-      expect(persistedMetadata).toMatchObject({ id: docId, note: "stored from metadata" });
+      expect(persistedMetadata).toMatchObject({
+        id: docId,
+        note: "stored from metadata",
+      });
     } finally {
       await metaConnection?.close();
       await dropTablePurge(connection as oracledb.Connection, metadataIdTable);
@@ -1018,16 +1049,18 @@ describe("OracleVectorStore", () => {
       const sampleVector = await embedder.embedQuery("quoted table test");
       await quotedStore.addVectors(
         [sampleVector],
-        [new Document({ pageContent: "quoted table test", metadata: {} })],
+        [new Document({ pageContent: "quoted table test", metadata: {} })]
       );
 
       metaConnection = await pool.getConnection();
       const countResult = await metaConnection.execute(
         `SELECT COUNT(*) AS CNT FROM ${quotedTable}`,
         [],
-        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
-      const row = countResult.rows?.[0] as { CNT?: number; cnt?: number } | undefined;
+      const row = countResult.rows?.[0] as
+        | { CNT?: number; cnt?: number }
+        | undefined;
       const rowCount = row?.CNT ?? row?.cnt ?? 0;
       expect(rowCount).toBe(1);
     } finally {
@@ -1081,7 +1114,10 @@ describe("OracleVectorStore", () => {
       ).rejects.toThrow(/Sparse vector type requires a vector format/i);
     } finally {
       await localConnection?.close();
-      await dropTablePurge(connection as oracledb.Connection, vectorTypeOnlyTable);
+      await dropTablePurge(
+        connection as oracledb.Connection,
+        vectorTypeOnlyTable
+      );
     }
   });
 
@@ -1095,11 +1131,17 @@ describe("OracleVectorStore", () => {
         vectorType: "nonsense" as unknown as VectorType,
       });
 
-      const meta = await getVectorColumnMetadata(localConnection, fallbackTypeTable);
+      const meta = await getVectorColumnMetadata(
+        localConnection,
+        fallbackTypeTable
+      );
       expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await localConnection?.close();
-      await dropTablePurge(connection as oracledb.Connection, fallbackTypeTable);
+      await dropTablePurge(
+        connection as oracledb.Connection,
+        fallbackTypeTable
+      );
     }
   });
 
@@ -1113,12 +1155,18 @@ describe("OracleVectorStore", () => {
         format: "float128" as unknown as VectorElementFormat,
       });
 
-      const meta = await getVectorColumnMetadata(localConnection, fallbackFormatTable);
+      const meta = await getVectorColumnMetadata(
+        localConnection,
+        fallbackFormatTable
+      );
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT32");
       expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
     } finally {
       await localConnection?.close();
-      await dropTablePurge(connection as oracledb.Connection, fallbackFormatTable);
+      await dropTablePurge(
+        connection as oracledb.Connection,
+        fallbackFormatTable
+      );
     }
   });
 
@@ -1132,7 +1180,10 @@ describe("OracleVectorStore", () => {
         format: VectorElementFormat.FLOAT64,
       });
 
-      const meta = await getVectorColumnMetadata(localConnection, explicitTable);
+      const meta = await getVectorColumnMetadata(
+        localConnection,
+        explicitTable
+      );
       expect(meta.vectorDimensions).toBe(96);
       expect((meta.vectorFormat ?? "").toUpperCase()).toBe("FLOAT64");
       expect((meta.vectorType ?? "").toUpperCase()).toBe("DENSE");
@@ -1505,7 +1556,10 @@ describe("OracleVectorStore", () => {
       expect(planText).toContain("VECTOR$embeddings_idx");
       expect(planText).toMatch(/TABLE ACCESS BY USER ROWID/i);
       expect(planText).toMatch(
-        new RegExp(normalizedTableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
+        new RegExp(
+          normalizedTableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+          "i"
+        )
       );
     } finally {
       await connection?.execute(
@@ -1709,13 +1763,15 @@ describe("OracleVectorStore", () => {
 
     await oraclevs.addDocuments(documents);
 
-    const customQuery = await embedder.embedQuery("urban development in smart cities");
+    const customQuery = await embedder.embedQuery(
+      "urban development in smart cities"
+    );
     const mmrResults = await oraclevs.maxMarginalRelevanceSearchByVector(
       customQuery,
       {
         k: 2,
         fetchK: 3,
-      },
+      }
     );
 
     expect(mmrResults).toHaveLength(2);
@@ -1787,5 +1843,4 @@ describe("OracleVectorStore", () => {
       await dropTablePurge(connection as oracledb.Connection, fallbackTable);
     }
   });
-
 });
