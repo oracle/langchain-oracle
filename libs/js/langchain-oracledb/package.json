@@ -12,7 +12,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oracle/langchain-oracle.git",
-    "directory": "libs/js/oracledb/langchain-oracledb"
+    "directory": "libs/js/langchain-oracledb"
   },
   "homepage": "https://github.com/oracle/langchain-oracle/tree/main/libs/js/langchain-oracledb",
   "scripts": {
