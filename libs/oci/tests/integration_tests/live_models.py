@@ -21,9 +21,10 @@ which is also how to run the suite against a dedicated endpoint.
 
 Catalog access reuses the suite's usual variables: ``OCI_COMPARTMENT_ID``
 (required), ``OCI_REGION`` (default ``us-chicago-1``), ``OCI_AUTH_TYPE``
-(default ``SECURITY_TOKEN``) and ``OCI_CONFIG_PROFILE`` (default ``DEFAULT``).
-When the catalog can't be read every role comes back empty, so parametrized
-tests collect as skipped instead of failing.
+(default ``API_KEY``, the same default the tests themselves use) and
+``OCI_CONFIG_PROFILE`` (default ``DEFAULT``). When the catalog can't be read
+every role comes back empty, so parametrized tests collect as skipped instead
+of failing; the warning says why.
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from langchain_oci.utils.vision import IMAGE_EMBEDDING_MODELS, VISION_MODELS
 
 VENDORS = ("meta", "cohere", "google", "openai", "xai")
+
+# Must match the default the tests pass to the chat/embedding classes, or an
+# API-key setup with ``OCI_AUTH_TYPE`` unset would read an empty catalog and
+# skip everything while the tests themselves could have run.
+DEFAULT_AUTH_TYPE = "API_KEY"
 
 # Name fragments of variants the plain chat endpoint can't serve, or that
 # need inputs the generic chat tests don't send.
@@ -83,7 +89,7 @@ def _catalog() -> Dict[str, List[Any]]:
         region = os.environ.get("OCI_REGION", "us-chicago-1")
         client = oci.generative_ai.GenerativeAiClient(
             **create_oci_client_kwargs(
-                auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
+                auth_type=os.environ.get("OCI_AUTH_TYPE", DEFAULT_AUTH_TYPE),
                 service_endpoint=f"https://generativeai.{region}.oci.oraclecloud.com",
                 auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
             )
