@@ -12,6 +12,9 @@ export const ErrorCode = {
   VECTOR_INVALID_INDEX_PARAMETERS: "VECTOR_INVALID_INDEX_PARAMETERS",
   STATE_INVALID: "STATE_INVALID",
   QUERY_NO_ROWS_FOUND: "QUERY_NO_ROWS_FOUND",
+  CACHE_DESERIALIZATION_FAILED: "CACHE_DESERIALIZATION_FAILED",
+  HISTORY_DESERIALIZATION_FAILED: "HISTORY_DESERIALIZATION_FAILED",
+  HISTORY_REPLACEMENT_FAILED: "HISTORY_REPLACEMENT_FAILED",
   SYSTEM_ERROR: "SYSTEM_ERROR",
 } as const;
 
@@ -34,6 +37,9 @@ type ErrorArgs = {
   [ErrorCode.VECTOR_INVALID_INDEX_PARAMETERS]: [invalidKeys: string[]];
   [ErrorCode.STATE_INVALID]: [message: string];
   [ErrorCode.QUERY_NO_ROWS_FOUND]: [];
+  [ErrorCode.CACHE_DESERIALIZATION_FAILED]: [];
+  [ErrorCode.HISTORY_DESERIALIZATION_FAILED]: [];
+  [ErrorCode.HISTORY_REPLACEMENT_FAILED]: [];
   [ErrorCode.SYSTEM_ERROR]: [message: string];
 };
 
@@ -60,6 +66,31 @@ export class LangChainOracleError extends Error {
     // Save the raw node-oracledb error (or validation error) for root-cause analysis
     this.cause = cause;
   }
+}
+
+export function handleError(error: unknown): never {
+  // Preserve LangChainOracleError instances created by this package instead of
+  // wrapping them again as generic SYSTEM_ERROR failures.
+  if (isLangChainOracleError(error)) {
+    throw error;
+  }
+
+  // Preserve a useful message for both real Error instances and thrown
+  // object literals shaped like { message: string }.
+  const details =
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+      ? error.message
+      : String(error);
+
+  // Preserve the original cause when wrapping an unexpected error.
+  throw createErrorFromCodeWithCause(
+    ErrorCode.SYSTEM_ERROR,
+    error,
+    `An unexpected error occurred during the operation. ${details}`
+  );
 }
 
 export function createError(
@@ -104,6 +135,12 @@ const errorMessageFactories: {
     `Invalid parameter(s): ${invalidKeys.join(", ")}`,
   [ErrorCode.STATE_INVALID]: (message) => message,
   [ErrorCode.QUERY_NO_ROWS_FOUND]: () => "No rows found.",
+  [ErrorCode.CACHE_DESERIALIZATION_FAILED]: () =>
+    "Failed to deserialize cached generations.",
+  [ErrorCode.HISTORY_DESERIALIZATION_FAILED]: () =>
+    "Failed to deserialize a stored history message.",
+  [ErrorCode.HISTORY_REPLACEMENT_FAILED]: () =>
+    "Failed to replace stored history messages.",
   [ErrorCode.SYSTEM_ERROR]: (message) => message,
 };
 
