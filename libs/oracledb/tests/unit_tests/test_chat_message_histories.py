@@ -51,6 +51,43 @@ def test_chat_history_default_index_name_is_truncated_when_needed() -> None:
     assert index_name.startswith("idx_")
 
 
+def test_chat_history_default_index_name_fits_byte_limit_when_truncated() -> None:
+    table_name = "T_" + ("\u00e9" * 50)
+    session_column = "S_" + ("x" * 70)
+
+    index_name = _default_index_name(table_name, session_column)
+
+    assert len(index_name.encode("utf-8")) <= 128
+    assert index_name.startswith("idx_")
+
+
+def test_chat_history_default_index_name_fits_byte_limit_without_truncation() -> None:
+    table_name = "\u00e9" * 45
+    session_column = "x" * 50
+
+    index_name = _default_index_name(table_name, session_column)
+
+    assert len(index_name.encode("utf-8")) <= 128
+    assert index_name.startswith("idx_")
+
+
+def test_chat_history_default_index_name_truncates_on_character_boundary() -> None:
+    table_name = ("T" * 114) + "\u00e9\u00e9"
+    session_column = "x" * 20
+
+    index_name = _default_index_name(table_name, session_column)
+
+    assert len(index_name.encode("utf-8")) <= 128
+    assert "\ufffd" not in index_name
+
+
+def test_chat_history_default_index_name_is_stable_for_ascii_names() -> None:
+    assert _default_index_name("t", "s") == "idx_t_s"
+    assert _default_index_name("t" * 90, "s" * 60) == (
+        "idx_" + ("t" * 90) + "_" + ("s" * 24) + "_493853b4"
+    )
+
+
 def test_message_payload_rejects_non_string_values() -> None:
     with pytest.raises(TypeError, match="Expected Oracle chat history payload"):
         _message_payload({"not": "a string"})
