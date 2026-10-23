@@ -54,6 +54,20 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+from ..live_models import chat_model, chat_models, family_models
+
+_META = chat_models("meta", 2)
+_COHERE = chat_models("cohere", 1)
+_META_COHERE = _META[:1] + _COHERE
+_GOOGLE = chat_models("google", 1)
+_LLAMA_4 = family_models(r"^meta\.llama-4-", n=1)
+_GROK_NON_REASONING = family_models(r"^xai\..*non-reasoning$", n=1)
+_OPENAI = chat_models("openai", 3)
+
+
+def _live_model(vendor: str) -> str:
+    return chat_model(vendor) or pytest.skip(f"no live {vendor} chat model")
+
 
 def create_chat_model(model_id: str, response_format=None, **kwargs):
     """Create a ChatOCIGenAI instance for testing."""
@@ -84,13 +98,7 @@ def create_chat_model(model_id: str, response_format=None, **kwargs):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-3.3-70b-instruct",
-        "cohere.command-r-plus-08-2024",
-    ],
-)
+@pytest.mark.parametrize("model_id", _META_COHERE)
 def test_json_mode_basic(model_id: str):
     """Test basic JSON mode with response_format parameter.
 
@@ -120,7 +128,7 @@ def test_json_mode_basic(model_id: str):
 @pytest.mark.requires("oci")
 def test_json_mode_meta_llama():
     """Test JSON mode specifically with Meta Llama models."""
-    model_id = "meta.llama-3.3-70b-instruct"
+    model_id = _live_model("meta")
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
     response = llm.invoke(
@@ -151,7 +159,7 @@ def test_json_mode_meta_llama():
 @pytest.mark.requires("oci")
 def test_json_mode_cohere():
     """Test JSON mode specifically with Cohere models."""
-    model_id = "cohere.command-r-plus-08-2024"
+    model_id = _live_model("cohere")
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
     response = llm.invoke(
@@ -176,13 +184,7 @@ def test_json_mode_cohere():
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-3.3-70b-instruct",
-        "cohere.command-r-plus-08-2024",
-    ],
-)
+@pytest.mark.parametrize("model_id", _META_COHERE)
 def test_with_structured_output_json_mode(model_id: str):
     """Test with_structured_output using json_mode method.
 
@@ -217,13 +219,7 @@ def test_with_structured_output_json_mode(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-3.3-70b-instruct",
-        "cohere.command-r-08-2024",
-    ],
-)
+@pytest.mark.parametrize("model_id", _META_COHERE)
 def test_with_structured_output_json_schema(model_id: str):
     """Test with_structured_output using json_schema method.
 
@@ -270,7 +266,7 @@ def test_response_format_via_model_kwargs():
     if not compartment_id:
         pytest.skip("OCI_COMPARTMENT_ID not set")
 
-    model_id = "meta.llama-3.3-70b-instruct"
+    model_id = _live_model("meta")
     region = os.getenv("OCI_REGION", "us-chicago-1")
     endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
@@ -305,7 +301,7 @@ def test_response_format_via_model_kwargs():
 @pytest.mark.requires("oci")
 def test_json_mode_complex_nested_structure():
     """Test JSON mode with a more complex nested structure request."""
-    model_id = "cohere.command-r-plus-08-2024"
+    model_id = _live_model("cohere")
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
     response = llm.invoke(
@@ -340,7 +336,7 @@ def test_json_mode_complex_nested_structure():
 @pytest.mark.requires("oci")
 def test_response_format_class_level():
     """Test response_format set at class initialization level."""
-    model_id = "meta.llama-3.3-70b-instruct"
+    model_id = _live_model("meta")
     llm = create_chat_model(model_id, response_format={"type": "JSON_OBJECT"})
 
     # Should work without bind()
@@ -365,17 +361,7 @@ def test_response_format_class_level():
 
 @pytest.mark.requires("oci")
 @pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-3.3-70b-instruct",
-        "google.gemini-2.5-flash",
-        "meta.llama-4-scout-17b-16e-instruct",
-        "cohere.command-a-03-2025",
-        "xai.grok-4-1-fast-non-reasoning",
-        "openai.gpt-5.1",
-        "openai.gpt-5.2",
-        "openai.gpt-4.1",
-    ],
+    "model_id", _META + _GOOGLE + _COHERE + _GROK_NON_REASONING + _OPENAI
 )
 def test_structured_output_no_docstring(model_id: str):
     """Pydantic models without docstrings must work with with_structured_output.
@@ -403,18 +389,7 @@ def test_structured_output_no_docstring(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-3.3-70b-instruct",
-        "google.gemini-2.5-flash",
-        "meta.llama-4-scout-17b-16e-instruct",
-        "xai.grok-4-1-fast-non-reasoning",
-        "openai.gpt-5.1",
-        "openai.gpt-5.2",
-        "openai.gpt-4.1",
-    ],
-)
+@pytest.mark.parametrize("model_id", _META + _GOOGLE + _GROK_NON_REASONING + _OPENAI)
 def test_structured_output_with_enum(model_id: str):
     """Structured output with enum fields and varied input."""
     from enum import Enum
@@ -446,16 +421,7 @@ def test_structured_output_with_enum(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "google.gemini-2.5-flash",
-        "meta.llama-4-scout-17b-16e-instruct",
-        "openai.gpt-5.1",
-        "openai.gpt-5.2",
-        "openai.gpt-4.1",
-    ],
-)
+@pytest.mark.parametrize("model_id", _GOOGLE + _LLAMA_4 + _OPENAI)
 def test_structured_output_nested(model_id: str):
     """Structured output with nested Pydantic models and lists."""
     from typing import List
@@ -490,17 +456,7 @@ def test_structured_output_nested(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "google.gemini-2.5-flash",
-        "meta.llama-4-scout-17b-16e-instruct",
-        "xai.grok-4-1-fast-non-reasoning",
-        "openai.gpt-5.1",
-        "openai.gpt-5.2",
-        "openai.gpt-4.1",
-    ],
-)
+@pytest.mark.parametrize("model_id", _GOOGLE + _LLAMA_4 + _GROK_NON_REASONING + _OPENAI)
 def test_structured_output_deeply_nested(model_id: str):
     """Structured output with multiple nesting levels and mixed types."""
     from enum import Enum
@@ -555,14 +511,7 @@ def test_structured_output_deeply_nested(model_id: str):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "openai.gpt-5.1",
-        "openai.gpt-5.2",
-        "openai.gpt-4.1",
-    ],
-)
+@pytest.mark.parametrize("model_id", _OPENAI)
 def test_structured_output_openai_models(model_id: str):
     """Structured output on OpenAI commercial models via OCI GenAI.
 

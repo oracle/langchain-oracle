@@ -50,7 +50,14 @@ from langchain_core.tools import tool
 
 from langchain_oci import ChatOCIGenAI, create_deepagents_agent
 
-from .conftest import adb_is_reachable, get_adb_config
+from ..live_models import family_models
+from .conftest import (
+    adb_is_reachable,
+    deepagents_model,
+    gemini_model,
+    gemini_pro_model,
+    get_adb_config,
+)
 
 
 # Sample research tools for testing
@@ -279,7 +286,7 @@ class TestOCIDeepAgentIntegration:
     @pytest.fixture
     def model_id(self) -> str:
         """Use the faster Gemini variant for live integration reliability."""
-        return "google.gemini-2.5-flash"
+        return gemini_model()
 
     @pytest.fixture
     def compartment_id(self) -> str:
@@ -688,7 +695,7 @@ def test_research_task_completion(task: dict) -> None:
 
     agent = create_deepagents_agent(
         tools=[search_knowledge_base, get_statistics, analyze_trends],
-        model_id="google.gemini-2.5-flash",
+        model_id=gemini_model(),
         compartment_id=compartment_id,
         service_endpoint=service_endpoint,
         auth_type=auth_type,
@@ -744,7 +751,7 @@ class TestOCIDeepAgentAsyncIntegration:
     @pytest.fixture
     def model_id(self) -> str:
         """Use the faster Gemini variant for live async integration reliability."""
-        return "google.gemini-2.5-flash"
+        return gemini_model()
 
     @pytest.fixture
     def compartment_id(self) -> str:
@@ -853,13 +860,7 @@ class TestOCIDeepAgentAsyncIntegration:
     skip_if_no_deepagents(),
     reason="deepagents package not installed",
 )
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "google.gemini-2.5-pro",
-        "google.gemini-2.5-flash",
-    ],
-)
+@pytest.mark.parametrize("model_id", family_models(r"^google\.gemini-.*-(pro|flash)$"))
 def test_model_variants(model_id: str) -> None:
     """Test deep agent works with different model variants."""
     from langchain_oci import create_deepagents_agent
@@ -915,7 +916,7 @@ def _make_oci_kwargs() -> dict:
         ),
         "auth_type": os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
         "auth_profile": os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
-        "model_id": os.environ.get("OCI_DEEPAGENTS_MODEL", "google.gemini-2.5-flash"),
+        "model_id": deepagents_model(),
         "temperature": 0.0,
         "max_tokens": 1024,
     }
@@ -1108,7 +1109,7 @@ class TestDeepAgentResponseFormat:
         # handles unreliably (it frequently returns ``malformed_function_call``
         # with empty content). Pin the more capable pro variant regardless of
         # the OCI_DEEPAGENTS_MODEL default used elsewhere.
-        oci_kwargs = {**_make_oci_kwargs(), "model_id": "google.gemini-2.5-pro"}
+        oci_kwargs = {**_make_oci_kwargs(), "model_id": gemini_pro_model()}
 
         agent = create_deepagents_agent(
             tools=[search_knowledge_base],

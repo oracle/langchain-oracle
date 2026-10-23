@@ -16,7 +16,8 @@ valid arguments — on both the sync and async streaming paths.
 - ``OCI_AUTH_TYPE`` / ``OCI_CONFIG_PROFILE`` — auth configuration
   (defaults: ``API_KEY`` / ``API_KEY_AUTH``).
 - ``OCI_GPT_PARALLEL_MODELS`` — comma-separated GPT model ids to
-  exercise (default ``openai.gpt-4.1``, the model from issue #253).
+  exercise (default: live ``gpt-4.1``, the model from issue #253, else the
+  newest live OpenAI chat model).
 """
 
 import os
@@ -29,9 +30,13 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
-from .conftest import _env_list
+from ..live_models import chat_models, env_list, family_models
 
-GPT_PARALLEL_MODELS = _env_list("OCI_GPT_PARALLEL_MODELS", ["openai.gpt-4.1"])
+GPT_PARALLEL_MODELS = (
+    env_list("OCI_GPT_PARALLEL_MODELS")
+    or family_models(r"^openai\.gpt-4\.1$")
+    or chat_models("openai")
+)
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("OCI_COMPARTMENT_ID"),

@@ -15,9 +15,10 @@ absent, so partial environments still produce a clean run.
 - OCI_CONFIG_PROFILE: profile name in ~/.oci/config (default "DEFAULT")
 - OCI_AUTH_TYPE: "API_KEY" or "SECURITY_TOKEN" (default "API_KEY")
 - OCI_REGION: OCI region (default "us-chicago-1")
-- OCI_DEEPAGENTS_MODEL: model id for deepagents tests (e.g.
-  "google.gemini-2.5-flash"; pro recommended for structured-output tests)
-- OCI_CHAT_MODEL: model id for chat / react tests
+- OCI_DEEPAGENTS_MODEL: model id for deepagents tests (default: a live
+  Gemini model, pro preferred for structured-output tests)
+- OCI_CHAT_MODEL: model id for chat / react tests (default: the newest live
+  Meta chat model)
 
 ### OpenSearch (skipped if any missing)
 - OPENSEARCH_ENDPOINT, OPENSEARCH_INDEX, OPENSEARCH_USERNAME,
@@ -35,6 +36,8 @@ absent, so partial environments still produce a clean run.
 import os
 
 import pytest
+
+from ..live_models import chat_model, family_models
 
 # =============================================================================
 # Configuration Helpers
@@ -88,6 +91,41 @@ def get_oci_config() -> dict:
         "deepagents_model": os.environ.get("OCI_DEEPAGENTS_MODEL"),
         "deepagents_max_output_tokens": int(max_output) if max_output else None,
     }
+
+
+def gemini_pro_model() -> str:
+    """A live Gemini model, preferring a ``-pro`` tier; skips when none is live."""
+    return (
+        next(iter(family_models(r"^google\.gemini-.*-pro")), None)
+        or chat_model("google")
+        or pytest.skip("no live Gemini chat model")
+    )
+
+
+def gemini_model() -> str:
+    """A live Gemini model, preferring the faster flash tier; skips when none."""
+    return (
+        next(iter(family_models(r"^google\.gemini-.*-flash$")), None)
+        or chat_model("google")
+        or pytest.skip("no live Gemini chat model")
+    )
+
+
+def deepagents_model(prefer_pro: bool = False) -> str:
+    """``OCI_DEEPAGENTS_MODEL`` or a live Gemini model."""
+    pinned = os.environ.get("OCI_DEEPAGENTS_MODEL")
+    if pinned:
+        return pinned
+    return gemini_pro_model() if prefer_pro else gemini_model()
+
+
+def react_chat_model() -> str:
+    """``OCI_CHAT_MODEL`` or the newest live Meta chat model."""
+    return (
+        os.environ.get("OCI_CHAT_MODEL")
+        or chat_model("meta")
+        or pytest.skip("no live Meta chat model")
+    )
 
 
 # =============================================================================

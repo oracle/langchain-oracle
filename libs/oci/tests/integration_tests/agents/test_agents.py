@@ -13,10 +13,12 @@ from .conftest import (
     create_adb_store,
     create_embedding_model,
     create_opensearch_store,
+    deepagents_model,
     get_adb_config,
     get_oci_config,
     get_opensearch_config,
     opensearch_is_reachable,
+    react_chat_model,
 )
 
 # deepagents requires Python 3.11+; Python 3.14 not yet tested
@@ -25,8 +27,7 @@ _SKIP_DEEPAGENTS = sys.version_info < (3, 11) or sys.version_info >= (3, 14)
 
 @pytest.mark.requires("oci", "opensearchpy", "langgraph")
 @pytest.mark.skipif(
-    not opensearch_is_reachable() or not get_oci_config().get("chat_model"),
-    reason="OpenSearch or OCI chat model not configured",
+    not opensearch_is_reachable(), reason="OpenSearch not configured or reachable"
 )
 class TestReactAgentWithOpenSearch:
     """Test ReAct agent with real OpenSearch datastore."""
@@ -55,7 +56,7 @@ class TestReactAgentWithOpenSearch:
         )
 
         agent = create_oci_agent(
-            model_id=oci_config["chat_model"],
+            model_id=react_chat_model(),
             tools=tools,
             compartment_id=oci_config["compartment_id"],
             service_endpoint=oci_config["service_endpoint"],
@@ -102,7 +103,7 @@ class TestDeepagentsAgentWithOpenSearch:
         from langchain_oci import create_deepagents_agent
 
         oci_config = get_oci_config()
-        model_id = oci_config.get("deepagents_model") or "google.gemini-2.5-pro"
+        model_id = deepagents_model(prefer_pro=True)
 
         agent = create_deepagents_agent(
             datastores=stores,
@@ -150,7 +151,7 @@ class TestDeepagentsAgentWithADB:
         from langchain_oci import create_deepagents_agent
 
         oci_config = get_oci_config()
-        model_id = oci_config.get("deepagents_model") or "google.gemini-2.5-pro"
+        model_id = deepagents_model(prefer_pro=True)
 
         agent = create_deepagents_agent(
             datastores=stores,
@@ -243,7 +244,7 @@ class TestResearchDocumentGeneration:
         from langchain_oci import create_deepagents_agent
 
         oci_config = get_oci_config()
-        model_id = oci_config.get("deepagents_model") or "google.gemini-2.5-pro"
+        model_id = deepagents_model(prefer_pro=True)
 
         stores: dict = {}
         embedding_model = None

@@ -31,6 +31,7 @@ from langchain_oci.chat_models import ChatOCIGenAI
 # =============================================================================
 # Model lists are env-driven via conftest so deployments can swap models
 # without editing test source. See conftest.py for env-var documentation.
+from ..live_models import chat_model, family_models, vision_models
 from .conftest import cohere_models, grok_models, llama_models, openai_models
 
 LLAMA_MODELS = llama_models()
@@ -153,7 +154,10 @@ def test_llama_structured_output(model_id: str):
 @pytest.mark.requires("oci")
 def test_llama_streaming():
     """Test streaming on Llama models."""
-    llm = create_llm("meta.llama-4-maverick-17b-128e-instruct-fp8")
+    model_id = chat_model("meta", env_var="OCI_LLAMA_MODELS") or pytest.skip(
+        "no live Meta Llama chat model"
+    )
+    llm = create_llm(model_id)
 
     chunks = []
     for chunk in llm.stream([HumanMessage(content="Count 1 to 5")]):
@@ -244,7 +248,10 @@ def test_grok_structured_output(model_id: str):
 @pytest.mark.requires("oci")
 def test_grok_streaming():
     """Test streaming on Grok models."""
-    llm = create_llm("xai.grok-3-mini-fast")
+    model_id = chat_model("xai", env_var="OCI_GROK_MODELS") or pytest.skip(
+        "no live xAI Grok chat model"
+    )
+    llm = create_llm(model_id)
 
     chunks = []
     for chunk in llm.stream([HumanMessage(content="Count 1-3")]):
@@ -346,10 +353,10 @@ def test_same_prompt_different_models():
     prompt = "What is the capital of France? Answer in one word."
 
     models_to_test = [
-        "meta.llama-4-maverick-17b-128e-instruct-fp8",
-        "cohere.command-a-03-2025",
-        "xai.grok-3-mini-fast",
+        m for v in ("meta", "cohere", "xai") if (m := chat_model(v)) is not None
     ]
+    if not models_to_test:
+        pytest.skip("no live chat models")
 
     responses = {}
     for model_id in models_to_test:
@@ -375,10 +382,9 @@ def test_tool_calling_consistency():
         return 9.99
 
     # Only test Llama models - Cohere has different tool call format
-    models_with_tools = [
-        "meta.llama-4-maverick-17b-128e-instruct-fp8",
-        "meta.llama-4-scout-17b-16e-instruct",
-    ]
+    models_with_tools = family_models(r"^meta\.llama-4-", n=2)
+    if not models_with_tools:
+        pytest.skip("no live Llama 4 models")
 
     for model_id in models_with_tools:
         llm = create_llm(model_id)
@@ -402,7 +408,10 @@ def test_tool_calling_consistency():
 def test_llama3_vision_model_exists():
     """Verify vision-capable Llama model can be instantiated."""
     # Note: Actual vision testing would require image input support
-    llm = create_llm("meta.llama-3.2-90b-vision-instruct")
+    model_id = next(
+        (m for m in vision_models() if m.startswith("meta.")), None
+    ) or pytest.skip("no live vision-capable Llama model")
+    llm = create_llm(model_id)
     response = llm.invoke([HumanMessage(content="Describe what you can do")])
 
     assert isinstance(response, AIMessage)
@@ -411,8 +420,11 @@ def test_llama3_vision_model_exists():
 @pytest.mark.requires("oci")
 def test_model_with_custom_kwargs():
     """Test models with custom generation parameters."""
+    model_id = chat_model("meta", env_var="OCI_LLAMA_MODELS") or pytest.skip(
+        "no live Meta Llama chat model"
+    )
     llm = create_llm(
-        "meta.llama-4-maverick-17b-128e-instruct-fp8",
+        model_id,
         temperature=0.7,
         max_tokens=100,
         top_p=0.9,
@@ -432,10 +444,9 @@ def test_model_with_custom_kwargs():
 @pytest.mark.requires("oci")
 def test_fast_models_respond_quickly():
     """Test that 'fast' model variants respond (existence check)."""
-    fast_models = [
-        "xai.grok-3-fast",
-        "xai.grok-3-mini-fast",
-    ]
+    fast_models = family_models(r"^xai\.grok-.*fast", n=2)
+    if not fast_models:
+        pytest.skip("no live 'fast' Grok variants")
 
     for model_id in fast_models:
         llm = create_llm(model_id, max_tokens=50)

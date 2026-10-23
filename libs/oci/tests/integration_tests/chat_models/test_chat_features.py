@@ -27,20 +27,24 @@ from pydantic import BaseModel, Field
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
-# Model lists are env-driven via conftest so deployments can swap models
-# without editing this test module. See conftest.py for the env vars.
-from .conftest import reasoning_models, standard_models
+from ..live_models import chat_model, chat_models, env_list, reasoning_models
 
 
-def get_config():
+def _default_model_id() -> str:
+    return (
+        os.environ.get("OCI_MODEL_ID")
+        or chat_model("meta")
+        or pytest.skip("no live Meta chat model")
+    )
+
+
+def get_config(with_model: bool = True):
     """Get test configuration."""
     compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
     if not compartment_id:
         pytest.skip("OCI_COMPARTMENT_ID not set")
     return {
-        "model_id": os.environ.get(
-            "OCI_MODEL_ID", "meta.llama-4-maverick-17b-128e-instruct-fp8"
-        ),
+        "model_id": _default_model_id() if with_model else None,
         "service_endpoint": os.environ.get(
             "OCI_GENAI_ENDPOINT",
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
@@ -441,7 +445,10 @@ def test_long_context_handling(llm):
 # =============================================================================
 
 REASONING_MODELS = reasoning_models()
-STANDARD_MODELS = standard_models()
+# Meta and Cohere chat models never return reasoning_content.
+STANDARD_MODELS = env_list("OCI_STANDARD_MODELS") or [
+    m for vendor in ("meta", "cohere") for m in chat_models(vendor)
+]
 
 # ``.content_blocks`` exists on langchain-core >= 1.0 only (the Python 3.10+
 # install); on the 3.9 / core-0.3.x matrix it is absent.
@@ -468,7 +475,7 @@ def _content_blocks(message: Any) -> list:
 
 def _make_reasoning_llm(model_id: str) -> ChatOCIGenAI:
     """Create LLM for reasoning content tests."""
-    config = get_config()
+    config = get_config(with_model=False)
     # OpenAI models require 'max_completion_tokens' instead of 'max_tokens'
     if model_id.startswith("openai."):
         model_kwargs = {"max_completion_tokens": 100, "temperature": 1.0}
@@ -578,7 +585,7 @@ def test_standard_model_has_no_reasoning_content(model_id: str) -> None:
 @pytest.mark.requires("oci")
 def test_usage_metadata_with_null_tokens() -> None:
     """Usage metadata should handle None token fields gracefully."""
-    llm = _make_reasoning_llm("meta.llama-3.3-70b-instruct")
+    llm = _make_reasoning_llm(_default_model_id())
     result = llm.invoke([HumanMessage(content="Say hello")])
 
     if hasattr(result, "usage_metadata") and result.usage_metadata is not None:
