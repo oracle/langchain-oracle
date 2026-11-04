@@ -42,6 +42,16 @@ You can do so by adding an appropriate field to your project's `package.json` li
 
 The field you need depends on the package manager you're using, but we recommend adding a field for the common `yarn`, `npm`, and `pnpm` to maximize compatibility.
 
+## Transaction management
+
+Database operations may commit or roll back transactions depending on the operation.
+
+When an existing `oracledb.Connection` is supplied, the integration uses that connection directly. Any `commit()` or `rollback()` performed by the integration affects all uncommitted work on that connection, including unrelated application statements. Database initialization and other DDL operations may also implicitly commit the current transaction.
+
+When an `oracledb.Pool` is supplied, the integration acquires a connection for its operations. Commits and rollbacks on that connection do not affect transactions on other connections checked out from the same pool.
+
+For operations that should be independent of application transactions, use an `oracledb.Pool` or a dedicated connection. If using a custom connection provider, ensure it does not return a connection participating in an unrelated transaction.
+
 ## Document Loaders
 
 This package includes a document loader for loading documents from different sources and file formats.
@@ -98,6 +108,51 @@ await oraclevs.initialize();
 
 await oraclevs.addDocuments(docs);
 const results = await oraclevs.similaritySearch("hello!", 3);
+```
+## Caches
+
+Python and TypeScript exact and semantic cache tables are not currently interchangeable. Use separate table names for each implementation.
+
+### Exact Cache
+
+This package includes an exact cache for storing and retrieving model generations by prompt and model configuration key.
+
+```typescript
+import {OracleCache} from "@oracle/langchain-oracledb";
+
+const cache = new OracleCache(conn);
+await cache.initialize();
+
+await cache.update(prompt, llmKey, generations);
+const cachedGenerations = await cache.lookup(prompt, llmKey);
+```
+
+### Semantic Cache
+
+This package includes a semantic cache for retrieving model generations using vector similarity between prompts.
+
+```typescript
+import {OracleSemanticCache} from "@oracle/langchain-oracledb";
+
+const cache = new OracleSemanticCache(embedder, dbConfig, {scoreThreshold: 0.2});
+await cache.initialize();
+
+await cache.update(prompt, llmKey, generations);
+const cachedGenerations = await cache.lookup(prompt, llmKey);
+```
+
+## Chat Message History
+
+This package includes a chat message history for storing and retrieving conversation messages by session in the database.
+
+```typescript
+import {OracleChatMessageHistory} from "@oracle/langchain-oracledb";
+
+await OracleChatMessageHistory.createTables({client: conn});
+const history = new OracleChatMessageHistory({client: conn, sessionId: "session-1"});
+
+await history.addMessages(messages);
+const storedMessages = await history.getMessages();
 ```
 
 ## Development
