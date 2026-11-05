@@ -35,16 +35,70 @@ def _unqualified_identifier(name: str) -> str:
     return name.replace('"', "").split(".")[-1]
 
 
-def _default_index_name(table_name: str, session_id_key: str) -> str:
-    base_name = (
+def _identifier_schema(name: str) -> Optional[str]:
+    parts = name.replace('"', "").split(".")
+    if len(parts) > 1:
+        return parts[-2]
+    return None
+
+
+def _legacy_index_name(table_name: str, session_id_key: str) -> str:
+    return (
         f"idx_{_unqualified_identifier(table_name)}_"
         f"{_unqualified_identifier(session_id_key)}"
     )
-    if len(base_name) <= 128:
-        return base_name
 
-    digest = hashlib.sha1(base_name.encode("utf-8")).hexdigest()[:8]
-    return f"{base_name[:119]}_{digest}"
+
+def _session_column_is_indexed(
+    connection: Any, table_name: str, session_id_key: str
+) -> bool:
+    query = """
+        SELECT 1
+        FROM all_ind_columns
+        WHERE table_name = :table_name
+          AND column_name = :column_name
+          AND table_owner = NVL(:owner, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))
+          AND column_position = 1
+          AND ROWNUM < 2
+        """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            query,
+            table_name=_unqualified_identifier(table_name),
+            column_name=_unqualified_identifier(session_id_key),
+            owner=_identifier_schema(table_name),
+        )
+        return cursor.fetchone() is not None
+
+
+def _session_index_already_present(
+    connection: Any,
+    table_name: str,
+    session_id_key: str,
+    index_name: str,
+) -> bool:
+    unqualified_table = _unqualified_identifier(table_name)
+    if _index_exists(connection, _quote_indentifier(index_name), unqualified_table):
+        return True
+    legacy_name = _legacy_index_name(table_name, session_id_key)
+    if legacy_name != index_name and _index_exists(
+        connection, _quote_indentifier(legacy_name), unqualified_table
+    ):
+        return True
+    return _session_column_is_indexed(connection, table_name, session_id_key)
+
+
+def _default_index_name(table_name: str, session_id_key: str) -> str:
+    base_name = _legacy_index_name(table_name, session_id_key)
+    # Always hash the original table/column pair so concatenations such as
+    # ("customer_support_chat", "session_id") and
+    # ("customer_support", "chat_session_id") cannot collide. Oracle limits
+    # identifiers to 128 bytes; keep a 119-byte prefix plus "_" and 8 hex chars.
+    digest = hashlib.sha1(
+        json.dumps([table_name, session_id_key]).encode("utf-8")
+    ).hexdigest()[:8]
+    prefix = base_name.encode("utf-8")[:119].decode("utf-8", errors="ignore")
+    return f"{prefix}_{digest}"
 
 
 def _message_payload(value: Any) -> str:
@@ -165,10 +219,11 @@ class OracleChatMessageHistory(BaseChatMessageHistory):
                             f"Table {table_name} does not exist. "
                             "Set create_table=True or create the table first."
                         )
-                    if not _index_exists(
+                    if not _session_index_already_present(
                         connection,
-                        quoted_index_name,
-                        _unqualified_identifier(table_name),
+                        table_name,
+                        session_id_key,
+                        index_name,
                     ):
                         cursor.execute(
                             f"CREATE INDEX {quoted_index_name} "
