@@ -187,8 +187,8 @@ describe("OracleVectorStore", () => {
       const indexResult = await localConnection.execute(
         `SELECT index_name FROM user_indexes WHERE table_name = :tableName AND index_name = :indexName`,
         {
-          tableName: hnswTable.toUpperCase(),
-          indexName: "HNSW_VECTOR_IDX",
+          tableName: hnswTable,
+          indexName: "hnsw_vector_idx",
         },
         { outFormat: oracledb.OUT_FORMAT_OBJECT }
       );
@@ -196,7 +196,7 @@ describe("OracleVectorStore", () => {
         | { INDEX_NAME?: string; index_name?: string }
         | undefined;
       const indexName = indexRow?.INDEX_NAME ?? indexRow?.index_name;
-      expect(indexName?.toUpperCase()).toBe("HNSW_VECTOR_IDX");
+      expect(indexName).toBe("hnsw_vector_idx");
     } finally {
       await dropTablePurge(connection as oracledb.Connection, hnswTable);
       await localConnection?.close();
