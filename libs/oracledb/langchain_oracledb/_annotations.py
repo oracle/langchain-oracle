@@ -159,15 +159,23 @@ def _backfill_ddl(target: tuple[str, str], table_type: TableType) -> str:
 def _skip_backfill(
     error: DatabaseError, annotation_start: Optional[int] = None
 ) -> bool:
+    detail = error.args[0]
+    read_only = detail.code == 16000 or (
+        detail.code == 604
+        and re.search(r"\bORA-16000\b", getattr(detail, "message", "")) is not None
+    )
+    if annotation_start is not None and read_only:
+        logger.debug("SQL annotation backfill skipped (ORA-%05d)", detail.code)
+        return True
     # Missing dictionary/table, insufficient ALTER privileges, or a busy object:
     # optional telemetry must not stop use of an otherwise accessible SQL table.
     if error.args[0].code in {942, 1031, 54}:
-        logger.warning("SQL annotation backfill skipped (ORA-%05d)", error.args[0].code)
+        logger.debug("SQL annotation backfill skipped (ORA-%05d)", error.args[0].code)
         return True
     if annotation_start is not None and _annotation_syntax_error(
         error, annotation_start
     ):
-        logger.warning("SQL annotation backfill skipped (ORA-%05d)", error.args[0].code)
+        logger.debug("SQL annotation backfill skipped (ORA-%05d)", error.args[0].code)
         return True
     return False
 

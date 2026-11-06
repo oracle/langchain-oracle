@@ -10,10 +10,18 @@ import oracledb
 import pytest
 
 from langchain_oracledb import _annotations
-from langchain_oracledb.cache import OracleCache, OracleSemanticCache
+from langchain_oracledb.cache import (
+    OracleCache,
+    OracleSemanticCache,
+    _SemanticCacheVectorStore,
+)
 from langchain_oracledb.chat_message_histories import OracleChatMessageHistory
 from langchain_oracledb.storage import OracleByteStore, OracleDocStore
-from langchain_oracledb.vectorstores.oraclevs import _acreate_table, _create_table
+from langchain_oracledb.vectorstores.oraclevs import (
+    OracleVS,
+    _acreate_table,
+    _create_table,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -130,7 +138,48 @@ def test_chat_history_annotates_only_new_tables(exists):
         assert "type=chat_history;backend=sql" in cursor.execute.call_args.args[0]
 
 
-def test_semantic_cache_passes_purpose_to_vector_store():
-    with patch("langchain_oracledb.cache.OracleVS") as store:
+def test_semantic_cache_uses_its_vector_store_subclass():
+    with patch("langchain_oracledb.cache._SemanticCacheVectorStore") as store:
         OracleSemanticCache(object(), object())
-    assert store.call_args.kwargs["_table_type"] == "semantic_cache"
+    store.assert_called_once()
+    assert "_table_type" not in store.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    "store_type,kind",
+    [
+        (OracleVS, "vector_store"),
+        (_SemanticCacheVectorStore, "semantic_cache"),
+    ],
+)
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_store_subclass_selects_annotation_type_during_creation(
+    store_type, kind, asynchronous
+):
+    conn = MagicMock(
+        spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
+    )
+
+    def initialize(self, *args):
+        self.table_name = '"DOCS"'
+
+    module = "langchain_oracledb.vectorstores.oraclevs"
+    with patch.object(OracleVS, "_initialize", autospec=True, side_effect=initialize):
+        if asynchronous:
+            with (
+                patch.object(
+                    OracleVS, "aget_embedding_dimension", new=AsyncMock(return_value=3)
+                ),
+                patch(module + "._acreate_table", new=AsyncMock()) as create,
+            ):
+                store = await store_type.acreate(conn, object(), "DOCS")
+                create.assert_awaited_once_with(conn, '"DOCS"', 3, kind)
+        else:
+            with (
+                patch.object(OracleVS, "get_embedding_dimension", return_value=3),
+                patch(module + "._create_table") as create,
+            ):
+                store = store_type(conn, object(), "DOCS")
+                create.assert_called_once_with(conn, '"DOCS"', 3, kind)
+    assert isinstance(store, store_type)

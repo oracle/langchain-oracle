@@ -137,7 +137,57 @@ async def test_only_annotation_ddl_syntax_errors_are_skipped(database, code, sta
         assert raised.value is error
     conn.commit.assert_not_called()
     conn.rollback.assert_not_called()
+
+
+@pytest.mark.parametrize("during_ddl", [False, True])
+@pytest.mark.parametrize(
+    "code,message,read_only",
+    [
+        (16000, "ORA-16000: database is open for read-only access", True),
+        (
+            604,
+            "ORA-00604: recursive SQL error\n"
+            "ORA-16000: database is open for read-only access",
+            True,
+        ),
+        (
+            604,
+            "ORA-00604: recursive SQL error\nORA-01031: insufficient privileges",
+            False,
+        ),
+        (604, "ORA-00604: recursive SQL error\nORA-03113: connection lost", False),
+        (604, "ORA-00604: unrelated recursive error", False),
+        (3113, "ORA-03113: end-of-file on communication channel", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_read_only_backfill_is_optional_but_other_failures_propagate(
+    database, during_ddl, code, message, read_only
+):
+    conn, cursor, run = database
+    error = oracledb.DatabaseError(
+        SimpleNamespace(code=code, message=message, offset=0)
+    )
+    cursor.execute.side_effect = [None, error] if during_ddl else [error]
+    if during_ddl and read_only:
+        await run()
+    else:
+        with pytest.raises(oracledb.DatabaseError) as raised:
+            await run()
+        assert raised.value is error
+    conn.commit.assert_not_called()
     conn.rollback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_missing_annotation_view_logs_only_at_debug(database, caplog):
+    _, cursor, run = database
+    cursor.execute.side_effect = oracledb.DatabaseError(SimpleNamespace(code=942))
+    with caplog.at_level("DEBUG", logger="langchain_oracledb._annotations"):
+        await run()
+    records = [r for r in caplog.records if "backfill skipped" in r.message]
+    assert len(records) == 1
+    assert records[0].levelname == "DEBUG"
 
 
 @pytest.mark.parametrize("factory", [OracleCache, OracleByteStore, OracleDocStore])

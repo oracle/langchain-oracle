@@ -1092,6 +1092,9 @@ class OracleVS(VectorStore):
                 vectors = OracleVS(connection, embeddings, table_name, query)
     """
 
+    def _annotation_type(self) -> TableType:
+        return "vector_store"
+
     @_handle_exceptions
     def __init__(
         self,
@@ -1105,8 +1108,6 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
-        *,
-        _table_type: TableType = "vector_store",
     ):
         """
         Initialize the OracleVS store.
@@ -1125,7 +1126,9 @@ class OracleVS(VectorStore):
             )
 
             embedding_dim = self.get_embedding_dimension()
-            _create_table(connection, self.table_name, embedding_dim, _table_type)
+            _create_table(
+                connection, self.table_name, embedding_dim, self._annotation_type()
+            )
 
     @classmethod
     @_ahandle_exceptions
@@ -1141,8 +1144,6 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
-        *,
-        _table_type: TableType = "vector_store",
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
@@ -1164,7 +1165,7 @@ class OracleVS(VectorStore):
 
             embedding_dim = await self.aget_embedding_dimension()
             await _acreate_table(
-                connection, self.table_name, embedding_dim, _table_type
+                connection, self.table_name, embedding_dim, self._annotation_type()
             )
 
         return self

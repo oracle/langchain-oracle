@@ -18,6 +18,7 @@ from langchain_core.load.load import loads
 from langchain_core.outputs import Generation
 
 from langchain_oracledb._annotations import (
+    TableType,
     backfill_table_annotation,
     create_table_with_annotations,
 )
@@ -113,6 +114,11 @@ def _loads_generations(generations_str: str) -> Union[RETURN_VAL_TYPE, None]:
         return None
 
 
+class _SemanticCacheVectorStore(OracleVS):
+    def _annotation_type(self) -> TableType:
+        return "semantic_cache"
+
+
 class OracleSemanticCache(BaseCache):
     """Semantic cache backed by Oracle AI Vector Search.
 
@@ -164,13 +170,12 @@ class OracleSemanticCache(BaseCache):
         self._table_name = table_name
         self._score_threshold = score_threshold
         self._distance_strategy = distance_strategy
-        self._vector_store = OracleVS(
+        self._vector_store = _SemanticCacheVectorStore(
             client=client,
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
             mutate_on_duplicate=True,
-            _table_type="semantic_cache",
         )
 
         if create_index_if_missing:
