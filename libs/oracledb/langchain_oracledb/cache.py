@@ -17,11 +17,16 @@ from langchain_core.load.dump import dumps
 from langchain_core.load.load import loads
 from langchain_core.outputs import Generation
 
+from langchain_oracledb._annotations import (
+    backfill_table_annotation,
+    table_annotation_clause,
+)
 from langchain_oracledb.vectorstores.oraclevs import OracleVS, create_index
 from langchain_oracledb.vectorstores.utils import (
     DistanceStrategy,
     _get_connection,
     _quote_indentifier,
+    _table_exists,
     _validate_indentifier,
     drop_table_purge,
 )
@@ -165,6 +170,7 @@ class OracleSemanticCache(BaseCache):
             table_name=table_name,
             distance_strategy=distance_strategy,
             mutate_on_duplicate=True,
+            _table_type="semantic_cache",
         )
 
         if create_index_if_missing:
@@ -323,9 +329,14 @@ class OracleCache(BaseCache):
                 llm_string_hash VARCHAR2(64) NOT NULL,
                 generations CLOB NOT NULL,
                 created_at TIMESTAMP DEFAULT SYSTIMESTAMP
-            )
+            ) {table_annotation_clause("exact_cache")}
         """
         with _get_connection(self._client) as connection:
+            if _table_exists(connection, self._quoted_table_name):
+                backfill_table_annotation(
+                    connection, self._quoted_table_name, "exact_cache"
+                )
+                return
             with connection.cursor() as cursor:
                 cursor.execute(ddl)
             connection.commit()

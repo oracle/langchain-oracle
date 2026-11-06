@@ -14,6 +14,11 @@ from typing import Any, List, Optional
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage, message_to_dict, messages_from_dict
 
+from langchain_oracledb._annotations import (
+    backfill_table_annotation,
+    supports_table_annotations,
+    table_annotation_clause,
+)
 from langchain_oracledb.vectorstores.utils import (
     _get_connection,
     _index_exists,
@@ -143,8 +148,16 @@ class OracleChatMessageHistory(BaseChatMessageHistory):
 
         with _get_connection(client) as connection:
             table_exists = _table_exists(connection, quoted_table_name)
+            ddl_executed = False
+            if table_exists:
+                backfill_table_annotation(connection, quoted_table_name, "chat_history")
             with connection.cursor() as cursor:
                 if create_table and not table_exists:
+                    annotation_clause = (
+                        table_annotation_clause("chat_history")
+                        if supports_table_annotations(connection)
+                        else ""
+                    )
                     cursor.execute(
                         f"""
                         CREATE TABLE {quoted_table_name} (
@@ -154,10 +167,11 @@ class OracleChatMessageHistory(BaseChatMessageHistory):
                             {quoted_history_key} CLOB NOT NULL,
                             created_at TIMESTAMP WITH TIME ZONE DEFAULT
                                 CURRENT_TIMESTAMP NOT NULL
-                        )
+                        ) {annotation_clause}
                         """
                     )
                     table_exists = True
+                    ddl_executed = True
 
                 if create_index:
                     if not table_exists:
@@ -174,8 +188,10 @@ class OracleChatMessageHistory(BaseChatMessageHistory):
                             f"CREATE INDEX {quoted_index_name} "
                             f"ON {quoted_table_name} ({quoted_session_id_key})"
                         )
+                        ddl_executed = True
 
-            connection.commit()
+            if ddl_executed:
+                connection.commit()
 
     @staticmethod
     def drop_table(client: Any, table_name: str = DEFAULT_TABLE_NAME, /) -> None:

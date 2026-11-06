@@ -30,6 +30,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import field_validator
 
+from langchain_oracledb._telemetry import tag_sql
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY, OracleVS
 from langchain_oracledb.vectorstores.utils import (
@@ -754,7 +755,10 @@ class OracleHybridSearchRetriever(BaseRetriever):
             with connection.cursor() as cursor:
                 cursor.setinputsizes(search_params=oracledb.DB_TYPE_JSON)
                 cursor.execute(
-                    "SELECT DBMS_HYBRID_VECTOR.SEARCH(json(:search_params))",
+                    tag_sql(
+                        "SELECT DBMS_HYBRID_VECTOR.SEARCH(json(:search_params))",
+                        self.search_mode or "hybrid",
+                    ),
                     search_params=search_params,
                 )
                 res = cursor.fetchall()
@@ -816,7 +820,10 @@ class OracleHybridSearchRetriever(BaseRetriever):
             async with connection.cursor() as cursor:
                 cursor.setinputsizes(search_params=oracledb.DB_TYPE_JSON)
                 await cursor.execute(
-                    "SELECT DBMS_HYBRID_VECTOR.SEARCH(json(:search_params))",
+                    tag_sql(
+                        "SELECT DBMS_HYBRID_VECTOR.SEARCH(json(:search_params))",
+                        self.search_mode or "hybrid",
+                    ),
                     search_params=search_params,
                 )
                 res = await cursor.fetchall()

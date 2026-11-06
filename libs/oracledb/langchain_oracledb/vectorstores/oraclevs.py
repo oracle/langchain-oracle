@@ -47,6 +47,13 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 from langchain_core.vectorstores.utils import maximal_marginal_relevance
 
+from .._annotations import (
+    TableType,
+    abackfill_table_annotation,
+    backfill_table_annotation,
+    table_annotation_clause,
+)
+from .._telemetry import tag_sql
 from ..embeddings import OracleEmbeddings
 from .utils import (
     DistanceStrategy,
@@ -444,7 +451,12 @@ def _get_table_dict(embedding_dim: int) -> Dict:
     return cols_dict
 
 
-def _create_table(connection: Connection, table_name: str, embedding_dim: int) -> None:
+def _create_table(
+    connection: Connection,
+    table_name: str,
+    embedding_dim: int,
+    table_type: TableType = "vector_store",
+) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
     if not _table_exists(connection, table_name):
@@ -452,15 +464,22 @@ def _create_table(connection: Connection, table_name: str, embedding_dim: int) -
             ddl_body = ", ".join(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
             )
-            ddl = f"CREATE TABLE {table_name} ({ddl_body})"
+            ddl = (
+                f"CREATE TABLE {table_name} ({ddl_body}) "
+                f"{table_annotation_clause(table_type)}"
+            )
             cursor.execute(ddl)
         logger.info(f"Table {table_name} created successfully...")
     else:
         logger.info(f"Table {table_name} already exists...")
+        backfill_table_annotation(connection, table_name, table_type)
 
 
 async def _acreate_table(
-    connection: AsyncConnection, table_name: str, embedding_dim: int
+    connection: AsyncConnection,
+    table_name: str,
+    embedding_dim: int,
+    table_type: TableType = "vector_store",
 ) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
@@ -469,11 +488,15 @@ async def _acreate_table(
             ddl_body = ", ".join(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
             )
-            ddl = f"CREATE TABLE {table_name} ({ddl_body})"
+            ddl = (
+                f"CREATE TABLE {table_name} ({ddl_body}) "
+                f"{table_annotation_clause(table_type)}"
+            )
             await cursor.execute(ddl)
         logger.info(f"Table {table_name} created successfully...")
     else:
         logger.info(f"Table {table_name} already exists...")
+        await abackfill_table_annotation(connection, table_name, table_type)
 
 
 @_handle_exceptions
@@ -964,7 +987,7 @@ def _get_similarity_search_query(
     FETCH APPROX FIRST {k} ROWS ONLY
     """
 
-    return query, bind_variables
+    return tag_sql(query, "vector"), bind_variables
 
 
 def _read_similarity_output(
@@ -1087,6 +1110,8 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
+        *,
+        _table_type: TableType = "vector_store",
     ):
         """
         Initialize the OracleVS store.
@@ -1105,7 +1130,7 @@ class OracleVS(VectorStore):
             )
 
             embedding_dim = self.get_embedding_dimension()
-            _create_table(connection, self.table_name, embedding_dim)
+            _create_table(connection, self.table_name, embedding_dim, _table_type)
 
     @classmethod
     @_ahandle_exceptions
@@ -1121,6 +1146,8 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
+        *,
+        _table_type: TableType = "vector_store",
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
@@ -1141,7 +1168,9 @@ class OracleVS(VectorStore):
             )
 
             embedding_dim = await self.aget_embedding_dimension()
-            await _acreate_table(connection, self.table_name, embedding_dim)
+            await _acreate_table(
+                connection, self.table_name, embedding_dim, _table_type
+            )
 
         return self
 
