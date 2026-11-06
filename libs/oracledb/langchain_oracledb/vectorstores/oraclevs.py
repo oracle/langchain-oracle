@@ -50,8 +50,9 @@ from langchain_core.vectorstores.utils import maximal_marginal_relevance
 from .._annotations import (
     TableType,
     abackfill_table_annotation,
+    acreate_table_with_annotations,
     backfill_table_annotation,
-    table_annotation_clause,
+    create_table_with_annotations,
 )
 from .._telemetry import tag_sql
 from ..embeddings import OracleEmbeddings
@@ -464,11 +465,8 @@ def _create_table(
             ddl_body = ", ".join(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
             )
-            ddl = (
-                f"CREATE TABLE {table_name} ({ddl_body}) "
-                f"{table_annotation_clause(table_type)}"
-            )
-            cursor.execute(ddl)
+            ddl = f"CREATE TABLE {table_name} ({ddl_body})"
+            create_table_with_annotations(cursor, ddl, table_type)
         logger.info(f"Table {table_name} created successfully...")
     else:
         logger.info(f"Table {table_name} already exists...")
@@ -488,11 +486,8 @@ async def _acreate_table(
             ddl_body = ", ".join(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
             )
-            ddl = (
-                f"CREATE TABLE {table_name} ({ddl_body}) "
-                f"{table_annotation_clause(table_type)}"
-            )
-            await cursor.execute(ddl)
+            ddl = f"CREATE TABLE {table_name} ({ddl_body})"
+            await acreate_table_with_annotations(cursor, ddl, table_type)
         logger.info(f"Table {table_name} created successfully...")
     else:
         logger.info(f"Table {table_name} already exists...")

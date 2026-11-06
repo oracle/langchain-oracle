@@ -36,7 +36,7 @@ from langchain_core.stores import BaseStore
 
 from langchain_oracledb._annotations import (
     backfill_table_annotation,
-    table_annotation_clause,
+    create_table_with_annotations,
 )
 from langchain_oracledb.vectorstores.utils import (
     _get_connection,
@@ -81,7 +81,7 @@ class _OracleKVStore(BaseStore[str, V], Generic[V]):
                 k VARCHAR2(1000) PRIMARY KEY,
                 v {self._VALUE_COLUMN_TYPE} NOT NULL,
                 updated_at TIMESTAMP DEFAULT SYSTIMESTAMP
-            ) {table_annotation_clause("kv_store")}
+            )
         """
         with _get_connection(self._client) as connection:
             if _table_exists(connection, self._quoted_table_name):
@@ -90,7 +90,7 @@ class _OracleKVStore(BaseStore[str, V], Generic[V]):
                 )
                 return
             with connection.cursor() as cursor:
-                cursor.execute(ddl)
+                create_table_with_annotations(cursor, ddl, "kv_store")
             connection.commit()
 
     # -- serialization hooks -------------------------------------------------

@@ -118,6 +118,25 @@ async def test_expected_backfill_failures_skip_but_connection_errors_propagate(
     else:
         await run()
     conn.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("code", [922, 933, 3049])
+@pytest.mark.parametrize("stage", ["query", "before_clause", "annotation_clause"])
+@pytest.mark.asyncio
+async def test_only_annotation_ddl_syntax_errors_are_skipped(database, code, stage):
+    conn, cursor, run = database
+    error = oracledb.DatabaseError(
+        SimpleNamespace(code=code, offset=100 if stage == "annotation_clause" else 5)
+    )
+    cursor.execute.side_effect = [error] if stage == "query" else [None, error]
+    if stage == "annotation_clause":
+        await run()
+    else:
+        with pytest.raises(oracledb.DatabaseError) as raised:
+            await run()
+        assert raised.value is error
+    conn.commit.assert_not_called()
+    conn.rollback.assert_not_called()
     conn.rollback.assert_not_called()
 
 

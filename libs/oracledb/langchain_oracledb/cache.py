@@ -19,7 +19,7 @@ from langchain_core.outputs import Generation
 
 from langchain_oracledb._annotations import (
     backfill_table_annotation,
-    table_annotation_clause,
+    create_table_with_annotations,
 )
 from langchain_oracledb.vectorstores.oraclevs import OracleVS, create_index
 from langchain_oracledb.vectorstores.utils import (
@@ -329,7 +329,7 @@ class OracleCache(BaseCache):
                 llm_string_hash VARCHAR2(64) NOT NULL,
                 generations CLOB NOT NULL,
                 created_at TIMESTAMP DEFAULT SYSTIMESTAMP
-            ) {table_annotation_clause("exact_cache")}
+            )
         """
         with _get_connection(self._client) as connection:
             if _table_exists(connection, self._quoted_table_name):
@@ -338,7 +338,7 @@ class OracleCache(BaseCache):
                 )
                 return
             with connection.cursor() as cursor:
-                cursor.execute(ddl)
+                create_table_with_annotations(cursor, ddl, "exact_cache")
             connection.commit()
 
     def lookup(self, prompt: str, llm_string: str) -> Optional[RETURN_VAL_TYPE]:

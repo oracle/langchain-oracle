@@ -5,7 +5,7 @@
 
 import os
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import oracledb
 import pytest
@@ -19,7 +19,10 @@ from langchain_oracledb import (
     OracleSemanticCache,
     OracleVS,
 )
-from langchain_oracledb._annotations import table_annotations
+from langchain_oracledb._annotations import (
+    create_table_with_annotations,
+    table_annotations,
+)
 
 
 def test_sql_classes_create_annotations_and_preserve_them_on_reopen(sql_connection):
@@ -91,3 +94,45 @@ def sql_connection():
         retry_count=0,
     ) as connection:
         yield connection
+
+
+def test_plain_creation_after_a_real_server_clause_syntax_error(sql_connection):
+    # The test database supports annotations. Replace only the appended keyword
+    # to exercise a real server parse error, not to claim an older DB version.
+    name = "LCFALL_" + uuid.uuid4().hex[:16].upper()
+    errors = []
+    with sql_connection.cursor() as cursor:
+        proxy = MagicMock(wraps=cursor)
+
+        def execute(statement):
+            sent = statement.replace(" ANNOTATIONS (", " ANNOTATIONS_UNSUPPORTED (", 1)
+            try:
+                return cursor.execute(sent)
+            except oracledb.DatabaseError as error:
+                errors.append(error.args[0])
+                raise
+
+        proxy.execute.side_effect = execute
+        try:
+            create_table_with_annotations(
+                proxy, f'CREATE TABLE "{name}" (id NUMBER)', "kv_store"
+            )
+            assert proxy.execute.call_count == 2
+            assert len(errors) == 1
+            assert errors[0].code in {922, 933, 3049}
+            cursor.execute(
+                "SELECT COUNT(*) FROM user_tables WHERE table_name=:n", n=name
+            )
+            assert cursor.fetchone()[0] == 1
+            cursor.execute(
+                "SELECT COUNT(*) FROM user_annotations_usage "
+                "WHERE object_name=:n AND annotation_name='LANGCHAIN_ORACLE'",
+                n=name,
+            )
+            assert cursor.fetchone()[0] == 0
+        finally:
+            cursor.execute(
+                "SELECT COUNT(*) FROM user_tables WHERE table_name=:n", n=name
+            )
+            if cursor.fetchone()[0]:
+                cursor.execute(f'DROP TABLE "{name}" PURGE')

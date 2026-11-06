@@ -13,7 +13,7 @@ import re
 from importlib.metadata import PackageNotFoundError, version
 from typing import Literal, Optional
 
-from oracledb import AsyncConnection, Connection, DatabaseError
+from oracledb import AsyncConnection, AsyncCursor, Connection, Cursor, DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -31,23 +31,6 @@ _TABLE_TYPES = {
     "chat_history",
     "kv_store",
 }
-
-
-def supports_table_annotations(connection: Connection) -> bool:
-    """Check annotation availability for chat history's older databases.
-
-    The dictionary view shipped with annotations, including the 19.28 backport.
-    A zero-row query reads no application data. Only a missing/inaccessible view
-    disables telemetry; other database errors retain their normal behavior.
-    """
-    with connection.cursor() as cursor:
-        try:
-            cursor.execute("SELECT 1 FROM user_annotations_usage WHERE 1 = 0")
-        except DatabaseError as exc:
-            if exc.args[0].code == 942:
-                return False
-            raise
-    return True
 
 
 def table_annotations(
@@ -92,6 +75,51 @@ def table_annotation_clause(
     return f"ANNOTATIONS ({operation}{ANNOTATION_NAME} '{value}')"
 
 
+def _annotation_syntax_error(error: DatabaseError, annotation_start: int) -> bool:
+    detail = error.args[0]
+    if detail.code not in {922, 933, 3049}:
+        return False
+    # Oracle offsets identify parsing errors in the appended clause. Some
+    # drivers/servers omit the offset; in that case the plain DDL retry must
+    # succeed on its own, otherwise its error propagates normally.
+    offset = getattr(detail, "offset", 0)
+    return offset == 0 or offset >= annotation_start
+
+
+def create_table_with_annotations(
+    cursor: Cursor, ddl: str, table_type: TableType
+) -> None:
+    """Retry a generated CREATE without optional unsupported annotation syntax."""
+    plain_ddl = ddl.rstrip()
+    annotated_ddl = plain_ddl + " " + table_annotation_clause(table_type)
+    try:
+        cursor.execute(annotated_ddl)
+    except DatabaseError as error:
+        if not _annotation_syntax_error(error, len(plain_ddl)):
+            raise
+        logger.warning(
+            "Creating table without annotations (ORA-%05d)", error.args[0].code
+        )
+        cursor.execute(plain_ddl)
+
+
+async def acreate_table_with_annotations(
+    cursor: AsyncCursor, ddl: str, table_type: TableType
+) -> None:
+    """Async equivalent using the same cursor and transaction behavior."""
+    plain_ddl = ddl.rstrip()
+    annotated_ddl = plain_ddl + " " + table_annotation_clause(table_type)
+    try:
+        await cursor.execute(annotated_ddl)
+    except DatabaseError as error:
+        if not _annotation_syntax_error(error, len(plain_ddl)):
+            raise
+        logger.warning(
+            "Creating table without annotations (ORA-%05d)", error.args[0].code
+        )
+        await cursor.execute(plain_ddl)
+
+
 _BACKFILL_QUERY = """
     SELECT t.owner, t.table_name
     FROM all_tables t
@@ -128,10 +156,17 @@ def _backfill_ddl(target: tuple[str, str], table_type: TableType) -> str:
     )
 
 
-def _skip_backfill(error: DatabaseError) -> bool:
+def _skip_backfill(
+    error: DatabaseError, annotation_start: Optional[int] = None
+) -> bool:
     # Missing dictionary/table, insufficient ALTER privileges, or a busy object:
     # optional telemetry must not stop use of an otherwise accessible SQL table.
     if error.args[0].code in {942, 1031, 54}:
+        logger.warning("SQL annotation backfill skipped (ORA-%05d)", error.args[0].code)
+        return True
+    if annotation_start is not None and _annotation_syntax_error(
+        error, annotation_start
+    ):
         logger.warning("SQL annotation backfill skipped (ORA-%05d)", error.args[0].code)
         return True
     return False
@@ -149,14 +184,17 @@ def backfill_table_annotation(
     if connection.transaction_in_progress is not False:
         logger.debug("SQL annotation backfill deferred: connection has pending work")
         return
+    annotation_start = None
     try:
         with connection.cursor() as cursor:
             cursor.execute(_BACKFILL_QUERY, **_backfill_binds(table_name))
             target = cursor.fetchone()
             if target and connection.transaction_in_progress is False:
-                cursor.execute(_backfill_ddl(target, table_type))
+                ddl = _backfill_ddl(target, table_type)
+                annotation_start = ddl.rindex(" ANNOTATIONS (")
+                cursor.execute(ddl)
     except DatabaseError as error:
-        if not _skip_backfill(error):
+        if not _skip_backfill(error, annotation_start):
             raise
 
 
@@ -167,12 +205,15 @@ async def abackfill_table_annotation(
     if connection.transaction_in_progress is not False:
         logger.debug("SQL annotation backfill deferred: connection has pending work")
         return
+    annotation_start = None
     try:
         with connection.cursor() as cursor:
             await cursor.execute(_BACKFILL_QUERY, **_backfill_binds(table_name))
             target = await cursor.fetchone()
             if target and connection.transaction_in_progress is False:
-                await cursor.execute(_backfill_ddl(target, table_type))
+                ddl = _backfill_ddl(target, table_type)
+                annotation_start = ddl.rindex(" ANNOTATIONS (")
+                await cursor.execute(ddl)
     except DatabaseError as error:
-        if not _skip_backfill(error):
+        if not _skip_backfill(error, annotation_start):
             raise

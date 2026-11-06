@@ -4,7 +4,6 @@
 """Annotation format and SQL creation paths."""
 
 from importlib.metadata import PackageNotFoundError
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import oracledb
@@ -129,30 +128,6 @@ def test_chat_history_annotates_only_new_tables(exists):
         cursor.execute.assert_not_called()
     else:
         assert "type=chat_history;backend=sql" in cursor.execute.call_args.args[0]
-
-
-@pytest.mark.parametrize("error_code", [942, 1031, 3113])
-def test_chat_history_annotation_availability_errors(error_code):
-    conn, cursor = connection()
-    error = oracledb.DatabaseError(SimpleNamespace(code=error_code))
-    cursor.execute.side_effect = [error, None]
-    with patch(
-        "langchain_oracledb.chat_message_histories._table_exists", return_value=False
-    ):
-        if error_code != 942:
-            with pytest.raises(oracledb.DatabaseError) as raised:
-                OracleChatMessageHistory.create_tables(conn, "DOCS", create_index=False)
-            assert raised.value is error
-            assert cursor.execute.call_count == 1
-            conn.commit.assert_not_called()
-        else:
-            OracleChatMessageHistory.create_tables(conn, "DOCS", create_index=False)
-            assert cursor.execute.call_count == 2
-            probe, create = [call.args[0] for call in cursor.execute.call_args_list]
-            assert probe == "SELECT 1 FROM user_annotations_usage WHERE 1 = 0"
-            assert 'CREATE TABLE "DOCS"' in create
-            assert "ANNOTATIONS" not in create
-            conn.commit.assert_called_once()
 
 
 def test_semantic_cache_passes_purpose_to_vector_store():
