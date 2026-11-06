@@ -6,6 +6,8 @@
 
 This package contains the LangChain integrations with [Oracle AI Vector Search](https://www.oracle.com/database/ai-vector-search/).
 
+Tables created by LangChain are annotated with `LANGCHAIN_ORACLE` when the database supports annotations.
+
 > ⭐ If this package is useful to you, consider [starring the repository](https://github.com/oracle/langchain-oracle) — it helps other developers discover these integrations.
 
 ## Installation

@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 import oracledb
 
+from .._telemetry import tag_sql
+
 logger = logging.getLogger(__name__)
 
 """OracleEmbeddings class"""
@@ -129,9 +131,12 @@ class OracleEmbeddings(BaseModel, Embeddings):
                 inputs = vector_array_type.newobject(chunks)
                 cursor.setinputsizes(None, oracledb.DB_TYPE_JSON)
                 cursor.execute(
-                    "select t.* "
-                    + "from dbms_vector_chain.utl_to_embeddings(:1, "
-                    + "json(:2)) t",
+                    tag_sql(
+                        "select t.* "
+                        + "from dbms_vector_chain.utl_to_embeddings(:1, "
+                        + "json(:2)) t",
+                        "embedding",
+                    ),
                     [inputs, self.params],
                 )
 
