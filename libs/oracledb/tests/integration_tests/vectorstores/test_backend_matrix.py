@@ -132,7 +132,10 @@ def database_matrix():
                             [
                                 "seed",
                                 array.array("f", [1, 0, 0]),
-                                {"text": "oracle existing seed", "tenant": "base"},
+                                {
+                                    "lc_oracle_content": "oracle existing seed",
+                                    "tenant": "base",
+                                },
                             ],
                         )
                 connection.commit()
@@ -1496,7 +1499,7 @@ async def test_native_signature_preflight_rejects_before_package_execution(
         NativeTransport,
     )
 
-    connection, _, config, tables, baseline = database_matrix
+    connection, _, config, _, baseline = database_matrix
     client = await oracledb.connect_async(**config) if asynchronous else connection
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         client, (23, 26, 4)
@@ -1513,8 +1516,8 @@ async def test_native_signature_preflight_rejects_before_package_execution(
                 await transport.acall("drop_vector_table", name="LCM_NEVER_DROP")
             else:
                 transport.call("drop_vector_table", name="LCM_NEVER_DROP")
-        for name in tables.values():
-            assert_preserved(connection, name, baseline[name])
+        for name, snapshot in baseline.items():
+            assert_preserved(connection, name, snapshot)
     finally:
         if asynchronous:
             await client.close()
