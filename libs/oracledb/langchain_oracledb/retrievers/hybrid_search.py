@@ -872,14 +872,12 @@ class OracleHybridSearchRetriever(BaseRetriever):
 
         return search_params
 
-    def _get_vecdb_search_params(
-        self, query: str, *, embed: bool = True, **kwargs: Any
-    ) -> dict:
+    def _get_vecdb_search_params(self, query: str, **kwargs: Any) -> dict:
         from langchain_oracledb.vectorstores._vecdb_adapter import (
             retriever_hybrid_options,
         )
 
-        params = retriever_hybrid_options(
+        return retriever_hybrid_options(
             query,
             self.search_mode or "hybrid",
             self.idx_name,
@@ -887,9 +885,6 @@ class OracleHybridSearchRetriever(BaseRetriever):
             self.params or {},
             kwargs.get("params", {}),
         )
-        if embed and self.search_mode in {"semantic", "hybrid"}:
-            params["vector"]["search_vector"] = self.vector_store._embed_query(query)
-        return params
 
     def _get_relevant_documents(self, query: str, **kwargs: Any) -> List[Document]:
         """Execute a synchronous hybrid search via DBMS_HYBRID_VECTOR.SEARCH.
@@ -984,11 +979,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
         """
         if self.vector_store._vecdb is not None:
             self.vector_store._vecdb.native_transport("hybrid search")
-            search_params = self._get_vecdb_search_params(query, embed=False, **kwargs)
-            if self.search_mode in {"semantic", "hybrid"}:
-                search_params["vector"][
-                    "search_vector"
-                ] = await self.vector_store._aembed_query(query)
+            search_params = self._get_vecdb_search_params(query, **kwargs)
             return await self.vector_store._vecdb.run_async(
                 "hybrid_search", search_params, bool(self.return_scores)
             )

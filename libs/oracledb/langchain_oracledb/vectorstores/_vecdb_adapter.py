@@ -300,7 +300,7 @@ def hybrid_index_ddl(
 
 
 class _LangChainHybridSearch(HybridSearch):
-    """Supply the metadata text path for caller-generated query embeddings."""
+    """Supply the metadata text path for native hybrid search requests."""
 
     @staticmethod
     def _identifier(value: Any, name: str) -> str:
@@ -319,8 +319,8 @@ class _LangChainHybridSearch(HybridSearch):
     def _require_hybrid_embed_params(embed_params: Any, operation: str) -> dict:
         if operation != "query":
             return HybridSearch._require_hybrid_embed_params(embed_params, operation)
-        # The SDK also requires a database model here. LangChain supplies query
-        # vectors itself; request construction only needs the stored text path.
+        # Request construction only needs the stored text path. SEARCH resolves
+        # the database model from the hybrid index's vectorizer preference.
         HybridSearch._json_path_literal(embed_params["embed_metadata_jsonpath"])
         return deepcopy(embed_params)
 
@@ -409,6 +409,7 @@ def retriever_hybrid_options(
     options["return"] = {"topN": HybridSearch._positive_integer(k, "k")}
     if mode in {"semantic", "hybrid"}:
         options["vector"] = dict(options.get("vector") or {})
+        options["vector"]["search_text"] = query
     else:
         options.pop("vector", None)
     if mode in {"keyword", "hybrid"}:

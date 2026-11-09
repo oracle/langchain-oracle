@@ -590,6 +590,9 @@ def test_text_retriever_uses_metadata_backend(store):
 @pytest.mark.parametrize("mode", ["keyword", "semantic", "hybrid"])
 def test_hybrid_retriever_calls_native_search_without_application_fusion(store, mode):
     store._vecdb.transport = NativeTransport(object(), (23, 26, 4))
+    store.embedding_function.embed_query = MagicMock(
+        side_effect=AssertionError("separate query embedding")
+    )
     expected = [
         Document(id="native", page_content="native result", metadata={"score": 7})
     ]
@@ -614,24 +617,33 @@ def test_hybrid_retriever_calls_native_search_without_application_fusion(store, 
             "json_textcontains": ["$.lc_oracle_content", '"hello"']
         }
     if mode != "keyword":
-        assert params["vector"] == {"search_vector": [1.0, 0.0]}
+        assert params["vector"] == {"search_text": "hello"}
+    store.embedding_function.embed_query.assert_not_called()
 
 
+@pytest.mark.parametrize("mode", ["keyword", "semantic", "hybrid"])
 @pytest.mark.asyncio
-async def test_async_hybrid_uses_native_search_and_async_query_embedding(store):
+async def test_async_hybrid_uses_database_query_embedding(store, mode):
     store._vecdb.transport = NativeTransport(object(), (23, 26, 4))
-    store.embedding_function.aembed_query = AsyncMock(return_value=[0.0, 1.0])
+    store.embedding_function.aembed_query = AsyncMock(
+        side_effect=AssertionError("separate async query embedding")
+    )
     store.embedding_function.embed_query = MagicMock(
         side_effect=AssertionError("sync embed")
     )
     expected = [Document(id="native", page_content="hello")]
     store._vecdb.run_async = AsyncMock(return_value=expected)
-    retriever = OracleHybridSearchRetriever(vector_store=store, idx_name="HVI")
+    retriever = OracleHybridSearchRetriever(
+        vector_store=store, idx_name="HVI", search_mode=mode
+    )
     assert await retriever.ainvoke("hello") == expected
     method, params, scores = store._vecdb.run_async.call_args.args
     assert method == "hybrid_search"
-    assert params["vector"] == {"search_vector": [0.0, 1.0]}
-    store.embedding_function.aembed_query.assert_awaited_once_with("hello")
+    assert ("vector" in params) == (mode != "keyword")
+    if mode != "keyword":
+        assert params["vector"] == {"search_text": "hello"}
+    store.embedding_function.embed_query.assert_not_called()
+    store.embedding_function.aembed_query.assert_not_called()
 
 
 def test_native_hybrid_transport_binds_query_and_maps_database_scores():
