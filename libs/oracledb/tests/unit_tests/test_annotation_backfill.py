@@ -111,7 +111,7 @@ async def test_expected_backfill_failures_skip_but_connection_errors_propagate(
     conn, cursor, run = database
     error = oracledb.DatabaseError(SimpleNamespace(code=code))
     cursor.execute.side_effect = [None, error] if during_ddl else [error]
-    if code == 3113:
+    if code == 3113 and not during_ddl:
         with pytest.raises(oracledb.DatabaseError) as raised:
             await run()
         assert raised.value is error
@@ -123,13 +123,15 @@ async def test_expected_backfill_failures_skip_but_connection_errors_propagate(
 @pytest.mark.parametrize("code", [922, 933, 3049])
 @pytest.mark.parametrize("stage", ["query", "before_clause", "annotation_clause"])
 @pytest.mark.asyncio
-async def test_only_annotation_ddl_syntax_errors_are_skipped(database, code, stage):
+async def test_syntax_errors_skip_in_ddl_but_propagate_from_probe(
+    database, code, stage
+):
     conn, cursor, run = database
     error = oracledb.DatabaseError(
         SimpleNamespace(code=code, offset=100 if stage == "annotation_clause" else 5)
     )
     cursor.execute.side_effect = [error] if stage == "query" else [None, error]
-    if stage == "annotation_clause":
+    if stage != "query":
         await run()
     else:
         with pytest.raises(oracledb.DatabaseError) as raised:
@@ -141,35 +143,40 @@ async def test_only_annotation_ddl_syntax_errors_are_skipped(database, code, sta
 
 @pytest.mark.parametrize("during_ddl", [False, True])
 @pytest.mark.parametrize(
-    "code,message,read_only",
+    "code,message",
     [
-        (16000, "ORA-16000: database is open for read-only access", True),
+        (16000, "ORA-16000: database is open for read-only access"),
         (
             604,
             "ORA-00604: recursive SQL error\n"
             "ORA-16000: database is open for read-only access",
-            True,
         ),
         (
             604,
             "ORA-00604: recursive SQL error\nORA-01031: insufficient privileges",
-            False,
         ),
-        (604, "ORA-00604: recursive SQL error\nORA-03113: connection lost", False),
-        (604, "ORA-00604: unrelated recursive error", False),
-        (3113, "ORA-03113: end-of-file on communication channel", False),
+        (604, "ORA-00604: recursive SQL error\nORA-03113: connection lost"),
+        (604, "ORA-00604: unrelated recursive error"),
+        (
+            4088,
+            "ORA-04088: error during execution of trigger 'TESTUSER.BLOCK_DDL'\n"
+            "ORA-00604: Error occurred at recursive SQL level 1.\n"
+            "ORA-20001: DDL frozen by change-control policy",
+        ),
+        (47401, "ORA-47401: Realm violation"),
+        (3113, "ORA-03113: end-of-file on communication channel"),
     ],
 )
 @pytest.mark.asyncio
-async def test_read_only_backfill_is_optional_but_other_failures_propagate(
-    database, during_ddl, code, message, read_only
+async def test_any_ddl_failure_skips_but_probe_failures_propagate(
+    database, during_ddl, code, message
 ):
     conn, cursor, run = database
     error = oracledb.DatabaseError(
         SimpleNamespace(code=code, message=message, offset=0)
     )
     cursor.execute.side_effect = [None, error] if during_ddl else [error]
-    if during_ddl and read_only:
+    if during_ddl:
         await run()
     else:
         with pytest.raises(oracledb.DatabaseError) as raised:
