@@ -108,14 +108,15 @@ REST writes require `mutate_on_duplicate=True`; insert-only writes, metadata
 text/hybrid search and indexing, vectorizer preferences, and migration require a
 native connection. Native stores also support the corresponding async APIs.
 
-- Vector similarity filters use OracleVS validation and translate nested paths
-  and `$instr` to the VecDB QBE grammar. Unsupported predicates raise `ValueError`
-  before the search call: array/object `$eq` and `$ne`, scalar `$ne`, field
-  `$not`, and `$regex` (including inside logical expressions). These require
-  package support or further proven translations to preserve exact equality,
-  array/missing-field negation, type coercion, and `like_regex` semantics.
-  Use `backend="sql"` when those predicates are required. This restriction
-  applies to vector similarity searches, including async and MMR searches.
+- Vector similarity filters preserve the OracleVS SQL filter contract on native
+  connections and pools, including async and MMR searches. Verified predicates
+  use VecDB QBE translations with explicit type conversion and negation.
+  Valid predicates without an equivalent translation use an exact SQL query
+  against the VecDB-managed table: filtering precedes distance ordering and
+  limiting (or `fetch_k` for MMR). Writes, indexes, and cleanup remain managed
+  by VecDB. SQL fallback honors `output_selector`; package index-search tuning
+  options do not change its exact distance ranking. REST uses the translated
+  QBE subset and raises `ValueError` for filters requiring SQL fallback.
 - Native VecDB keyword retrieval uses `JSON_TEXTCONTAINS` with `SCORE(1)`
   and returns matches in descending relevance order. `return_scores=True`
   exposes those Oracle Text scores. Keyword-only hybrid retrieval reports
@@ -171,10 +172,15 @@ from langchain_oracledb.vectorstores import DistanceStrategy
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/paraphrase-mpnet-base-v2"
 )
-vector_store = OracleVS(conn, embedding_model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+vector_store = OracleVS(
+    conn, embedding_model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+)
 
 # add texts to the vector database
-texts = ["A tablespace can be online (accessible) or offline (not accessible) whenever the database is open.\nA tablespace is usually online so that its data is available to users. The SYSTEM tablespace and temporary tablespaces cannot be taken offline.", "The database stores LOBs differently from other data types. Creating a LOB column implicitly creates a LOB segment and a LOB index. "]
+texts = [
+    "A tablespace can be online (accessible) or offline (not accessible) whenever the database is open.\nA tablespace is usually online so that its data is available to users. The SYSTEM tablespace and temporary tablespaces cannot be taken offline.",
+    "The database stores LOBs differently from other data types. Creating a LOB column implicitly creates a LOB segment and a LOB index. ",
+]
 metadata = [
     {"id": "100", "link": "Document Example Test 1"},
     {"id": "101", "link": "Document Example Test 2"},
@@ -199,13 +205,10 @@ vector_store.add_documents(
     ids=["200"],  # becomes 200#chunk-0, 200#chunk-1, ...
 )
 
-create_index(
-    conn, vector_store, params={"idx_name": "hnsw_oravs", "idx_type": "HNSW"}
-)
+create_index(conn, vector_store, params={"idx_name": "hnsw_oravs", "idx_type": "HNSW"})
 
 # perform siliarity search
 vector_store.similarity_search("How does a database stores LOBs?", 1)
-
 ```
 
 ### Document Loaders

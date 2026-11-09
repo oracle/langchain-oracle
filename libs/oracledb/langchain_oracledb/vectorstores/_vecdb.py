@@ -8,6 +8,7 @@ There are no SDK imports on the SQL-only import path.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import json
 import logging
@@ -50,6 +51,7 @@ from ._vecdb_capabilities import (
     sdk_index_status,
     signature_error,
 )
+from ._vecdb_filters import SQLFilterRequired
 from .utils import (
     DistanceStrategy,
     _aget_connection,
@@ -58,6 +60,48 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_query(
+    name: str, metadata_column: str, request: dict, filter: dict
+) -> tuple:
+    from .oraclevs import _generate_where_clause
+
+    quoted, _ = table_identifier(name)
+    values: list = []
+    predicate = _generate_where_clause(filter, values)
+    metric = request["advanced_options"]["distance_metric"]
+    if metric not in {"COSINE", "EUCLIDEAN", "DOT"}:
+        raise ValueError("Unsupported vector distance metric")
+    # Alias the physical metadata column instead of replacing SQL text: a
+    # caller's JSON path or value can itself contain the word 'metadata'.
+    sql = f"""SELECT id, metadata,
+        VECTOR_DISTANCE(dense_vector, :embedding, {metric}) AS distance
+        {", dense_vector" if request["include_vectors"] else ""}
+        FROM (SELECT id, dense_vector, {metadata_column} AS metadata FROM {quoted})
+        WHERE {predicate}
+        ORDER BY distance FETCH FIRST :k ROWS ONLY"""
+    binds = {f"value{i}": value for i, value in enumerate(values)}
+    binds.update(
+        embedding=array.array("f", request["query_by"]["vector"]), k=request["top_k"]
+    )
+    return tag_sql(sql, "vector", backend="vecdb"), binds
+
+
+def _filter_response(result: list, request: dict) -> dict:
+    hits = []
+    selector = request.get("output_selector")
+    for id_, metadata, distance, *vector in result:
+        if selector is not None:
+            metadata = {
+                key: value for key, value in metadata.items() if key in selector
+            }
+        hit = {"id": id_, "metadata": metadata, "distance": distance}
+        if request["include_vectors"]:
+            hit["vector"] = list(vector[0])
+        hits.append(hit)
+    return {"results": hits}
+
 
 LEGACY_VERSION = (23, 26, 1)
 DENSE_COMPATIBLE = (23, 4, 0)
@@ -472,8 +516,8 @@ def _is_vecdb_table(cursor: Any, name: str) -> bool:
             cursor, name
         ):
             return False
-        binds = _case_sensitive_membership_binds(name, error)
-        if binds is not None:
+        membership_binds = _case_sensitive_membership_binds(name, error)
+        if membership_binds is not None:
             # Some older packages fold quoted names. Prove this exact table
             # exists, then check registration without changing its case.
             statement, layout_binds = _layout_query(name)
@@ -481,9 +525,11 @@ def _is_vecdb_table(cursor: Any, name: str) -> bool:
             if not cursor.fetchall():
                 raise error
         else:
-            binds = _qualified_membership_binds(name, error)
+            membership_binds = _qualified_membership_binds(name, error)
         membership = cursor.var(int)
-        cursor.execute(VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **binds)
+        cursor.execute(
+            VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **membership_binds
+        )
         return _membership_flag(membership.getvalue())
     result = cursor.fetchone()
     if result is None:
@@ -503,17 +549,17 @@ async def _ais_vecdb_table(cursor: Any, name: str) -> bool:
             cursor, name
         ):
             return False
-        binds = _case_sensitive_membership_binds(name, error)
-        if binds is not None:
+        membership_binds = _case_sensitive_membership_binds(name, error)
+        if membership_binds is not None:
             statement, layout_binds = _layout_query(name)
             await cursor.execute(statement, **layout_binds)
             if not await cursor.fetchall():
                 raise error
         else:
-            binds = _qualified_membership_binds(name, error)
+            membership_binds = _qualified_membership_binds(name, error)
         membership = cursor.var(int)
         await cursor.execute(
-            VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **binds
+            VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **membership_binds
         )
         return _membership_flag(membership.getvalue())
     result = await cursor.fetchone()
@@ -1049,6 +1095,23 @@ class NativeTransport:
             raise AssertionError("Unreachable metadata search retry")
 
     @_with_native_session
+    def filter_search(self, name: str, filter: dict, request: dict) -> dict:
+        with _get_connection(self.client) as connection:
+            info = self._search_info(name)
+            for attempt in range(2):
+                sql, binds = _filter_query(name, info.metadata_column, request, filter)
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(sql, **binds)
+                        return _filter_response(cursor.fetchall(), request)
+                except Exception as error:
+                    if attempt or not _metadata_search_error(error):
+                        raise
+                    self._forget_table(name)
+                    info = self.discover(name)
+            raise AssertionError("Unreachable filter search retry")
+
+    @_with_native_session
     def text_search(self, name: str, query: str, k: int, scores: bool = False) -> list:
         quoted, _ = table_identifier(name)
         with _get_connection(self.client) as connection:
@@ -1317,13 +1380,35 @@ class VecDBBackend:
         include_vectors: bool = False,
         **kwargs: Any,
     ) -> list:
-        response = self.query(
-            "search",
-            **search_request(
-                self.name, self.metric, embedding, k, filter, include_vectors, kwargs
-            ),
+        request, fallback = self._search_request(
+            embedding, k, filter, include_vectors, kwargs
+        )
+        response = (
+            self.transport.filter_search(self.name, filter, request)
+            if fallback
+            else self.query("search", **request)
         )
         return self.search_results(response, include_vectors)
+
+    def _search_request(
+        self, embedding: list, k: int, filter: Any, include: bool, options: dict
+    ) -> tuple:
+        try:
+            return search_request(
+                self.name, self.metric, embedding, k, filter, include, options
+            ), False
+        except SQLFilterRequired:
+            if not isinstance(self.transport, NativeTransport):
+                raise
+            # Revalidate all search options even when filter translation cannot
+            # use the package. Only the typed translation signal selects SQL.
+            request = search_request(
+                self.name, self.metric, embedding, k, None, include, options
+            )
+            logger.debug(
+                "Using native SQL filter fallback for VecDB table %s", self.name
+            )
+            return request, True
 
     def search_results(self, response: dict, include_vectors: bool) -> list:
         result = []
@@ -1603,11 +1688,13 @@ class VecDBBackend:
         if method == "search":
             embedding, k, filter = args[:3]
             include = args[3] if len(args) > 3 else False
-            response = await self.aquery(
-                "search",
-                **search_request(
-                    self.name, self.metric, embedding, k, filter, include, kwargs
-                ),
+            request, fallback = self._search_request(
+                embedding, k, filter, include, kwargs
+            )
+            response = (
+                await self.transport.afilter_search(self.name, filter, request)
+                if fallback
+                else await self.aquery("search", **request)
             )
             return self.search_results(response, include)
         if method == "hybrid_search":
@@ -1924,6 +2011,23 @@ class AsyncNativeTransport(NativeTransport):
                     self._forget_table(name)
                     info = await self.adiscover(name)
             raise AssertionError("Unreachable metadata search retry")
+
+    @_with_async_native_session
+    async def afilter_search(self, name: str, filter: dict, request: dict) -> dict:
+        async with _aget_connection(self.client) as connection:
+            info = await self._asearch_info(name)
+            for attempt in range(2):
+                sql, binds = _filter_query(name, info.metadata_column, request, filter)
+                try:
+                    with connection.cursor() as cursor:
+                        await cursor.execute(sql, **binds)
+                        return _filter_response(await cursor.fetchall(), request)
+                except Exception as error:
+                    if attempt or not _metadata_search_error(error):
+                        raise
+                    self._forget_table(name)
+                    info = await self.adiscover(name)
+            raise AssertionError("Unreachable filter search retry")
 
     @_with_async_native_session
     async def atext_search(

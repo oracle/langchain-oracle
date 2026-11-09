@@ -6,21 +6,14 @@ import oracledb
 import pytest
 
 from langchain_oracledb import OracleVS
+from langchain_oracledb.vectorstores._vecdb_filters import (
+    SQLFilterRequired,
+    translate_filter,
+)
 
 from ._backend_fixtures import backend_store, native_config
 from ._filter_cases import FILTER_CASES, FILTER_METADATA, FILTER_TEXTS
 from .test_backend_contract import ContractEmbeddings
-
-
-def vecdb_unsupported(value):
-    if isinstance(value, dict):
-        return any(
-            key in {"$ne", "$not", "$regex"}
-            or (key == "$eq" and isinstance(operand, (list, dict)))
-            or vecdb_unsupported(operand)
-            for key, operand in value.items()
-        )
-    return isinstance(value, list) and any(vecdb_unsupported(v) for v in value)
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +41,7 @@ async def filter_store(filter_seed, oracle_backend, asynchronous):
     try:
         store = await OracleVS.acreate(
             client,
-            ContractEmbeddings(),
+            filter_seed.embedding_function,
             filter_seed.table_name,
             backend=filter_seed.backend,
         )
@@ -61,11 +54,14 @@ async def filter_store(filter_seed, oracle_backend, asynchronous):
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("filter_,expected", FILTER_CASES)
 @pytest.mark.asyncio
-async def test_filter_results(filter_store, asynchronous, filter_, expected):
+async def test_filter_results(
+    filter_store, asynchronous, filter_, expected, oracle_backend
+):
     store = filter_store
-    if store.backend == "vecdb":
-        # Unsupported cases are explicit error expectations, never skipped.
-        if vecdb_unsupported(filter_):
+    if oracle_backend == "rest":
+        try:
+            translate_filter(filter_)
+        except SQLFilterRequired:
             with pytest.raises(ValueError, match="Unsupported VecDB filter"):
                 if asynchronous:
                     await store.asimilarity_search("oracle", k=3, filter=filter_)

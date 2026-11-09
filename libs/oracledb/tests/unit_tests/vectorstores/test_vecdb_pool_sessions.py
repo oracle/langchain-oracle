@@ -22,6 +22,7 @@ from langchain_oracledb.vectorstores._vecdb import (
     AsyncNativeTransport,
     NativeTransport,
     VecDBBackend,
+    _TableInfo,
 )
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
@@ -143,6 +144,9 @@ class Session:
             self.rows = [
                 (self.schema, {"lc_oracle_content": self.schema}, 1.0, 0.5, 0.5)
             ]
+        elif "VECTOR_DISTANCE(dense_vector" in statement:
+            self.check_metadata_search(statement, binds)
+            self.rows = [(self.schema, {"lc_oracle_content": self.schema}, 0.25, [1.0])]
         elif "JSON_TEXTCONTAINS" in statement:
             self.check_metadata_search(statement, binds)
             self.rows = [(self.schema, {"lc_oracle_content": self.schema}, 17)]
@@ -716,3 +720,40 @@ async def test_text_search_ranks_by_database_score(sessions, scores):
     assert "SCORE(1)" in statements[-1]
     assert ":query, 1)" in statements[-1]
     assert "ORDER BY SCORE(1) DESC" in statements[-1]
+
+
+@pytest.mark.asyncio
+async def test_sql_filter_fallback_uses_one_pool_checkout(sessions):
+    s = sessions
+    result = await invoke(s, "search", [1.0], 1, {"payload": {"$eq": {"a": 1}}}, True)
+    assert result[0][0].id == "SCHEMA_A"
+    assert result[0][0].page_content == "SCHEMA_A"
+    assert result[0][1] == 0.25
+    assert list(result[0][2]) == [1.0]
+    assert_one_session(s)
+    queries = [
+        (sql, binds) for sql, binds in s.a.log if "VECTOR_DISTANCE(dense_vector" in sql
+    ]
+    assert len(queries) == 1
+    sql, binds = queries[0]
+    assert "METADATA AS metadata" in sql
+    assert (
+        sql.index("WHERE JSON_EQUAL")
+        < sql.index("ORDER BY distance")
+        < sql.index("FETCH FIRST")
+    )
+    assert binds["value0"] == '{"a": 1}'
+    assert not any(".search(" in sql.lower() for sql, _ in s.a.log)
+
+
+@pytest.mark.asyncio
+async def test_sql_filter_fallback_refreshes_layout_on_same_session(sessions):
+    s = sessions
+    s.transport._remember_table("DOCS", _TableInfo(frozenset(CURRENT_COLUMNS), None))
+    result = await invoke(s, "search", [1.0], 1, {"payload": {"$eq": {"a": 1}}}, True)
+    assert result[0][0].id == "SCHEMA_A"
+    assert_one_session(s)
+    queries = [sql for sql, _ in s.a.log if "VECTOR_DISTANCE(dense_vector" in sql]
+    assert len(queries) == 2
+    assert "CONTENT_METADATA AS metadata" in queries[0]
+    assert "METADATA AS metadata" in queries[1]

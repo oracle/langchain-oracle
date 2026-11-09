@@ -112,6 +112,21 @@ COMPARISON_MAP = {
 NOT_OPERS = ["$nin", "$not", "$exists"]
 
 
+def _comparison_operand(value: Any, bind_variables: List[str]) -> tuple[str, str, str]:
+    if isinstance(value, bool):
+        # SQL BOOLEAN passing values can retain a preceding True in cached
+        # statements. These two fixed JSON literals avoid that problem while
+        # preserving the implicit boolean conversion of the SQL contract.
+        return "@.boolean()", json.dumps(value), ""
+    index = len(bind_variables)
+    bind_variables.append(value)
+    return "@", f"$val{index}", f':value{index} as "val{index}"'
+
+
+def _passing_clause(passings: str) -> str:
+    return " PASSING " + passings if passings else ""
+
+
 def _get_comparison_string(
     oper: str, value: Any, bind_variables: List[str]
 ) -> tuple[str, str]:
@@ -120,13 +135,8 @@ def _get_comparison_string(
 
     # usual two sided operator case
     if COMPARISON_MAP[oper] != "":
-        bind_l = len(bind_variables)
-        bind_variables.append(value)
-
-        return (
-            COMPARISON_MAP[oper].format(f"$val{bind_l}"),
-            f':value{bind_l} as "val{bind_l}"',
-        )
+        item, operand, passing = _comparison_operand(value, bind_variables)
+        return COMPARISON_MAP[oper].replace("@", item).format(operand), passing
 
     # between - needs two bindings
     elif oper == "$between":
@@ -143,18 +153,16 @@ def _get_comparison_string(
         conditions = []
         passings = []
         if min_val is not None:
-            bind_l = len(bind_variables)
-            bind_variables.append(min_val)
-
-            conditions.append(f"@ >= $val{bind_l}")
-            passings.append(f':value{bind_l} as "val{bind_l}"')
+            item, operand, passing = _comparison_operand(min_val, bind_variables)
+            conditions.append(f"{item} >= {operand}")
+            if passing:
+                passings.append(passing)
 
         if max_val is not None:
-            bind_l = len(bind_variables)
-            bind_variables.append(max_val)
-
-            conditions.append(f"@ <= $val{bind_l}")
-            passings.append(f':value{bind_l} as "val{bind_l}"')
+            item, operand, passing = _comparison_operand(max_val, bind_variables)
+            conditions.append(f"{item} <= {operand}")
+            if passing:
+                passings.append(passing)
 
         passing_bind = ",".join(passings)
 
@@ -169,17 +177,23 @@ def _get_comparison_string(
 
         value_binds = []
         passings = []
+        comparisons = []
         for val in value:
-            bind_l = len(bind_variables)
-            bind_variables.append(val)
-
-            value_binds.append(f"$val{bind_l}")
-            passings.append(f':value{bind_l} as "val{bind_l}"')
+            item, operand, passing = _comparison_operand(val, bind_variables)
+            value_binds.append(operand)
+            comparisons.append(f"{item} == {operand}")
+            if passing:
+                passings.append(passing)
 
         passing_bind = ",".join(passings)
         condition = ""
 
-        if oper == "$all":
+        if any(isinstance(val, bool) for val in value) and (
+            oper == "$all" or all(isinstance(val, bool) for val in value)
+        ):
+            separator = " && " if oper == "$all" else " || "
+            condition = "(" + separator.join(comparisons) + ")"
+        elif oper == "$all":
             condition = "@ == " + " && @ == ".join(value_binds)
 
         else:
@@ -247,15 +261,17 @@ def _generate_condition(
         'PASSING {value_bind} AS "val")'
     )
     # combined checks with multiple operators and passing values
-    MULTIPLE_MASK = "JSON_EXISTS(metadata, '$.{key}?({filters})' PASSING {passes})"
+    MULTIPLE_MASK = "JSON_EXISTS(metadata, '$.{key}?({filters})'{passes})"
 
     _validate_metadata_key(metadata_key)
 
     if not isinstance(value, (dict, list, tuple)):
         # scalar-equality Clause
+        if isinstance(value, bool):
+            condition, _ = _get_comparison_string("$eq", value, bind_variables)
+            return MULTIPLE_MASK.format(key=metadata_key, filters=condition, passes="")
         bind = f":value{len(bind_variables)}"
         bind_variables.append(value)
-
         return SINGLE_MASK.format(key=metadata_key, oper="==", value_bind=bind)
 
     elif isinstance(value, dict):
@@ -292,7 +308,9 @@ def _generate_condition(
                     MULTIPLE_MASK.format(
                         key=metadata_key,
                         filters=" && ".join(comparison_values),
-                        passes=" , ".join(passing_values),
+                        passes=_passing_clause(
+                            " , ".join(p for p in passing_values if p)
+                        ),
                     )
                 )
 
@@ -324,7 +342,9 @@ def _generate_condition(
                     all_conditions.append(
                         " NOT "
                         + MULTIPLE_MASK.format(
-                            key=metadata_key, filters=result, passes=passings
+                            key=metadata_key,
+                            filters=result,
+                            passes=_passing_clause(passings),
                         )
                     )
 
@@ -357,72 +377,39 @@ def _generate_condition(
 
             return res
 
-        elif any(value_key.startswith("$") for value_key in value.keys()):
-            raise ValueError(
-                "Invalid filter: operator keys ($...) cannot be mixed with "
-                f"nested metadata keys in {value!r}."
-            )
-
         else:
-            # Nested metadata path: {"address": {"city": "NYC"}} is
-            # equivalent to {"address.city": "NYC"}. Recurse with the
-            # dotted path; operator dicts and scalars terminate the
-            # recursion, so arbitrary nesting depth is supported.
-            nested_conditions = [
-                _generate_condition(
-                    f"{metadata_key}.{sub_key}", sub_value, bind_variables
-                )
-                for sub_key, sub_value in value.items()
-            ]
+            from ._filters import render_field
 
-            res = " AND ".join(nested_conditions)
+            def combine(operator: Optional[str], clauses: list[str]) -> str:
+                result = " AND ".join(clauses)
+                return "(" + result + ")" if len(clauses) > 1 else result
 
-            if len(nested_conditions) > 1:
-                return "(" + res + ")"
-
-            return res
+            return render_field(
+                metadata_key,
+                value,
+                lambda key, operand: _generate_condition(key, operand, bind_variables),
+                combine,
+            )
 
     else:
         raise ValueError("Filter format is invalid.")
 
 
 def _generate_where_clause(filter: dict, bind_variables: List[str]) -> str:
-    if not isinstance(filter, dict):
-        raise ValueError("Filter syntax is incorrect. Must be a dictionary.")
+    from ._filters import render_filter
 
-    all_conditions = []
+    def combine(operator: Optional[str], clauses: list[str]) -> str:
+        if operator is not None:
+            separator, template = LOGICAL_MAP[operator]
+            return template.format(separator.join(clauses))
+        result = " AND ".join(clauses)
+        return "(" + result + ")" if len(clauses) > 1 else result
 
-    for key, value in filter.items():
-        # must be a logical if on a high level
-        if key.startswith("$"):
-            if key not in LOGICAL_MAP.keys():
-                raise ValueError(f"'{key}' is not a recognized logical operator.")
-
-            filter_format = LOGICAL_MAP[key]
-
-            if not isinstance(value, list):
-                raise ValueError("Logical operators require an array of values.")
-
-            combine_conditions = [
-                _generate_where_clause(v, bind_variables) for v in value
-            ]
-
-            res = filter_format[1].format(filter_format[0].join(combine_conditions))
-
-            all_conditions.append(res)
-
-        else:
-            # this is a metadata key - not an operator
-            res = _generate_condition(key, value, bind_variables)
-            all_conditions.append(res)
-
-    # combine everything with AND
-    res = " AND ".join(all_conditions)
-
-    if len(all_conditions) > 1:
-        res = "(" + res + ")"
-
-    return res
+    return render_filter(
+        filter,
+        lambda key, value: _generate_condition(key, value, bind_variables),
+        combine,
+    )
 
 
 def _get_distance_function(distance_strategy: DistanceStrategy) -> str:

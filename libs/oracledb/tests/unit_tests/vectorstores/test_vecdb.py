@@ -228,7 +228,9 @@ def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
         id="a", page_content="hello", metadata={"tenant": "one"}
     )
     assert hits[0][1] == 0.25  # lower-is-better distance, same as SQL OracleVS
-    assert sdk.query.call_args.kwargs["filters"] == {"tenant": {"$eq": "one"}}
+    assert sdk.query.call_args.kwargs["filters"] == {
+        "tenant": {"$string": {"$eq": "one"}}
+    }
     assert sdk.query.call_args.kwargs["advanced_options"] == {
         "distance_metric": "EUCLIDEAN"
     }
@@ -275,7 +277,9 @@ async def test_user_text_metadata_roundtrip_filter_and_projection(
         fetched = store.get_by_ids(["a"])
     expected = Document(id="a", page_content="document body", metadata=metadata)
     assert hits == fetched == [expected]
-    assert sdk.query.call_args.kwargs["filters"] == {"text": {"$eq": "user label"}}
+    assert sdk.query.call_args.kwargs["filters"] == {
+        "text": {"$string": {"$eq": "user label"}}
+    }
     assert sdk.query.call_args.kwargs["output_selector"] == [
         "text",
         "lc_oracle_content",
@@ -1098,7 +1102,7 @@ async def test_facade_forwards_vecdb_options_without_mutating_them(
         "table_name": "DOCS",
         "query_by": {"vector": [1.0, 0.0]},
         "top_k": 3,
-        "filters": {"tenant": "one"},
+        "filters": {"tenant": {"$string": {"$eq": "one"}}},
         "include_vectors": False,
         "advanced_options": {**options, "distance_metric": store._vecdb.metric},
         "output_selector": ["tenant", "lc_oracle_content"],
@@ -1421,10 +1425,9 @@ async def test_public_vecdb_creation_options_forwarded(sdk, asynchronous, factor
 @pytest.mark.parametrize(
     "filters",
     [
-        {"drinks": {"$eq": ["soda", "tea"]}},
-        {"drinks": {"$ne": "tea"}},
-        {"age": {"$not": {"$gt": 46, "$lt": 65}}},
-        {"name": {"$regex": "*rk"}},
+        {"payload": {"$eq": {"a": 1}}},
+        {"drinks": {"$ne": ["tea"]}},
+        {"items[*].tags": {"$eq": ["tea", "soda"]}},
     ],
 )
 @pytest.mark.asyncio
