@@ -67,12 +67,12 @@ def test_rest_crud_filters_and_full_text(vecdb_store):
     assert store.backend == "vecdb"
     assert store.add_texts(
         [long_text, "other subject"],
-        [{"tenant": "a"}, {"tenant": "b"}],
+        [{"tenant": "a", "text": "user label"}, {"tenant": "b", "text": "other label"}],
         ids=["one", "two"],
     ) == ["one", "two"]
     doc = store.get_by_ids(["one"])[0]
     assert doc.page_content == long_text
-    assert doc.metadata == {"tenant": "a"}
+    assert doc.metadata == {"tenant": "a", "text": "user label"}
     hits = store.similarity_search_with_score("oracle", k=2)
     assert hits[0][0].id == "one"
     assert hits[0][1] == pytest.approx(0)
@@ -82,6 +82,12 @@ def test_rest_crud_filters_and_full_text(vecdb_store):
             "oracle", k=2, filter={"tenant": {"$eq": "b"}}
         )
     ] == ["two"]
+    projected = store.similarity_search(
+        "oracle", k=2, filter={"text": {"$eq": "user label"}}, output_selector=["text"]
+    )
+    assert [doc.id for doc in projected] == ["one"]
+    assert projected[0].page_content == long_text
+    assert projected[0].metadata == {"text": "user label"}
     store.add_texts(["oracle changed"], [{"tenant": "a"}], ids=["one"])
     assert store.get_by_ids(["one"])[0].page_content == "oracle changed"
     store.delete(["one", "two"])

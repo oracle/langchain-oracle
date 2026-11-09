@@ -27,7 +27,11 @@ def test_emitted_function_contract(version, operation):
         params = {
             "table_name": "DOCS",
             "vectors": [
-                {"id": "one", "dense_vector": [1.0], "metadata": {"text": "one"}}
+                {
+                    "id": "one",
+                    "dense_vector": [1.0],
+                    "metadata": {"lc_oracle_content": "one"},
+                }
             ],
         }
     sql, binds = _vecdb.NativeTransport(None, version)._statement(operation, params)
@@ -130,7 +134,9 @@ async def test_insert_failure_preserves_primary_error(
     )(None, (23, 26, 4))
     transport.columns = MagicMock(return_value=_vecdb.CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=_vecdb.CURRENT_COLUMNS)
-    records = [{"id": "one", "dense_vector": [1.0], "metadata": {"text": "one"}}]
+    records = [
+        {"id": "one", "dense_vector": [1.0], "metadata": {"lc_oracle_content": "one"}}
+    ]
     with pytest.raises(type(error)) as caught:
         if asynchronous:
             await transport.ainsert("DOCS", records)

@@ -66,7 +66,11 @@ def test_preflight_never_accepts_ddl_or_non_adapter_sql(statement):
             {
                 "table_name": "DOCS",
                 "vectors": [
-                    {"id": "one", "dense_vector": [1.0], "metadata": {"text": "one"}}
+                    {
+                        "id": "one",
+                        "dense_vector": [1.0],
+                        "metadata": {"lc_oracle_content": "one"},
+                    }
                 ],
             },
         ),

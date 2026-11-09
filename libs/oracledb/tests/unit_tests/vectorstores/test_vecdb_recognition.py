@@ -125,7 +125,9 @@ async def test_recognition_errors_never_become_nonmembership(database, code):
     with pytest.raises(oracledb.DatabaseError) as caught:
         await recognize(database)
     assert caught.value is error
-    assert cursor.execute.call_count == 2
+    # ORA-00942 additionally checks that this is a direct table, rather than
+    # a SQL synonym the package cannot describe. Other errors are never retried.
+    assert cursor.execute.call_count == (3 if code == 942 else 2)
 
 
 @pytest.mark.parametrize(
@@ -336,3 +338,39 @@ async def test_unqualified_invalid_name_is_not_registry_fallback(database):
         "LIST_VECTOR_TABLES" not in call.args[0]
         for call in cursor.execute.call_args_list
     )
+
+
+@pytest.mark.parametrize("registered", [False, True, None])
+@pytest.mark.asyncio
+async def test_case_sensitive_table_description_uses_exact_registry_membership(
+    database, registered
+):
+    _, _, cursor, state = database
+    state["columns"] = {"ID", "TEXT", "METADATA", "EMBEDDING"}
+    state["error"] = oracledb.DatabaseError(SimpleNamespace(code=942))
+    output = MagicMock(getvalue=MagicMock(return_value=registered))
+    cursor.var.return_value = output
+    if registered is None:
+        with pytest.raises(ValueError, match="Malformed VecDB"):
+            await recognize(database, '"Mixed.Name"')
+    else:
+        assert await recognize(database, '"Mixed.Name"') is registered
+    assert cursor.execute.call_args.args == (_vecdb.VECDB_QUALIFIED_MEMBERSHIP_SQL,)
+    assert cursor.execute.call_args.kwargs == {
+        "membership": output,
+        "owner": None,
+        "name": "Mixed.Name",
+    }
+
+
+@pytest.mark.asyncio
+async def test_case_sensitive_package_table_with_sql_columns_is_not_sql(database):
+    asynchronous, connection, cursor, state = database
+    state["columns"] = {"ID", "TEXT", "METADATA", "EMBEDDING"}
+    state["error"] = oracledb.DatabaseError(SimpleNamespace(code=942))
+    cursor.var.return_value.getvalue.return_value = 1
+    with pytest.raises(ValueError, match="Incompatible VecDB"):
+        if asynchronous:
+            await _vecdb.anative_selection(connection, '"Mixed"', "auto")
+        else:
+            _vecdb.native_selection(connection, '"Mixed"', "auto")

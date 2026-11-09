@@ -22,7 +22,8 @@ from .._vecdb_sdk.services.ords.hybrid_search import HybridSearch
 from .._vecdb_sdk.services.sqlnet.query_mapper import SQLNetQueryMapper
 from ._vecdb_filters import translate_filter
 
-TEXT_KEY = "text"
+# Internal document body field; user metadata remains flat.
+TEXT_KEY = "lc_oracle_content"
 CURRENT_VERSION = (23, 26, 3)
 
 
@@ -311,7 +312,7 @@ class _LangChainHybridSearch(HybridSearch):
         return HybridSearch._identifier(value, name)
 
     def _describe_table_embed_params(self, table_name: str) -> dict[str, Any]:
-        # LangChain stores page_content at metadata.text for both table layouts.
+        # Both table layouts store page_content under the same internal key.
         return {"embed_metadata_jsonpath": TEXT_KEY}
 
     @staticmethod
@@ -414,7 +415,10 @@ def retriever_hybrid_options(
         text = dict(options.get("text") or {})
         if "json_textcontains" in text:
             raise ValueError("The text path and query are derived internally")
-        text["json_textcontains"] = ["$.text", _generate_accum_query(query, False)]
+        text["json_textcontains"] = [
+            f"$.{TEXT_KEY}",
+            _generate_accum_query(query, False),
+        ]
         options["text"] = text
     else:
         options.pop("text", None)

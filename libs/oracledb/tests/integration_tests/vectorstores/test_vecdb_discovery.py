@@ -46,7 +46,7 @@ async def test_discovery_is_reused_and_external_column_change_refreshes(
                     [
                         "one",
                         array.array("f", [1.0, 0.0, 0.0]),
-                        {"text": "oracle database"},
+                        {"lc_oracle_content": "oracle database", "text": "userlabel"},
                     ],
                 )
                 connection.commit()
@@ -83,6 +83,8 @@ async def test_discovery_is_reused_and_external_column_change_refreshes(
                 for _ in range(3):
                     docs = await invoke("text_search", "oracle", 1)
                     assert [doc.page_content for doc in docs] == ["oracle database"]
+                assert docs[0].metadata == {"text": "userlabel"}
+                assert await invoke("text_search", "userlabel", 1) == []
                 assert (layout.call_count, indexes.call_count) == (1, 1)
                 # External DDL is intentionally outside the transport lifecycle.
                 with connection.cursor() as cursor:

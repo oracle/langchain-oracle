@@ -5,6 +5,9 @@ test_oraclevs.py
 
 Test Oracle AI Vector Search functionality integration
 with OracleVS.
+
+Tests asserting physical SQL index names explicitly select the SQL backend.
+Package-managed VecDB indexes are covered by test_vecdb_managed_indexes.py.
 """
 
 # import required modules
@@ -436,7 +439,9 @@ def test_create_hnsw_index_test() -> None:
     model1 = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
-    vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs)
 
     # 2. Creating same index again
@@ -451,7 +456,9 @@ def test_create_hnsw_index_test() -> None:
     #    idx_name - hnsw_idx2
     #    idx_type - HNSW
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
     drop_index_if_exists(connection, "hnsw_idx2")
     drop_table_purge(connection, "TB2")
@@ -460,7 +467,9 @@ def test_create_hnsw_index_test() -> None:
     #    idx_name - "हिन्दी"
     #    idx_type - HNSW
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"})
     drop_index_if_exists(connection, '"हिन्दी"')
     drop_table_purge(connection, "TB3")
@@ -468,21 +477,31 @@ def test_create_hnsw_index_test() -> None:
     # 5. idx_name passed empty
     # Expectation:ORA-01741: illegal zero-length identifier
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB4",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(connection, vs, params={"idx_name": '""', "idx_type": "HNSW"})
         drop_index_if_exists(connection, '""')
     drop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
     # Expectation: rejected by _validate_index_type (added in #215)
-    vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     with pytest.raises(ValueError, match="idx_type must be HNSW"):
         create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
     drop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -494,7 +513,9 @@ def test_create_hnsw_index_test() -> None:
     # 8. efconstruction passed as parameter as well as neighbours
     # (for this idx_type parameter is also necessary)
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -519,7 +540,9 @@ def test_create_hnsw_index_test() -> None:
     #     0<parallel<=255
     # Expectation:Index created
     drop_table_purge(connection, "TB9")
-    vs = OracleVS(connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -535,7 +558,13 @@ def test_create_hnsw_index_test() -> None:
     drop_table_purge(connection, "TB9")
     # index not created:
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB10",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -550,7 +579,13 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # index not created:
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB11",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -565,7 +600,13 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # index not created
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB12",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -580,7 +621,13 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # index not created
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB13",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -597,7 +644,13 @@ def test_create_hnsw_index_test() -> None:
     # With negative or out-of-bound values for all 4 of them, we get the same errors.
     # Expectation:Index not created
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB14",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -619,7 +672,9 @@ def test_create_hnsw_index_test() -> None:
 
     # 10. Table_name as <schema_name.table_name>
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -639,7 +694,11 @@ def test_create_hnsw_index_test() -> None:
     # Expectation:U1 not present
     with pytest.raises(RuntimeError):
         vs = OracleVS(
-            connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "U1.TB16",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         create_index(
             connection,
@@ -659,14 +718,22 @@ def test_create_hnsw_index_test() -> None:
     # 12. Index_name size >129
     # Expectation:Index not created
     with pytest.raises(RuntimeError):
-        vs = OracleVS(connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB17",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"})
         drop_index_if_exists(connection, "x" * 129)
     drop_table_purge(connection, "TB17")
 
     # 13. Index_name size 128
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": "x" * 128, "idx_type": "HNSW"})
     drop_index_if_exists(connection, "x" * 128)
     drop_table_purge(connection, "TB18")
@@ -688,7 +755,7 @@ async def test_create_hnsw_index_test_async() -> None:
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
     vs = await OracleVS.acreate(
-        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs)
 
@@ -705,7 +772,7 @@ async def test_create_hnsw_index_test_async() -> None:
     #    idx_type - HNSW
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
@@ -718,7 +785,7 @@ async def test_create_hnsw_index_test_async() -> None:
     #    idx_type - HNSW
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"}
@@ -730,7 +797,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:ORA-01741: illegal zero-length identifier
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB4",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection, vs, params={"idx_name": '""', "idx_type": "HNSW"}
@@ -740,7 +811,7 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 6. idx_type left empty
     vs = await OracleVS.acreate(
-        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     with pytest.raises(ValueError, match="idx_type must be HNSW"):
         await acreate_index(
@@ -751,7 +822,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # 7. efconstruction passed as parameter but not neighbours
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -765,7 +836,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # (for this idx_type parameter is also necessary)
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -792,7 +863,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:Index created
     await adrop_table_purge(connection, "TB9")
     vs = await OracleVS.acreate(
-        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -810,7 +881,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created:
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB10",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -828,7 +903,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created:
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB11",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -845,7 +924,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB12",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -862,7 +945,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB13",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -881,7 +968,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:Index not created
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB14",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -905,7 +996,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # 10. Table_name as <schema_name.table_name>
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -926,7 +1017,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:U1 not present
     with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
-            connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "U1.TB16",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -947,7 +1042,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:Index not created
     with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB17",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"}
@@ -958,7 +1057,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # 13. Index_name size 128
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": "x" * 128, "idx_type": "HNSW"}
@@ -982,7 +1081,9 @@ def test_index_exists_test() -> None:
     )
     # 1. Existing Index:(all capital letters)
     # Expectation:true
-    vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"})
     assert not _index_exists(connection, _quote_indentifier("IDX11"))
 
@@ -1048,7 +1149,7 @@ async def test_index_exists_test_async() -> None:
     # 1. Existing Index:(all capital letters)
     # Expectation:true
     vs = await OracleVS.acreate(
-        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"}
@@ -1452,28 +1553,36 @@ def test_create_index_test() -> None:
     model1 = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
-    vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs)
     drop_index_if_exists(connection, "HNSW")
     drop_table_purge(connection, "TB1")
 
     # 2. ivf index
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     drop_index_if_exists(connection, "IVF")
     drop_table_purge(connection, "TB2")
 
     # 3. ivf index with neighbour_part passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10})
     drop_index_if_exists(connection, "IVF")
     drop_table_purge(connection, "TB3")
 
     # 4. ivf index with neighbour_part and accuracy passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90}
     )
@@ -1482,7 +1591,9 @@ def test_create_index_test() -> None:
 
     # 5. ivf index with neighbour_part and parallel passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90}
     )
@@ -1491,7 +1602,9 @@ def test_create_index_test() -> None:
 
     # 6. ivf index and then perform dml(insert)
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     texts = ["Sri Ram", "Krishna"]
     vs.add_texts(texts)
@@ -1502,7 +1615,9 @@ def test_create_index_test() -> None:
 
     # 7. ivf index with neighbour_part,parallel and accuracy passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -1526,7 +1641,7 @@ async def test_create_index_test_async() -> None:
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
     vs = await OracleVS.acreate(
-        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs)
     await adrop_index_if_exists(connection, "HNSW")
@@ -1535,7 +1650,7 @@ async def test_create_index_test_async() -> None:
     # 2. ivf index
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     await adrop_index_if_exists(connection, "IVF")
@@ -1544,7 +1659,7 @@ async def test_create_index_test_async() -> None:
     # 3. ivf index with neighbour_part passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10})
     await adrop_index_if_exists(connection, "IVF")
@@ -1553,7 +1668,7 @@ async def test_create_index_test_async() -> None:
     # 4. ivf index with neighbour_part and accuracy passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90}
@@ -1564,7 +1679,7 @@ async def test_create_index_test_async() -> None:
     # 5. ivf index with neighbour_part and parallel passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90}
@@ -1575,7 +1690,7 @@ async def test_create_index_test_async() -> None:
     # 6. ivf index and then perform dml(insert)
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     texts = ["Sri Ram", "Krishna"]
@@ -1588,7 +1703,7 @@ async def test_create_index_test_async() -> None:
     # 7. ivf index with neighbour_part,parallel and accuracy passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -2297,23 +2412,33 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 
     with caplog.at_level(logging.INFO):
-        vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs_obj = OracleVS(
+            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+        )
 
     assert 'Table "TB1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        OracleVS(connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE)
+        OracleVS(
+            connection,
+            model,
+            '"TB1"',
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
 
     assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        OracleVS(connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        OracleVS(
+            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+        )
 
     assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = OracleVS(
-            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "TB2" created successfully...' in caplog.records[-1].message
@@ -2385,28 +2510,32 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
 
     with caplog.at_level(logging.INFO):
         vs_obj = await OracleVS.acreate(
-            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "TB1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         await OracleVS.acreate(
-            connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model,
+            '"TB1"',
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
 
     assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         await OracleVS.acreate(
-            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = await OracleVS.acreate(
-            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "TB2" created successfully...' in caplog.records[-1].message

@@ -63,7 +63,7 @@ def sdk():
             "items": [
                 {
                     "id": "a",
-                    "metadata": {"text": "hello", "tenant": "one"},
+                    "metadata": {"lc_oracle_content": "hello", "tenant": "one"},
                     "distance": 0.25,
                     "vector": [1.0, 0.0],
                 }
@@ -218,7 +218,7 @@ def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
         {
             "id": "a",
             "dense_vector": [1.0, 0.0],
-            "metadata": {"tenant": "one", "text": "hello"},
+            "metadata": {"tenant": "one", "lc_oracle_content": "hello"},
         }
     ]
     hits = store.similarity_search_with_score(
@@ -234,12 +234,53 @@ def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
     }
 
 
-def test_reserved_text_key_and_bad_batch_do_not_write(store, sdk):
-    with pytest.raises(ValueError, match="reserved"):
-        store.add_texts(["hello"], [{"text": "user value"}])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_reserved_content_key_and_bad_batch_do_not_write(
+    store, sdk, asynchronous
+):
+    with pytest.raises(ValueError, match="lc_oracle_content.*reserved"):
+        if asynchronous:
+            await store.aadd_texts(["hello"], [{"lc_oracle_content": "user value"}])
+        else:
+            store.add_texts(["hello"], [{"lc_oracle_content": "user value"}])
     with pytest.raises(ValueError, match="Length mismatch"):
         store.add_texts(["hello"], ids=["one", "two"])
     sdk.upsert_vectors.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_user_text_metadata_roundtrip_filter_and_projection(
+    store, sdk, asynchronous
+):
+    metadata = {"text": "user label", "metadata": {"text": "nested label"}}
+    if asynchronous:
+        await store.aadd_texts(["document body"], [metadata], ids=["a"])
+    else:
+        store.add_texts(["document body"], [metadata], ids=["a"])
+    record = sdk.upsert_vectors.call_args.kwargs["vectors"][0]
+    assert record["metadata"] == {
+        **metadata,
+        "lc_oracle_content": "document body",
+    }
+    sdk.query.return_value = {"items": [{**record, "distance": 0.25}]}
+    sdk.list_vectors.return_value = {"items": [record]}
+    options = {"filter": {"text": {"$eq": "user label"}}, "output_selector": ["text"]}
+    if asynchronous:
+        hits = await store.asimilarity_search("query", **options)
+        fetched = await store.aget_by_ids(["a"])
+    else:
+        hits = store.similarity_search("query", **options)
+        fetched = store.get_by_ids(["a"])
+    expected = Document(id="a", page_content="document body", metadata=metadata)
+    assert hits == fetched == [expected]
+    assert sdk.query.call_args.kwargs["filters"] == {"text": {"$eq": "user label"}}
+    assert sdk.query.call_args.kwargs["output_selector"] == [
+        "text",
+        "lc_oracle_content",
+    ]
+    assert metadata == {"text": "user label", "metadata": {"text": "nested label"}}
 
 
 def test_empty_batch_does_not_write(store, sdk):
@@ -270,7 +311,7 @@ def test_insert_only_rest_requires_native_instead_of_racy_upsert(sdk):
 
 def test_get_pages_id_batches_and_delete(store, sdk):
     sdk.list_vectors.return_value = {
-        "items": [{"id": "a", "metadata": {"text": "hello"}}]
+        "items": [{"id": "a", "metadata": {"lc_oracle_content": "hello"}}]
     }
     assert store.get_by_ids([str(i) for i in range(205)])[0].page_content == "hello"
     assert [call.kwargs["limit"] for call in sdk.list_vectors.call_args_list] == [
@@ -565,7 +606,9 @@ def test_hybrid_retriever_calls_native_search_without_application_fusion(store, 
     assert ("text" in params) == (mode != "semantic")
     assert ("vector" in params) == (mode != "keyword")
     if mode != "semantic":
-        assert params["text"] == {"json_textcontains": ["$.text", '"hello"']}
+        assert params["text"] == {
+            "json_textcontains": ["$.lc_oracle_content", '"hello"']
+        }
     if mode != "keyword":
         assert params["vector"] == {"search_vector": [1.0, 0.0]}
 
@@ -592,12 +635,12 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     connection = MagicMock()
     cursor = connection.cursor.return_value.__enter__.return_value
-    original = {"text": "hello", "tenant": "one"}
+    original = {"lc_oracle_content": "hello", "tenant": "one"}
     cursor.fetchall.return_value = [("a", original, 9, 2, 7)]
     cursor.fetchone.return_value = ("HVI", "SIMPLIFIED_JSON_HYBRID")
     params = {
         "hybrid_index_name": "HVI",
-        "text": {"json_textcontains": ["$.text", "x' OR 1=1"]},
+        "text": {"json_textcontains": ["$.lc_oracle_content", "x' OR 1=1"]},
     }
 
     @contextmanager
@@ -614,7 +657,7 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
         "text_score": 2,
         "vector_score": 0,
     }
-    assert original == {"text": "hello", "tenant": "one"}
+    assert original == {"lc_oracle_content": "hello", "tenant": "one"}
     statement = cursor.execute.call_args.args[0]
     assert "DBMS_HYBRID_VECTOR.SEARCH(JSON(:search_params))" in statement
     assert "ORDER BY h.position" in statement
@@ -622,7 +665,7 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     request = json.loads(cursor.execute.call_args.kwargs["search_params"])
     assert request["hybrid_index_name"] == '"HVI"'
     assert request["text"]["json_textcontains"] == params["text"]["json_textcontains"]
-    assert request["text"]["inpath"] == ["$.text"]
+    assert request["text"]["inpath"] == ["$.lc_oracle_content"]
     assert request["return"]["format"] == "JSON"
 
 
@@ -708,7 +751,7 @@ def test_native_insert_only_skips_duplicate_rows():
         SimpleNamespace(code=1, offset=0, message="duplicate ID")
     ]
     records = [
-        {"id": id_, "dense_vector": [1.0], "metadata": {"text": "x"}}
+        {"id": id_, "dense_vector": [1.0], "metadata": {"lc_oracle_content": "x"}}
         for id_ in ["a", "b"]
     ]
 
@@ -884,7 +927,7 @@ async def test_async_native_hybrid_transport_returns_database_scores():
     cursor.execute = AsyncMock()
     cursor.fetchone = AsyncMock(return_value=("HVI", "SIMPLIFIED_JSON_HYBRID"))
     cursor.fetchall = AsyncMock(
-        return_value=[("a", {"text": "hello", "tenant": "one"}, 9, 2, 7)]
+        return_value=[("a", {"lc_oracle_content": "hello", "tenant": "one"}, 9, 2, 7)]
     )
 
     @asynccontextmanager
@@ -1058,7 +1101,7 @@ async def test_facade_forwards_vecdb_options_without_mutating_them(
         "filters": {"tenant": "one"},
         "include_vectors": False,
         "advanced_options": {**options, "distance_metric": store._vecdb.metric},
-        "output_selector": ["tenant", "text"],
+        "output_selector": ["tenant", "lc_oracle_content"],
     }
     assert options == {"accuracy": 90, "advanced_params": {"rescore_factor": 2}}
     assert selector == ["tenant"]
@@ -1127,7 +1170,7 @@ async def test_native_facade_submits_projected_search_request(store, asynchronou
         "top_k": 4,
         "filters": None,
         "include_vectors": False,
-        "output_selector": ["text"],
+        "output_selector": ["lc_oracle_content"],
         "advanced_options": {"accuracy": 75, "distance_metric": store._vecdb.metric},
     }
 
@@ -1173,7 +1216,7 @@ async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, capl
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
     records = [
-        {"id": key, "dense_vector": [1.0], "metadata": {"text": key}}
+        {"id": key, "dense_vector": [1.0], "metadata": {"lc_oracle_content": key}}
         for key in ["valid", "duplicate", "other"]
     ]
 
@@ -1272,7 +1315,7 @@ def test_public_sdk_and_native_provider_share_query_and_result_contract(
     )
     hit = {
         "id": "fixture",
-        "metadata": {"text": "Oracle λ", "tenant": "one"},
+        "metadata": {"lc_oracle_content": "Oracle λ", "tenant": "one"},
         "distance": 0.25,
     }
     if include_vectors:

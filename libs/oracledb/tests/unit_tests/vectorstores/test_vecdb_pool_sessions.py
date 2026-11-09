@@ -140,10 +140,12 @@ class Session:
             self.preference_exists = False
         elif "JSON_TABLE(DBMS_HYBRID_VECTOR.SEARCH" in statement:
             self.check_metadata_search(statement, binds)
-            self.rows = [(self.schema, {"text": self.schema}, 1.0, 0.5, 0.5)]
+            self.rows = [
+                (self.schema, {"lc_oracle_content": self.schema}, 1.0, 0.5, 0.5)
+            ]
         elif "JSON_TEXTCONTAINS" in statement:
             self.check_metadata_search(statement, binds)
-            self.rows = [(self.schema, {"text": self.schema}, 17)]
+            self.rows = [(self.schema, {"lc_oracle_content": self.schema}, 17)]
         elif "result" in binds:
             if ".search(" in statement.lower() and self.fail_query:
                 self.fail_query = False
@@ -153,7 +155,7 @@ class Session:
                     "items": [
                         {
                             "id": self.schema,
-                            "metadata": {"text": self.schema},
+                            "metadata": {"lc_oracle_content": self.schema},
                             "distance": 0.0,
                         }
                     ]

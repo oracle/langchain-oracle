@@ -211,8 +211,10 @@ class OracleVectorizerPreference:
                 preference_params["embedder_spec"] = embeddings.params
 
         if self.vs._vecdb is not None:
+            from ..vectorstores._vecdb_adapter import TEXT_KEY
+
             preference_params.setdefault(
-                "paths", [{"type": "STRING", "path_list": ["$.text"]}]
+                "paths", [{"type": "STRING", "path_list": [f"$.{TEXT_KEY}"]}]
             )
         return preference_params
 

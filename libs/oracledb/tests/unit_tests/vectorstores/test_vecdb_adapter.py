@@ -172,7 +172,7 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
     params = {
         "hybrid_index_name": "HVI",
         "vector": {"search_vector": [1.0, 0.0], "aggregator_params": ["AVGN", 5, 50]},
-        "text": {"json_textcontains": ["$.text", '"oracle"']},
+        "text": {"json_textcontains": ["$.lc_oracle_content", '"oracle"']},
         "search_fusion": "UNION",
         "return": {"topN": 7},
     }
@@ -180,8 +180,8 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
     result = hybrid_search_request("DOCS", params)
     assert result["vector"]["search_vector"] == "[1.0, 0.0]"
     assert result["vector"]["aggregator_params"] == ["AVGN", 5, 50]
-    assert result["text"]["inpath"] == ["$.text"]
-    assert result["text"]["json_textcontains"] == ["$.text", '"oracle"']
+    assert result["text"]["inpath"] == ["$.lc_oracle_content"]
+    assert result["text"]["json_textcontains"] == ["$.lc_oracle_content", '"oracle"']
     assert result["return"]["topN"] == 7
     assert result["return"]["format"] == "JSON"
     assert "rowid" in result["return"]["values"]
@@ -202,7 +202,7 @@ def test_hybrid_rejects_invalid_vectors_without_native_access(vector):
 def test_hybrid_mode_survives_request_adaptation(mode):
     params = {"hybrid_index_name": "HVI", "search_fusion": mode}
     if mode == "TEXT_ONLY":
-        params["text"] = {"json_textcontains": ["$.text", "hello"]}
+        params["text"] = {"json_textcontains": ["$.lc_oracle_content", "hello"]}
     else:
         params["vector"] = {"search_vector": [1.0]}
     assert hybrid_search_request("DOCS", params)["search_fusion"] == mode
@@ -212,7 +212,7 @@ def test_hybrid_mode_survives_request_adaptation(mode):
 def test_response_adapter_keeps_full_text_id_and_metadata_without_mutation(key):
     item = {
         "id": "a",
-        "metadata": {"text": "full document", "tenant": "one"},
+        "metadata": {"lc_oracle_content": "full document", "tenant": "one"},
         "score": 9,
     }
     original = deepcopy(item)
@@ -228,7 +228,7 @@ def test_response_adapter_accepts_pydantic_shape():
     class Response(BaseModel):
         items: list[dict]
 
-    response = Response(items=[{"id": "a", "metadata": {"text": "hello"}}])
+    response = Response(items=[{"id": "a", "metadata": {"lc_oracle_content": "hello"}}])
     assert as_dict(response)["items"][0]["id"] == "a"
 
 

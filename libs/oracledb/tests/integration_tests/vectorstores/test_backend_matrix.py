@@ -538,7 +538,7 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
                     [("added",), ("seed",)] if name == target else [("seed",)]
                 )
             cursor.execute(
-                f"SELECT JSON_VALUE(CONTENT_METADATA, '$.text') "
+                f"SELECT JSON_VALUE(CONTENT_METADATA, '$.lc_oracle_content') "
                 f"FROM {target} WHERE ID='added'"
             )
             assert cursor.fetchone()[0] == "oracle target"
@@ -718,7 +718,7 @@ async def test_broken_synonym_never_creates_a_table(
 @pytest.mark.parametrize("origin", ["library_sql", "current_vecdb_shape", "unrelated"])
 @pytest.mark.asyncio
 async def test_current_schema_does_not_inspect_login_users_table(
-    database_matrix, asynchronous, origin
+    database_matrix, vecdb_enabled, asynchronous, origin
 ):
     from langchain_oracledb.vectorstores._vecdb import (
         AsyncNativeTransport,
@@ -729,6 +729,9 @@ async def test_current_schema_does_not_inspect_login_users_table(
 
     connection, _, config, tables, baseline = database_matrix
     name = tables[origin]
+    # The current schema has no such table. Selection follows the new-table
+    # policy for this database, independently of the login user's object.
+    expected_backend = "vecdb" if vecdb_enabled else "sql"
     client = await oracledb.connect_async(**config) if asynchronous else connection
     original = None
     try:
@@ -753,7 +756,9 @@ async def test_current_schema_does_not_inspect_login_users_table(
             assert before
             if asynchronous:
                 assert await transport.acolumns(name) == set()
-                assert (await anative_selection(client, name, "auto"))[0] == "sql"
+                assert (await anative_selection(client, name, "auto"))[
+                    0
+                ] == expected_backend
                 assert await transport.acolumns(f'"{original}"."{name}"') == before
                 await cursor.execute(
                     "SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') FROM SYS.DUAL"
@@ -761,7 +766,7 @@ async def test_current_schema_does_not_inspect_login_users_table(
                 assert (await cursor.fetchone())[0] == "SYS"
             else:
                 assert transport.columns(name) == set()
-                assert native_selection(client, name, "auto")[0] == "sql"
+                assert native_selection(client, name, "auto")[0] == expected_backend
                 assert transport.columns(f'"{original}"."{name}"') == before
                 cursor.execute(
                     "SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') FROM SYS.DUAL"
@@ -887,16 +892,20 @@ async def test_native_vecdb_batch_commits_successful_rows(
     valid = "atomic_" + uuid.uuid4().hex[:12]
     caller = "caller_" + uuid.uuid4().hex[:12]
     records = [
-        {"id": valid, "dense_vector": [1.0, 0.0, 0.0], "metadata": {"text": "valid"}},
+        {
+            "id": valid,
+            "dense_vector": [1.0, 0.0, 0.0],
+            "metadata": {"lc_oracle_content": "valid"},
+        },
         {
             "id": "seed",
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"text": "duplicate"},
+            "metadata": {"lc_oracle_content": "duplicate"},
         },
         {
             "id": "fatal",
             "dense_vector": [1.0, 0.0],
-            "metadata": {"text": "wrong dimension"},
+            "metadata": {"lc_oracle_content": "wrong dimension"},
         },
     ]
     connection = (
@@ -1045,7 +1054,7 @@ async def test_native_pool_operation_keeps_checkout_schema(
         {
             "id": id_,
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"text": "oracle pool insert"},
+            "metadata": {"lc_oracle_content": "oracle pool insert"},
         }
     ]
     pool = (AlternatingAsyncPool if asynchronous else AlternatingPool)(
@@ -1128,7 +1137,7 @@ async def test_native_function_signatures_compile_without_execution(
                 {
                     "id": "never",
                     "dense_vector": [1.0, 0.0, 0.0],
-                    "metadata": {"text": "never"},
+                    "metadata": {"lc_oracle_content": "never"},
                 }
             ],
         }
@@ -1189,7 +1198,7 @@ async def test_native_insert_real_driver_failure_outcomes(
         {
             "id": identifier,
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"text": "failure fixture"},
+            "metadata": {"lc_oracle_content": "failure fixture"},
         }
     ]
     connection = (
@@ -1438,7 +1447,10 @@ async def test_native_metadata_replacement_recovers_real_index_and_ingestion(
             {
                 "id": identifier,
                 "dense_vector": [1.0, 0.0, 0.0],
-                "metadata": {"text": "recoveryprobe", "tenant": "afterrestore"},
+                "metadata": {
+                    "lc_oracle_content": "recoveryprobe",
+                    "tenant": "afterrestore",
+                },
             }
         ]
         if asynchronous:

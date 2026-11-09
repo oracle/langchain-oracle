@@ -60,8 +60,8 @@ server and requested name support it, otherwise SQL. Set `backend="sql"` or
 
 Native ownership checks use a bound, single-table
 `DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE` call. Older packages that reject
-cross-schema description use a server-filtered registry lookup returning only a
-membership flag; Python does not download the full registry. The targeted
+cross-schema or case-sensitive descriptions use a server-filtered registry lookup
+returning only a membership flag; Python does not download the full registry. The targeted
 `ALL_TAB_COLUMNS` query still checks table existence and layout.
 For native VecDB selection, one SELECT returns both `SEARCH` availability and
 `COMPATIBLE`, using an inline function around `DBMS_UTILITY.DB_VERSION` without
@@ -121,7 +121,8 @@ native connection. Native stores also support the corresponding async APIs.
   exposes those Oracle Text scores. Keyword-only hybrid retrieval reports
   `vector_score=0`. Numeric document metadata is decoded as `Decimal`, matching
   SQL JSON metadata; booleans and nulls retain their types.
-- VecDB reserves metadata key `text` for document content. Search scores remain
+- VecDB reserves metadata key `lc_oracle_content` for document content;
+  user metadata can contain `text`. Search scores remain
   lower-is-better distances; `output_selector` and `advanced_options` expose SDK
   query options.
 - Native insert-only writes follow regular SQL insert behavior: autocommit and

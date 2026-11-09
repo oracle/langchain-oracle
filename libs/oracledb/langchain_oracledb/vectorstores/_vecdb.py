@@ -351,7 +351,7 @@ VECDB_QUALIFIED_TABLE_SQL = (
     "THEN :unqualified_name ELSE :name END), "
     "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM SYS.DUAL"
 )
-# Older packages reject qualified names in DESCRIBE_VECTOR_TABLE. Keep this
+# Older packages reject qualified/case-sensitive table descriptions. Keep this
 # compatibility lookup server-side: one registry generation and one scalar bind.
 VECDB_QUALIFIED_MEMBERSHIP_SQL = """
 DECLARE
@@ -368,7 +368,8 @@ BEGIN
             ERROR ON ERROR) THEN NULL
         WHEN JSON_EXISTS(payload,
             '$.vector_tables[*]?(@.owner == $owner && @.table_name == $name)'
-            PASSING :owner AS "owner", :name AS "name" ERROR ON ERROR)
+            PASSING COALESCE(:owner, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))
+                AS "owner", :name AS "name" ERROR ON ERROR)
             THEN 1
         ELSE 0
     END INTO :membership FROM SYS.DUAL;
@@ -395,6 +396,17 @@ def _qualified_membership_binds(name: str, error: oracledb.DatabaseError) -> dic
     return {"owner": parts[0], "name": parts[-1]}
 
 
+def _case_sensitive_membership_binds(
+    name: str, error: oracledb.DatabaseError
+) -> Optional[dict]:
+    parts = _identifier_parts(name)
+    if getattr(error.args[0], "code", None) != 942 or all(
+        part == part.upper() for part in parts
+    ):
+        return None
+    return {"owner": parts[0] if len(parts) == 2 else None, "name": parts[-1]}
+
+
 def _membership_flag(value: Any) -> bool:
     if value not in (0, 1):
         raise ValueError("Malformed VecDB table registry identity")
@@ -414,6 +426,39 @@ def _described_table(name: str, result: tuple) -> bool:
     return response["owner"] == owner and response["table_name"] == parts[-1]
 
 
+def _is_sql_synonym(cursor: Any, name: str) -> bool:
+    """Prove SQL synonym resolution before treating package ORA-00942 as absent.
+
+    DESCRIBE_VECTOR_TABLE does not resolve synonyms. A real table, including one
+    shadowing a public synonym, must still propagate its description errors.
+    """
+    statement, binds = _layout_query(name)
+    cursor.execute(statement, **binds)
+    if cursor.fetchall():
+        return False
+    statement, binds = _synonym_query(name)
+    cursor.execute(statement, **binds)
+    if not cursor.fetchone():
+        return False
+    cursor.execute(f"SELECT * FROM {_quote_indentifier(name)} WHERE 1 = 0")
+    columns = {column[0] for column in cursor.description or ()}
+    return {"ID", "TEXT", "METADATA", "EMBEDDING"} <= columns
+
+
+async def _ais_sql_synonym(cursor: Any, name: str) -> bool:
+    statement, binds = _layout_query(name)
+    await cursor.execute(statement, **binds)
+    if await cursor.fetchall():
+        return False
+    statement, binds = _synonym_query(name)
+    await cursor.execute(statement, **binds)
+    if not await cursor.fetchone():
+        return False
+    await cursor.execute(f"SELECT * FROM {_quote_indentifier(name)} WHERE 1 = 0")
+    columns = {column[0] for column in cursor.description or ()}
+    return {"ID", "TEXT", "METADATA", "EMBEDDING"} <= columns
+
+
 def _is_vecdb_table(cursor: Any, name: str) -> bool:
     """Describe one exact table without transferring the package registry."""
     cursor.execute(VECDB_RECOGNITION_SQL)
@@ -423,7 +468,20 @@ def _is_vecdb_table(cursor: Any, name: str) -> bool:
     try:
         cursor.execute(statement, **binds)
     except oracledb.DatabaseError as error:
-        binds = _qualified_membership_binds(name, error)
+        if getattr(error.args[0], "code", None) == 942 and _is_sql_synonym(
+            cursor, name
+        ):
+            return False
+        binds = _case_sensitive_membership_binds(name, error)
+        if binds is not None:
+            # Some older packages fold quoted names. Prove this exact table
+            # exists, then check registration without changing its case.
+            statement, layout_binds = _layout_query(name)
+            cursor.execute(statement, **layout_binds)
+            if not cursor.fetchall():
+                raise error
+        else:
+            binds = _qualified_membership_binds(name, error)
         membership = cursor.var(int)
         cursor.execute(VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **binds)
         return _membership_flag(membership.getvalue())
@@ -441,7 +499,18 @@ async def _ais_vecdb_table(cursor: Any, name: str) -> bool:
     try:
         await cursor.execute(statement, **binds)
     except oracledb.DatabaseError as error:
-        binds = _qualified_membership_binds(name, error)
+        if getattr(error.args[0], "code", None) == 942 and await _ais_sql_synonym(
+            cursor, name
+        ):
+            return False
+        binds = _case_sensitive_membership_binds(name, error)
+        if binds is not None:
+            statement, layout_binds = _layout_query(name)
+            await cursor.execute(statement, **layout_binds)
+            if not await cursor.fetchall():
+                raise error
+        else:
+            binds = _qualified_membership_binds(name, error)
         membership = cursor.var(int)
         await cursor.execute(
             VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **binds
@@ -988,7 +1057,7 @@ class NativeTransport:
                 meta = info.metadata_column
                 sql = (
                     f"SELECT id, {meta}, SCORE(1) FROM {quoted} "
-                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.text', :query, 1) "
+                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.{TEXT_KEY}', :query, 1) "
                     "ORDER BY SCORE(1) DESC, id FETCH FIRST :k ROWS ONLY"
                 )
                 try:
@@ -1207,7 +1276,9 @@ class VecDBBackend:
         records = []
         for text, vector, metadata, id_ in zip(texts, vectors, metadatas, ids):
             if TEXT_KEY in metadata:
-                raise ValueError("Document metadata contains a reserved key")
+                raise ValueError(
+                    f"Document metadata key {TEXT_KEY!r} is reserved for content"
+                )
             records.append(
                 {
                     "id": id_,
@@ -1865,7 +1936,7 @@ class AsyncNativeTransport(NativeTransport):
                 meta = info.metadata_column
                 sql = (
                     f"SELECT id, {meta}, SCORE(1) FROM {quoted} "
-                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.text', :query, 1) "
+                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.{TEXT_KEY}', :query, 1) "
                     "ORDER BY SCORE(1) DESC, id FETCH FIRST :k ROWS ONLY"
                 )
                 try:
