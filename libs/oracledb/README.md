@@ -57,16 +57,26 @@ print("Connection successful!")
 while package-registered VecDB tables use VecDB. New tables use VecDB when the
 server and requested name support it, otherwise SQL. Set `backend="sql"` or
 `backend="vecdb"` explicitly, and inspect `store.backend` for the selected backend.
-Ownership is checked through `DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES`, not column
-names; incompatible tables and package errors are reported rather than silently
-switching backends.
+
+Native ownership checks use a bound, single-table
+`DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE` call. Older packages that reject
+cross-schema description use a server-filtered registry lookup returning only a
+membership flag; Python does not download the full registry. The targeted
+`ALL_TAB_COLUMNS` query still checks table existence and layout.
+For native VecDB selection, one SELECT returns both `SEARCH` availability and
+`COMPATIBLE`, using an inline function around `DBMS_UTILITY.DB_VERSION` without
+requiring `V$PARAMETER` access. Existing SQL stores skip that compatibility query.
 
 Native VecDB uses an `oracledb` connection or pool and requires Oracle Database
 23.26.1+ with `COMPATIBLE >=23.4` (or `>=23.6` for 23.26.3+). Package operations
-require unqualified uppercase table names, such as `DOCUMENTS`. The default
-`from_texts()` name `langchain` therefore stays on SQL in automatic mode.
+require unqualified table names. Names are quoted and retain their case, as on
+the SQL backend, including lowercase, mixed-case, and quoted names containing
+literal dots. The default `from_texts()` name `langchain` can therefore use VecDB
+in automatic mode on a supported server.
 
-For REST, install the optional SDK extra (Python 3.10–3.15):
+REST resource names follow the SDK naming rules; case-sensitive quoted
+identifiers require a native connection or pool. Install the optional SDK extra
+for REST (Python 3.10–3.15):
 
 ```bash
 pip install "langchain-oracledb[vecdb]"
@@ -98,14 +108,48 @@ REST writes require `mutate_on_duplicate=True`; insert-only writes, metadata
 text/hybrid search and indexing, vectorizer preferences, and migration require a
 native connection. Native stores also support the corresponding async APIs.
 
+- Vector similarity filters use OracleVS validation and translate nested paths
+  and `$instr` to the VecDB QBE grammar. Unsupported predicates raise `ValueError`
+  before the search call: array/object `$eq` and `$ne`, scalar `$ne`, field
+  `$not`, and `$regex` (including inside logical expressions). These require
+  package support or further proven translations to preserve exact equality,
+  array/missing-field negation, type coercion, and `like_regex` semantics.
+  Use `backend="sql"` when those predicates are required. This restriction
+  applies to vector similarity searches, including async and MMR searches.
+- Native VecDB keyword retrieval uses `JSON_TEXTCONTAINS` with `SCORE(1)`
+  and returns matches in descending relevance order. `return_scores=True`
+  exposes those Oracle Text scores. Keyword-only hybrid retrieval reports
+  `vector_score=0`. Numeric document metadata is decoded as `Decimal`, matching
+  SQL JSON metadata; booleans and nulls retain their types.
 - VecDB reserves metadata key `text` for document content. Search scores remain
   lower-is-better distances; `output_selector` and `advanced_options` expose SDK
   query options.
-- Native insert-only writes require `autocommit=False` and no pending transaction;
-  successful batches commit and skip duplicate IDs.
-- Index creation returns a submission response. Check `describe_vecdb_index()`
-  for readiness, serialize index maintenance, and use an idle connection for DDL.
-  Text/hybrid index freshness follows its synchronization schedule.
+- Native insert-only writes follow regular SQL insert behavior: autocommit and
+  pending transactions are accepted. Row errors (including duplicate IDs) are
+  logged and excluded from returned IDs; successful rows are committed, along
+  with any pending work on that connection. Driver/commit failures propagate
+  without an automatic rollback, as on the SQL backend.
+- VecDB creates its vector index with the table. To configure a new table, pass
+  `vector_index_params={"idx_type": "HNSW", "neighbors": 32, "efConstruction": 200}`
+  to `OracleVS`, `acreate()`, `from_texts()`, or `afrom_texts()`. This VecDB-only
+  option uses the same LangChain HNSW/IVF keys as `create_index()`; it is applied
+  only to new tables, and SQL stores reject it. Reopening preserves existing
+  index settings.
+- `create_index()` and `acreate_index()` leave an existing VecDB vector index
+  unchanged when no parameters (or an empty dictionary) are supplied. Explicit
+  parameters request a vector-only rebuild; a missing index is created instead.
+  For example, `create_index(store.client, store, {"idx_type": "IVF",
+  "neighbor_part": 32, "accuracy": 90})` maps `neighbor_part` to VecDB partitions.
+  VecDB owns the physical index name, so `idx_name` is not applied.
+- No distribution setting is injected. Supply `distribute_params` explicitly only
+  when appropriate for the target database. Explicit HNSW/IVF requests use the
+  LangChain construction defaults where the package requires concrete values;
+  absent index configuration is omitted from the package request.
+- A VecDB creation/rebuild returns the provider response; a skipped operation
+  returns `None`. Check `describe_vecdb_index()` for readiness. Serialize index
+  maintenance and use an idle connection for native DDL. Explicit text/hybrid
+  index operations remain available with a native connection, and their freshness
+  follows the synchronization schedule.
 - `drop_table_purge()` and `adrop_table_purge()` use package/SDK cleanup for VecDB
   and SQL cleanup for ordinary tables. Package failures never trigger a SQL drop.
 

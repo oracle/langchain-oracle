@@ -13,7 +13,11 @@ from langchain_oracledb.vectorstores._vecdb import (
     NativeTransport,
     _identifier_parts,
 )
-from langchain_oracledb.vectorstores.utils import adrop_table_purge, drop_table_purge
+from langchain_oracledb.vectorstores.utils import (
+    _quote_indentifier,
+    adrop_table_purge,
+    drop_table_purge,
+)
 
 
 @pytest.fixture(params=[False, True], ids=["sync", "async"])
@@ -35,18 +39,16 @@ def native(request):
         statement, values = sql, binds
 
     def fetchone():
-        if "LIST_VECTOR_TABLES()" in statement:
-            entries = (
-                [
-                    {
-                        "owner": cursor.registration_owner,
-                        "table_name": cursor.registration_name,
-                    }
-                ]
+        if "DESCRIBE_VECTOR_TABLE(" in statement:
+            return (
+                {
+                    "owner": cursor.registration_owner,
+                    "table_name": cursor.registration_name,
+                }
                 if cursor.vecdb_registered
-                else []
+                else None,
+                "OWNER",
             )
-            return ({"vector_tables": entries}, "OWNER")
         return (1,)
 
     cursor.execute.side_effect = execute
@@ -66,11 +68,13 @@ async def drop(native, name="DOCS", **kwargs):
 
 
 @pytest.mark.parametrize("metadata", ["METADATA", "CONTENT_METADATA"])
+@pytest.mark.parametrize("name", ["DOCS", '"Mixed"', '"literal.dot"'])
 @pytest.mark.asyncio
-async def test_vecdb_drop_uses_package_on_same_checkout(native, metadata):
+async def test_vecdb_drop_uses_package_on_same_checkout(native, metadata, name):
     asynchronous, conn, cursor = native
     columns = {"ID", "DENSE_VECTOR", metadata}
     transport = AsyncNativeTransport if asynchronous else NativeTransport
+    cursor.registration_name = name.strip('"')
     with (
         patch.object(
             transport, "acolumns" if asynchronous else "columns", return_value=columns
@@ -82,10 +86,10 @@ async def test_vecdb_drop_uses_package_on_same_checkout(native, metadata):
             return_value={},
         ) as call,
     ):
-        await drop(native)
+        await drop(native, name)
     assert call.call_args.args[0].client is conn
     assert call.call_args.args[1] == "drop_vector_table"
-    assert call.call_args.kwargs == {"name": '"DOCS"'}
+    assert call.call_args.kwargs == {"name": _quote_indentifier(name)}
     assert not any(c.args[0].startswith("DROP") for c in cursor.execute.call_args_list)
 
 
@@ -134,7 +138,7 @@ async def test_package_error_never_becomes_raw_drop(native):
     assert not any(c.args[0].startswith("DROP") for c in cursor.execute.call_args_list)
 
 
-@pytest.mark.parametrize("name", ["SCHEMA.DOCS", '"Mixed"'])
+@pytest.mark.parametrize("name", ["SCHEMA.DOCS"])
 @pytest.mark.asyncio
 async def test_unsupported_package_name_never_becomes_raw_drop(native, name):
     asynchronous, _, cursor = native

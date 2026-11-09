@@ -16,6 +16,7 @@ import re
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import wraps
 from typing import Any, AsyncIterator, Callable, Iterator, Optional, TypeVar, cast
 
@@ -25,11 +26,13 @@ from langchain_core.documents import Document
 
 from .._annotations import TableType, table_annotations
 from .._telemetry import tag_sql
+from .._vecdb_sdk.parameter_validation import validate_operation_arguments
 from ._vecdb_adapter import (
     CURRENT_VERSION,
     TEXT_KEY,
     SQLNetAdapter,
     _hybrid_documents,
+    _text_documents,
     as_dict,
     document,
     hybrid_search_request,
@@ -43,6 +46,7 @@ from ._vecdb_capabilities import (
     index_status_query,
     native_index_status,
     require_index_features,
+    sdk_index_state,
     sdk_index_status,
     signature_error,
 )
@@ -59,6 +63,21 @@ LEGACY_VERSION = (23, 26, 1)
 DENSE_COMPATIBLE = (23, 4, 0)
 SPARSE_COMPATIBLE = (23, 6, 0)
 COMPATIBILITY_SQL = "BEGIN DBMS_UTILITY.DB_VERSION(:db_version, :compatibility); END;"
+# Initialization needs SEARCH capability and COMPATIBLE in the same round trip.
+VECDB_CAPABILITY_SQL = """
+WITH FUNCTION lc_compatible RETURN VARCHAR2 IS
+    db_version VARCHAR2(128);
+    compatibility VARCHAR2(128);
+BEGIN
+    SYS.DBMS_UTILITY.DB_VERSION(db_version, compatibility);
+    RETURN compatibility;
+END;
+SELECT COUNT(*) AS search_supported,
+       CASE WHEN COUNT(*) > 0 THEN lc_compatible() END AS compatibility
+FROM all_procedures
+WHERE owner = 'SYS' AND object_name = 'DBMS_VECTOR_DATABASE'
+  AND procedure_name = 'SEARCH'
+"""
 BASE_COLUMNS = {"ID", "DENSE_VECTOR"}
 CURRENT_COLUMNS = BASE_COLUMNS | {
     "CONTENT_METADATA",
@@ -169,14 +188,6 @@ def _package_name_error(name: str) -> Optional[str]:
             "Use an unqualified name with CURRENT_SCHEMA set to the owning "
             "schema. Full support for this identifier requires support in "
             "the underlying VecDB package."
-        )
-    if parts[0] != parts[0].upper():
-        return (
-            "Native VecDB package operations normalize table names "
-            f"to uppercase and cannot preserve {name!r}. "
-            "Changing the case can target a different table. Full support "
-            "for this identifier requires support in the underlying VecDB "
-            "package; new native VecDB tables must use uppercase names."
         )
     return None
 
@@ -327,56 +338,122 @@ def _layout(columns: set[str]) -> str:
 VECDB_RECOGNITION_SQL = (
     "SELECT COUNT(*) FROM all_procedures WHERE owner = 'SYS' "
     "AND object_name = 'DBMS_VECTOR_DATABASE' "
-    "AND procedure_name = 'LIST_VECTOR_TABLES'"
+    "AND procedure_name = 'DESCRIBE_VECTOR_TABLE'"
 )
-VECDB_TABLES_SQL = (
-    "SELECT SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES(), "
+VECDB_TABLE_SQL = (
+    "SELECT SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE(:name), "
     "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM SYS.DUAL"
 )
 
+VECDB_QUALIFIED_TABLE_SQL = (
+    "SELECT SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE("
+    "CASE WHEN :owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') "
+    "THEN :unqualified_name ELSE :name END), "
+    "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM SYS.DUAL"
+)
+# Older packages reject qualified names in DESCRIBE_VECTOR_TABLE. Keep this
+# compatibility lookup server-side: one registry generation and one scalar bind.
+VECDB_QUALIFIED_MEMBERSHIP_SQL = """
+DECLARE
+    payload CLOB;
+BEGIN
+    payload := SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES();
+    SELECT CASE
+        WHEN payload IS NULL THEN NULL
+        WHEN JSON_VALUE(payload, '$.vector_tables.type()' ERROR ON ERROR) <> 'array'
+            THEN NULL
+        WHEN JSON_EXISTS(payload,
+            '$.vector_tables[*]?(!exists(@.owner) || !exists(@.table_name) ||
+                @.owner.type() != "string" || @.table_name.type() != "string")'
+            ERROR ON ERROR) THEN NULL
+        WHEN JSON_EXISTS(payload,
+            '$.vector_tables[*]?(@.owner == $owner && @.table_name == $name)'
+            PASSING :owner AS "owner", :name AS "name" ERROR ON ERROR)
+            THEN 1
+        ELSE 0
+    END INTO :membership FROM SYS.DUAL;
+END;
+"""
 
-def _registered_table(name: str, result: tuple) -> bool:
+
+def _description_statement(name: str) -> tuple[str, dict]:
+    quoted, _ = table_identifier(name)
+    parts = _identifier_parts(name)
+    if len(parts) == 1:
+        return VECDB_TABLE_SQL, {"name": quoted}
+    return VECDB_QUALIFIED_TABLE_SQL, {
+        "name": quoted,
+        "owner": parts[0],
+        "unqualified_name": '"' + parts[-1].replace('"', '""') + '"',
+    }
+
+
+def _qualified_membership_binds(name: str, error: oracledb.DatabaseError) -> dict:
+    parts = _identifier_parts(name)
+    if getattr(error.args[0], "code", None) != 44003 or len(parts) != 2:
+        raise error
+    return {"owner": parts[0], "name": parts[-1]}
+
+
+def _membership_flag(value: Any) -> bool:
+    if value not in (0, 1):
+        raise ValueError("Malformed VecDB table registry identity")
+    return bool(value)
+
+
+def _described_table(name: str, result: tuple) -> bool:
     payload, schema = result
+    # The package returns SQL NULL for an existing, unregistered SQL table.
+    if payload is None:
+        return False
+    response = as_dict(payload)
+    if not all(isinstance(response.get(key), str) for key in ("owner", "table_name")):
+        raise ValueError("Malformed VecDB table identity")
     parts = _identifier_parts(name)
     owner = parts[0] if len(parts) == 2 else schema
-    response = as_dict(payload)
-    entries = response.get("vector_tables")
-    if not isinstance(entries, list):
-        raise ValueError("Malformed VecDB table registry")
-    for entry in entries:
-        if not isinstance(entry, dict) or not all(
-            isinstance(entry.get(key), str) for key in ("owner", "table_name")
-        ):
-            raise ValueError("Malformed VecDB table identity")
-        if entry["owner"] == owner and entry["table_name"] == parts[-1]:
-            return True
-    return False
+    return response["owner"] == owner and response["table_name"] == parts[-1]
 
 
 def _is_vecdb_table(cursor: Any, name: str) -> bool:
-    """Ask the package, without treating execution errors as non-membership."""
+    """Describe one exact table without transferring the package registry."""
     cursor.execute(VECDB_RECOGNITION_SQL)
     if not cursor.fetchone()[0]:
         return False
-    cursor.execute(VECDB_TABLES_SQL)
+    statement, binds = _description_statement(name)
+    try:
+        cursor.execute(statement, **binds)
+    except oracledb.DatabaseError as error:
+        binds = _qualified_membership_binds(name, error)
+        membership = cursor.var(int)
+        cursor.execute(VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **binds)
+        return _membership_flag(membership.getvalue())
     result = cursor.fetchone()
     if result is None:
         raise ValueError("Missing VecDB recognition response")
-    return _registered_table(name, result)
+    return _described_table(name, result)
 
 
 async def _ais_vecdb_table(cursor: Any, name: str) -> bool:
     await cursor.execute(VECDB_RECOGNITION_SQL)
     if not (await cursor.fetchone())[0]:
         return False
-    await cursor.execute(VECDB_TABLES_SQL)
+    statement, binds = _description_statement(name)
+    try:
+        await cursor.execute(statement, **binds)
+    except oracledb.DatabaseError as error:
+        binds = _qualified_membership_binds(name, error)
+        membership = cursor.var(int)
+        await cursor.execute(
+            VECDB_QUALIFIED_MEMBERSHIP_SQL, membership=membership, **binds
+        )
+        return _membership_flag(membership.getvalue())
     result = await cursor.fetchone()
     if result is None:
         raise ValueError("Missing VecDB recognition response")
     payload, schema = result
     if hasattr(payload, "read"):
         payload = await payload.read()
-    return _registered_table(name, (payload, schema))
+    return _described_table(name, (payload, schema))
 
 
 def _table_kind(columns: set[str], registered: bool) -> str:
@@ -627,8 +704,8 @@ class NativeTransport:
                 return _inspect_columns(cursor, name)
 
     def _statement(self, operation: str, params: dict) -> tuple[str, dict]:
-        # Preserve SQL component boundaries in package arguments too. The
-        # package uppercases names and cannot represent qualified objects.
+        # Quoted package arguments preserve case and literal dots, just as SQL
+        # identifiers do. Schema-qualified package operations remain unsupported.
         params = dict(params)
         for key in ("name", "table_name"):
             if key in params:
@@ -652,7 +729,7 @@ class NativeTransport:
                 ):
                     raise RuntimeError("VecDB table drop requires no pending work")
                 if (
-                    operation == "create_index"
+                    operation in {"create_index", "rebuild_index"}
                     and connection.transaction_in_progress is True
                 ):
                     raise RuntimeError(
@@ -831,43 +908,30 @@ class NativeTransport:
             for r in records
         ]
         with _get_connection(self.client) as connection:
-            if connection.autocommit is True or connection.transaction_in_progress:
-                raise RuntimeError(
-                    "VecDB insert-only writes require autocommit=False and a "
-                    "connection without pending work; commit or roll back first, "
-                    "or use a separate connection"
+            # Match regular OracleVS SQL inserts: report row errors and commit
+            # successful rows, including any caller work on this connection.
+            with connection.cursor() as cursor:
+                cursor.setinputsizes(
+                    None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON
                 )
-            try:
-                with connection.cursor() as cursor:
-                    cursor.setinputsizes(
-                        None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON
+                cursor.executemany(
+                    f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
+                    "VALUES (:1, :2, :3)",
+                    values,
+                    batcherrors=True,
+                )
+                errors = cursor.getbatcherrors() or []
+                for error in errors:
+                    logger.warning(
+                        "Could not insert row at offset %s due to error: %s",
+                        error.offset,
+                        error.message,
                     )
-                    cursor.executemany(
-                        f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
-                        "VALUES (:1, :2, :3)",
-                        values,
-                        batcherrors=True,
-                    )
-                    errors = cursor.getbatcherrors() or []
-                    fatal = [error for error in errors if error.code != 1]
-                    if fatal:
-                        raise RuntimeError(
-                            f"VecDB insert failed with ORA-{fatal[0].code:05d}"
-                        )
-                    connection.commit()
-                    failed = {error.offset for error in errors}
-                    return [
-                        record["id"]
-                        for i, record in enumerate(records)
-                        if i not in failed
-                    ]
-            except BaseException as error:
-                try:
-                    connection.rollback()
-                except BaseException as rollback_error:
-                    # Keep the operation failure primary, including cancellation.
-                    raise error from rollback_error
-                raise
+                connection.commit()
+                failed = {error.offset for error in errors}
+                return [
+                    record["id"] for i, record in enumerate(records) if i not in failed
+                ]
 
     @_with_native_session
     def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
@@ -903,7 +967,11 @@ class NativeTransport:
                             ),
                             search_params=json.dumps(request, allow_nan=False),
                         )
-                        return _hybrid_documents(cursor.fetchall(), scores)
+                        return _hybrid_documents(
+                            cursor.fetchall(),
+                            scores,
+                            keyword_only=_hybrid_search_mode(params) == "keyword",
+                        )
                 except Exception as error:
                     if attempt or not _metadata_search_error(error):
                         raise
@@ -912,26 +980,23 @@ class NativeTransport:
             raise AssertionError("Unreachable metadata search retry")
 
     @_with_native_session
-    def text_search(self, name: str, query: str, k: int) -> list:
+    def text_search(self, name: str, query: str, k: int, scores: bool = False) -> list:
         quoted, _ = table_identifier(name)
         with _get_connection(self.client) as connection:
             info = self._search_info(name)
             for attempt in range(2):
                 meta = info.metadata_column
                 sql = (
-                    f"SELECT id, {meta} FROM {quoted} "
-                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.text', :query) "
-                    "ORDER BY id FETCH FIRST :k ROWS ONLY"
+                    f"SELECT id, {meta}, SCORE(1) FROM {quoted} "
+                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.text', :query, 1) "
+                    "ORDER BY SCORE(1) DESC, id FETCH FIRST :k ROWS ONLY"
                 )
                 try:
                     with connection.cursor() as cursor:
                         cursor.execute(
                             tag_sql(sql, "text", backend="vecdb"), query=query, k=k
                         )
-                        return [
-                            document({"id": str(row[0]), "metadata": row[1]})
-                            for row in cursor.fetchall()
-                        ]
+                        return _text_documents(cursor.fetchall(), scores)
                 except Exception as error:
                     if attempt or not _metadata_search_error(error):
                         raise
@@ -967,7 +1032,7 @@ class RestTransport:
     def migrate(self, name: str) -> None:
         raise RuntimeError("oracle-vecdb REST SDK does not support schema migration")
 
-    def text_search(self, name: str, query: str, k: int) -> list:
+    def text_search(self, name: str, query: str, k: int, scores: bool = False) -> list:
         raise ValueError("oracle-vecdb REST SDK does not support metadata text search")
 
 
@@ -1033,11 +1098,8 @@ def native_selection(
             if backend == "vecdb" or kind == "vecdb":
                 raise ValueError("VecDB requires Oracle Database 23.26.1+")
             return "sql", version
-        cursor.execute(
-            "SELECT COUNT(*) FROM all_procedures WHERE owner = 'SYS' "
-            "AND object_name = 'DBMS_VECTOR_DATABASE' AND procedure_name = 'SEARCH'"
-        )
-        supported = cursor.fetchone()[0] > 0
+        cursor.execute(VECDB_CAPABILITY_SQL)
+        supported, compatibility = cursor.fetchone()
         if not supported:
             if backend == "vecdb" or kind == "vecdb":
                 raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
@@ -1050,14 +1112,7 @@ def native_selection(
             raise ValueError(
                 "Current VecDB table layout cannot be used on a legacy database"
             )
-        db_version = cursor.var(str, size=128)
-        compatibility = cursor.var(str, size=128)
-        cursor.execute(
-            COMPATIBILITY_SQL, db_version=db_version, compatibility=compatibility
-        )
-        return _compatible_backend(
-            version, compatibility.getvalue(), kind, backend
-        ), version
+        return _compatible_backend(version, compatibility, kind, backend), version
 
 
 class VecDBBackend:
@@ -1068,6 +1123,7 @@ class VecDBBackend:
         metric: DistanceStrategy,
         *,
         table_type: TableType = "vector_store",
+        vector_index_params: Optional[dict] = None,
     ):
         self.transport = transport
         self.table_type = table_type
@@ -1081,20 +1137,38 @@ class VecDBBackend:
             if metric == DistanceStrategy.MAX_INNER_PRODUCT
             else metric
         )
+        self._creation_index_params = self.index_params(vector_index_params)
+        validate_operation_arguments(
+            "create_vector_table", {"index_params": self._creation_index_params}
+        )
+
+    def _table_creation_params(self) -> dict:
+        params = {
+            "name": self.name,
+            "table_params": {"auto_generate_id": False},
+            "annotations": table_annotations(self.table_type, "vecdb"),
+        }
+        if self._creation_index_params is not None:
+            params["index_params"] = self._creation_index_params
+        return params
 
     @_with_native_backend_session
     def prepare(self) -> None:
         if isinstance(self.transport, NativeTransport):
             columns = self.transport.columns(self.name)
-            if not columns:
+            created = not columns
+            if created:
                 self.transport.call(
                     "create_vector_table",
-                    name=self.name,
-                    table_params={"auto_generate_id": False},
-                    annotations=table_annotations(self.table_type, "vecdb"),
+                    **self._table_creation_params(),
                 )
                 columns = self.transport.columns(self.name)
             self.transport.discover(self.name, columns)
+            logger.info(
+                "Table %s %s...",
+                self.quoted,
+                "created successfully" if created else "already exists",
+            )
             return
         try:
             self.transport.call("describe_vector_table", name=self.name)
@@ -1103,10 +1177,11 @@ class VecDBBackend:
                 raise
             self.transport.call(
                 "create_vector_table",
-                name=self.name,
-                table_params={"auto_generate_id": False},
-                annotations=table_annotations(self.table_type, "vecdb"),
+                **self._table_creation_params(),
             )
+            logger.info("Table %s created successfully...", self.quoted)
+        else:
+            logger.info("Table %s already exists...", self.quoted)
 
     @_with_native_backend_session
     def query(self, operation: str, **params: Any) -> dict:
@@ -1183,7 +1258,9 @@ class VecDBBackend:
         result = []
         for row in rows(response, "results"):
             distance = row.get("distance")
-            if not isinstance(distance, (int, float)) or not math.isfinite(distance):
+            if not isinstance(distance, (int, float, Decimal)) or not math.isfinite(
+                distance
+            ):
                 raise ValueError("VecDB returned an invalid distance")
             hit: tuple[Any, ...] = (document(row), float(distance))
             if include_vectors:
@@ -1213,8 +1290,8 @@ class VecDBBackend:
     def delete(self, ids: Optional[list[str]]) -> None:
         self.transport.call("delete_vectors", table_name=self.name, ids=ids)
 
-    def text_search(self, query: str, k: int) -> list[Document]:
-        return self.transport.text_search(self.name, query, k)
+    def text_search(self, query: str, k: int, scores: bool = False) -> list[Document]:
+        return self.transport.text_search(self.name, query, k, scores)
 
     def native_transport(
         self, operation: str = "SQL-based metadata index operations"
@@ -1255,7 +1332,11 @@ class VecDBBackend:
             )
         return self.transport.describe_index(self.name, kind)
 
-    def index_params(self, params: Optional[dict]) -> dict:
+    def index_params(self, params: Optional[dict]) -> Optional[dict]:
+        if params is not None and not isinstance(params, dict):
+            raise TypeError("Index parameters must be a dictionary")
+        if not params:
+            return None
         from .oraclevs import (
             _validate_index_type,
             _validate_int_param,
@@ -1263,6 +1344,8 @@ class VecDBBackend:
         )
 
         params = dict(params or {})
+        if params.get("distance_metric", self.metric) != self.metric:
+            raise ValueError("Index distance_metric must match distance_strategy")
         kind = params.get("idx_type", "HNSW")
         kind = "IVF" if isinstance(kind, str) and kind.upper() == "IVF" else "HNSW"
         _validate_index_type(params, kind)
@@ -1279,9 +1362,14 @@ class VecDBBackend:
             "distance_metric": self.metric,
             "accuracy": accuracy,
         }
-        # Materialize OracleVS defaults: this server rejects omitted HNSW
-        # construction settings even though the SDK schema makes them optional.
-        advanced = {"neighbors": 32, "efConstruction": 200} if kind == "HNSW" else {}
+        # Materialize OracleVS construction defaults for explicit requests:
+        # supported packages can emit invalid DDL when these are omitted.
+        # A completely omitted request still leaves defaults to the server.
+        advanced = (
+            {"neighbors": 32, "efConstruction": 200}
+            if kind == "HNSW"
+            else {"partitions": 32}
+        )
         ranges = (
             {"neighbors": (2, 2048), "efConstruction": (1, 65535)}
             if kind == "HNSW"
@@ -1293,9 +1381,9 @@ class VecDBBackend:
                 advanced["partitions" if key == "neighbor_part" else key] = params.pop(
                     key
                 )
-        if kind == "HNSW":
-            mapped["distribute_params"] = {"distribute_method": "AUTO"}
         mapped.update(params)  # The SDK/database validates additional options.
+        if mapped.get("distribute_params") is None:
+            mapped.pop("distribute_params", None)
         if advanced:
             supplied = mapped.get("advanced_params")
             if supplied is None:
@@ -1315,11 +1403,51 @@ class VecDBBackend:
             result["parallel_creation"] = parallel
         return result
 
-    @_with_native_backend_session
-    def create_index(self, params: Optional[dict]) -> dict:
-        return self.transport.call(
-            "create_index", table_name=self.name, index_params=self.index_params(params)
+    def _vector_index_exists(self) -> bool:
+        if isinstance(self.transport, NativeTransport):
+            return bool(self.describe_index()["details"]["indexes"])
+        try:
+            status = self.describe_index()
+        except Exception as error:
+            if getattr(error, "status", None) != 404:
+                raise
+            # A missing table must remain an error, rather than be interpreted
+            # as permission to create its index.
+            self.transport.call("describe_vector_table", name=self.name)
+            return False
+        state = sdk_index_state(status["details"])
+        if state in {
+            "READY",
+            "VALID",
+            "INDEX CREATION COMPLETED",
+            "BUILDING",
+            "PENDING",
+            "FAILED",
+            "UNUSABLE",
+        }:
+            return True
+        raise ValueError(
+            f"Cannot determine VecDB vector-index existence from SDK status {state!r}"
         )
+
+    def _index_request(self, mapped: Optional[dict], exists: bool) -> tuple[str, dict]:
+        params: dict[str, Any] = {"table_name": self.name}
+        operation = "rebuild_index" if exists else "create_index"
+        if mapped is not None:
+            params["index_params"] = (
+                {**mapped, "index_type": "vector"} if exists else mapped
+            )
+        return operation, params
+
+    @_with_native_backend_session
+    def create_index(self, params: Optional[dict]) -> Optional[dict]:
+        mapped = self.index_params(params)
+        validate_operation_arguments("create_index", {"index_params": mapped})
+        exists = self._vector_index_exists()
+        if exists and mapped is None:
+            return None
+        operation, request = self._index_request(mapped, exists)
+        return self.transport.call(operation, **request)
 
     @_with_async_native_backend_session
     async def aquery(self, operation: str, **params: Any) -> dict:
@@ -1344,25 +1472,32 @@ class VecDBBackend:
                 )
             return await self.transport.adescribe_index(self.name, kind)
         if method == "create_index":
-            return await self.transport.acall(
-                "create_index",
-                table_name=self.name,
-                index_params=self.index_params(args[0]),
-            )
+            mapped = self.index_params(args[0])
+            validate_operation_arguments("create_index", {"index_params": mapped})
+            status = await self.transport.adescribe_index(self.name)
+            exists = bool(status["details"]["indexes"])
+            if exists and mapped is None:
+                return None
+            operation, request = self._index_request(mapped, exists)
+            return await self.transport.acall(operation, **request)
         if method == "create_text_index":
             await self.transport.acreate_text_index(self.name, args[0])
             return
         if method == "prepare":
             columns = await self.transport.acolumns(self.name)
-            if not columns:
+            created = not columns
+            if created:
                 await self.transport.acall(
                     "create_vector_table",
-                    name=self.name,
-                    table_params={"auto_generate_id": False},
-                    annotations=table_annotations(self.table_type, "vecdb"),
+                    **self._table_creation_params(),
                 )
                 columns = await self.transport.acolumns(self.name)
             await self.transport.adiscover(self.name, columns)
+            logger.info(
+                "Table %s %s...",
+                self.quoted,
+                "created successfully" if created else "already exists",
+            )
             return
         if method == "add":
             texts, vectors, metadatas, ids, mutate = args
@@ -1407,8 +1542,7 @@ class VecDBBackend:
         if method == "hybrid_search":
             return await self.transport.ahybrid_search(self.name, *args)
         if method == "text_search":
-            query, k = args
-            return await self.transport.atext_search(self.name, query, k)
+            return await self.transport.atext_search(self.name, *args)
         raise ValueError("Unsupported async VecDB operation")
 
 
@@ -1460,7 +1594,7 @@ class AsyncNativeTransport(NativeTransport):
                 ):
                     raise RuntimeError("VecDB table drop requires no pending work")
                 if (
-                    operation == "create_index"
+                    operation in {"create_index", "rebuild_index"}
                     and connection.transaction_in_progress is True
                 ):
                     raise RuntimeError(
@@ -1649,42 +1783,30 @@ class AsyncNativeTransport(NativeTransport):
             for r in records
         ]
         async with _aget_connection(self.client) as connection:
-            if connection.autocommit is True or connection.transaction_in_progress:
-                raise RuntimeError(
-                    "VecDB insert-only writes require autocommit=False and a "
-                    "connection without pending work; commit or roll back first, "
-                    "or use a separate connection"
+            # Match regular OracleVS SQL inserts: report row errors and commit
+            # successful rows, including any caller work on this connection.
+            with connection.cursor() as cursor:
+                cursor.setinputsizes(
+                    None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON
                 )
-            try:
-                with connection.cursor() as cursor:
-                    cursor.setinputsizes(
-                        None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON
+                await cursor.executemany(
+                    f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
+                    "VALUES (:1, :2, :3)",
+                    values,
+                    batcherrors=True,
+                )
+                errors = cursor.getbatcherrors() or []
+                for error in errors:
+                    logger.warning(
+                        "Could not insert row at offset %s due to error: %s",
+                        error.offset,
+                        error.message,
                     )
-                    await cursor.executemany(
-                        f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
-                        "VALUES (:1, :2, :3)",
-                        values,
-                        batcherrors=True,
-                    )
-                    errors = cursor.getbatcherrors() or []
-                    fatal = [error for error in errors if error.code != 1]
-                    if fatal:
-                        raise RuntimeError(
-                            f"VecDB insert failed with ORA-{fatal[0].code:05d}"
-                        )
-                    await connection.commit()
-                    failed = {error.offset for error in errors}
-                    return [
-                        record["id"]
-                        for i, record in enumerate(records)
-                        if i not in failed
-                    ]
-            except BaseException as error:
-                try:
-                    await connection.rollback()
-                except BaseException as rollback_error:
-                    raise error from rollback_error
-                raise
+                await connection.commit()
+                failed = {error.offset for error in errors}
+                return [
+                    record["id"] for i, record in enumerate(records) if i not in failed
+                ]
 
     @_with_async_native_session
     async def ahybrid_search(self, name: str, params: dict, scores: bool) -> list:
@@ -1720,7 +1842,11 @@ class AsyncNativeTransport(NativeTransport):
                             ),
                             search_params=json.dumps(request, allow_nan=False),
                         )
-                        return _hybrid_documents(await cursor.fetchall(), scores)
+                        return _hybrid_documents(
+                            await cursor.fetchall(),
+                            scores,
+                            keyword_only=_hybrid_search_mode(params) == "keyword",
+                        )
                 except Exception as error:
                     if attempt or not _metadata_search_error(error):
                         raise
@@ -1729,26 +1855,25 @@ class AsyncNativeTransport(NativeTransport):
             raise AssertionError("Unreachable metadata search retry")
 
     @_with_async_native_session
-    async def atext_search(self, name: str, query: str, k: int) -> list:
+    async def atext_search(
+        self, name: str, query: str, k: int, scores: bool = False
+    ) -> list:
         quoted, _ = table_identifier(name)
         async with _aget_connection(self.client) as connection:
             info = await self._asearch_info(name)
             for attempt in range(2):
                 meta = info.metadata_column
                 sql = (
-                    f"SELECT id, {meta} FROM {quoted} "
-                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.text', :query) "
-                    "ORDER BY id FETCH FIRST :k ROWS ONLY"
+                    f"SELECT id, {meta}, SCORE(1) FROM {quoted} "
+                    f"WHERE JSON_TEXTCONTAINS({meta}, '$.text', :query, 1) "
+                    "ORDER BY SCORE(1) DESC, id FETCH FIRST :k ROWS ONLY"
                 )
                 try:
                     with connection.cursor() as cursor:
                         await cursor.execute(
                             tag_sql(sql, "text", backend="vecdb"), query=query, k=k
                         )
-                        return [
-                            document({"id": str(row[0]), "metadata": row[1]})
-                            for row in await cursor.fetchall()
-                        ]
+                        return _text_documents(await cursor.fetchall(), scores)
                 except Exception as error:
                     if attempt or not _metadata_search_error(error):
                         raise
@@ -1790,11 +1915,9 @@ async def anative_selection(
             if backend == "vecdb" or kind == "vecdb":
                 raise ValueError("VecDB requires Oracle Database 23.26.1+")
             return "sql", version
-        await cursor.execute(
-            "SELECT COUNT(*) FROM all_procedures WHERE owner = 'SYS' "
-            "AND object_name = 'DBMS_VECTOR_DATABASE' AND procedure_name = 'SEARCH'"
-        )
-        if not (await cursor.fetchone())[0]:
+        await cursor.execute(VECDB_CAPABILITY_SQL)
+        supported, compatibility = await cursor.fetchone()
+        if not supported:
             if backend == "vecdb" or kind == "vecdb":
                 raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
             return "sql", version
@@ -1806,11 +1929,4 @@ async def anative_selection(
             raise ValueError(
                 "Current VecDB table layout cannot be used on a legacy database"
             )
-        db_version = cursor.var(str, size=128)
-        compatibility = cursor.var(str, size=128)
-        await cursor.execute(
-            COMPATIBILITY_SQL, db_version=db_version, compatibility=compatibility
-        )
-        return _compatible_backend(
-            version, compatibility.getvalue(), kind, backend
-        ), version
+        return _compatible_backend(version, compatibility, kind, backend), version

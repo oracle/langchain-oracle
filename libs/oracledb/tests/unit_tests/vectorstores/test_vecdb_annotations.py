@@ -3,6 +3,7 @@
 """VecDB creation markers use the shared contract on every transport."""
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +24,10 @@ from langchain_oracledb.vectorstores.utils import DistanceStrategy
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_native_creation_and_reopen(kind, version, existing, asynchronous):
+async def test_native_creation_and_reopen(
+    kind, version, existing, asynchronous, caplog
+):
+    caplog.set_level(logging.INFO, logger="langchain_oracledb.vectorstores._vecdb")
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         object(), version
     )
@@ -49,6 +53,13 @@ async def test_native_creation_and_reopen(kind, version, existing, asynchronous)
             await backend.run_async("prepare")
         else:
             backend.prepare()
+        message = (
+            'Table "DOCS" already exists...'
+            if existing
+            else 'Table "DOCS" created successfully...'
+        )
+        assert caplog.records[-1].levelno == logging.INFO
+        assert caplog.records[-1].getMessage() == message
         if existing:
             create.assert_not_called()
         else:
@@ -68,7 +79,8 @@ async def test_native_creation_and_reopen(kind, version, existing, asynchronous)
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_rest_semantic_cache_creation_and_reopen(asynchronous):
+async def test_rest_semantic_cache_creation_and_reopen(asynchronous, caplog):
+    caplog.set_level(logging.INFO, logger="langchain_oracledb.vectorstores._vecdb")
     from langchain_core.embeddings import DeterministicFakeEmbedding
 
     sdk = pytest.importorskip("oracle_vecdb")
@@ -86,14 +98,23 @@ async def test_rest_semantic_cache_creation_and_reopen(asynchronous):
         for _ in range(2):
             if asynchronous:
                 await _SemanticCacheVectorStore.acreate(
-                    client, DeterministicFakeEmbedding(size=3), "DOCS"
+                    client, DeterministicFakeEmbedding(size=3), "Tb1"
                 )
             else:
                 _SemanticCacheVectorStore(
-                    client, DeterministicFakeEmbedding(size=3), "DOCS"
+                    client, DeterministicFakeEmbedding(size=3), "Tb1"
                 )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "langchain_oracledb.vectorstores._vecdb"
+        and record.levelno == logging.INFO
+    ] == [
+        'Table "Tb1" created successfully...',
+        'Table "Tb1" already exists...',
+    ]
     client.create_vector_table.assert_called_once_with(
-        name="DOCS",
+        name="Tb1",
         table_params={"auto_generate_id": False},
         annotations={
             "LANGCHAIN_ORACLE": (
@@ -102,3 +123,37 @@ async def test_rest_semantic_cache_creation_and_reopen(asynchronous):
             )
         },
     )
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_failed_native_creation_does_not_log_success(asynchronous, caplog):
+    caplog.set_level(logging.INFO, logger="langchain_oracledb.vectorstores._vecdb")
+    transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+        object(), (23, 26, 3)
+    )
+    mock = AsyncMock if asynchronous else MagicMock
+    with (
+        patch.object(
+            transport,
+            "acolumns" if asynchronous else "columns",
+            mock(return_value=set()),
+        ),
+        patch.object(
+            transport,
+            "acall" if asynchronous else "call",
+            mock(side_effect=RuntimeError("creation failed")),
+        ),
+    ):
+        backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+        with pytest.raises(RuntimeError, match="creation failed"):
+            if asynchronous:
+                await backend.run_async("prepare")
+            else:
+                backend.prepare()
+    assert not [
+        record
+        for record in caplog.records
+        if record.name == "langchain_oracledb.vectorstores._vecdb"
+        and record.levelno == logging.INFO
+    ]

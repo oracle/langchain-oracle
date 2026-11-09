@@ -199,14 +199,12 @@ def create_text_index(
     Raises:
         RuntimeError/ValueError: on DB/validation errors.
     """
-    if vector_store is not None and vector_store._vecdb is not None:
-        if table_name is not None or (column_name or "text").lower() != "text":
-            raise ValueError("VecDB text indexes use the store's metadata text path")
-        return vector_store._vecdb.create_text_index(idx_name)
     idx_name = _quote_indentifier(idx_name)
     ddl, resolved_table = _get_text_index_ddl(
         idx_name, vector_store, table_name, column_name
     )
+    if vector_store is not None and vector_store._vecdb is not None:
+        return vector_store._vecdb.create_text_index(idx_name)
 
     with _get_connection(client) as connection:
         if not _index_exists(connection, idx_name, resolved_table):
@@ -239,14 +237,12 @@ async def acreate_text_index(
     Raises:
         RuntimeError/ValueError: on DB/validation errors.
     """
-    if vector_store is not None and vector_store._vecdb is not None:
-        if table_name is not None or (column_name or "text").lower() != "text":
-            raise ValueError("VecDB text indexes use the store's metadata text path")
-        return await vector_store._vecdb.run_async("create_text_index", idx_name)
     idx_name = _quote_indentifier(idx_name)
     ddl, resolved_table = _get_text_index_ddl(
         idx_name, vector_store, table_name, column_name
     )
+    if vector_store is not None and vector_store._vecdb is not None:
+        return await vector_store._vecdb.run_async("create_text_index", idx_name)
 
     async with _aget_connection(client) as connection:
         if not await _aindex_exists(connection, idx_name, resolved_table):
@@ -469,11 +465,9 @@ class OracleTextSearchRetriever(BaseRetriever):
             if not expression:
                 return []
             limit = _positive_int(kwargs.get("k", self.k or 4), "k")
-            docs = self.vector_store._vecdb.text_search(expression, limit)
-            if self.return_scores:
-                for doc in docs:
-                    doc.metadata["score"] = 1.0
-            return docs
+            return self.vector_store._vecdb.text_search(
+                expression, limit, self.return_scores
+            )
         if not self.operator_search:
             query = _generate_accum_query(query, self.fuzzy)
 
@@ -545,11 +539,8 @@ class OracleTextSearchRetriever(BaseRetriever):
                 return []
             limit = _positive_int(kwargs.get("k", self.k or 4), "k")
             docs = await self.vector_store._vecdb.run_async(
-                "text_search", expression, limit
+                "text_search", expression, limit, self.return_scores
             )
-            if self.return_scores:
-                for doc in docs:
-                    doc.metadata["score"] = 1.0
             return docs
         if not self.operator_search:
             query = _generate_accum_query(query, self.fuzzy)

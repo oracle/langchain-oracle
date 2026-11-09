@@ -70,8 +70,12 @@ def check_native_backend(config, backend, table):
 
 
 @contextmanager
-def backend_store(backend, embeddings):
-    table = "LCMX_" + uuid.uuid4().hex[:16].upper()
+def backend_store(backend, embeddings, *, table_name=None):
+    table = (
+        table_name
+        if table_name is not None
+        else "LCMX_" + uuid.uuid4().hex[:16].upper()
+    )
     selected = "sql" if backend.startswith("sql") else "vecdb"
     if backend == "rest":
         client = rest_client()
@@ -98,8 +102,12 @@ def backend_store(backend, embeddings):
 
 
 @asynccontextmanager
-async def async_backend_store(backend, embeddings):
-    table = "LCMX_" + uuid.uuid4().hex[:16].upper()
+async def async_backend_store(backend, embeddings, *, table_name=None):
+    table = (
+        table_name
+        if table_name is not None
+        else "LCMX_" + uuid.uuid4().hex[:16].upper()
+    )
     selected = "sql" if backend.startswith("sql") else "vecdb"
     if backend == "rest":
         client = rest_client()

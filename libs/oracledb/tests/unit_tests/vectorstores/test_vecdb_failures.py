@@ -94,11 +94,10 @@ async def test_signature_errors_propagate_without_mutation_retry(
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("stage", ["execute", "commit"])
-@pytest.mark.parametrize("rollback_fails", [False, True])
 @pytest.mark.parametrize("interrupted", [False, True])
 @pytest.mark.asyncio
 async def test_insert_failure_preserves_primary_error(
-    monkeypatch, asynchronous, stage, rollback_fails, interrupted
+    monkeypatch, asynchronous, stage, interrupted
 ):
     connection = MagicMock(autocommit=False, transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -115,9 +114,6 @@ async def test_insert_failure_preserves_primary_error(
     (
         cursor.executemany if stage == "execute" else connection.commit
     ).side_effect = error
-    rollback_error = RuntimeError("rollback connection lost")
-    if rollback_fails:
-        connection.rollback.side_effect = rollback_error
 
     @contextmanager
     def get(_):
@@ -141,9 +137,7 @@ async def test_insert_failure_preserves_primary_error(
         else:
             transport.insert("DOCS", records)
     assert caught.value is error
-    assert caught.value.__cause__ is (rollback_error if rollback_fails else None)
+    assert caught.value.__cause__ is None
     cursor.executemany.assert_called_once()
-    connection.rollback.assert_called_once()
+    connection.rollback.assert_not_called()
     assert connection.commit.call_count == (1 if stage == "commit" else 0)
-    if asynchronous:
-        connection.rollback.assert_awaited_once()

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from decimal import Decimal
 from typing import Any
 
 from langchain_core.documents import Document
@@ -19,6 +20,7 @@ from langchain_core.documents import Document
 from .._vecdb_sdk.parameter_validation import validate_operation_arguments
 from .._vecdb_sdk.services.ords.hybrid_search import HybridSearch
 from .._vecdb_sdk.services.sqlnet.query_mapper import SQLNetQueryMapper
+from ._vecdb_filters import translate_filter
 
 TEXT_KEY = "text"
 CURRENT_VERSION = (23, 26, 3)
@@ -28,7 +30,7 @@ def as_dict(response: Any) -> dict[str, Any]:
     if hasattr(response, "read"):
         response = response.read()
     if isinstance(response, str):
-        response = json.loads(response)
+        response = json.loads(response, parse_int=Decimal, parse_float=Decimal)
     if hasattr(response, "to_dict"):
         response = response.to_dict()
     elif hasattr(response, "model_dump"):
@@ -46,10 +48,21 @@ def rows(response: Any, key: str) -> list[dict[str, Any]]:
     return [as_dict(item) for item in result]
 
 
+def _metadata_numbers(value: Any) -> Any:
+    """Match native SQL JSON NUMBER decoding without changing booleans."""
+    if isinstance(value, dict):
+        return {key: _metadata_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_metadata_numbers(item) for item in value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return Decimal(str(value))
+    return value
+
+
 def document(row: dict[str, Any]) -> Document:
     from .oraclevs import INTERNAL_ID_KEY
 
-    metadata = dict(row.get("metadata") or {})
+    metadata = _metadata_numbers(dict(row.get("metadata") or {}))
     text = metadata.pop(TEXT_KEY, None)
     if not isinstance(text, str) or not isinstance(row.get("id"), str):
         raise ValueError("VecDB document is missing its ID or metadata text")
@@ -58,14 +71,28 @@ def document(row: dict[str, Any]) -> Document:
     return Document(id=row["id"], page_content=text, metadata=metadata)
 
 
-def _hybrid_documents(result: list, scores: bool) -> list[Document]:
+def _hybrid_documents(
+    result: list, scores: bool, *, keyword_only: bool = False
+) -> list[Document]:
     docs = []
     for id_, metadata, score, text_score, vector_score in result:
         doc = document({"id": str(id_), "metadata": metadata})
         if scores:
             doc.metadata.update(
-                score=score, text_score=text_score, vector_score=vector_score
+                score=score,
+                text_score=text_score,
+                vector_score=0 if keyword_only else vector_score,
             )
+        docs.append(doc)
+    return docs
+
+
+def _text_documents(result: list, scores: bool) -> list[Document]:
+    docs = []
+    for id_, metadata, score in result:
+        doc = document({"id": str(id_), "metadata": metadata})
+        if scores:
+            doc.metadata["score"] = score
         docs.append(doc)
     return docs
 
@@ -100,7 +127,7 @@ def search_request(
         table_name=name,
         query_by={"vector": embedding},
         top_k=k,
-        filters=filter,
+        filters=translate_filter(filter),
         include_vectors=include_vectors,
         advanced_options={**advanced, "distance_metric": metric},
     )
@@ -133,6 +160,7 @@ class SQLNetAdapter:
             "query",
             "delete_vectors",
             "create_index",
+            "rebuild_index",
         }
         if method not in supported:
             raise ValueError("Unsupported VecDB operation")
@@ -145,7 +173,12 @@ class SQLNetAdapter:
         # The adapter emits JSON-returning functions for both generations.
         # Legacy create/drop names and create defaults differ; the copied
         # branch's upsert/drop OUT procedure templates are not used here.
-        if method in {"create_vector_table", "drop_vector_table", "upsert_vectors"}:
+        if method in {
+            "create_vector_table",
+            "drop_vector_table",
+            "upsert_vectors",
+            "rebuild_index",
+        }:
             return self._function_statement(operation, params)
 
         mapped = dict(params)

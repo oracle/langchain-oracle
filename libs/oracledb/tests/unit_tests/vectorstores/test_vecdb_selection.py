@@ -68,14 +68,13 @@ def database(request, monkeypatch):
             state["exists"] = True
 
     def fetchone():
-        if "SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES" in state["last"]:
-            registered = "DENSE_VECTOR" in state["catalog"]
+        if state["last"] == _vecdb.VECDB_CAPABILITY_SQL:
+            return 1, "23.6.0.0.0"
+        if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in state["last"]:
             return (
-                {
-                    "vector_tables": [{"owner": "OWNER", "table_name": state["name"]}]
-                    if registered
-                    else []
-                },
+                {"owner": "OWNER", "table_name": state["name"]}
+                if "DENSE_VECTOR" in state["catalog"]
+                else None,
                 "OWNER",
             )
         if "all_synonyms" in state["last"]:
@@ -120,9 +119,7 @@ async def select(database, name, backend="auto"):
     )[0]
 
 
-@pytest.mark.parametrize(
-    "name", ["langchain", '"literal.dot"', '"Mixed"', '"OWNER"."DOCS"']
-)
+@pytest.mark.parametrize("name", ['"OWNER"."DOCS"'])
 @pytest.mark.asyncio
 async def test_missing_unrepresentable_names_use_sql_only_in_auto(database, name):
     assert await select(database, name) == "sql"
@@ -133,27 +130,35 @@ async def test_missing_unrepresentable_names_use_sql_only_in_auto(database, name
     )
 
 
+@pytest.mark.parametrize(
+    "name", ["DOCS", "docs", "langchain", '"literal.dot"', '"Mixed"']
+)
 @pytest.mark.asyncio
-async def test_missing_representable_name_still_selects_vecdb(database):
-    assert await select(database, "DOCS") == "vecdb"
+async def test_missing_representable_name_still_selects_vecdb(database, name):
+    assert await select(database, name) == "vecdb"
+    assert await select(database, name, "vecdb") == "vecdb"
     assert any(
         "all_procedures" in c.args[0] for c in database[2].execute.call_args_list
     )
     assert any(
-        c.args[0] == _vecdb.COMPATIBILITY_SQL
+        c.args[0] == _vecdb.VECDB_CAPABILITY_SQL
         for c in database[2].execute.call_args_list
     )
 
 
 @pytest.mark.asyncio
-async def test_default_factory_creates_sql_table_on_vecdb_capable_database(database):
+async def test_explicit_sql_factory_creates_sql_table_on_vecdb_capable_database(
+    database,
+):
     asynchronous, conn, cursor, state = database
     if asynchronous:
         store = await OracleVS.afrom_texts(
-            ["seed"], Embedding(), client=conn, ids=["seed"]
+            ["seed"], Embedding(), client=conn, ids=["seed"], backend="sql"
         )
     else:
-        store = OracleVS.from_texts(["seed"], Embedding(), client=conn, ids=["seed"])
+        store = OracleVS.from_texts(
+            ["seed"], Embedding(), client=conn, ids=["seed"], backend="sql"
+        )
     assert store.backend == "sql" and store._vecdb is None
     assert store.table_name == '"langchain"'
     ddl = [
@@ -211,7 +216,7 @@ async def test_resolved_incompatible_layout_is_not_an_ordinary_sql_table(
 
 
 @pytest.mark.asyncio
-async def test_existing_vecdb_table_with_unsupported_name_never_falls_back(database):
+async def test_existing_case_sensitive_vecdb_table_never_falls_back(database):
     database[3]["catalog"] = CURRENT_COLUMNS
     assert await select(database, '"Mixed"') == "vecdb"
 

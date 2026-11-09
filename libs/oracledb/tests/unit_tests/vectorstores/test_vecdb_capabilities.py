@@ -228,8 +228,9 @@ async def test_feature_preflight_before_any_index_ddl(native, hybrid, available)
     cursor.execute.assert_called_once_with(INDEX_FEATURES_SQL)
 
 
+@pytest.mark.parametrize("operation", ["create_index", "rebuild_index"])
 @pytest.mark.asyncio
-async def test_pending_work_blocks_preference_or_index_mutation(native):
+async def test_pending_work_blocks_preference_or_index_mutation(native, operation):
     asynchronous, connection, cursor, transport = native
     connection.transaction_in_progress = True
     with pytest.raises(RuntimeError, match="pending work"):
@@ -240,9 +241,9 @@ async def test_pending_work_blocks_preference_or_index_mutation(native):
     cursor.execute.assert_not_called()
     with pytest.raises(RuntimeError, match="pending work"):
         if asynchronous:
-            await transport.acall("create_index", table_name="DOCS", index_params={})
+            await transport.acall(operation, table_name="DOCS", index_params={})
         else:
-            transport.call("create_index", table_name="DOCS", index_params={})
+            transport.call(operation, table_name="DOCS", index_params={})
     cursor.execute.assert_not_called()
 
 

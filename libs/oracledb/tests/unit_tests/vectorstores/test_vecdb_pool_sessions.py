@@ -143,7 +143,7 @@ class Session:
             self.rows = [(self.schema, {"text": self.schema}, 1.0, 0.5, 0.5)]
         elif "JSON_TEXTCONTAINS" in statement:
             self.check_metadata_search(statement, binds)
-            self.rows = [(self.schema, {"text": self.schema})]
+            self.rows = [(self.schema, {"text": self.schema}, 17)]
         elif "result" in binds:
             if ".search(" in statement.lower() and self.fail_query:
                 self.fail_query = False
@@ -312,7 +312,7 @@ async def test_index_params_use_the_operation_session_version(sessions):
         s.transport.acall = AsyncMock(return_value={"job": "submitted"})
     else:
         s.transport.call = MagicMock(return_value={"job": "submitted"})
-    assert await invoke(s, "create_index", None) == {"job": "submitted"}
+    assert await invoke(s, "create_index", {"idx_type": "HNSW"}) == {"job": "submitted"}
     call = s.transport.acall.call_args if s.asynchronous else s.transport.call.call_args
     assert call.kwargs["index_params"]["indexing"] == "auto"
     assert "vector_index_params" not in call.kwargs["index_params"]
@@ -561,7 +561,7 @@ async def test_migration_invalidates_layout_before_next_search(sessions):
     result = await invoke(s, "text_search", "oracle", 1)
     assert result[0].page_content == "SCHEMA_A"
     assert s.a.log[-1][0].startswith("SELECT /* lc_oracledb mode=text backend=vecdb")
-    assert ' id, CONTENT_METADATA FROM "DOCS"' in s.a.log[-1][0]
+    assert ' id, CONTENT_METADATA, SCORE(1) FROM "DOCS"' in s.a.log[-1][0]
     assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
     s.a.log.clear()
     await invoke(s, "text_search", "oracle", 1)
@@ -702,3 +702,15 @@ async def test_native_metadata_search_execution_markers(
         "lc_oracledb" not in statement for statement, _ in s.a.log if statement != sql
     )
     assert_one_session(s)
+
+
+@pytest.mark.parametrize("scores", [False, True])
+@pytest.mark.asyncio
+async def test_text_search_ranks_by_database_score(sessions, scores):
+    result = await invoke(sessions, "text_search", "oracle", 1, scores)
+    assert result[0].metadata == ({"score": 17} if scores else {})
+    statements = [sql for sql, _ in sessions.a.log if "JSON_TEXTCONTAINS" in sql]
+    assert statements
+    assert "SCORE(1)" in statements[-1]
+    assert ":query, 1)" in statements[-1]
+    assert "ORDER BY SCORE(1) DESC" in statements[-1]

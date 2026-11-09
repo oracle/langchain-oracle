@@ -3,7 +3,7 @@
 """Live existing-table and backend-selection matrix on the native SQL database.
 
 SQL-created VecDB-shaped fixtures are unregistered and cannot select VecDB.
-True VecDB tables are covered separately against the VecDB service.
+Package-created VecDB fixtures exercise recognition and reopening when enabled.
 """
 
 import array
@@ -18,7 +18,7 @@ from langchain_core.embeddings import Embeddings
 
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY
-from langchain_oracledb.vectorstores.utils import DistanceStrategy
+from langchain_oracledb.vectorstores.utils import DistanceStrategy, drop_table_purge
 
 
 class MatrixEmbeddings(Embeddings):
@@ -39,6 +39,7 @@ ORIGINS = (
     "current_vecdb_shape",
     "unrelated",
     "ambiguous",
+    "registered_vecdb",
 )
 SQL_ORIGINS = {"library_sql", "external_sql", "quoted_sql"}
 
@@ -65,17 +66,24 @@ def database_matrix():
                 version=version,
                 compatible=compatible,
             )
-            if tuple(map(int, compatible.getvalue().split(".")[:2])) >= (23, 6):
-                pytest.skip("This matrix targets SQL fallback with COMPATIBLE <23.6")
+            vecdb_enabled = tuple(map(int, compatible.getvalue().split(".")[:2])) >= (
+                23,
+                6,
+            )
             if tuple(map(int, connection.version.split(".")[:3])) < (23, 26, 3):
                 pytest.skip("This matrix targets the current VecDB generation")
         try:
             for origin, name in tables.items():
+                if origin == "registered_vecdb" and not vecdb_enabled:
+                    continue
                 quoted = f'"{name}"'
                 with connection.cursor() as cursor:
-                    if origin == "library_sql":
+                    if origin in {"library_sql", "registered_vecdb"}:
                         store = OracleVS(
-                            connection, MatrixEmbeddings(), name, backend="sql"
+                            connection,
+                            MatrixEmbeddings(),
+                            name,
+                            backend="vecdb" if origin == "registered_vecdb" else "sql",
                         )
                         store.add_texts(
                             ["oracle existing seed"], [{"tenant": "base"}], ids=["seed"]
@@ -131,7 +139,9 @@ def database_matrix():
             pool = oracledb.create_pool(**config, min=1, max=2, increment=1)
             try:
                 baseline = {
-                    name: table_snapshot(connection, name) for name in tables.values()
+                    name: table_snapshot(connection, name)
+                    for origin, name in tables.items()
+                    if origin != "registered_vecdb" or vecdb_enabled
                 }
                 yield connection, pool, config, tables, baseline
             finally:
@@ -145,10 +155,28 @@ def database_matrix():
                         name=name,
                     )
                     if cursor.fetchone()[0]:
-                        cursor.execute(f'DROP TABLE "{name}" PURGE')
+                        if name == tables["registered_vecdb"]:
+                            drop_table_purge(connection, name, backend="vecdb")
+                        else:
+                            cursor.execute(f'DROP TABLE "{name}" PURGE')
+
+
+@pytest.fixture(scope="module")
+def vecdb_enabled(database_matrix):
+    connection = database_matrix[0]
+    with connection.cursor() as cursor:
+        version, compatible = cursor.var(str), cursor.var(str)
+        cursor.execute(
+            "BEGIN DBMS_UTILITY.DB_VERSION(:version,:compatible); END;",
+            version=version,
+            compatible=compatible,
+        )
+        return tuple(map(int, compatible.getvalue().split(".")[:2])) >= (23, 6)
 
 
 def expected_error(origin, backend):
+    if origin == "registered_vecdb":
+        return "SQL backend cannot use a VecDB" if backend == "sql" else None
     if origin in SQL_ORIGINS:
         return "ordinary OracleVS" if backend == "vecdb" else None
     return "Incompatible"
@@ -183,8 +211,10 @@ def assert_preserved(connection, name, baseline):
 @pytest.mark.parametrize("origin", ORIGINS)
 @pytest.mark.parametrize("backend", ["auto", "sql", "vecdb"])
 @pytest.mark.parametrize("pooled", [False, True])
-def test_existing_table_sync(database_matrix, origin, backend, pooled):
+def test_existing_table_sync(database_matrix, vecdb_enabled, origin, backend, pooled):
     connection, pool, _, tables, baseline = database_matrix
+    if origin == "registered_vecdb" and not vecdb_enabled:
+        pytest.skip("Package-created origin requires COMPATIBLE >= 23.6")
     name = tables[origin]
     client = pool if pooled else connection
     error = expected_error(origin, backend)
@@ -201,7 +231,9 @@ def test_existing_table_sync(database_matrix, origin, backend, pooled):
         mutate_on_duplicate=True,
         distance_strategy=DistanceStrategy.COSINE,
     )
-    assert store.backend == "sql" and store._vecdb is None
+    expected = "vecdb" if origin == "registered_vecdb" else "sql"
+    assert store.backend == expected
+    assert (store._vecdb is not None) == (expected == "vecdb")
     assert store.get_by_ids(["seed"])[0].page_content == "oracle existing seed"
     record = uuid.uuid4().hex
     try:
@@ -222,8 +254,12 @@ def test_existing_table_sync(database_matrix, origin, backend, pooled):
 @pytest.mark.parametrize("backend", ["auto", "sql", "vecdb"])
 @pytest.mark.parametrize("pooled", [False, True])
 @pytest.mark.asyncio
-async def test_existing_table_async(database_matrix, origin, backend, pooled):
+async def test_existing_table_async(
+    database_matrix, vecdb_enabled, origin, backend, pooled
+):
     connection, _, config, tables, baseline = database_matrix
+    if origin == "registered_vecdb" and not vecdb_enabled:
+        pytest.skip("Package-created origin requires COMPATIBLE >= 23.6")
     name = tables[origin]
     client = (
         oracledb.create_pool_async(**config, min=1, max=2, increment=1)
@@ -247,7 +283,9 @@ async def test_existing_table_async(database_matrix, origin, backend, pooled):
             mutate_on_duplicate=True,
             distance_strategy=DistanceStrategy.COSINE,
         )
-        assert store.backend == "sql" and store._vecdb is None
+        expected = "vecdb" if origin == "registered_vecdb" else "sql"
+        assert store.backend == expected
+        assert (store._vecdb is not None) == (expected == "vecdb")
         assert (await store.aget_by_ids(["seed"]))[
             0
         ].page_content == "oracle existing seed"
@@ -277,12 +315,12 @@ async def test_existing_table_async(database_matrix, origin, backend, pooled):
 
 @pytest.mark.parametrize("backend", ["auto", "sql", "vecdb"])
 @pytest.mark.parametrize("pooled", [False, True])
-def test_missing_table_sync(database_matrix, backend, pooled):
+def test_missing_table_sync(database_matrix, vecdb_enabled, backend, pooled):
     connection, pool, _, _, _ = database_matrix
     name = "LCM_NEW_" + uuid.uuid4().hex[:10].upper()
     client = pool if pooled else connection
     try:
-        if backend == "vecdb":
+        if backend == "vecdb" and not vecdb_enabled:
             with pytest.raises(ValueError, match="COMPATIBLE"):
                 OracleVS(client, MatrixEmbeddings(), name, backend=backend)
         else:
@@ -296,8 +334,11 @@ def test_missing_table_sync(database_matrix, backend, pooled):
                 ids=["fresh"],
                 mutate_on_duplicate=True,
             )
-            assert store.backend == "sql"
+            assert store.backend == (
+                "vecdb" if backend != "sql" and vecdb_enabled else "sql"
+            )
             reopened = OracleVS(client, MatrixEmbeddings(), name, backend="auto")
+            assert reopened.backend == store.backend
             assert reopened.get_by_ids(["fresh"])[0].page_content == "oracle fresh"
     finally:
         with connection.cursor() as cursor:
@@ -305,16 +346,16 @@ def test_missing_table_sync(database_matrix, backend, pooled):
                 "SELECT COUNT(*) FROM user_tables WHERE table_name=:name", name=name
             )
             exists = cursor.fetchone()[0]
-            if backend == "vecdb":
+            if backend == "vecdb" and not vecdb_enabled:
                 assert exists == 0
             if exists:
-                cursor.execute(f'DROP TABLE "{name}" PURGE')
+                drop_table_purge(connection, name, backend="auto")
 
 
 @pytest.mark.parametrize("backend", ["auto", "sql", "vecdb"])
 @pytest.mark.parametrize("pooled", [False, True])
 @pytest.mark.asyncio
-async def test_missing_table_async(database_matrix, backend, pooled):
+async def test_missing_table_async(database_matrix, vecdb_enabled, backend, pooled):
     connection, _, config, _, _ = database_matrix
     name = "LCM_NEW_" + uuid.uuid4().hex[:10].upper()
     client = (
@@ -323,7 +364,7 @@ async def test_missing_table_async(database_matrix, backend, pooled):
         else await oracledb.connect_async(**config)
     )
     try:
-        if backend == "vecdb":
+        if backend == "vecdb" and not vecdb_enabled:
             with pytest.raises(ValueError, match="COMPATIBLE"):
                 await OracleVS.acreate(
                     client, MatrixEmbeddings(), name, backend=backend
@@ -339,10 +380,13 @@ async def test_missing_table_async(database_matrix, backend, pooled):
                 ids=["fresh"],
                 mutate_on_duplicate=True,
             )
-            assert store.backend == "sql"
+            assert store.backend == (
+                "vecdb" if backend != "sql" and vecdb_enabled else "sql"
+            )
             reopened = await OracleVS.acreate(
                 client, MatrixEmbeddings(), name, backend="auto"
             )
+            assert reopened.backend == store.backend
             assert (await reopened.aget_by_ids(["fresh"]))[
                 0
             ].page_content == "oracle fresh"
@@ -353,10 +397,10 @@ async def test_missing_table_async(database_matrix, backend, pooled):
                 "SELECT COUNT(*) FROM user_tables WHERE table_name=:name", name=name
             )
             exists = cursor.fetchone()[0]
-            if backend == "vecdb":
+            if backend == "vecdb" and not vecdb_enabled:
                 assert exists == 0
             if exists:
-                cursor.execute(f'DROP TABLE "{name}" PURGE')
+                drop_table_purge(connection, name, backend="auto")
 
 
 @pytest.mark.parametrize("origin", sorted(SQL_ORIGINS))
@@ -828,9 +872,10 @@ async def test_current_schema_index_lookup_does_not_find_login_users_index(
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("autocommit", [False, True])
 @pytest.mark.asyncio
-async def test_native_vecdb_failed_batch_preserves_transaction_boundary(
-    database_matrix, asynchronous, pending
+async def test_native_vecdb_batch_commits_successful_rows(
+    database_matrix, asynchronous, pending, autocommit
 ):
     from langchain_oracledb.vectorstores._vecdb import (
         AsyncNativeTransport,
@@ -854,60 +899,66 @@ async def test_native_vecdb_failed_batch_preserves_transaction_boundary(
             "metadata": {"text": "wrong dimension"},
         },
     ]
-    if asynchronous:
-        async with oracledb.connect_async(**config) as connection:
-            with connection.cursor() as cursor:
-                if pending:
+    connection = (
+        await oracledb.connect_async(**config)
+        if asynchronous
+        else oracledb.connect(**config)
+    )
+    try:
+        with connection.cursor() as cursor:
+            if pending:
+                if asynchronous:
                     await cursor.execute(
                         f'INSERT INTO "{name}" (ID) VALUES (:id)', id=caller
                     )
-                transport = AsyncNativeTransport(connection, (23, 26, 4))
-                with pytest.raises(
-                    RuntimeError, match="pending work" if pending else "ORA-"
-                ):
-                    await transport.ainsert(name, records)
-                await cursor.execute(
-                    f'SELECT ID FROM "{name}" WHERE ID IN (:a,:b)', a=valid, b=caller
-                )
-                assert await cursor.fetchall() == ([(caller,)] if pending else [])
-                if pending:
-                    assert connection.transaction_in_progress
-                    await connection.rollback()
                 else:
-                    await connection.commit()
-    else:
-        with oracledb.connect(**config) as connection:
-            with connection.cursor() as cursor:
-                if pending:
                     cursor.execute(f'INSERT INTO "{name}" (ID) VALUES (:id)', id=caller)
-                transport = NativeTransport(connection, (23, 26, 4))
-                with pytest.raises(
-                    RuntimeError, match="pending work" if pending else "ORA-"
-                ):
-                    transport.insert(name, records)
+        connection.autocommit = autocommit
+        if asynchronous:
+            transport = AsyncNativeTransport(connection, (23, 26, 4))
+            assert await transport.ainsert(name, records) == [valid]
+        else:
+            transport = NativeTransport(connection, (23, 26, 4))
+            assert transport.insert(name, records) == [valid]
+        # A separate session verifies both the valid row and caller work committed.
+        with oracledb.connect(**config) as observer:
+            with observer.cursor() as cursor:
                 cursor.execute(
                     f'SELECT ID FROM "{name}" WHERE ID IN (:a,:b)', a=valid, b=caller
                 )
-                assert cursor.fetchall() == ([(caller,)] if pending else [])
-                if pending:
-                    assert connection.transaction_in_progress
-                    connection.rollback()
-                else:
-                    connection.commit()
-    with oracledb.connect(**config) as connection:
-        assert_preserved(connection, name, baseline[name])
+                assert {row[0] for row in cursor.fetchall()} == (
+                    {valid, caller} if pending else {valid}
+                )
+                cursor.execute(
+                    f'SELECT CONTENT_METADATA FROM "{name}" WHERE ID=:id', id="seed"
+                )
+                assert cursor.fetchone()[0]["text"] == "oracle existing seed"
+    finally:
+        if asynchronous:
+            await connection.close()
+        else:
+            connection.close()
+        with oracledb.connect(**config) as cleanup:
+            with cleanup.cursor() as cursor:
+                cursor.execute(
+                    f'DELETE FROM "{name}" WHERE ID IN (:a,:b)', a=valid, b=caller
+                )
+            cleanup.commit()
+            assert_preserved(cleanup, name, baseline[name])
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
 async def test_native_migration_rejects_sparse_ddl_below_compatible(
-    database_matrix, asynchronous
+    database_matrix, asynchronous, vecdb_enabled
 ):
     from langchain_oracledb.vectorstores._vecdb import (
         AsyncNativeTransport,
         NativeTransport,
     )
 
+    if vecdb_enabled:
+        pytest.skip("This rejection requires COMPATIBLE < 23.6")
     _, _, config, tables, baseline = database_matrix
     name = tables["legacy_vecdb_shape"]
     if asynchronous:
@@ -1111,7 +1162,7 @@ async def test_native_function_signatures_compile_without_execution(
     [
         "interruption",
         "connection_loss",
-        "rollback_failure",
+        "execute_failure",
         "commit_before",
         "commit_after",
     ],
@@ -1122,7 +1173,8 @@ async def test_native_insert_real_driver_failure_outcomes(
 ):
     """Inject failures around real driver DML/commit; no network-loss claim.
 
-    commit_after models a lost acknowledgment: rollback cannot undo that commit.
+    Driver failures propagate without rolling back caller-owned transactions.
+    commit_after models a lost acknowledgment after a successful commit.
     Async interruption uses actual task cancellation after real DML completes.
     """
     import asyncio
@@ -1166,7 +1218,7 @@ async def test_native_insert_real_driver_failure_outcomes(
             self.cursor.executemany(*args, **kwargs)
             if failure == "interruption":
                 raise KeyboardInterrupt()
-            if failure in {"connection_loss", "rollback_failure"}:
+            if failure in {"connection_loss", "execute_failure"}:
                 if failure == "connection_loss":
                     proxy.close()
                 raise error
@@ -1176,7 +1228,7 @@ async def test_native_insert_real_driver_failure_outcomes(
             if failure == "interruption":
                 entered.set()
                 await asyncio.Event().wait()
-            if failure in {"connection_loss", "rollback_failure"}:
+            if failure in {"connection_loss", "execute_failure"}:
                 if failure == "connection_loss":
                     await proxy.aclose()
                 raise error
@@ -1215,20 +1267,9 @@ async def test_native_insert_real_driver_failure_outcomes(
             if failure == "commit_after":
                 raise error
 
-        def rollback(self):
-            if failure == "rollback_failure":
-                self.close()
-            connection.rollback()
-
-        async def arollback(self):
-            if failure == "rollback_failure":
-                await self.aclose()
-            await connection.rollback()
-
     proxy = ConnectionProxy()
     if asynchronous:
         proxy.commit = proxy.acommit
-        proxy.rollback = proxy.arollback
 
     @contextmanager
     def get(_):
@@ -1264,9 +1305,8 @@ async def test_native_insert_real_driver_failure_outcomes(
                 transport.insert(name, records)
         if failure not in {"interruption", "connection_loss"}:
             assert caught.value is error
-        if failure in {"connection_loss", "rollback_failure"}:
-            assert isinstance(caught.value.__cause__, oracledb.Error)
-        # Detect leaked uncommitted rows by committing any still-open session.
+        assert caught.value.__cause__ is None
+        # SQL semantics leave DML pending on driver failure; explicitly commit it.
         if not closed:
             if asynchronous:
                 await connection.commit()
@@ -1276,7 +1316,7 @@ async def test_native_insert_real_driver_failure_outcomes(
             with observer.cursor() as cursor:
                 cursor.execute(f'SELECT ID FROM "{name}" WHERE ID=:id', id=identifier)
                 assert cursor.fetchall() == (
-                    [(identifier,)] if failure == "commit_after" else []
+                    [] if failure == "connection_loss" else [(identifier,)]
                 )
     finally:
         if not closed:

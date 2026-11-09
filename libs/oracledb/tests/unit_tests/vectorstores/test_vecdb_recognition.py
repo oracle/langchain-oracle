@@ -24,7 +24,7 @@ def database(request):
     cursor = connection.cursor.return_value.__enter__.return_value
     state = {
         "available": True,
-        "payload": {"vector_tables": []},
+        "payload": None,
         "schema": "OWNER",
         "columns": set(_vecdb.CURRENT_COLUMNS),
         "statement": "",
@@ -37,6 +37,8 @@ def database(request):
             raise state["error"]
 
     def fetchone():
+        if state["statement"] == _vecdb.VECDB_CAPABILITY_SQL:
+            return 1, "23.6.0"
         if state["statement"] == _vecdb.VECDB_RECOGNITION_SQL:
             return (int(state["available"]),)
         if "SELECT SYS.DBMS_VECTOR_DATABASE." in state["statement"]:
@@ -64,17 +66,14 @@ async def recognize(database, name="DOCS"):
 
 @pytest.mark.parametrize("registered", [False, True])
 @pytest.mark.asyncio
-async def test_registry_membership_identifies_package_tables(registered, database):
+async def test_targeted_description_identifies_package_tables(registered, database):
     _, _, cursor, state = database
-    state["payload"] = json.dumps(
-        {
-            "vector_tables": [{"owner": "OWNER", "table_name": "DOCS"}]
-            if registered
-            else []
-        }
+    state["payload"] = (
+        json.dumps({"owner": "OWNER", "table_name": "DOCS"}) if registered else None
     )
     assert await recognize(database) is registered
-    assert cursor.execute.call_args.args == (_vecdb.VECDB_TABLES_SQL,)
+    assert cursor.execute.call_args.args == (_vecdb.VECDB_TABLE_SQL,)
+    assert cursor.execute.call_args.kwargs == {"name": '"DOCS"'}
     assert cursor.execute.call_count == 2
 
 
@@ -110,8 +109,8 @@ async def test_existing_sql_store_selects_sql_without_vecdb_package(database):
     ],
 )
 @pytest.mark.asyncio
-async def test_unqualified_registry_matching_ignores_other_objects(database, entry):
-    database[3]["payload"] = {"vector_tables": [entry]}
+async def test_unqualified_description_matching_ignores_other_objects(database, entry):
+    database[3]["payload"] = entry
     assert not await recognize(database)
 
 
@@ -138,23 +137,27 @@ async def test_recognition_errors_never_become_nonmembership(database, code):
     ],
 )
 @pytest.mark.asyncio
-async def test_qualified_registry_matching_keeps_owner_and_name(
+async def test_qualified_description_matching_keeps_owner_and_name(
     database, owner, table, expected
 ):
     _, _, cursor, state = database
-    state["payload"] = {"vector_tables": [{"owner": owner, "table_name": table}]}
+    state["payload"] = {"owner": owner, "table_name": table}
     assert await recognize(database, '"OWNER"."DOCS"') is expected
-    assert "LIST_VECTOR_TABLES()" in cursor.execute.call_args.args[0]
-    assert cursor.execute.call_args.kwargs == {}
+    assert "DESCRIBE_VECTOR_TABLE(" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.kwargs == {
+        "name": '"OWNER"."DOCS"',
+        "owner": "OWNER",
+        "unqualified_name": '"DOCS"',
+    }
 
 
 @pytest.mark.parametrize("name", ['"Mixed"', '"LITERAL.DOT"', '"O\'BRIEN"'])
 @pytest.mark.asyncio
-async def test_registry_matching_preserves_exact_identifier(database, name):
+async def test_description_matching_preserves_exact_identifier(database, name):
     _, _, cursor, state = database
-    state["payload"] = {"vector_tables": [{"owner": "OWNER", "table_name": name[1:-1]}]}
+    state["payload"] = {"owner": "OWNER", "table_name": name[1:-1]}
     assert await recognize(database, name)
-    assert cursor.execute.call_args.kwargs == {}
+    assert cursor.execute.call_args.kwargs == {"name": name}
     assert name not in cursor.execute.call_args.args[0]
 
 
@@ -169,10 +172,15 @@ async def test_malformed_response_does_not_authorize_sql_fallback(database, payl
 
 
 @pytest.mark.parametrize(
-    "payload", [None, {}, {"vector_tables": None}, {"vector_tables": [{}]}]
+    "payload",
+    [
+        {"owner": None, "table_name": "DOCS"},
+        {"owner": 1, "table_name": "DOCS"},
+        {"owner": "OWNER", "table_name": []},
+    ],
 )
 @pytest.mark.asyncio
-async def test_malformed_registry_does_not_authorize_sql_fallback(database, payload):
+async def test_malformed_identity_does_not_authorize_sql_fallback(database, payload):
     database[3]["payload"] = payload
     with pytest.raises(ValueError):
         await recognize(database, '"OWNER"."DOCS"')
@@ -222,11 +230,7 @@ async def test_backend_selection_distinguishes_same_columns_by_registration(
     database, registered
 ):
     asynchronous, connection, cursor, state = database
-    state["payload"] = {
-        "vector_tables": [{"owner": "OWNER", "table_name": "DOCS"}]
-        if registered
-        else []
-    }
+    state["payload"] = {"owner": "OWNER", "table_name": "DOCS"} if registered else None
     if registered:
         cursor.var.side_effect = lambda *a, **kw: MagicMock(getvalue=lambda: "23.6.0")
         selected = (
@@ -244,4 +248,91 @@ async def test_backend_selection_distinguishes_same_columns_by_registration(
     assert not any(
         c.args[0].startswith(("ALTER", "CREATE", "DROP"))
         for c in cursor.execute.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_description_lob_is_read_once_and_registry_is_never_requested(database):
+    asynchronous, _, cursor, state = database
+    payload = json.dumps({"owner": "OWNER", "table_name": "DOCS"})
+    lob = MagicMock()
+    lob.read = (
+        AsyncMock(return_value=payload)
+        if asynchronous
+        else MagicMock(return_value=payload)
+    )
+    state["payload"] = lob
+    assert await recognize(database)
+    lob.read.assert_called_once_with()
+    if asynchronous:
+        lob.read.assert_awaited_once_with()
+    assert all(
+        "LIST_VECTOR_TABLES" not in call.args[0]
+        for call in cursor.execute.call_args_list
+    )
+    assert cursor.execute.call_args.kwargs == {"name": '"DOCS"'}
+
+
+@pytest.mark.asyncio
+async def test_targeted_description_preserves_quoted_owner_and_literal_dots(database):
+    _, _, cursor, state = database
+    state["payload"] = {"owner": "Owner.Name", "table_name": "Table.Name"}
+    name = '"Owner.Name"."Table.Name"'
+    assert await recognize(database, name)
+    assert cursor.execute.call_args.kwargs == {
+        "name": name,
+        "owner": "Owner.Name",
+        "unqualified_name": '"Table.Name"',
+    }
+    assert name not in cursor.execute.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_missing_description_row_is_not_nonmembership(database):
+    _, _, cursor, _ = database
+    cursor.fetchone.side_effect = [(1,), None]
+    with pytest.raises(ValueError, match="Missing VecDB recognition response"):
+        await recognize(database)
+
+
+@pytest.mark.parametrize("flag", [0, 1, None])
+@pytest.mark.asyncio
+async def test_legacy_qualified_lookup_returns_only_filtered_membership(database, flag):
+    asynchronous, _, cursor, _ = database
+    error = oracledb.DatabaseError(SimpleNamespace(code=44003))
+    output = MagicMock(getvalue=MagicMock(return_value=flag))
+    cursor.var.return_value = output
+
+    def execute(statement, **binds):
+        if "DESCRIBE_VECTOR_TABLE(" in statement:
+            raise error
+
+    cursor.execute.side_effect = execute
+    cursor.fetchone.side_effect = [(1,)]
+    if flag is None:
+        with pytest.raises(ValueError, match="Malformed VecDB"):
+            await recognize(database, '"OTHER"."DOCS"')
+    else:
+        assert await recognize(database, '"OTHER"."DOCS"') is bool(flag)
+    assert cursor.execute.call_args.args == (_vecdb.VECDB_QUALIFIED_MEMBERSHIP_SQL,)
+    assert cursor.execute.call_args.kwargs == {
+        "membership": output,
+        "owner": "OTHER",
+        "name": "DOCS",
+    }
+    cursor.var.assert_called_once_with(int)
+    if asynchronous:
+        assert cursor.execute.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_unqualified_invalid_name_is_not_registry_fallback(database):
+    _, _, cursor, state = database
+    state["error"] = oracledb.DatabaseError(SimpleNamespace(code=44003))
+    with pytest.raises(oracledb.DatabaseError):
+        await recognize(database)
+    assert cursor.execute.call_count == 2
+    assert all(
+        "LIST_VECTOR_TABLES" not in call.args[0]
+        for call in cursor.execute.call_args_list
     )

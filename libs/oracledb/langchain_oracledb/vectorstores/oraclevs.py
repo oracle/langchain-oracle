@@ -500,11 +500,13 @@ def create_index(
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Create an index; VecDB returns its submission response, SQL returns None.
+    """Ensure a vector index exists, or explicitly reconfigure a VecDB index.
 
-    A VecDB job response confirms submission. Use the SDK's public index/job
-    description methods or store.describe_vecdb_index() to check readiness.
-    The caller owns polling/timeouts and must serialize index maintenance.
+    Existing VecDB indexes are unchanged when params is empty. Explicit params
+    use LangChain HNSW/IVF options and rebuild an existing VecDB vector index.
+    A VecDB operation returns its provider response; a no-op or SQL returns None.
+    Use store.describe_vecdb_index() for readiness. Index maintenance requires
+    an idle connection and caller-owned serialization.
     """
     if vector_store._vecdb is not None:
         return vector_store._vecdb.create_index(params)
@@ -742,11 +744,13 @@ async def acreate_index(
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Create an index; VecDB returns its submission response, SQL returns None.
+    """Ensure a vector index exists, or explicitly reconfigure a VecDB index.
 
-    A VecDB job response confirms submission. Use the SDK's public index/job
-    description methods or store.describe_vecdb_index() to check readiness.
-    The caller owns polling/timeouts and must serialize index maintenance.
+    Existing VecDB indexes are unchanged when params is empty. Explicit params
+    use LangChain HNSW/IVF options and rebuild an existing VecDB vector index.
+    A VecDB operation returns its provider response; a no-op or SQL returns None.
+    Use store.describe_vecdb_index() for readiness. Index maintenance requires
+    an idle connection and caller-owned serialization.
     """
     if vector_store._vecdb is not None:
         return await vector_store._vecdb.run_async("create_index", params)
@@ -1135,10 +1139,15 @@ class OracleVS(VectorStore):
         mutate_on_duplicate: Optional[bool] = False,
         *,
         backend: str = "auto",
+        vector_index_params: Optional[dict[str, Any]] = None,
     ):
         """
         Initialize the OracleVS store.
         For an async version, use OracleVS.acreate() instead.
+
+        vector_index_params accepts LangChain HNSW/IVF options for new VecDB
+        tables only. Reopening preserves existing indexes. SQL stores reject
+        this VecDB-only option.
 
         ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
         compatible layouts and databases. Native VecDB package calls require
@@ -1175,6 +1184,7 @@ class OracleVS(VectorStore):
                 table_name,
                 distance_strategy,
                 table_type=self._annotation_type(),
+                vector_index_params=vector_index_params,
             )
             self._vecdb.prepare()
             self.backend = "vecdb"
@@ -1182,6 +1192,8 @@ class OracleVS(VectorStore):
 
         with _get_connection(client) as connection:
             selected, version = native_selection(connection, table_name, backend)
+            if selected == "sql" and vector_index_params is not None:
+                raise ValueError("vector_index_params requires a VecDB backend")
             self._initialize(
                 connection,
                 client,
@@ -1199,6 +1211,7 @@ class OracleVS(VectorStore):
                     table_name,
                     distance_strategy,
                     table_type=self._annotation_type(),
+                    vector_index_params=vector_index_params,
                 )
                 self._vecdb.prepare()
                 self._vecdb.transport.client = client
@@ -1249,9 +1262,13 @@ class OracleVS(VectorStore):
         mutate_on_duplicate: Optional[bool] = False,
         *,
         backend: str = "auto",
+        vector_index_params: Optional[dict[str, Any]] = None,
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
+
+        vector_index_params follows the constructor's creation-only VecDB
+        contract and accepts the same LangChain HNSW/IVF options.
 
         Uses the constructor's naming/backend contract. Native VecDB requires an
         unqualified uppercase name; new unsupported names use SQL in auto mode.
@@ -1280,6 +1297,7 @@ class OracleVS(VectorStore):
                 params,
                 mutate_on_duplicate,
                 backend=backend,
+                vector_index_params=vector_index_params,
             )
         self = cls.__new__(cls)
         self._vecdb = None
@@ -1287,6 +1305,8 @@ class OracleVS(VectorStore):
 
         async with _aget_connection(client) as connection:
             selected, version = await anative_selection(connection, table_name, backend)
+            if selected == "sql" and vector_index_params is not None:
+                raise ValueError("vector_index_params requires a VecDB backend")
             self._initialize(
                 connection,
                 client,
@@ -1304,6 +1324,7 @@ class OracleVS(VectorStore):
                     table_name,
                     distance_strategy,
                     table_type=self._annotation_type(),
+                    vector_index_params=vector_index_params,
                 )
                 await self._vecdb.run_async("prepare")
                 self._vecdb.transport.client = client
@@ -2609,6 +2630,9 @@ class OracleVS(VectorStore):
           ids: List of ids to delete.
           **kwargs
         """
+        if not ids:
+            raise ValueError("No ids provided to delete.")
+
         if self._vecdb is not None:
             return self._vecdb.delete(ids)
 
@@ -2627,6 +2651,9 @@ class OracleVS(VectorStore):
           ids: List of ids to delete.
           **kwargs
         """
+        if not ids:
+            raise ValueError("No ids provided to delete.")
+
         if self._vecdb is not None:
             return await self._vecdb.run_async("delete", ids)
 
@@ -2708,6 +2735,7 @@ class OracleVS(VectorStore):
             query=query,
             params=params,
             backend=kwargs.get("backend", "auto"),
+            vector_index_params=kwargs.get("vector_index_params"),
             mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 
@@ -2746,6 +2774,7 @@ class OracleVS(VectorStore):
             query=query,
             params=params,
             backend=kwargs.get("backend", "auto"),
+            vector_index_params=kwargs.get("vector_index_params"),
             mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 

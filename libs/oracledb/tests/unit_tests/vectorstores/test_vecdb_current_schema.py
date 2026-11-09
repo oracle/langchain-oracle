@@ -87,15 +87,15 @@ def schemas(request, monkeypatch):
         raise AssertionError(state["statement"])
 
     def fetchone():
-        if "SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES" in state["statement"]:
+        if state["statement"] == _vecdb.VECDB_CAPABILITY_SQL:
+            return 1, "23.6.0.0.0"
+        if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in state["statement"]:
+            parts = _vecdb._identifier_parts(state["binds"]["name"])
+            schema = parts[0] if len(parts) == 2 else state["schema"]
             return (
-                {
-                    "vector_tables": [
-                        {"owner": schema, "table_name": "DOCS"}
-                        for schema, columns in state["tables"].items()
-                        if "DENSE_VECTOR" in columns
-                    ]
-                },
+                {"owner": schema, "table_name": parts[-1]}
+                if "DENSE_VECTOR" in state["tables"].get(schema, set())
+                else None,
                 state["schema"],
             )
         if "all_procedures" in state["statement"]:

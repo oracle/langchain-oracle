@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from langchain_oracledb.vectorstores._vecdb import (
-    COMPATIBILITY_SQL,
     CURRENT_COLUMNS,
+    VECDB_CAPABILITY_SQL,
     anative_selection,
     native_selection,
 )
@@ -26,13 +26,13 @@ def connection(version, compatibility, columns=(), supported=True, asynchronous=
         statement = sql
 
     def fetchone():
-        if "SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES" in statement:
+        if statement == VECDB_CAPABILITY_SQL:
+            return int(supported), compatibility if supported else None
+        if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in statement:
             return (
-                {
-                    "vector_tables": [{"owner": "OWNER", "table_name": "DOCS"}]
-                    if "DENSE_VECTOR" in columns
-                    else []
-                },
+                {"owner": "OWNER", "table_name": "DOCS"}
+                if "DENSE_VECTOR" in columns
+                else None,
                 "OWNER",
             )
         return (int(supported),)
@@ -87,12 +87,24 @@ async def test_auto_checks_compatible_before_selecting_new_table_backend(
     )
     assert result[0] == expected
     assert any(
-        call.args[0] == COMPATIBILITY_SQL for call in cursor.execute.call_args_list
+        call.args[0] == VECDB_CAPABILITY_SQL for call in cursor.execute.call_args_list
     )
     assert all(
         "v$parameter" not in call.args[0].lower()
         for call in cursor.execute.call_args_list
     )
+    assert (
+        sum(
+            call.args[0] == VECDB_CAPABILITY_SQL
+            for call in cursor.execute.call_args_list
+        )
+        == 1
+    )
+    assert not any(
+        call.args[0].startswith("BEGIN DBMS_UTILITY.DB_VERSION")
+        for call in cursor.execute.call_args_list
+    )
+    cursor.var.assert_not_called()
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -153,7 +165,7 @@ async def test_compatibility_probe_errors_are_not_treated_as_sql_fallback(asynch
     conn, cursor = connection("26.1.0.24.0", "23.6.0.0.0", asynchronous=asynchronous)
 
     def execute(sql, **kwargs):
-        if sql == COMPATIBILITY_SQL:
+        if sql == VECDB_CAPABILITY_SQL:
             raise RuntimeError("Permission denied")
 
     cursor.execute.side_effect = execute
@@ -214,4 +226,4 @@ async def test_qualified_sql_cannot_bypass_vecdb_layout_guard(asynchronous):
             native_selection(conn, '"OWNER"."DOCS"', "sql")
     assert "all_tab_columns" in cursor.execute.call_args_list[0].args[0]
     assert cursor.execute.call_args_list[0].kwargs == {"owner": "OWNER", "name": "DOCS"}
-    assert "LIST_VECTOR_TABLES" in cursor.execute.call_args.args[0]
+    assert "DESCRIBE_VECTOR_TABLE(" in cursor.execute.call_args.args[0]

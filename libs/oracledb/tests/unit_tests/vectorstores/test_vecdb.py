@@ -53,6 +53,8 @@ def sdk():
     )
     client.describe_vector_table = MagicMock(return_value={"table_name": "DOCS"})
     client.create_vector_table = MagicMock(return_value={"table_name": "DOCS"})
+    client.describe_index = MagicMock(return_value={"index_status": "READY"})
+    client.rebuild_index = MagicMock(return_value={"message": "rebuilt"})
     client.upsert_vectors = MagicMock(return_value={"upserted_count": 1})
     client.delete_vectors = MagicMock(return_value={"message": "deleted"})
     client.list_vectors = MagicMock(return_value={"items": []})
@@ -136,14 +138,13 @@ def selection_connection(version, columns, supported=True, compatible="23.6.0.0.
         statement = sql
 
     def fetchone():
-        if "SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES" in statement:
-            registered = "DENSE_VECTOR" in columns
+        if "WITH FUNCTION lc_compatible" in statement:
+            return int(supported), compatible if supported else None
+        if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in statement:
             return (
-                {
-                    "vector_tables": [{"owner": "OWNER", "table_name": "DOCS"}]
-                    if registered
-                    else []
-                },
+                {"owner": "OWNER", "table_name": "DOCS"}
+                if "DENSE_VECTOR" in columns
+                else None,
                 "OWNER",
             )
         return (int(supported),)
@@ -283,14 +284,14 @@ def test_get_pages_id_batches_and_delete(store, sdk):
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_delete_validation_is_delegated_to_the_sdk(store, sdk, asynchronous):
-    sdk.delete_vectors.side_effect = ValueError("SDK rejected the IDs")
-    with pytest.raises(ValueError, match="SDK rejected the IDs"):
-        if asynchronous:
-            await store.adelete([])
-        else:
-            store.delete([])
-    sdk.delete_vectors.assert_called_once_with(table_name="DOCS", ids=[])
+async def test_delete_rejects_missing_ids_before_sdk(store, sdk, asynchronous):
+    for ids in (None, []):
+        with pytest.raises(ValueError, match="No ids provided to delete"):
+            if asynchronous:
+                await store.adelete(ids)
+            else:
+                store.delete(ids)
+    sdk.delete_vectors.assert_not_called()
 
 
 def test_return_embeddings(store):
@@ -417,8 +418,11 @@ def test_generation_specific_index_json():
     new = VecDBBackend(
         NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
     )
-    assert old.index_params({})["indexing"] == "auto"
-    assert new.index_params({})["vector_index_params"]["auto_index"] is True
+    assert old.index_params({"idx_type": "HNSW"})["indexing"] == "auto"
+    assert (
+        new.index_params({"idx_type": "HNSW"})["vector_index_params"]["auto_index"]
+        is True
+    )
     assert (
         new.index_params({"efConstruction": 20})["vector_index_params"][
             "advanced_params"
@@ -459,20 +463,18 @@ def test_index_parameter_validation_matches_existing_sql(kind, invalid):
 
 
 def test_existing_index_options_are_translated_for_the_sdk(store, sdk):
-    sdk.create_index = MagicMock(return_value={"message": "created"})
+    sdk.rebuild_index = MagicMock(return_value={"message": "rebuilt"})
     store._vecdb.create_index({"idx_type": "ivf", "neighbor_part": 32, "parallel": 2})
-    mapped = sdk.create_index.call_args.kwargs["index_params"]
+    mapped = sdk.rebuild_index.call_args.kwargs["index_params"]
     assert mapped["parallel_creation"] == 2
     assert mapped["vector_index_params"]["organization"] == "PARTITIONS"
     assert mapped["vector_index_params"]["advanced_params"] == {"partitions": 32}
 
 
 def test_additional_index_option_validation_is_delegated_to_the_sdk(store, sdk):
-    sdk.create_index = MagicMock(
-        side_effect=ValueError("SDK rejected the index option")
-    )
-    with pytest.raises(ValueError, match="SDK rejected the index option"):
+    with pytest.raises(ValueError, match="unknown_option"):
         store._vecdb.create_index({"unknown_option": True})
+    sdk.rebuild_index.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -482,19 +484,20 @@ def test_additional_index_option_validation_is_delegated_to_the_sdk(store, sdk):
         {"address.city": "NYC"},
         {"tags[*]": {"$all": ["a", "b"]}},
         {"size": {"$between": [1, 10]}},
-        {"name": {"$regex": "^Oracle"}},
         {"$nor": [{"tenant": "one"}, {"size": {"$gt": 2}}]},
     ],
 )
-def test_vecdb_filters_are_forwarded_without_an_adapter_whitelist(store, sdk, filters):
+def test_vecdb_filters_are_translated(store, sdk, filters):
     store.similarity_search("query", filter=filters)
-    assert sdk.query.call_args.kwargs["filters"] is filters
+    from langchain_oracledb.vectorstores._vecdb_filters import translate_filter
+
+    assert sdk.query.call_args.kwargs["filters"] == translate_filter(filters)
 
 
 def test_vecdb_filter_errors_come_from_the_sdk(store, sdk):
-    sdk.query.side_effect = ValueError("SDK rejected the filter")
-    with pytest.raises(ValueError, match="SDK rejected the filter"):
+    with pytest.raises(ValueError, match="not a recognized logical operator"):
         store.similarity_search("query", filter={"$unknown": "x"})
+    sdk.query.assert_not_called()
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -536,7 +539,7 @@ def test_text_retriever_uses_metadata_backend(store):
     )
     retriever = OracleTextSearchRetriever(vector_store=store)
     assert retriever.invoke("hello")[0].id == "a"
-    store._vecdb.text_search.assert_called_once_with('"hello"', 4)
+    store._vecdb.text_search.assert_called_once_with('"hello"', 4, False)
 
 
 @pytest.mark.parametrize("mode", ["keyword", "semantic", "hybrid"])
@@ -609,7 +612,7 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
         "tenant": "one",
         "score": 9,
         "text_score": 2,
-        "vector_score": 7,
+        "vector_score": 0,
     }
     assert original == {"text": "hello", "tenant": "one"}
     statement = cursor.execute.call_args.args[0]
@@ -696,12 +699,14 @@ def test_native_text_index_reuses_already_enabled_index():
     assert cursor.execute.call_count == 1
 
 
-def test_native_insert_only_skips_duplicates_atomically():
+def test_native_insert_only_skips_duplicate_rows():
     transport = NativeTransport(object(), (23, 26, 3))
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     connection = MagicMock(transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
-    cursor.getbatcherrors.return_value = [SimpleNamespace(code=1, offset=0)]
+    cursor.getbatcherrors.return_value = [
+        SimpleNamespace(code=1, offset=0, message="duplicate ID")
+    ]
     records = [
         {"id": id_, "dense_vector": [1.0], "metadata": {"text": "x"}}
         for id_ in ["a", "b"]
@@ -806,6 +811,8 @@ def test_native_pool_initialization_does_not_acquire_a_second_connection():
 
     def execute(statement, **binds):
         nonlocal created
+        if statement == _vecdb.VECDB_CAPABILITY_SQL:
+            cursor.fetchone.return_value = (1, "23.6.0.0.0")
         if "create_vector_table" in statement.lower() and not statement.startswith(
             "BEGIN IF FALSE THEN"
         ):
@@ -1130,7 +1137,7 @@ async def test_native_facade_submits_projected_search_request(store, asynchronou
     "failure", ["fatal", "driver", "pending", "autocommit", "duplicates"]
 )
 @pytest.mark.asyncio
-async def test_vecdb_insert_transaction_boundary(monkeypatch, asynchronous, failure):
+async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, caplog):
     from contextlib import asynccontextmanager
 
     from langchain_oracledb.vectorstores import _vecdb
@@ -1139,9 +1146,9 @@ async def test_vecdb_insert_transaction_boundary(monkeypatch, asynchronous, fail
         transaction_in_progress=failure == "pending", autocommit=failure == "autocommit"
     )
     cursor = connection.cursor.return_value.__enter__.return_value
-    errors = [SimpleNamespace(code=1, offset=1)]
+    errors = [SimpleNamespace(code=1, offset=1, message="duplicate ID")]
     if failure == "fatal":
-        errors.append(SimpleNamespace(code=51803, offset=2))
+        errors.append(SimpleNamespace(code=51803, offset=2, message="wrong dimension"))
     cursor.getbatcherrors.return_value = errors
     if asynchronous:
         cursor.executemany = AsyncMock()
@@ -1175,19 +1182,20 @@ async def test_vecdb_insert_transaction_boundary(monkeypatch, asynchronous, fail
             return await transport.ainsert("DOCS", records)
         return transport.insert("DOCS", records)
 
-    if failure == "duplicates":
-        assert await insert() == ["valid", "other"]
-        connection.commit.assert_called_once()
-        connection.rollback.assert_not_called()
-    else:
-        with pytest.raises(RuntimeError):
+    if failure == "driver":
+        with pytest.raises(RuntimeError, match="driver failure"):
             await insert()
         connection.commit.assert_not_called()
-        if failure in {"pending", "autocommit"}:
-            cursor.executemany.assert_not_called()
-            connection.rollback.assert_not_called()
-        else:
-            connection.rollback.assert_called_once()
+    else:
+        assert await insert() == (
+            ["valid"] if failure == "fatal" else ["valid", "other"]
+        )
+        connection.commit.assert_called_once()
+        assert "duplicate ID" in caplog.text
+        if failure == "fatal":
+            assert "wrong dimension" in caplog.text
+    cursor.executemany.assert_called_once()
+    connection.rollback.assert_not_called()
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -1227,17 +1235,20 @@ async def test_migration_rechecks_compatible_before_any_ddl(monkeypatch, asynchr
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("params", [None, {}])
 @pytest.mark.asyncio
-async def test_public_index_creation_returns_submission(store, sdk, asynchronous):
+async def test_public_rest_index_creation_is_noop(store, sdk, asynchronous, params):
     from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
 
-    submission = {"job_id": "building-1", "status": "SUBMITTED"}
-    sdk.create_index = MagicMock(return_value=submission)
+    sdk.create_index = MagicMock(
+        side_effect=AssertionError("VecDB owns vector indexes")
+    )
     if asynchronous:
-        result = await acreate_index(sdk, store)
+        result = await acreate_index(sdk, store, params)
     else:
-        result = create_index(sdk, store)
-    assert result == submission
+        result = create_index(sdk, store, params)
+    assert result is None
+    sdk.query.assert_not_called()
 
 
 @pytest.mark.parametrize("include_vectors", [False, True])
@@ -1293,22 +1304,30 @@ def test_sdk_public_ords_configuration_contract(sdk):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("params", [None, {}])
 @pytest.mark.asyncio
-async def test_native_index_submission_is_not_discarded(store, asynchronous):
+async def test_public_native_index_creation_is_noop(store, asynchronous, params):
     from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
 
-    submission = {"job_id": "native-build", "status": "SUBMITTED"}
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         None, (23, 26, 4)
     )
-    transport.call = MagicMock(return_value=submission)
-    transport.acall = AsyncMock(return_value=submission)
+    transport.call = MagicMock(side_effect=AssertionError("VecDB owns vector indexes"))
+    transport.acall = AsyncMock(side_effect=AssertionError("VecDB owns vector indexes"))
+    transport.describe_index = MagicMock(
+        return_value={"ready": True, "details": {"indexes": [{"index_name": "AUTO"}]}}
+    )
+    transport.adescribe_index = AsyncMock(
+        return_value={"ready": True, "details": {"indexes": [{"index_name": "AUTO"}]}}
+    )
     store._vecdb.transport = transport
     if asynchronous:
-        result = await acreate_index(None, store)
+        result = await acreate_index(None, store, params)
     else:
-        result = create_index(None, store)
-    assert result == submission
+        result = create_index(None, store, params)
+    assert result is None
+    transport.call.assert_not_called()
+    transport.acall.assert_not_called()
 
 
 def test_sdk_without_public_transport_configuration_is_rejected(sdk):
@@ -1317,3 +1336,112 @@ def test_sdk_without_public_transport_configuration_is_rejected(sdk):
         OracleVS(sdk, Embedding(), "DOCS")
     sdk.describe_vector_table.assert_not_called()
     sdk.create_vector_table.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("factory", [False, True], ids=["constructor", "from_texts"])
+@pytest.mark.asyncio
+async def test_public_vecdb_creation_options_forwarded(sdk, asynchronous, factory):
+    error = RuntimeError("missing")
+    error.status = 404
+    sdk.describe_vector_table.side_effect = error
+    options = {"idx_type": "IVF", "neighbor_part": 4, "accuracy": 85}
+    kwargs = {
+        "client": sdk,
+        "table_name": "DOCS",
+        "backend": "vecdb",
+        "mutate_on_duplicate": True,
+        "vector_index_params": options,
+    }
+    if factory:
+        if asynchronous:
+            store = await OracleVS.afrom_texts(["oracle"], Embedding(), **kwargs)
+        else:
+            store = OracleVS.from_texts(["oracle"], Embedding(), **kwargs)
+    elif asynchronous:
+        store = await OracleVS.acreate(embedding_function=Embedding(), **kwargs)
+    else:
+        store = OracleVS(embedding_function=Embedding(), **kwargs)
+    assert store.backend == "vecdb"
+    sdk.create_vector_table.assert_called_once()
+    mapped = sdk.create_vector_table.call_args.kwargs["index_params"][
+        "vector_index_params"
+    ]
+    assert mapped["organization"] == "PARTITIONS"
+    assert mapped["accuracy"] == 85
+    assert mapped["advanced_params"] == {"partitions": 4}
+    assert "distribute_params" not in mapped
+    assert options == {"idx_type": "IVF", "neighbor_part": 4, "accuracy": 85}
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"drinks": {"$eq": ["soda", "tea"]}},
+        {"drinks": {"$ne": "tea"}},
+        {"age": {"$not": {"$gt": 46, "$lt": 65}}},
+        {"name": {"$regex": "*rk"}},
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsupported_filters_fail_before_sdk_query(
+    store, sdk, asynchronous, filters
+):
+    with pytest.raises(ValueError, match="Unsupported VecDB filter"):
+        if asynchronous:
+            await store.asimilarity_search("query", filter=filters)
+        else:
+            store.similarity_search("query", filter=filters)
+    sdk.query.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("return_scores", [False, True])
+@pytest.mark.asyncio
+async def test_text_retriever_preserves_provider_scores(
+    store, asynchronous, return_scores
+):
+    expected = [Document(id="z", page_content="oracle", metadata={"score": 37})]
+    store._vecdb.text_search = MagicMock(return_value=expected)
+    store._vecdb.run_async = AsyncMock(return_value=expected)
+    retriever = OracleTextSearchRetriever(
+        vector_store=store, return_scores=return_scores
+    )
+    hits = (
+        await retriever.ainvoke("oracle")
+        if asynchronous
+        else retriever.invoke("oracle")
+    )
+    assert hits[0].metadata["score"] == 37
+    if asynchronous:
+        store._vecdb.run_async.assert_awaited_once_with(
+            "text_search", '"oracle"', 4, return_scores
+        )
+    else:
+        store._vecdb.text_search.assert_called_once_with('"oracle"', 4, return_scores)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "arguments,message",
+    [
+        ({"table_name": "OTHER", "column_name": "metadata"}, "Only give one"),
+        ({"column_name": "metadata"}, "column_name must be 'text'"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_vecdb_text_index_validates_common_arguments_first(
+    store, sdk, asynchronous, arguments, message
+):
+    from langchain_oracledb.retrievers.text_search import (
+        acreate_text_index,
+        create_text_index,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        if asynchronous:
+            await acreate_text_index(sdk, "IDX", vector_store=store, **arguments)
+        else:
+            create_text_index(sdk, "IDX", vector_store=store, **arguments)
+    sdk.query.assert_not_called()

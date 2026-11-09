@@ -124,19 +124,6 @@ class VectorIndexParams(_StrictModel):
         # validation must use that effective value, not merely the raw input.
         organization = self.organization or IndexOrganization.PARTITIONS
 
-        # When distribute_params is not present reject the request as
-        # it would otherwise reach PL/SQL without a valid method.
-        if (
-            organization == IndexOrganization.INMEMORY_GRAPH
-            and self.distribute_params is None
-        ):
-            raise ValueError(
-                "vector_index_params.distribute_params cannot be None for "
-                "organization 'INMEMORY GRAPH'; it must contain a valid "
-                "distribute_method. Valid values are: "
-                + ", ".join(f"'{method.value}'" for method in DistributeMethod)
-            )
-
         # Distribution is implemented by the HNSW / INMEMORY GRAPH path.  IVF
         # PARTITIONS indexes must not receive a distribute_params object.
         if (
@@ -333,6 +320,14 @@ def validate_index_params(value: Any) -> None:
     IndexParams.model_validate(current)
 
 
+def validate_rebuild_index_params(value: Any) -> None:
+    params = dict(_require_mapping(value, "index_params"))
+    index_type = params.pop("index_type", "all")
+    if index_type not in {"vector", "metadata", "all"}:
+        raise ValueError("index_params.index_type must be vector, metadata, or all")
+    validate_index_params(params)
+
+
 def validate_query_by(value: Any) -> None:
     QueryBy.model_validate(_require_mapping(value, "query_by"))
 
@@ -371,6 +366,7 @@ OPERATION_PARAMETER_VALIDATORS: dict[str, dict[str, ParameterValidator]] = {
         "index_params": validate_index_params,
     },
     "create_index": {"index_params": validate_index_params},
+    "rebuild_index": {"index_params": validate_rebuild_index_params},
     "query": {
         "query_by": validate_query_by,
         "top_k": validate_positive_top_k,

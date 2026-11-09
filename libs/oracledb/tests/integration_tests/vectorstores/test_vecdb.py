@@ -223,6 +223,17 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
     assert hits
     assert any(doc.metadata["text_score"] > 0 for doc in hits)
     assert any(doc.metadata["vector_score"] > 0 for doc in hits)
+    keyword = OracleHybridSearchRetriever(
+        vector_store=store,
+        idx_name="REQUESTED_HYBRID_NAME",
+        search_mode="keyword",
+        return_scores=True,
+    )
+    hits = keyword.invoke("oracle")
+    assert hits
+    assert all(doc.metadata["vector_score"] == 0 for doc in hits)
+    assert any(doc.metadata["text_score"] > 0 for doc in hits)
+
     create_text_index(connection, "REQUESTED_TEXT_NAME", vector_store=store)
     create_hybrid_index(connection, "REQUESTED_HYBRID_NAME", vector_store=store)
     assert metadata_index(connection, store) == (actual_name, parameters)

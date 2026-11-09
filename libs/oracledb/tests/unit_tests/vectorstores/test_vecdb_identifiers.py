@@ -160,9 +160,24 @@ async def test_migration_reinspects_same_owner_and_table(native, name, quoted, b
     assert all(s.startswith(f"ALTER TABLE {quoted} ") for s in ddl)
 
 
+@pytest.mark.parametrize(
+    "name, quoted",
+    [
+        ("docs", '"docs"'),
+        ("Mixed", '"Mixed"'),
+        ('"literal.dot"', '"literal.dot"'),
+        ('"O\'Brien"', '"O\'Brien"'),
+        ('"LITERAL.DOT"', '"LITERAL.DOT"'),
+    ],
+)
 @pytest.mark.asyncio
-async def test_package_calls_preserve_native_quoted_name(native):
-    name = '"LITERAL.DOT"'
+async def test_package_calls_preserve_native_quoted_name(native, name, quoted):
+    asynchronous, transport, cursor, _ = native
+    if asynchronous:
+        await transport.acall("create_vector_table", name=name)
+    else:
+        transport.call("create_vector_table", name=name)
+    assert cursor.execute.call_args.kwargs["name"] == quoted
     for method, args in [
         ("add", (["seed"], [[1.0]], [{}], ["id"], True)),
         ("get", (["id"],)),
@@ -171,13 +186,12 @@ async def test_package_calls_preserve_native_quoted_name(native):
         ("create_index", ({},)),
     ]:
         await run(native, name, method, *args)
-        assert native[2].execute.call_args.kwargs["table_name"] == '"LITERAL.DOT"'
+        assert native[2].execute.call_args.kwargs["table_name"] == quoted
 
 
 @pytest.mark.parametrize(
     "name, message",
     [
-        ('"literal.dot"', "normalize table names to uppercase"),
         ('"OWNER"."DOCS"', "do not support schema-qualified table names"),
     ],
 )

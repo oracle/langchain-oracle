@@ -108,7 +108,10 @@ def test_index_template_captures_real_package_result():
             "create_index",
             {
                 "index_params": {
-                    "vector_index_params": {"organization": "INMEMORY GRAPH"}
+                    "vector_index_params": {
+                        "organization": "INMEMORY GRAPH",
+                        "distribute_params": {"distribute_method": "invalid"},
+                    }
                 }
             },
             "distribute_params",
@@ -150,13 +153,10 @@ def test_index_translation_satisfies_copied_validation(version, kind):
     )
     assert "dbms_vector_database.create_index(" in sql
     vector = params.get("vector_index_params", params)
-    if kind == "HNSW":
-        assert vector["distribute_params"] == {"distribute_method": "AUTO"}
-    else:
-        assert "distribute_params" not in vector
+    assert "distribute_params" not in vector
 
 
-def test_explicit_distribution_overrides_langchain_default():
+def test_explicit_distribution_is_preserved():
     backend = VecDBBackend(
         NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
     )
@@ -300,7 +300,7 @@ def test_hnsw_defaults_include_construction_settings_required_by_live_database()
     backend = VecDBBackend(
         NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
     )
-    params = backend.index_params(None)["vector_index_params"]
+    params = backend.index_params({"idx_type": "HNSW"})["vector_index_params"]
     assert params["advanced_params"] == {"neighbors": 32, "efConstruction": 200}
 
 

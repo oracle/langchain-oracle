@@ -119,3 +119,115 @@ def test_semantic_cache_model_isolation_and_clear(oracle_backend):
         cache.update("oracle", "model-a", [Generation(text="again")])
         cache.clear()
         assert cache.lookup("oracle", "model-a") is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_delete_validation_and_numeric_metadata(oracle_backend, asynchronous):
+    from decimal import Decimal
+
+    async def check(store):
+        metadata = {"integer": 7, "nested": [1.25, True, None]}
+        if asynchronous:
+            await store.aadd_texts(["oracle"], [metadata], ids=["numeric"])
+            documents = await store.aget_by_ids(["numeric"])
+            hits = await store.asimilarity_search("oracle", k=1)
+        else:
+            store.add_texts(["oracle"], [metadata], ids=["numeric"])
+            documents = store.get_by_ids(["numeric"])
+            hits = store.similarity_search("oracle", k=1)
+        for doc in [*documents, *hits]:
+            assert type(doc.metadata["integer"]) is Decimal
+            assert type(doc.metadata["nested"][0]) is Decimal
+            assert doc.metadata["nested"][1] is True
+            assert doc.metadata["nested"][2] is None
+        for ids in (None, []):
+            with pytest.raises(ValueError, match="No ids provided to delete"):
+                if asynchronous:
+                    await store.adelete(ids)
+                else:
+                    store.delete(ids)
+        remaining = (
+            await store.aget_by_ids(["numeric"])
+            if asynchronous
+            else store.get_by_ids(["numeric"])
+        )
+        assert len(remaining) == 1
+
+    if asynchronous:
+        async with async_backend_store(oracle_backend, ContractEmbeddings()) as store:
+            await check(store)
+    else:
+        with backend_store(oracle_backend, ContractEmbeddings()) as store:
+            await check(store)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_keyword_relevance_scores_and_order(oracle_backend, asynchronous):
+    import uuid
+
+    from langchain_oracledb.retrievers.text_search import (
+        OracleTextSearchRetriever,
+        acreate_text_index,
+        create_text_index,
+    )
+    from langchain_oracledb.vectorstores.utils import _aget_connection, _get_connection
+
+    if oracle_backend == "rest":
+        pytest.skip("REST SDK does not expose keyword retrieval or text indexing")
+    texts = ["oracle " + "fruit " * 99, "oracle " * 50 + "fruit " * 50]
+
+    async def check(store):
+        index = "LCP_" + uuid.uuid4().hex[:16].upper()
+        if asynchronous:
+            await store.aadd_texts(texts, ids=["a", "z"])
+            await acreate_text_index(store.client, index, vector_store=store)
+            async with _aget_connection(store.client) as connection:
+                with connection.cursor() as cursor:
+                    await cursor.execute(
+                        "SELECT index_name FROM user_indexes "
+                        "WHERE table_name=:name AND index_type='DOMAIN'",
+                        name=store.table_name.strip('"'),
+                    )
+                    actual = (await cursor.fetchone())[0]
+                    await cursor.execute(
+                        "BEGIN CTX_DDL.SYNC_INDEX(:name); END;", name=actual
+                    )
+        else:
+            store.add_texts(texts, ids=["a", "z"])
+            create_text_index(store.client, index, vector_store=store)
+            with _get_connection(store.client) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT index_name FROM user_indexes "
+                        "WHERE table_name=:name AND index_type='DOMAIN'",
+                        name=store.table_name.strip('"'),
+                    )
+                    actual = cursor.fetchone()[0]
+                    cursor.execute("BEGIN CTX_DDL.SYNC_INDEX(:name); END;", name=actual)
+        retriever = OracleTextSearchRetriever(
+            vector_store=store, k=2, return_scores=True
+        )
+        docs = (
+            await retriever.ainvoke("oracle")
+            if asynchronous
+            else retriever.invoke("oracle")
+        )
+        assert [doc.page_content for doc in docs] == [texts[1], texts[0]]
+        assert docs[0].metadata["score"] > docs[1].metadata["score"] > 0
+        retriever.return_scores = False
+        docs = (
+            await retriever.ainvoke("oracle")
+            if asynchronous
+            else retriever.invoke("oracle")
+        )
+        assert [doc.page_content for doc in docs] == [texts[1], texts[0]]
+        assert all("score" not in doc.metadata for doc in docs)
+
+    if asynchronous:
+        async with async_backend_store(oracle_backend, ContractEmbeddings()) as store:
+            await check(store)
+    else:
+        with backend_store(oracle_backend, ContractEmbeddings()) as store:
+            await check(store)

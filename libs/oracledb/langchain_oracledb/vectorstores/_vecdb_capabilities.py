@@ -2,6 +2,7 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Non-mutating checks for the native VecDB operation about to execute."""
 
+import re
 from typing import Any
 
 import oracledb
@@ -103,8 +104,20 @@ def native_index_status(found: list) -> dict[str, Any]:
     return {"ready": ready, "details": {"indexes": indexes}}
 
 
-def sdk_index_status(response: dict, job: bool) -> dict[str, Any]:
+def sdk_index_state(response: dict) -> str:
     state = str(response.get("index_status") or "").upper()
+    # ORDS can return a sentence containing the quoted owner/index and type,
+    # rather than the bare status. Only normalize the observed success grammar.
+    found = re.fullmatch(
+        r'"(?:[^"\r\n]|"")+"\."(?:[^"\r\n]|"")+" (?:HNSW|IVF) '
+        r"(INDEX CREATION COMPLETED)",
+        state,
+    )
+    return found.group(1) if found else state
+
+
+def sdk_index_status(response: dict, job: bool) -> dict[str, Any]:
+    state = sdk_index_state(response)
     ready = None
     if not job:
         if state in {"READY", "VALID", "INDEX CREATION COMPLETED"}:

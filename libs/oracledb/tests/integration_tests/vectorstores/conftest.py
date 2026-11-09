@@ -18,4 +18,6 @@ def pytest_generate_tests(metafunc):
             import pytest
 
             raise pytest.UsageError("Unknown --oracle-backends selection")
-        metafunc.parametrize("oracle_backend", names)
+        # The read-only filter contract shares its seed data across all cases.
+        scope = "module" if "filter_seed" in metafunc.fixturenames else "function"
+        metafunc.parametrize("oracle_backend", names, scope=scope)
