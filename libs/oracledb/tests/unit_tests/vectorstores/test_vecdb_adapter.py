@@ -77,7 +77,8 @@ async def test_sync_async_driver_gets_same_copied_query_contract(asynchronous):
             assert transport.call("search", **args) == {"items": []}
     cursor.execute.assert_called_once()
     sql = cursor.execute.call_args.args[0]
-    assert "BEGIN :result := dbms_vector_database.search(" in sql
+    assert sql.startswith("BEGIN /* lc_oracledb mode=vector backend=vecdb")
+    assert " :result := dbms_vector_database.search(" in sql
     assert cursor.execute.call_args.kwargs["query_by_json"] == '{"vector": [1.0]}'
     assert cursor.setinputsizes.call_args.kwargs["query_by_json"] is not None
 

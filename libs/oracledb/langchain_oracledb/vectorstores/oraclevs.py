@@ -1189,7 +1189,10 @@ class OracleVS(VectorStore):
             self.params = params
             self.mutate_on_duplicate = mutate_on_duplicate
             self._vecdb = VecDBBackend(
-                RestTransport(client), table_name, distance_strategy
+                RestTransport(client),
+                table_name,
+                distance_strategy,
+                table_type=self._annotation_type(),
             )
             self._vecdb.prepare()
             self.backend = "vecdb"
@@ -1210,7 +1213,10 @@ class OracleVS(VectorStore):
 
             if selected == "vecdb":
                 self._vecdb = VecDBBackend(
-                    NativeTransport(connection, version), table_name, distance_strategy
+                    NativeTransport(connection, version),
+                    table_name,
+                    distance_strategy,
+                    table_type=self._annotation_type(),
                 )
                 self._vecdb.prepare()
                 self._vecdb.transport.client = client
@@ -1315,6 +1321,7 @@ class OracleVS(VectorStore):
                     AsyncNativeTransport(connection, version),
                     table_name,
                     distance_strategy,
+                    table_type=self._annotation_type(),
                 )
                 await self._vecdb.run_async("prepare")
                 self._vecdb.transport.client = client

@@ -23,6 +23,8 @@ import numpy as np
 import oracledb
 from langchain_core.documents import Document
 
+from .._annotations import TableType, table_annotations
+from .._telemetry import tag_sql
 from ._vecdb_adapter import (
     CURRENT_VERSION,
     TEXT_KEY,
@@ -426,6 +428,15 @@ def layout_error(error: Exception) -> bool:
     )
 
 
+def _hybrid_search_mode(params: dict) -> str:
+    """Match the retriever mode from its vector/text request sections."""
+    if "vector" in params and "text" not in params:
+        return "semantic"
+    if "text" in params and "vector" not in params:
+        return "keyword"
+    return "hybrid"
+
+
 def _hybrid_sql(name: str, columns: set[str]) -> str:
     quoted, _ = table_identifier(name)
     _layout(columns)
@@ -625,7 +636,10 @@ class NativeTransport:
                 if name_error:
                     raise ValueError(name_error)
                 params[key] = _quote_indentifier(params[key])
-        return SQLNetAdapter(self.version).statement(operation, params)
+        statement, binds = SQLNetAdapter(self.version).statement(operation, params)
+        if operation in {"search", "query"}:
+            statement = tag_sql(statement, "vector", backend="vecdb")
+        return statement, binds
 
     @_with_native_session
     def call(self, operation: str, **params: Any) -> dict:
@@ -882,7 +896,11 @@ class NativeTransport:
                     with connection.cursor() as cursor:
                         cursor.setinputsizes(search_params=oracledb.DB_TYPE_CLOB)
                         cursor.execute(
-                            _hybrid_sql(name, set(info.columns)),
+                            tag_sql(
+                                _hybrid_sql(name, set(info.columns)),
+                                _hybrid_search_mode(params),
+                                backend="vecdb",
+                            ),
                             search_params=json.dumps(request, allow_nan=False),
                         )
                         return _hybrid_documents(cursor.fetchall(), scores)
@@ -907,7 +925,9 @@ class NativeTransport:
                 )
                 try:
                     with connection.cursor() as cursor:
-                        cursor.execute(sql, query=query, k=k)
+                        cursor.execute(
+                            tag_sql(sql, "text", backend="vecdb"), query=query, k=k
+                        )
                         return [
                             document({"id": str(row[0]), "metadata": row[1]})
                             for row in cursor.fetchall()
@@ -1041,8 +1061,16 @@ def native_selection(
 
 
 class VecDBBackend:
-    def __init__(self, transport: Any, name: str, metric: DistanceStrategy):
+    def __init__(
+        self,
+        transport: Any,
+        name: str,
+        metric: DistanceStrategy,
+        *,
+        table_type: TableType = "vector_store",
+    ):
         self.transport = transport
+        self.table_type = table_type
         self.quoted, api_name = table_identifier(name)
         # Native calls must retain component boundaries, including literal dots.
         self.name = self.quoted if isinstance(transport, NativeTransport) else api_name
@@ -1063,6 +1091,7 @@ class VecDBBackend:
                     "create_vector_table",
                     name=self.name,
                     table_params={"auto_generate_id": False},
+                    annotations=table_annotations(self.table_type, "vecdb"),
                 )
                 columns = self.transport.columns(self.name)
             self.transport.discover(self.name, columns)
@@ -1076,6 +1105,7 @@ class VecDBBackend:
                 "create_vector_table",
                 name=self.name,
                 table_params={"auto_generate_id": False},
+                annotations=table_annotations(self.table_type, "vecdb"),
             )
 
     @_with_native_backend_session
@@ -1329,6 +1359,7 @@ class VecDBBackend:
                     "create_vector_table",
                     name=self.name,
                     table_params={"auto_generate_id": False},
+                    annotations=table_annotations(self.table_type, "vecdb"),
                 )
                 columns = await self.transport.acolumns(self.name)
             await self.transport.adiscover(self.name, columns)
@@ -1682,7 +1713,11 @@ class AsyncNativeTransport(NativeTransport):
                     with connection.cursor() as cursor:
                         cursor.setinputsizes(search_params=oracledb.DB_TYPE_CLOB)
                         await cursor.execute(
-                            _hybrid_sql(name, set(info.columns)),
+                            tag_sql(
+                                _hybrid_sql(name, set(info.columns)),
+                                _hybrid_search_mode(params),
+                                backend="vecdb",
+                            ),
                             search_params=json.dumps(request, allow_nan=False),
                         )
                         return _hybrid_documents(await cursor.fetchall(), scores)
@@ -1707,7 +1742,9 @@ class AsyncNativeTransport(NativeTransport):
                 )
                 try:
                     with connection.cursor() as cursor:
-                        await cursor.execute(sql, query=query, k=k)
+                        await cursor.execute(
+                            tag_sql(sql, "text", backend="vecdb"), query=query, k=k
+                        )
                         return [
                             document({"id": str(row[0]), "metadata": row[1]})
                             for row in await cursor.fetchall()

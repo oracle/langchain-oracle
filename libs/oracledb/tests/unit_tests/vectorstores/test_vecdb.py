@@ -14,6 +14,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from langchain_oracledb import OracleVS
+from langchain_oracledb._annotations import table_annotations
 from langchain_oracledb.retrievers.hybrid_search import (
     OracleHybridSearchRetriever,
 )
@@ -322,7 +323,9 @@ def test_only_404_causes_rest_creation(sdk):
     sdk.describe_vector_table.side_effect = error
     OracleVS(sdk, Embedding(), "DOCS")
     sdk.create_vector_table.assert_called_once_with(
-        name="DOCS", table_params={"auto_generate_id": False}
+        name="DOCS",
+        table_params={"auto_generate_id": False},
+        annotations=table_annotations("vector_store", "vecdb"),
     )
 
 

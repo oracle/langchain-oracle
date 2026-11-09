@@ -390,3 +390,52 @@ async def test_unsupported_native_status_does_not_submit_anything(native, kind, 
         else:
             store.describe_vecdb_index(kind=kind, job_name=job)
     cursor.execute.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "operation", ["search", "query", "list_vectors", "upsert_vectors"]
+)
+@pytest.mark.parametrize("version", [(23, 26, 1), (23, 26, 3)])
+@pytest.mark.parametrize("program", ["other-program", "devrel-developerhub-langchain"])
+@pytest.mark.asyncio
+async def test_native_vector_execution_markers(
+    native, operation, version, program, monkeypatch
+):
+    asynchronous, _, cursor, transport = native
+    monkeypatch.setattr(oracledb.defaults, "program", program)
+    transport.version = version
+    params = {"table_name": "DOCS"}
+    if operation in {"search", "query"}:
+        params.update(query_by={"vector": [0.12, 0.34]}, top_k=2)
+    elif operation == "list_vectors":
+        params.update(ids=["private-id"], limit=1, offset=0)
+    else:
+        params["vectors"] = [{"id": "one", "vector": [0.12, 0.34], "metadata": {}}]
+    plain, expected_binds = _vecdb.SQLNetAdapter(version).statement(
+        operation, {**params, "table_name": '"DOCS"'}
+    )
+    if asynchronous:
+        await transport.acall(operation, **params)
+    else:
+        transport.call(operation, **params)
+    executed = cursor.execute.call_args.args[0]
+    if operation in {"search", "query"}:
+        source = (
+            " source=devrel-developerhub-langchain"
+            if program == "devrel-developerhub-langchain"
+            else ""
+        )
+        marker = f"/* lc_oracledb mode=vector backend=vecdb{source} */"
+        assert executed.startswith("BEGIN " + marker + " ")
+        assert executed.count(marker) == 1
+        assert executed.replace(" " + marker, "", 1) == plain
+        assert cursor.execute.call_count == 1
+    else:
+        assert executed == plain
+        assert all(
+            "lc_oracledb" not in call.args[0] for call in cursor.execute.call_args_list
+        )
+    assert cursor.execute.call_args.kwargs == {
+        "result": cursor.var.return_value,
+        **expected_binds,
+    }

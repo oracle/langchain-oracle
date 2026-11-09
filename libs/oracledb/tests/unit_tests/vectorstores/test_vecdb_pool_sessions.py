@@ -560,7 +560,8 @@ async def test_migration_invalidates_layout_before_next_search(sessions):
     s.a.log.clear()
     result = await invoke(s, "text_search", "oracle", 1)
     assert result[0].page_content == "SCHEMA_A"
-    assert "SELECT id, CONTENT_METADATA" in s.a.log[-1][0]
+    assert s.a.log[-1][0].startswith("SELECT /* lc_oracledb mode=text backend=vecdb")
+    assert ' id, CONTENT_METADATA FROM "DOCS"' in s.a.log[-1][0]
     assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
     s.a.log.clear()
     await invoke(s, "text_search", "oracle", 1)
@@ -647,3 +648,57 @@ async def test_failed_index_replacement_discards_snapshot(sessions):
     assert result[0].page_content == "SCHEMA_A"
     assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
     assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+
+
+@pytest.mark.parametrize(
+    "operation,mode",
+    [
+        ("text_search", "text"),
+        ("hybrid_search", "hybrid"),
+        ("hybrid_search", "keyword"),
+        ("hybrid_search", "semantic"),
+    ],
+)
+@pytest.mark.parametrize("current_layout", [False, True], ids=["legacy", "current"])
+@pytest.mark.parametrize("program", ["other-program", "devrel-developerhub-langchain"])
+@pytest.mark.asyncio
+async def test_native_metadata_search_execution_markers(
+    sessions, operation, mode, current_layout, program, monkeypatch
+):
+    s = sessions
+    monkeypatch.setattr(oracledb.defaults, "program", program)
+    if current_layout:
+        s.a.columns = set(CURRENT_COLUMNS)
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    query = "private_request_123"
+    if operation == "text_search":
+        result = await invoke(s, operation, query, 2)
+    else:
+        params = {}
+        if mode in {"hybrid", "keyword"}:
+            params["text"] = {"search_text": query}
+        if mode in {"hybrid", "semantic"}:
+            params["vector"] = {"search_text": query}
+        result = await invoke(s, operation, params, False)
+    assert result[0].page_content == "SCHEMA_A"
+    searches = [
+        (sql, binds)
+        for sql, binds in s.a.log
+        if "JSON_TEXTCONTAINS" in sql or "JSON_TABLE(DBMS_HYBRID_VECTOR.SEARCH" in sql
+    ]
+    assert len(searches) == 1
+    sql, binds = searches[0]
+    source = (
+        " source=devrel-developerhub-langchain"
+        if program == "devrel-developerhub-langchain"
+        else ""
+    )
+    marker = f"/* lc_oracledb mode={mode} backend=vecdb{source} */"
+    assert sql.startswith("SELECT " + marker + " ")
+    assert sql.count("lc_oracledb") == 1
+    assert query not in sql
+    assert query in json.dumps(binds)
+    assert all(
+        "lc_oracledb" not in statement for statement, _ in s.a.log if statement != sql
+    )
+    assert_one_session(s)
