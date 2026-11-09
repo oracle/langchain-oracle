@@ -1,4 +1,3 @@
-import os
 from collections.abc import Generator
 from typing import AsyncGenerator
 
@@ -12,17 +11,7 @@ from langchain_oracledb import OracleVS
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.vectorstores.oraclevs import adrop_table_purge, drop_table_purge
 
-username = os.environ.get("VECDB_USER")
-password = os.environ.get("VECDB_PASS")
-dsn = os.environ.get("VECDB_HOST")
-
-try:
-    oracledb.connect(user=username, password=password, dsn=dsn)
-except Exception as e:
-    pytest.skip(
-        allow_module_level=True,
-        reason=f"Database connection failed: {e}, skipping tests.",
-    )
+from ._backend_fixtures import async_backend_store, backend_store, native_config
 
 
 class TestOracleVSStandardSync(VectorStoreIntegrationTests):
@@ -32,17 +21,9 @@ class TestOracleVSStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:
-        """Get an empty vectorstore for unit tests."""
-        conn = oracledb.connect(user=username, password=password, dsn=dsn)
-        drop_table_purge(conn, "standard_tests")
-        store = OracleVS(
-            conn,
-            embedding_function=self.get_embeddings(),
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        yield store
+    def vectorstore(self, oracle_backend) -> Generator[VectorStore, None, None]:
+        with backend_store(oracle_backend, self.get_embeddings()) as store:
+            yield store
 
 
 class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
@@ -54,21 +35,28 @@ class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
     @pytest.fixture()
     def vectorstore(self) -> Generator[VectorStore, None, None]:
         """Get an empty vectorstore for unit tests."""
-        conn = oracledb.connect(user=username, password=password, dsn=dsn)
-        drop_table_purge(conn, "standard_tests")
-        embedder_params = {"provider": "database", "model": "allminilm"}
-        proxy = ""
+        conn = oracledb.connect(**native_config())
+        try:
+            drop_table_purge(conn, "standard_tests", backend="sql")
+            embedder_params = {"provider": "database", "model": "allminilm"}
+            proxy = ""
 
-        # instance
-        model = OracleEmbeddings(conn=conn, params=embedder_params, proxy=proxy)
+            # instance
+            model = OracleEmbeddings(conn=conn, params=embedder_params, proxy=proxy)
 
-        store = OracleVS(
-            conn,
-            embedding_function=model,
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        yield store
+            store = OracleVS(
+                conn,
+                embedding_function=model,
+                table_name="standard_tests",
+                mutate_on_duplicate=True,
+                backend="sql",
+            )
+            yield store
+        finally:
+            try:
+                drop_table_purge(conn, "standard_tests", backend="sql")
+            finally:
+                conn.close()
 
 
 class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
@@ -78,22 +66,9 @@ class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
         return False
 
     @pytest_asyncio.fixture
-    async def vectorstore(self) -> AsyncGenerator[VectorStore, None]:
-        """Get an empty vectorstore for unit tests (async version)."""
-
-        conn = await oracledb.connect_async(user=username, password=password, dsn=dsn)
-        await adrop_table_purge(conn, "standard_tests")
-
-        store = await OracleVS.acreate(
-            conn,
-            embedding_function=self.get_embeddings(),
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        try:
+    async def vectorstore(self, oracle_backend) -> AsyncGenerator[VectorStore, None]:
+        async with async_backend_store(oracle_backend, self.get_embeddings()) as store:
             yield store
-        finally:
-            await conn.close()
 
 
 class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
@@ -106,23 +81,31 @@ class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
     async def vectorstore(self) -> AsyncGenerator[VectorStore, None]:
         """Get an empty vectorstore for unit tests (async version)."""
 
-        conn = await oracledb.connect_async(user=username, password=password, dsn=dsn)
-        await adrop_table_purge(conn, "standard_tests")
-        embedder_params = {"provider": "database", "model": "allminilm"}
-        proxy = ""
-
-        # OracleEmbeddings does not support asyncconnection
-        conn_syn = oracledb.connect(user=username, password=password, dsn=dsn)
-        model = OracleEmbeddings(conn=conn_syn, params=embedder_params, proxy=proxy)
-
-        store = await OracleVS.acreate(
-            conn,
-            embedding_function=model,
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
+        conn = await oracledb.connect_async(**native_config())
+        conn_syn = None
         try:
+            await adrop_table_purge(conn, "standard_tests", backend="sql")
+            embedder_params = {"provider": "database", "model": "allminilm"}
+            proxy = ""
+
+            # OracleEmbeddings does not support asyncconnection
+            conn_syn = oracledb.connect(**native_config())
+            model = OracleEmbeddings(conn=conn_syn, params=embedder_params, proxy=proxy)
+
+            store = await OracleVS.acreate(
+                conn,
+                embedding_function=model,
+                table_name="standard_tests",
+                mutate_on_duplicate=True,
+                backend="sql",
+            )
             yield store
         finally:
-            conn_syn.close()
-            await conn.close()
+            try:
+                await adrop_table_purge(conn, "standard_tests", backend="sql")
+            finally:
+                try:
+                    if conn_syn is not None:
+                        conn_syn.close()
+                finally:
+                    await conn.close()

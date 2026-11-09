@@ -64,7 +64,8 @@ if not all([USERNAME, PASSWORD, DSN]):
     )
 
 try:
-    oracledb.connect(user=USERNAME, password=PASSWORD, dsn=DSN)
+    with oracledb.connect(user=USERNAME, password=PASSWORD, dsn=DSN):
+        pass
 except Exception as e:
     pytest.skip(
         allow_module_level=True,
@@ -113,15 +114,18 @@ def embedder(connection):
 
 
 class TestOracleEmbeddingsStandard(EmbeddingsIntegrationTests):
+    @pytest.fixture(autouse=True)
+    def embedding_connection(self, connection):
+        self._embedding_conn = connection
+
     @property
     def embeddings_class(self) -> Type[OracleEmbeddings]:
         return OracleEmbeddings
 
     @property
     def embedding_model_params(self) -> dict:
-        conn = oracledb.connect(user=USERNAME, password=PASSWORD, dsn=DSN)
         return {
-            "conn": conn,
+            "conn": self._embedding_conn,
             "params": {"provider": "database", "model": "allminilm"},
         }
 

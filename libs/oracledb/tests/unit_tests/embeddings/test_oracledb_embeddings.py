@@ -185,6 +185,28 @@ class TestLoadOnnxModel:
 
 
 class TestEmbedDocuments:
+    @pytest.mark.parametrize(
+        "element_type", [oracledb.DB_TYPE_VARCHAR, oracledb.DB_TYPE_CLOB]
+    )
+    def test_collection_input_follows_database_element_type(self, element_type):
+        conn, _ = make_conn(rows=[embed_row(1, [0.1, 0.2])])
+        vector_type = conn.gettype.return_value
+        vector_type.element_type = element_type
+        lob = conn.createlob.return_value
+        assert make_embedder(conn).embed_documents(["hello"]) == [[0.1, 0.2]]
+        chunk = json.dumps({"chunk_id": 1, "chunk_data": "hello"})
+        if element_type == oracledb.DB_TYPE_CLOB:
+            conn.createlob.assert_called_once_with(oracledb.DB_TYPE_CLOB, chunk)
+            vector_type.newobject.assert_called_once_with([lob])
+        else:
+            conn.createlob.assert_not_called()
+            vector_type.newobject.assert_called_once_with([chunk])
+
+    def test_empty_input_does_not_require_a_database_model(self):
+        conn, _ = make_conn()
+        assert make_embedder(conn).embed_documents([]) == []
+        conn.cursor.assert_not_called()
+
     def test_returns_list_of_lists(self):
         conn, _ = make_conn(rows=[embed_row(1, [0.1, 0.2, 0.3])])
         embedder = make_embedder(conn)

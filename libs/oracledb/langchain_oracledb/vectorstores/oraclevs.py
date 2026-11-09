@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import uuid
+from contextlib import AsyncExitStack, ExitStack
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -499,7 +500,15 @@ def create_index(
     client: Union[Connection, ConnectionPool],
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
-) -> None:
+) -> Optional[dict[str, Any]]:
+    """Create an index; VecDB returns its submission response, SQL returns None.
+
+    A VecDB job response confirms submission. Use the SDK's public index/job
+    description methods or store.describe_vecdb_index() to check readiness.
+    The caller owns polling/timeouts and must serialize index maintenance.
+    """
+    if vector_store._vecdb is not None:
+        return vector_store._vecdb.create_index(params)
     with _get_connection(client) as connection:
         if params:
             if "idx_name" in params:
@@ -532,7 +541,7 @@ def create_index(
                 vector_store.distance_strategy,
                 params,
             )
-    return
+    return None
 
 
 def _get_hnsw_index_ddl(
@@ -733,7 +742,15 @@ async def acreate_index(
     client: Union[AsyncConnection, AsyncConnectionPool],
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
-) -> None:
+) -> Optional[dict[str, Any]]:
+    """Create an index; VecDB returns its submission response, SQL returns None.
+
+    A VecDB job response confirms submission. Use the SDK's public index/job
+    description methods or store.describe_vecdb_index() to check readiness.
+    The caller owns polling/timeouts and must serialize index maintenance.
+    """
+    if vector_store._vecdb is not None:
+        return await vector_store._vecdb.run_async("create_index", params)
     async with _aget_connection(client) as connection:
         if params:
             if "idx_name" in params:
@@ -767,6 +784,8 @@ async def acreate_index(
                 vector_store.distance_strategy,
                 params,
             )
+
+    return None
 
 
 async def _acreate_hnsw_index(
@@ -1039,19 +1058,39 @@ def _read_similarity_output(
     return docs
 
 
+def _close_bound_lob(lob: Any) -> None:
+    try:
+        lob.close()
+    except oracledb.DatabaseError as error:
+        # The server can consume a temporary input locator during MERGE.
+        if getattr(error.args[0], "code", None) != 64219:
+            raise
+
+
+async def _aclose_bound_lob(lob: Any) -> None:
+    try:
+        await lob.close()
+    except oracledb.DatabaseError as error:
+        if getattr(error.args[0], "code", None) != 64219:
+            raise
+
+
 # SQL queries to insert data into tables.
 # INSERT_QUERY is used when we do not wish to update the row when there is duplicate id.
 # MERGE_QUERY is used when we wish to update the row when there is duplicate id.
 # both expect values in the order (id, embedding, metadata, text)
 
 INSERT_QUERY = (
-    "INSERT INTO {table_name} (id, embedding, metadata, text) VALUES ({values})"
+    "INSERT INTO {table_name} (id, embedding, metadata, text) "
+    "VALUES ({id_value}, {embedding_value}, {metadata_value}, {text_value})"
 )
 MERGE_QUERY = """
 MERGE INTO {table_name} t
 USING (
-    VALUES ({values})
-) s(id, embedding, metadata, text)
+    SELECT {id_value} AS id, {embedding_value} AS embedding,
+           {metadata_value} AS metadata, {text_value} AS text
+    FROM dual
+) s
 ON (t.id = s.id)
 WHEN MATCHED THEN
     UPDATE SET 
@@ -1095,10 +1134,14 @@ class OracleVS(VectorStore):
     def _annotation_type(self) -> TableType:
         return "vector_store"
 
+    _vecdb: Any = None
+    client: Any
+    backend: str = "sql"
+
     @_handle_exceptions
     def __init__(
         self,
-        client: Union[Connection, ConnectionPool],
+        client: Any,
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1108,12 +1151,52 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
+        *,
+        backend: str = "auto",
     ):
         """
         Initialize the OracleVS store.
         For an async version, use OracleVS.acreate() instead.
+
+        ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
+        compatible layouts and databases. Native VecDB package calls require
+        unqualified uppercase table names; auto uses SQL for a new name outside
+        that contract, while explicit ``backend="vecdb"`` rejects it. Inspect
+        ``store.backend`` for the selected backend. SDK clients must use ORDS;
+        for native VecDB pass an oracledb connection or pool.
         """
+        from ._vecdb import (
+            NativeTransport,
+            RestTransport,
+            VecDBBackend,
+            is_sdk_client,
+            native_selection,
+            table_identifier,
+        )
+
+        if backend not in {"auto", "sql", "vecdb"}:
+            raise ValueError("backend must be auto, sql, or vecdb")
+        self._vecdb = None
+        self.backend = "sql"
+        if is_sdk_client(client):
+            if backend == "sql":
+                raise ValueError("The SQL backend requires an oracledb connection")
+            self.client = client
+            self.embedding_function = embedding_function
+            self.table_name = table_identifier(table_name)[0]
+            self.query = query
+            self.distance_strategy = distance_strategy
+            self.params = params
+            self.mutate_on_duplicate = mutate_on_duplicate
+            self._vecdb = VecDBBackend(
+                RestTransport(client), table_name, distance_strategy
+            )
+            self._vecdb.prepare()
+            self.backend = "vecdb"
+            return
+
         with _get_connection(client) as connection:
+            selected, version = native_selection(connection, table_name, backend)
             self._initialize(
                 connection,
                 client,
@@ -1125,16 +1208,48 @@ class OracleVS(VectorStore):
                 mutate_on_duplicate,
             )
 
-            embedding_dim = self.get_embedding_dimension()
-            _create_table(
-                connection, self.table_name, embedding_dim, self._annotation_type()
-            )
+            if selected == "vecdb":
+                self._vecdb = VecDBBackend(
+                    NativeTransport(connection, version), table_name, distance_strategy
+                )
+                self._vecdb.prepare()
+                self._vecdb.transport.client = client
+                self.backend = "vecdb"
+            else:
+                embedding_dim = self.get_embedding_dimension()
+                _create_table(
+                    connection, self.table_name, embedding_dim, self._annotation_type()
+                )
+
+    @classmethod
+    def from_vecdb_config(
+        cls, config: Any, table_name: str, embedding: Embeddings, **kwargs: Any
+    ) -> OracleVS:
+        """Create a REST VecDB store; install ``langchain-oracledb[vecdb]``.
+
+        Operations not exposed by the REST SDK raise an unsupported-operation error.
+        SDK clients supplied directly to OracleVS remain caller-owned.
+        """
+        try:
+            from importlib import import_module
+
+            OracleVecDB = import_module("oracle_vecdb").OracleVecDB
+        except ImportError as exc:
+            raise ImportError(
+                "REST VecDB requires Python 3.10-3.15 and langchain-oracledb[vecdb]"
+            ) from exc
+        return cls(
+            client=OracleVecDB(config),
+            embedding_function=embedding,
+            table_name=table_name,
+            **kwargs,
+        )
 
     @classmethod
     @_ahandle_exceptions
     async def acreate(
         cls,
-        client: Union[AsyncConnection, AsyncConnectionPool],
+        client: Any,
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1144,14 +1259,46 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
+        *,
+        backend: str = "auto",
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
+
+        Uses the constructor's naming/backend contract. Native VecDB requires an
+        unqualified uppercase name; new unsupported names use SQL in auto mode.
+        Inspect the returned store's ``backend`` to see the selected backend.
         """
 
+        from ._vecdb import (
+            AsyncNativeTransport,
+            VecDBBackend,
+            anative_selection,
+            is_sdk_client,
+        )
+
+        if backend not in {"auto", "sql", "vecdb"}:
+            raise ValueError("backend must be auto, sql, or vecdb")
+        if is_sdk_client(client):
+            import asyncio
+
+            return await asyncio.to_thread(
+                cls,
+                client,
+                embedding_function,
+                table_name,
+                distance_strategy,
+                query,
+                params,
+                mutate_on_duplicate,
+                backend=backend,
+            )
         self = cls.__new__(cls)
+        self._vecdb = None
+        self.backend = "sql"
 
         async with _aget_connection(client) as connection:
+            selected, version = await anative_selection(connection, table_name, backend)
             self._initialize(
                 connection,
                 client,
@@ -1163,10 +1310,20 @@ class OracleVS(VectorStore):
                 mutate_on_duplicate,
             )
 
-            embedding_dim = await self.aget_embedding_dimension()
-            await _acreate_table(
-                connection, self.table_name, embedding_dim, self._annotation_type()
-            )
+            if selected == "vecdb":
+                self._vecdb = VecDBBackend(
+                    AsyncNativeTransport(connection, version),
+                    table_name,
+                    distance_strategy,
+                )
+                await self._vecdb.run_async("prepare")
+                self._vecdb.transport.client = client
+                self.backend = "vecdb"
+            else:
+                embedding_dim = await self.aget_embedding_dimension()
+                await _acreate_table(
+                    connection, self.table_name, embedding_dim, self._annotation_type()
+                )
 
         return self
 
@@ -1214,6 +1371,28 @@ class OracleVS(VectorStore):
         self.distance_strategy = distance_strategy
         self.params = params
         self.mutate_on_duplicate = mutate_on_duplicate
+
+    def describe_vecdb_index(
+        self, *, kind: str = "vector", job_name: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Read VecDB index readiness or an ORDS job response without polling.
+
+        ``ready`` is True/False when known, otherwise None; ``details`` retains
+        provider status. A completed job alone never establishes index readiness.
+        ``kind="metadata"`` inspects native text/hybrid indexes. This is a snapshot,
+        not a synchronization guarantee; serialize index maintenance externally.
+        """
+        if self._vecdb is None:
+            raise ValueError("Index status requires a VecDB backend")
+        return self._vecdb.describe_index(kind, job_name)
+
+    async def adescribe_vecdb_index(
+        self, *, kind: str = "vector", job_name: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Async variant of describe_vecdb_index with the same readiness contract."""
+        if self._vecdb is None:
+            raise ValueError("Index status requires a VecDB backend")
+        return await self._vecdb.run_async("describe_index", kind, job_name)
 
     @property
     def embeddings(self) -> Optional[Embeddings]:
@@ -1459,7 +1638,6 @@ class OracleVS(VectorStore):
           List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
             also those successfully updated).
         """
-
         texts = list(texts)
         if ids and len(ids) != len(texts):
             raise ValueError(
@@ -1478,12 +1656,23 @@ class OracleVS(VectorStore):
                     f"but 'texts' has {len(texts)} items."
                 )
 
-        for i, _id in enumerate(original_ids):
-            if INTERNAL_ID_KEY in metadatas[i]:
+        for metadata in metadatas:
+            if INTERNAL_ID_KEY in metadata:
                 raise ValueError(
                     f'Metadata key "{INTERNAL_ID_KEY}" is '
                     "reserved and cannot used in metadata."
                 )
+
+        if self._vecdb is not None:
+            return self._vecdb.add(
+                texts,
+                self._embed_documents(texts) if texts else [],
+                metadatas,
+                original_ids,
+                self.mutate_on_duplicate,
+            )
+
+        for i, _id in enumerate(original_ids):
             metadatas[i][INTERNAL_ID_KEY] = _id
 
         # with OracleEmbeddings, embeddings are generated in the database during insert;
@@ -1533,17 +1722,36 @@ class OracleVS(VectorStore):
                         INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
                     if not isinstance(self.embeddings, OracleEmbeddings):
-                        cursor.setinputsizes(
-                            None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
-                        )
-                        cursor.executemany(
-                            selected_query.format(
-                                table_name=self.table_name, values=":1, :2, :3, :4"
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
-                        batch_errors = cursor.getbatcherrors() or []
+                        with ExitStack() as temporary_lobs:
+                            # Large MERGE text must use LOB locators. Keep the
+                            # array uniformly typed and close locators before the
+                            # cursor releases its input binds.
+                            if self.mutate_on_duplicate and any(
+                                len(row[3].encode("utf-8")) > 32767 for row in docs
+                            ):
+                                for i, row in enumerate(docs):
+                                    lob = connection.createlob(oracledb.DB_TYPE_CLOB)
+                                    temporary_lobs.callback(_close_bound_lob, lob)
+                                    lob.write(row[3])
+                                    docs[i] = (*row[:3], lob)
+                            cursor.setinputsizes(
+                                None,
+                                oracledb.DB_TYPE_VECTOR,
+                                oracledb.DB_TYPE_JSON,
+                                oracledb.DB_TYPE_CLOB,
+                            )
+                            cursor.executemany(
+                                selected_query.format(
+                                    table_name=self.table_name,
+                                    id_value=":1",
+                                    embedding_value=":2",
+                                    metadata_value=":3",
+                                    text_value=":4",
+                                ),
+                                docs,
+                                batcherrors=True,
+                            )
+                            batch_errors = cursor.getbatcherrors() or []
 
                     else:
                         proxy_was_set = False
@@ -1562,10 +1770,12 @@ class OracleVS(VectorStore):
                             cursor.executemany(
                                 selected_query.format(
                                     table_name=self.table_name,
-                                    values=(
-                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                        ":meta, :text"
+                                    id_value=":id",
+                                    embedding_value=(
+                                        "dbms_vector_chain.utl_to_embedding(:text,json(:param))"  # noqa: E501
                                     ),
+                                    metadata_value=":meta",
+                                    text_value=":text",
                                 ),
                                 docs,
                                 batcherrors=True,
@@ -1639,7 +1849,6 @@ class OracleVS(VectorStore):
           List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
             also those successfully updated).
         """
-
         texts = list(texts)
         if ids and len(ids) != len(texts):
             raise ValueError(
@@ -1658,12 +1867,20 @@ class OracleVS(VectorStore):
                     f"but 'texts' has {len(texts)} items."
                 )
 
-        for i, _id in enumerate(original_ids):
-            if INTERNAL_ID_KEY in metadatas[i]:
+        for metadata in metadatas:
+            if INTERNAL_ID_KEY in metadata:
                 raise ValueError(
                     f'Metadata key "{INTERNAL_ID_KEY}" is '
                     "reserved and cannot used in metadata."
                 )
+
+        if self._vecdb is not None:
+            vectors = await self._aembed_documents(texts) if texts else []
+            return await self._vecdb.run_async(
+                "add", texts, vectors, metadatas, original_ids, self.mutate_on_duplicate
+            )
+
+        for i, _id in enumerate(original_ids):
             metadatas[i][INTERNAL_ID_KEY] = _id
 
         # with OracleEmbeddings, embeddings are generated in the database during insert;
@@ -1702,17 +1919,40 @@ class OracleVS(VectorStore):
                         INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
                     if not isinstance(self.embeddings, OracleEmbeddings):
-                        cursor.setinputsizes(
-                            None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
-                        )
-                        await cursor.executemany(
-                            selected_query.format(
-                                table_name=self.table_name, values=":1, :2, :3, :4"
-                            ),
-                            docs,
-                            batcherrors=True,
-                        )
-                        batch_errors = cursor.getbatcherrors() or []
+                        async with AsyncExitStack() as temporary_lobs:
+                            # Large MERGE text must use LOB locators. Keep the
+                            # array uniformly typed and close locators before the
+                            # cursor releases its input binds.
+                            if self.mutate_on_duplicate and any(
+                                len(row[3].encode("utf-8")) > 32767 for row in docs
+                            ):
+                                for i, row in enumerate(docs):
+                                    lob = await connection.createlob(
+                                        oracledb.DB_TYPE_CLOB
+                                    )
+                                    temporary_lobs.push_async_callback(
+                                        _aclose_bound_lob, lob
+                                    )
+                                    await lob.write(row[3])
+                                    docs[i] = (*row[:3], lob)
+                            cursor.setinputsizes(
+                                None,
+                                oracledb.DB_TYPE_VECTOR,
+                                oracledb.DB_TYPE_JSON,
+                                oracledb.DB_TYPE_CLOB,
+                            )
+                            await cursor.executemany(
+                                selected_query.format(
+                                    table_name=self.table_name,
+                                    id_value=":1",
+                                    embedding_value=":2",
+                                    metadata_value=":3",
+                                    text_value=":4",
+                                ),
+                                docs,
+                                batcherrors=True,
+                            )
+                            batch_errors = cursor.getbatcherrors() or []
                     else:
                         proxy_was_set = False
                         try:
@@ -1730,10 +1970,12 @@ class OracleVS(VectorStore):
                             await cursor.executemany(
                                 selected_query.format(
                                     table_name=self.table_name,
-                                    values=(
-                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                        ":meta, :text"
+                                    id_value=":id",
+                                    embedding_value=(
+                                        "dbms_vector_chain.utl_to_embedding(:text,json(:param))"  # noqa: E501
                                     ),
+                                    metadata_value=":meta",
+                                    text_value=":text",
                                 ),
                                 docs,
                                 batcherrors=True,
@@ -1876,10 +2118,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        docs_and_scores = []
-
-        embedding_arr: Any = array.array("f", embedding)
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -1888,6 +2126,12 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return self._vecdb.search(embedding, k, filter, **kwargs)
+        docs_and_scores = []
+
+        embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -1923,8 +2167,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        embedding_arr: Any = array.array("f", embedding)
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -1933,6 +2175,10 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return await self._vecdb.run_async("search", embedding, k, filter, **kwargs)
+        embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -1968,10 +2214,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
-        embedding_arr: Any = array.array("f", embedding)
-
-        documents = []
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -1980,6 +2222,12 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return self._vecdb.search(embedding, k, filter, True, **kwargs)
+        embedding_arr: Any = array.array("f", embedding)
+
+        documents = []
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -2015,8 +2263,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
-        embedding_arr: Any = array.array("f", embedding)
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -2025,6 +2271,12 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return await self._vecdb.run_async(
+                "search", embedding, k, filter, True, **kwargs
+            )
+        embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -2326,6 +2578,8 @@ class OracleVS(VectorStore):
           ids: The ids of the documents to get.
           **kwargs
         """
+        if self._vecdb is not None:
+            return self._vecdb.get(list(ids))
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
@@ -2348,6 +2602,8 @@ class OracleVS(VectorStore):
           ids: The ids of the documents to get.
           **kwargs
         """
+        if self._vecdb is not None:
+            return await self._vecdb.run_async("get", list(ids))
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
@@ -2370,6 +2626,8 @@ class OracleVS(VectorStore):
           ids: List of ids to delete.
           **kwargs
         """
+        if self._vecdb is not None:
+            return self._vecdb.delete(ids)
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 
@@ -2386,6 +2644,8 @@ class OracleVS(VectorStore):
           ids: List of ids to delete.
           **kwargs
         """
+        if self._vecdb is not None:
+            return await self._vecdb.run_async("delete", ids)
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 
@@ -2415,7 +2675,9 @@ class OracleVS(VectorStore):
 
         table_name = str(kwargs.get("table_name", "langchain"))
 
-        distance_strategy = kwargs.get("distance_strategy", None)
+        distance_strategy = kwargs.get(
+            "distance_strategy", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         if not isinstance(distance_strategy, DistanceStrategy):
             try:
                 # Accept an equivalent value (e.g. a DistanceStrategy from
@@ -2440,6 +2702,13 @@ class OracleVS(VectorStore):
         metadatas: Optional[List[dict]] = None,
         **kwargs: Any,
     ) -> OracleVS:
+        """Create and populate a store using the constructor's backend contract.
+
+        With a native connection, the default lowercase ``langchain`` name uses
+        SQL in auto mode. Native VecDB needs an unqualified uppercase name.
+        ``backend="vecdb"`` rejects
+        unsupported names; inspect ``store.backend`` after auto selection.
+        """
         (
             client,
             table_name,
@@ -2449,15 +2718,17 @@ class OracleVS(VectorStore):
         ) = OracleVS._from_texts_helper(**kwargs)
 
         vss = cls(
-            client=client,  # type: ignore[arg-type]
+            client=client,
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
             query=query,
             params=params,
+            backend=kwargs.get("backend", "auto"),
+            mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 
-        vss.add_texts(texts=list(texts), metadatas=metadatas)
+        vss.add_texts(texts=list(texts), metadatas=metadatas, ids=kwargs.get("ids"))
         return vss
 
     @classmethod
@@ -2469,6 +2740,13 @@ class OracleVS(VectorStore):
         metadatas: Optional[List[dict]] = None,
         **kwargs: Any,
     ) -> OracleVS:
+        """Create and populate a store using the constructor's backend contract.
+
+        With a native connection, the default lowercase ``langchain`` name uses
+        SQL in auto mode. Native VecDB needs an unqualified uppercase name.
+        ``backend="vecdb"`` rejects
+        unsupported names; inspect ``store.backend`` after auto selection.
+        """
         (
             client,
             table_name,
@@ -2478,13 +2756,17 @@ class OracleVS(VectorStore):
         ) = OracleVS._from_texts_helper(**kwargs)
 
         vss = await OracleVS.acreate(
-            client=client,  # type: ignore[arg-type]
+            client=client,
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
             query=query,
             params=params,
+            backend=kwargs.get("backend", "auto"),
+            mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 
-        await vss.aadd_texts(texts=list(texts), metadatas=metadatas)
+        await vss.aadd_texts(
+            texts=list(texts), metadatas=metadatas, ids=kwargs.get("ids")
+        )
         return vss

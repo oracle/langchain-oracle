@@ -51,6 +51,64 @@ print("Connection successful!")
 
 ### Vector Stores
 
+#### OracleVS backends and VecDB
+
+`OracleVS` defaults to `backend="auto"`: existing SQL tables remain SQL-backed,
+while package-registered VecDB tables use VecDB. New tables use VecDB when the
+server and requested name support it, otherwise SQL. Set `backend="sql"` or
+`backend="vecdb"` explicitly, and inspect `store.backend` for the selected backend.
+Ownership is checked through `DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES`, not column
+names; incompatible tables and package errors are reported rather than silently
+switching backends.
+
+Native VecDB uses an `oracledb` connection or pool and requires Oracle Database
+23.26.1+ with `COMPATIBLE >=23.4` (or `>=23.6` for 23.26.3+). Package operations
+require unqualified uppercase table names, such as `DOCUMENTS`. The default
+`from_texts()` name `langchain` therefore stays on SQL in automatic mode.
+
+For REST, install the optional SDK extra (Python 3.10–3.15):
+
+```bash
+pip install "langchain-oracledb[vecdb]"
+```
+
+```python
+import os
+
+from oracle_vecdb import Configuration
+from langchain_oracledb import OracleVS
+
+# embedding_model implements LangChain's Embeddings interface.
+store = OracleVS.from_vecdb_config(
+    config=Configuration(
+        rest_url=os.environ["ORACLE_VECDB_REST_URL"],
+        username=os.environ["ORACLE_VECDB_USERNAME"],
+        password=os.environ["ORACLE_VECDB_PASSWORD"],
+    ),
+    table_name="DOCUMENTS",
+    embedding=embedding_model,
+    mutate_on_duplicate=True,
+)
+store.add_texts(["Oracle vector search"], ids=["doc-1"])
+documents = store.similarity_search("vector search", k=4)
+```
+
+An existing ORDS-configured `OracleVecDB` client can also be supplied as `client`.
+REST writes require `mutate_on_duplicate=True`; insert-only writes, metadata
+text/hybrid search and indexing, vectorizer preferences, and migration require a
+native connection. Native stores also support the corresponding async APIs.
+
+- VecDB reserves metadata key `text` for document content. Search scores remain
+  lower-is-better distances; `output_selector` and `advanced_options` expose SDK
+  query options.
+- Native insert-only writes require `autocommit=False` and no pending transaction;
+  successful batches commit and skip duplicate IDs.
+- Index creation returns a submission response. Check `describe_vecdb_index()`
+  for readiness, serialize index maintenance, and use an idle connection for DDL.
+  Text/hybrid index freshness follows its synchronization schedule.
+- `drop_table_purge()` and `adrop_table_purge()` use package/SDK cleanup for VecDB
+  and SQL cleanup for ordinary tables. Package failures never trigger a SQL drop.
+
 #### OracleVS
 
 Use Oracle Vector Database with `OracleVS`. More information can be found in [Oracle AI Vector Search: Vector Store](https://python.langchain.com/docs/integrations/vectorstores/oracle/) documentation.

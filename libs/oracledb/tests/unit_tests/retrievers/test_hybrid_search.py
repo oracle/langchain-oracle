@@ -60,6 +60,7 @@ def _make_vs(table_name="MY_TABLE"):
     vs = MagicMock(spec=OracleVS)
     vs.table_name = table_name
     vs.client = MagicMock()
+    vs._vecdb = None
     return vs
 
 

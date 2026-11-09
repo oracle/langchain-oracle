@@ -1,0 +1,1316 @@
+# Copyright (c) 2026 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""Backend selection, SDK contracts, and bounded VecDB layout repair."""
+
+import json
+import subprocess
+import sys
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+
+from langchain_oracledb import OracleVS
+from langchain_oracledb.retrievers.hybrid_search import (
+    OracleHybridSearchRetriever,
+)
+from langchain_oracledb.retrievers.text_search import OracleTextSearchRetriever
+from langchain_oracledb.vectorstores._vecdb import (
+    CURRENT_COLUMNS,
+    AsyncNativeTransport,
+    NativeTransport,
+    VecDBBackend,
+    _layout,
+    _migration_actions,
+    layout_error,
+    native_selection,
+    parse_version,
+    table_identifier,
+)
+from langchain_oracledb.vectorstores.utils import DistanceStrategy
+
+
+class Embedding(Embeddings):
+    def embed_documents(self, texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, text):
+        return [1.0, 0.0]
+
+
+@pytest.fixture
+def sdk():
+    oracle_vecdb = pytest.importorskip("oracle_vecdb")
+    client = oracle_vecdb.OracleVecDB(
+        oracle_vecdb.Configuration(
+            rest_url="https://example.com/ords/test/_/db-api/stable/vecdb/",
+            access_token="test",
+        )
+    )
+    client.describe_vector_table = MagicMock(return_value={"table_name": "DOCS"})
+    client.create_vector_table = MagicMock(return_value={"table_name": "DOCS"})
+    client.upsert_vectors = MagicMock(return_value={"upserted_count": 1})
+    client.delete_vectors = MagicMock(return_value={"message": "deleted"})
+    client.list_vectors = MagicMock(return_value={"items": []})
+    client.query = MagicMock(
+        return_value={
+            "items": [
+                {
+                    "id": "a",
+                    "metadata": {"text": "hello", "tenant": "one"},
+                    "distance": 0.25,
+                    "vector": [1.0, 0.0],
+                }
+            ]
+        }
+    )
+    return client
+
+
+@pytest.fixture
+def store(sdk):
+    return OracleVS(sdk, Embedding(), "DOCS", mutate_on_duplicate=True)
+
+
+@pytest.mark.parametrize(
+    "version, expected",
+    [("23.26.1.0.0", (23, 26, 1)), ("Release 23.0.0 Version 23.26.3.0.0", (23, 26, 3))],
+)
+def test_version(version, expected):
+    assert parse_version(version) == expected
+
+
+@pytest.mark.parametrize("name", ['x"y', " ", "schema..docs", '"unclosed'])
+def test_identifiers_reject_malformed_names(name):
+    with pytest.raises(ValueError):
+        table_identifier(name)
+
+
+@pytest.mark.parametrize(
+    "name, quoted, api_name",
+    [
+        ('"हिन्दी"', '"हिन्दी"', "हिन्दी"),
+        ("schema.docs", '"schema"."docs"', "schema.docs"),
+        ('"literal.dot"', '"literal.dot"', "literal.dot"),
+        ("DOCS; DROP TABLE x", '"DOCS; DROP TABLE x"', "DOCS; DROP TABLE x"),
+        ("DOCS) --", '"DOCS) --"', "DOCS) --"),
+    ],
+)
+def test_identifiers_preserve_shared_quoting(name, quoted, api_name):
+    assert table_identifier(name) == (quoted, api_name)
+
+
+def test_optional_sdk_not_imported_by_sql_package():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import langchain_oracledb; "
+            "assert 'oracle_vecdb' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_factory_reports_missing_sdk():
+    with patch.dict(sys.modules, {"oracle_vecdb": None}):
+        with pytest.raises(ImportError, match=r"langchain-oracledb\[vecdb\]"):
+            OracleVS.from_vecdb_config(object(), "DOCS", Embedding())
+
+
+def selection_connection(version, columns, supported=True, compatible="23.6.0.0.0"):
+    connection = MagicMock(version=version)
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [(column,) for column in columns]
+    cursor.fetchone.return_value = (int(supported),)
+    statement = ""
+
+    def execute(sql, **binds):
+        nonlocal statement
+        statement = sql
+
+    def fetchone():
+        if "SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES" in statement:
+            registered = "DENSE_VECTOR" in columns
+            return (
+                {
+                    "vector_tables": [{"owner": "OWNER", "table_name": "DOCS"}]
+                    if registered
+                    else []
+                },
+                "OWNER",
+            )
+        return (int(supported),)
+
+    cursor.execute.side_effect = execute
+    cursor.fetchone.side_effect = fetchone
+    cursor.var.side_effect = lambda *args, **kwargs: MagicMock(
+        getvalue=MagicMock(return_value=compatible)
+    )
+    return connection, cursor
+
+
+@pytest.mark.parametrize(
+    "version, expected",
+    [
+        ("23.4.0.0.0", "sql"),
+        ("23.26.1.0.0", "vecdb"),
+        ("23.26.2.0.0", "vecdb"),
+        ("23.26.3.0.0", "vecdb"),
+    ],
+)
+def test_auto_new_table(version, expected):
+    conn, _ = selection_connection(version, [])
+    assert native_selection(conn, "DOCS", "auto")[0] == expected
+
+
+def test_auto_preserves_existing_sql_even_on_current_database():
+    conn, cursor = selection_connection(
+        "23.26.3", {"ID", "EMBEDDING", "TEXT", "METADATA"}
+    )
+    assert native_selection(conn, "DOCS", "auto")[0] == "sql"
+    assert cursor.execute.call_count == 3
+    with pytest.raises(ValueError) as error:
+        native_selection(conn, "DOCS", "vecdb")
+    assert str(error.value) == (
+        "The VecDB backend cannot use an ordinary OracleVS table layout; "
+        "use backend='auto' or backend='sql'"
+    )
+
+
+def test_auto_missing_package_uses_sql_but_explicit_vecdb_fails():
+    conn, _ = selection_connection("23.26.3", [], False)
+    assert native_selection(conn, "DOCS", "auto")[0] == "sql"
+    with pytest.raises(ValueError, match="unavailable"):
+        native_selection(conn, "DOCS", "vecdb")
+
+
+def test_explicit_sql_does_not_probe_capabilities():
+    conn, cursor = selection_connection("23.26.3", [])
+    assert native_selection(conn, "DOCS", "sql")[0] == "sql"
+    assert [c.args[0] for c in cursor.execute.call_args_list] == [
+        "SELECT column_name FROM all_tab_columns "
+        "WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AND table_name = :name",
+        'SELECT * FROM "DOCS" WHERE 1 = 0',
+    ]
+
+
+def test_current_table_rejected_on_legacy_database():
+    conn, _ = selection_connection("23.26.1", CURRENT_COLUMNS)
+    with pytest.raises(ValueError, match="legacy database"):
+        native_selection(conn, "DOCS", "auto")
+
+
+def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
+    metadata = {"tenant": "one"}
+    assert store.backend == "vecdb"
+    assert store.add_texts(["hello"], [metadata], ids=["a"]) == ["a"]
+    assert metadata == {"tenant": "one"}
+    records = sdk.upsert_vectors.call_args.kwargs["vectors"]
+    assert records == [
+        {
+            "id": "a",
+            "dense_vector": [1.0, 0.0],
+            "metadata": {"tenant": "one", "text": "hello"},
+        }
+    ]
+    hits = store.similarity_search_with_score(
+        "query", k=3, filter={"tenant": {"$eq": "one"}}
+    )
+    assert hits[0][0] == Document(
+        id="a", page_content="hello", metadata={"tenant": "one"}
+    )
+    assert hits[0][1] == 0.25  # lower-is-better distance, same as SQL OracleVS
+    assert sdk.query.call_args.kwargs["filters"] == {"tenant": {"$eq": "one"}}
+    assert sdk.query.call_args.kwargs["advanced_options"] == {
+        "distance_metric": "EUCLIDEAN"
+    }
+
+
+def test_reserved_text_key_and_bad_batch_do_not_write(store, sdk):
+    with pytest.raises(ValueError, match="reserved"):
+        store.add_texts(["hello"], [{"text": "user value"}])
+    with pytest.raises(ValueError, match="Length mismatch"):
+        store.add_texts(["hello"], ids=["one", "two"])
+    sdk.upsert_vectors.assert_not_called()
+
+
+def test_empty_batch_does_not_write(store, sdk):
+    assert store.add_texts([]) == []
+    sdk.upsert_vectors.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_vecdb_uses_shared_empty_id_and_metadata_defaults(
+    store, sdk, asynchronous
+):
+    ids = (
+        await store.aadd_texts(["hello"], metadatas=[], ids=[])
+        if asynchronous
+        else store.add_texts(["hello"], metadatas=[], ids=[])
+    )
+    assert len(ids) == 1 and ids[0]
+    assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == ids[0]
+
+
+def test_insert_only_rest_requires_native_instead_of_racy_upsert(sdk):
+    store = OracleVS(sdk, Embedding(), "DOCS")
+    with pytest.raises(ValueError, match="REST SDK does not support"):
+        store.add_texts(["hello"], ids=["a"])
+    sdk.upsert_vectors.assert_not_called()
+
+
+def test_get_pages_id_batches_and_delete(store, sdk):
+    sdk.list_vectors.return_value = {
+        "items": [{"id": "a", "metadata": {"text": "hello"}}]
+    }
+    assert store.get_by_ids([str(i) for i in range(205)])[0].page_content == "hello"
+    assert [call.kwargs["limit"] for call in sdk.list_vectors.call_args_list] == [
+        100,
+        100,
+        5,
+    ]
+    store.delete(["a"])
+    sdk.delete_vectors.assert_called_once_with(table_name="DOCS", ids=["a"])
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_delete_validation_is_delegated_to_the_sdk(store, sdk, asynchronous):
+    sdk.delete_vectors.side_effect = ValueError("SDK rejected the IDs")
+    with pytest.raises(ValueError, match="SDK rejected the IDs"):
+        if asynchronous:
+            await store.adelete([])
+        else:
+            store.delete([])
+    sdk.delete_vectors.assert_called_once_with(table_name="DOCS", ids=[])
+
+
+def test_return_embeddings(store):
+    hit = store.similarity_search_by_vector_returning_embeddings([1.0, 0.0])[0]
+    assert hit[0].id == "a"
+    assert hit[2].tolist() == [1.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_rest_async_paths(store, sdk):
+    assert await store.aadd_texts(["hello"], ids=["a"]) == ["a"]
+    assert (await store.asimilarity_search("q"))[0].id == "a"
+    assert (await store.asimilarity_search_by_vector_returning_embeddings([1.0, 0.0]))[
+        0
+    ][2].tolist() == [1.0, 0.0]
+    await store.adelete(["a"])
+    sdk.delete_vectors.assert_called_once()
+
+
+def test_only_404_causes_rest_creation(sdk):
+    for status in [401, 403, 500]:
+        error = RuntimeError("request failed")
+        error.status = status
+        sdk.describe_vector_table.side_effect = error
+        with pytest.raises(RuntimeError):
+            OracleVS(sdk, Embedding(), "DOCS")
+    sdk.create_vector_table.assert_not_called()
+    error = RuntimeError("not found")
+    error.status = 404
+    sdk.describe_vector_table.side_effect = error
+    OracleVS(sdk, Embedding(), "DOCS")
+    sdk.create_vector_table.assert_called_once_with(
+        name="DOCS", table_params={"auto_generate_id": False}
+    )
+
+
+def test_migration_is_error_triggered_and_retry_is_bounded():
+    transport = MagicMock()
+    mismatch = RuntimeError('ORA-00904: "CONTENT_METADATA": invalid identifier')
+    transport.call.side_effect = [mismatch, {"results": []}]
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    assert backend.search([1.0], 2, None) == []
+    transport.migrate.assert_called_once_with("DOCS")
+    assert transport.call.call_count == 2
+    transport.reset_mock()
+    transport.call.side_effect = [mismatch, mismatch]
+    with pytest.raises(RuntimeError):
+        backend.search([1.0], 2, None)
+    assert transport.call.call_count == 2
+    transport.migrate.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("HTTP 401"),
+        RuntimeError("ORA-00904: tenant"),
+        RuntimeError("ORA-01031: insufficient privileges"),
+    ],
+)
+def test_unrelated_errors_never_migrate(error):
+    transport = MagicMock()
+    transport.call.side_effect = error
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    with pytest.raises(RuntimeError):
+        backend.search([1.0], 2, None)
+    transport.migrate.assert_not_called()
+
+
+def test_migration_steps_are_resumable_and_reject_ambiguous_layout():
+    assert len(_migration_actions({"ID", "DENSE_VECTOR", "METADATA"}, '"DOCS"')) == 4
+    assert (
+        len(
+            _migration_actions(
+                {"ID", "DENSE_VECTOR", "CONTENT_METADATA", "CONTENT"}, '"DOCS"'
+            )
+        )
+        == 2
+    )
+    assert _migration_actions(CURRENT_COLUMNS, '"DOCS"') == []
+    with pytest.raises(ValueError):
+        _migration_actions(CURRENT_COLUMNS | {"METADATA"}, '"DOCS"')
+    with pytest.raises(ValueError):
+        _layout({"ID", "TEXT"})
+
+
+def test_pending_transaction_prevents_migration():
+    connection = SimpleNamespace(transaction_in_progress=True, version="23.26.3")
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        with pytest.raises(RuntimeError, match="pending work"):
+            NativeTransport(object(), (23, 26, 3)).migrate("DOCS")
+
+
+def test_native_package_signatures():
+    legacy = NativeTransport(object(), (23, 26, 1))
+    current = NativeTransport(object(), (23, 26, 3))
+    old_sql, old_binds = legacy._statement(
+        "create_vector_table",
+        {"name": "DOCS", "table_params": {"auto_generate_id": False}},
+    )
+    new_sql, new_binds = current._statement(
+        "create_vector_table",
+        {"name": "DOCS", "table_params": {"auto_generate_id": False}},
+    )
+    assert "table_name => :table_name" in old_sql
+    assert old_binds["auto_generate_id"] is False
+    assert "name => :name" in new_sql
+    assert "table_params => JSON(:table_params)" in new_sql
+    assert json.loads(new_binds["table_params"]) == {"auto_generate_id": False}
+    assert "table_params" not in old_binds
+
+
+def test_generation_specific_index_json():
+    old = VecDBBackend(
+        NativeTransport(None, (23, 26, 1)), "DOCS", DistanceStrategy.COSINE
+    )
+    new = VecDBBackend(
+        NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
+    )
+    assert old.index_params({})["indexing"] == "auto"
+    assert new.index_params({})["vector_index_params"]["auto_index"] is True
+    assert (
+        new.index_params({"efConstruction": 20})["vector_index_params"][
+            "advanced_params"
+        ]["efConstruction"]
+        == 20
+    )
+    with pytest.raises(ValueError):
+        new.index_params({"accuracy": 101})
+
+
+@pytest.mark.parametrize(
+    "kind, invalid",
+    [
+        ("HNSW", {"accuracy": 0}),
+        ("HNSW", {"accuracy": True}),
+        ("HNSW", {"neighbors": 1}),
+        ("HNSW", {"efConstruction": 65536}),
+        ("IVF", {"neighbor_part": 0}),
+        ("IVF", {"parallel": 0}),
+    ],
+)
+def test_index_parameter_validation_matches_existing_sql(kind, invalid):
+    from langchain_oracledb.vectorstores.oraclevs import (
+        _get_hnsw_index_ddl,
+        _get_ivf_index_ddl,
+    )
+
+    params = {"idx_type": kind, **invalid}
+    sql_builder = _get_hnsw_index_ddl if kind == "HNSW" else _get_ivf_index_ddl
+    backend = VecDBBackend(
+        NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
+    )
+    with pytest.raises(ValueError) as sql_error:
+        sql_builder('"DOCS"', DistanceStrategy.COSINE, params)
+    with pytest.raises(ValueError) as vecdb_error:
+        backend.index_params(params)
+    assert str(vecdb_error.value) == str(sql_error.value)
+
+
+def test_existing_index_options_are_translated_for_the_sdk(store, sdk):
+    sdk.create_index = MagicMock(return_value={"message": "created"})
+    store._vecdb.create_index({"idx_type": "ivf", "neighbor_part": 32, "parallel": 2})
+    mapped = sdk.create_index.call_args.kwargs["index_params"]
+    assert mapped["parallel_creation"] == 2
+    assert mapped["vector_index_params"]["organization"] == "PARTITIONS"
+    assert mapped["vector_index_params"]["advanced_params"] == {"partitions": 32}
+
+
+def test_additional_index_option_validation_is_delegated_to_the_sdk(store, sdk):
+    sdk.create_index = MagicMock(
+        side_effect=ValueError("SDK rejected the index option")
+    )
+    with pytest.raises(ValueError, match="SDK rejected the index option"):
+        store._vecdb.create_index({"unknown_option": True})
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"address": {"city": "NYC"}},
+        {"address.city": "NYC"},
+        {"tags[*]": {"$all": ["a", "b"]}},
+        {"size": {"$between": [1, 10]}},
+        {"name": {"$regex": "^Oracle"}},
+        {"$nor": [{"tenant": "one"}, {"size": {"$gt": 2}}]},
+    ],
+)
+def test_vecdb_filters_are_forwarded_without_an_adapter_whitelist(store, sdk, filters):
+    store.similarity_search("query", filter=filters)
+    assert sdk.query.call_args.kwargs["filters"] is filters
+
+
+def test_vecdb_filter_errors_come_from_the_sdk(store, sdk):
+    sdk.query.side_effect = ValueError("SDK rejected the filter")
+    with pytest.raises(ValueError, match="SDK rejected the filter"):
+        store.similarity_search("query", filter={"$unknown": "x"})
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_native_text_limit_is_bound_instead_of_interpolated(asynchronous):
+    transport = (
+        AsyncNativeTransport(None, (23, 26, 3))
+        if asynchronous
+        else NativeTransport(None, (23, 26, 3))
+    )
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    limit = "1; DROP TABLE DOCS"
+    if asynchronous:
+        transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
+        cursor.execute = AsyncMock()
+        cursor.fetchall = AsyncMock(return_value=[])
+        cursor.fetchone = AsyncMock(return_value=None)
+        with patch(
+            "langchain_oracledb.vectorstores._vecdb._aget_connection"
+        ) as acquire:
+            acquire.return_value.__aenter__.return_value = connection
+            await transport.atext_search("DOCS", "oracle", limit)
+    else:
+        transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+        cursor.fetchall.return_value = []
+        with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as acquire:
+            acquire.return_value.__enter__.return_value = connection
+            transport.text_search("DOCS", "oracle", limit)
+    sql = cursor.execute.call_args.args[0]
+    assert "FETCH FIRST :k ROWS ONLY" in sql
+    assert limit not in sql
+    assert cursor.execute.call_args.kwargs["k"] == limit
+
+
+def test_text_retriever_uses_metadata_backend(store):
+    store._vecdb.text_search = MagicMock(
+        return_value=[Document(id="a", page_content="hello")]
+    )
+    retriever = OracleTextSearchRetriever(vector_store=store)
+    assert retriever.invoke("hello")[0].id == "a"
+    store._vecdb.text_search.assert_called_once_with('"hello"', 4)
+
+
+@pytest.mark.parametrize("mode", ["keyword", "semantic", "hybrid"])
+def test_hybrid_retriever_calls_native_search_without_application_fusion(store, mode):
+    store._vecdb.transport = NativeTransport(object(), (23, 26, 4))
+    expected = [
+        Document(id="native", page_content="native result", metadata={"score": 7})
+    ]
+    store._vecdb.hybrid_search = MagicMock(return_value=expected)
+    store._vecdb.text_search = MagicMock(
+        side_effect=AssertionError("separate text query")
+    )
+    store.similarity_search = MagicMock(
+        side_effect=AssertionError("separate vector query")
+    )
+    retriever = OracleHybridSearchRetriever(
+        vector_store=store, idx_name="HVI", search_mode=mode, return_scores=True
+    )
+    assert retriever.invoke("hello") == expected
+    params, scores = store._vecdb.hybrid_search.call_args.args
+    assert scores is True
+    assert params["hybrid_index_name"] == '"HVI"'
+    assert ("text" in params) == (mode != "semantic")
+    assert ("vector" in params) == (mode != "keyword")
+    if mode != "semantic":
+        assert params["text"] == {"json_textcontains": ["$.text", '"hello"']}
+    if mode != "keyword":
+        assert params["vector"] == {"search_vector": [1.0, 0.0]}
+
+
+@pytest.mark.asyncio
+async def test_async_hybrid_uses_native_search_and_async_query_embedding(store):
+    store._vecdb.transport = NativeTransport(object(), (23, 26, 4))
+    store.embedding_function.aembed_query = AsyncMock(return_value=[0.0, 1.0])
+    store.embedding_function.embed_query = MagicMock(
+        side_effect=AssertionError("sync embed")
+    )
+    expected = [Document(id="native", page_content="hello")]
+    store._vecdb.run_async = AsyncMock(return_value=expected)
+    retriever = OracleHybridSearchRetriever(vector_store=store, idx_name="HVI")
+    assert await retriever.ainvoke("hello") == expected
+    method, params, scores = store._vecdb.run_async.call_args.args
+    assert method == "hybrid_search"
+    assert params["vector"] == {"search_vector": [0.0, 1.0]}
+    store.embedding_function.aembed_query.assert_awaited_once_with("hello")
+
+
+def test_native_hybrid_transport_binds_query_and_maps_database_scores():
+    transport = NativeTransport(object(), (23, 26, 4))
+    transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    original = {"text": "hello", "tenant": "one"}
+    cursor.fetchall.return_value = [("a", original, 9, 2, 7)]
+    cursor.fetchone.return_value = ("HVI", "SIMPLIFIED_JSON_HYBRID")
+    params = {
+        "hybrid_index_name": "HVI",
+        "text": {"json_textcontains": ["$.text", "x' OR 1=1"]},
+    }
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        docs = transport.hybrid_search("DOCS", params, True)
+    assert docs[0].id == "a"
+    assert docs[0].page_content == "hello"
+    assert docs[0].metadata == {
+        "tenant": "one",
+        "score": 9,
+        "text_score": 2,
+        "vector_score": 7,
+    }
+    assert original == {"text": "hello", "tenant": "one"}
+    statement = cursor.execute.call_args.args[0]
+    assert "DBMS_HYBRID_VECTOR.SEARCH(JSON(:search_params))" in statement
+    assert "ORDER BY h.position" in statement
+    assert "x' OR 1=1" not in statement
+    request = json.loads(cursor.execute.call_args.kwargs["search_params"])
+    assert request["hybrid_index_name"] == '"HVI"'
+    assert request["text"]["json_textcontains"] == params["text"]["json_textcontains"]
+    assert request["text"]["inpath"] == ["$.text"]
+    assert request["return"]["format"] == "JSON"
+
+
+def test_rest_hybrid_reports_unsupported_operation(store):
+    with pytest.raises(ValueError, match="REST SDK does not support"):
+        OracleHybridSearchRetriever(vector_store=store, idx_name="HVI").invoke("hello")
+
+
+@pytest.mark.parametrize("params", [{"rrf_k": 60}, {"fetch_k": 20}])
+def test_hybrid_rejects_previous_application_fusion_parameters(store, params):
+    store._vecdb.transport = NativeTransport(object(), (23, 26, 4))
+    with pytest.raises(ValueError, match="DBMS_HYBRID_VECTOR"):
+        OracleHybridSearchRetriever(
+            vector_store=store, idx_name="HVI", params=params
+        ).invoke("hello")
+
+
+@pytest.mark.asyncio
+async def test_async_native_query_retries_once():
+    transport = AsyncNativeTransport(None, (23, 26, 3))
+    transport.acall = AsyncMock(
+        side_effect=[RuntimeError('ORA-00904: "CONTENT_METADATA"'), {"results": []}]
+    )
+    transport.amigrate = AsyncMock()
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    assert await backend.run_async("search", [1.0], 3, None) == []
+    transport.amigrate.assert_awaited_once_with('"DOCS"')
+    assert transport.acall.await_count == 2
+
+
+def test_native_text_index_replaces_guide_preserving_settings():
+    transport = NativeTransport(object(), (23, 26, 3))
+    transport.preflight_index = MagicMock()
+    transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+    connection = MagicMock()
+    connection.transaction_in_progress = False
+    cursor = connection.cursor.return_value.__enter__.return_value
+    original = (
+        "SIMPLIFIED_JSON dataguide on change "
+        "sys.dbms_vector_database.handle_mvi_index search_on none "
+        'sync (every "freq=secondly; interval=30" )'
+    )
+    cursor.fetchall.return_value = [("VEC_METADATA_IDX", original)]
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        transport.create_text_index("DOCS", "REQUESTED_NAME")
+    statements = [call.args[0] for call in cursor.execute.call_args_list]
+    assert statements[1] == 'DROP INDEX "VEC_METADATA_IDX"'
+    assert 'CREATE SEARCH INDEX "VEC_METADATA_IDX"' in statements[2]
+    assert "SEARCH_ON TEXT" in statements[2]
+    assert "search_on none" not in statements[2]
+    assert 'sync (every "freq=secondly; interval=30" )' in statements[2]
+    assert "sys.dbms_vector_database.handle_mvi_index" in statements[2]
+    assert "MEMORY" not in statements[2] and "ON COMMIT" not in statements[2]
+
+
+def test_native_text_index_reuses_already_enabled_index():
+    transport = NativeTransport(object(), (23, 26, 3))
+    transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [("VEC_METADATA_IDX", "search_on text_value")]
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        transport.create_text_index("DOCS", "REQUESTED_NAME")
+    assert cursor.execute.call_count == 1
+
+
+def test_native_insert_only_skips_duplicates_atomically():
+    transport = NativeTransport(object(), (23, 26, 3))
+    transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+    connection = MagicMock(transaction_in_progress=False)
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.getbatcherrors.return_value = [SimpleNamespace(code=1, offset=0)]
+    records = [
+        {"id": id_, "dense_vector": [1.0], "metadata": {"text": "x"}}
+        for id_ in ["a", "b"]
+    ]
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        assert transport.insert("DOCS", records) == ["b"]
+    assert "INSERT INTO" in cursor.executemany.call_args.args[0]
+    assert "CONTENT_METADATA" in cursor.executemany.call_args.args[0]
+    assert cursor.executemany.call_args.kwargs["batcherrors"] is True
+    connection.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_native_async_crud_uses_async_driver_not_thread_wrapping():
+    transport = AsyncNativeTransport(None, (23, 26, 3))
+    transport.acall = AsyncMock(return_value={"items": []})
+    transport.ainsert = AsyncMock(return_value=["a"])
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    assert await backend.run_async("add", ["x"], [[1.0]], [{}], ["a"], False) == ["a"]
+    transport.ainsert.assert_awaited_once()
+    assert await backend.run_async("get", ["a"]) == []
+    await backend.run_async("delete", ["a"])
+    assert transport.acall.await_count == 2
+
+
+def test_migration_applies_missing_actions_without_table_drop():
+    import re
+
+    from langchain_oracledb.vectorstores import _vecdb
+
+    columns = {"ID", "DENSE_VECTOR", "CONTENT_METADATA", "CONTENT"}
+    connection = MagicMock(transaction_in_progress=False, version="23.26.3")
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.var.return_value.getvalue.return_value = "23.6.0"
+
+    def execute(statement, **binds):
+        if " ADD " in statement:
+            columns.add(re.search(r" ADD (\w+)", statement).group(1))
+
+    cursor.execute.side_effect = execute
+    cursor.fetchall.side_effect = lambda: [(column,) for column in columns]
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch.object(_vecdb, "_get_connection", get):
+        NativeTransport(None, (23, 26, 3)).migrate("DOCS")
+    assert columns == CURRENT_COLUMNS
+    actions = [
+        call.args[0]
+        for call in cursor.execute.call_args_list
+        if "ALTER TABLE" in call.args[0]
+    ]
+    assert len(actions) == 2
+    assert not any("RENAME" in action or "DROP" in action for action in actions)
+
+
+def test_from_texts_propagates_backend_ids_and_mutation_mode(sdk):
+    store = OracleVS.from_texts(
+        ["hello"],
+        Embedding(),
+        client=sdk,
+        table_name="DOCS",
+        backend="vecdb",
+        mutate_on_duplicate=True,
+        ids=["custom"],
+    )
+    assert store.backend == "vecdb"
+    assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == "custom"
+
+
+def test_layout_error_checks_actual_missing_column_not_request_context():
+    assert layout_error(
+        RuntimeError('ORA-00904: "T"."CONTENT_METADATA": invalid identifier')
+    )
+    assert not layout_error(
+        RuntimeError(
+            "Request table_name CONTENT_METADATA; "
+            'ORA-00904: "TENANT": invalid identifier'
+        )
+    )
+    assert not layout_error(
+        RuntimeError('ORA-00904: "CONTENT_METADATA_OTHER": invalid identifier')
+    )
+
+
+def test_native_pool_initialization_does_not_acquire_a_second_connection():
+    from langchain_oracledb.vectorstores import _vecdb, oraclevs
+
+    pool = object()
+    connection = MagicMock(version="23.26.3", thin=True)
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = []
+    cursor.fetchone.return_value = (1,)
+    created = False
+
+    def execute(statement, **binds):
+        nonlocal created
+        if "create_vector_table" in statement.lower() and not statement.startswith(
+            "BEGIN IF FALSE THEN"
+        ):
+            created = True
+        if "column_name FROM" in statement:
+            cursor.fetchall.return_value = (
+                [(col,) for col in CURRENT_COLUMNS] if created else []
+            )
+        if "i.parameters" in statement:
+            cursor.fetchone.return_value = None
+
+    cursor.execute.side_effect = execute
+    cursor.var.side_effect = lambda kind, **kwargs: MagicMock(
+        getvalue=MagicMock(
+            return_value=("23.6.0.0.0" if kind is str else '{"table_name":"DOCS"}')
+        )
+    )
+    acquired = False
+
+    @contextmanager
+    def get(client):
+        nonlocal acquired
+        if client is pool:
+            assert not acquired, "Nested pool acquisition would deadlock max=1 pools"
+            acquired = True
+            try:
+                yield connection
+            finally:
+                acquired = False
+        else:
+            assert client is connection
+            yield connection
+
+    with (
+        patch.object(oraclevs, "_get_connection", get),
+        patch.object(_vecdb, "_get_connection", get),
+    ):
+        store = OracleVS(pool, Embedding(), "DOCS")
+    assert store.backend == "vecdb"
+    assert store._vecdb.transport.client is pool
+
+
+def test_migration_refreshes_version_after_pool_database_upgrade():
+    from langchain_oracledb.vectorstores import _vecdb
+
+    connection = MagicMock(version="23.26.4", transaction_in_progress=False)
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [(column,) for column in CURRENT_COLUMNS]
+    cursor.var.return_value.getvalue.return_value = "23.6.0"
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    transport = NativeTransport(None, (23, 26, 1))
+    with patch.object(_vecdb, "_get_connection", get):
+        transport.migrate("DOCS")
+    assert transport.version == (23, 26, 4)
+
+
+@pytest.mark.asyncio
+async def test_async_native_hybrid_transport_returns_database_scores():
+    from contextlib import asynccontextmanager
+
+    transport = AsyncNativeTransport(object(), (23, 26, 4))
+    transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.execute = AsyncMock()
+    cursor.fetchone = AsyncMock(return_value=("HVI", "SIMPLIFIED_JSON_HYBRID"))
+    cursor.fetchall = AsyncMock(
+        return_value=[("a", {"text": "hello", "tenant": "one"}, 9, 2, 7)]
+    )
+
+    @asynccontextmanager
+    async def get(_):
+        yield connection
+
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    params = {"hybrid_index_name": "HVI", "vector": {"search_vector": [1.0, 0.0]}}
+    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", get):
+        docs = await backend.run_async("hybrid_search", params, False)
+    assert docs == [Document(id="a", page_content="hello", metadata={"tenant": "one"})]
+    request = json.loads(cursor.execute.call_args.kwargs["search_params"])
+    assert request["hybrid_index_name"] == '"HVI"'
+    assert json.loads(request["vector"]["search_vector"]) == [1.0, 0.0]
+    assert params["vector"]["search_vector"] == [1.0, 0.0]
+    assert request["return"]["format"] == "JSON"
+    assert "DBMS_HYBRID_VECTOR.SEARCH" in cursor.execute.call_args.args[0]
+
+
+@pytest.mark.parametrize(
+    "version, column", [((23, 26, 1), "METADATA"), ((23, 26, 4), "CONTENT_METADATA")]
+)
+def test_vecdb_hybrid_ddl_uses_metadata_column(store, version, column):
+    from langchain_oracledb.retrievers.hybrid_search import (
+        OracleVectorizerPreference,
+        _get_hybrid_index_ddl,
+    )
+
+    store._vecdb.transport = NativeTransport(object(), version)
+    pref = OracleVectorizerPreference.__new__(OracleVectorizerPreference)
+    pref.vs = store
+    pref.preference_name = "MY_PREF"
+    ddl = _get_hybrid_index_ddl(pref, '"HVI"', {})
+    assert f'"DOCS"({column})' in ddl
+    assert "CREATE HYBRID VECTOR INDEX" in ddl
+
+
+@pytest.mark.parametrize(
+    "operation", ["text", "hybrid", "text_index", "hybrid_index", "preference"]
+)
+def test_rest_unsupported_operations_fail_without_native_fallback(store, operation):
+    from langchain_oracledb.retrievers.hybrid_search import (
+        OracleVectorizerPreference,
+        create_hybrid_index,
+    )
+    from langchain_oracledb.retrievers.text_search import create_text_index
+
+    store._embed_query = MagicMock(side_effect=AssertionError("must not embed"))
+    operations = {
+        "text": lambda: OracleTextSearchRetriever(vector_store=store).invoke("hello"),
+        "hybrid": lambda: OracleHybridSearchRetriever(
+            vector_store=store, idx_name="IDX"
+        ).invoke("hello"),
+        "text_index": lambda: create_text_index(
+            store.client, "IDX", vector_store=store
+        ),
+        "hybrid_index": lambda: create_hybrid_index(
+            store.client, "IDX", vector_store=store
+        ),
+        "preference": lambda: OracleVectorizerPreference.create_preference(store),
+    }
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as connect:
+        with pytest.raises(
+            ValueError, match="oracle-vecdb REST SDK does not support"
+        ) as error:
+            operations[operation]()
+    assert "native_client" not in str(error.value)
+    connect.assert_not_called()
+    store._embed_query.assert_not_called()
+    store.client.query.assert_not_called()
+    store.client.upsert_vectors.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation", ["text", "hybrid", "text_index", "hybrid_index", "preference"]
+)
+async def test_async_rest_unsupported_operations_fail_without_native_fallback(
+    store, operation
+):
+    from langchain_oracledb.retrievers.hybrid_search import (
+        OracleVectorizerPreference,
+        acreate_hybrid_index,
+    )
+    from langchain_oracledb.retrievers.text_search import acreate_text_index
+
+    store._aembed_query = AsyncMock(side_effect=AssertionError("must not embed"))
+    operations = {
+        "text": lambda: OracleTextSearchRetriever(vector_store=store).ainvoke("hello"),
+        "hybrid": lambda: OracleHybridSearchRetriever(
+            vector_store=store, idx_name="IDX"
+        ).ainvoke("hello"),
+        "text_index": lambda: acreate_text_index(
+            store.client, "IDX", vector_store=store
+        ),
+        "hybrid_index": lambda: acreate_hybrid_index(
+            store.client, "IDX", vector_store=store
+        ),
+        "preference": lambda: OracleVectorizerPreference.acreate_preference(store),
+    }
+    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection") as connect:
+        with pytest.raises(
+            ValueError, match="oracle-vecdb REST SDK does not support"
+        ) as error:
+            await operations[operation]()
+    assert "native_client" not in str(error.value)
+    connect.assert_not_called()
+    store._aembed_query.assert_not_called()
+    store.client.query.assert_not_called()
+    store.client.upsert_vectors.assert_not_called()
+
+
+def test_rest_layout_error_reports_unsupported_migration_without_retry(store):
+    store.client.query.side_effect = RuntimeError(
+        'ORA-00904: "CONTENT_METADATA": invalid identifier'
+    )
+    with pytest.raises(
+        RuntimeError, match="REST SDK does not support schema migration"
+    ):
+        store.similarity_search("hello")
+    assert store.client.query.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_rest_layout_error_reports_unsupported_migration_without_retry(
+    store,
+):
+    store.client.query.side_effect = RuntimeError(
+        'ORA-00904: "CONTENT_METADATA": invalid identifier'
+    )
+    with pytest.raises(
+        RuntimeError, match="REST SDK does not support schema migration"
+    ):
+        await store.asimilarity_search("hello")
+    assert store.client.query.call_count == 1
+
+
+def test_public_store_factories_have_no_native_companion_parameter():
+    import inspect
+
+    assert "native_client" not in inspect.signature(OracleVS).parameters
+    assert "native_client" not in inspect.signature(OracleVS.acreate).parameters
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_facade_forwards_vecdb_options_without_mutating_them(
+    store, sdk, asynchronous
+):
+    options = {"accuracy": 90, "advanced_params": {"rescore_factor": 2}}
+    selector = ["tenant"]
+    method = (
+        store.asimilarity_search_by_vector_with_relevance_scores
+        if asynchronous
+        else store.similarity_search_by_vector_with_relevance_scores
+    )
+    result = method(
+        [1.0, 0.0],
+        k=3,
+        db_filter={"tenant": "one"},
+        output_selector=selector,
+        advanced_options=options,
+    )
+    if asynchronous:
+        result = await result
+    assert result[0][0].page_content == "hello"
+    assert sdk.query.call_args.kwargs == {
+        "table_name": "DOCS",
+        "query_by": {"vector": [1.0, 0.0]},
+        "top_k": 3,
+        "filters": {"tenant": "one"},
+        "include_vectors": False,
+        "advanced_options": {**options, "distance_metric": store._vecdb.metric},
+        "output_selector": ["tenant", "text"],
+    }
+    assert options == {"accuracy": 90, "advanced_params": {"rescore_factor": 2}}
+    assert selector == ["tenant"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ({"typo": True}, "Unsupported VecDB search options"),
+        ({"advanced_options": {"accuracy": 101}}, "accuracy"),
+        ({"advanced_options": {"distance_metric": "WRONG"}}, "distance_strategy"),
+        ({"output_selector": "tenant"}, "output_selector"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_facade_rejects_unsupported_vecdb_options_before_query(
+    store, sdk, asynchronous, options, message
+):
+    with pytest.raises(ValueError, match=message):
+        if asynchronous:
+            await store.asimilarity_search_by_vector([1.0, 0.0], **options)
+        else:
+            store.similarity_search_by_vector([1.0, 0.0], **options)
+    sdk.query.assert_not_called()
+
+
+def test_sqlnet_sdk_rejected_before_preparing_table(sdk):
+    sdk.config = SimpleNamespace(has_sqlnet_connection=True, has_rest_connection=False)
+    with pytest.raises(ValueError, match="SQLNet-configured.*oracledb connection"):
+        OracleVS(sdk, Embedding(), "DOCS")
+    sdk.describe_vector_table.assert_not_called()
+    sdk.create_vector_table.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_sqlnet_sdk_rejected_before_preparing_table(sdk):
+    sdk.config = SimpleNamespace(has_sqlnet_connection=True, has_rest_connection=False)
+    with pytest.raises(ValueError, match="SQLNet-configured"):
+        await OracleVS.acreate(sdk, Embedding(), "DOCS")
+    sdk.describe_vector_table.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_native_facade_submits_projected_search_request(store, asynchronous):
+    transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+        None, (23, 26, 4)
+    )
+    transport.call = MagicMock(return_value={"items": []})
+    transport.acall = AsyncMock(return_value={"items": []})
+    store._vecdb.transport = transport
+    if asynchronous:
+        await store.asimilarity_search_by_vector(
+            [1.0, 0.0], output_selector=[], advanced_options={"accuracy": 75}
+        )
+        submitted = transport.acall.call_args.kwargs
+    else:
+        store.similarity_search_by_vector(
+            [1.0, 0.0], output_selector=[], advanced_options={"accuracy": 75}
+        )
+        submitted = transport.call.call_args.kwargs
+    assert submitted == {
+        "table_name": "DOCS",
+        "query_by": {"vector": [1.0, 0.0]},
+        "top_k": 4,
+        "filters": None,
+        "include_vectors": False,
+        "output_selector": ["text"],
+        "advanced_options": {"accuracy": 75, "distance_metric": store._vecdb.metric},
+    }
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "failure", ["fatal", "driver", "pending", "autocommit", "duplicates"]
+)
+@pytest.mark.asyncio
+async def test_vecdb_insert_transaction_boundary(monkeypatch, asynchronous, failure):
+    from contextlib import asynccontextmanager
+
+    from langchain_oracledb.vectorstores import _vecdb
+
+    connection = MagicMock(
+        transaction_in_progress=failure == "pending", autocommit=failure == "autocommit"
+    )
+    cursor = connection.cursor.return_value.__enter__.return_value
+    errors = [SimpleNamespace(code=1, offset=1)]
+    if failure == "fatal":
+        errors.append(SimpleNamespace(code=51803, offset=2))
+    cursor.getbatcherrors.return_value = errors
+    if asynchronous:
+        cursor.executemany = AsyncMock()
+        connection.commit = AsyncMock()
+        connection.rollback = AsyncMock()
+    if failure == "driver":
+        cursor.executemany.side_effect = RuntimeError("driver failure")
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    @asynccontextmanager
+    async def aget(_):
+        yield connection
+
+    monkeypatch.setattr(_vecdb, "_get_connection", get)
+    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+        None, (23, 26, 4)
+    )
+    transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+    transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
+    records = [
+        {"id": key, "dense_vector": [1.0], "metadata": {"text": key}}
+        for key in ["valid", "duplicate", "other"]
+    ]
+
+    async def insert():
+        if asynchronous:
+            return await transport.ainsert("DOCS", records)
+        return transport.insert("DOCS", records)
+
+    if failure == "duplicates":
+        assert await insert() == ["valid", "other"]
+        connection.commit.assert_called_once()
+        connection.rollback.assert_not_called()
+    else:
+        with pytest.raises(RuntimeError):
+            await insert()
+        connection.commit.assert_not_called()
+        if failure in {"pending", "autocommit"}:
+            cursor.executemany.assert_not_called()
+            connection.rollback.assert_not_called()
+        else:
+            connection.rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_migration_rechecks_compatible_before_any_ddl(monkeypatch, asynchronous):
+    from contextlib import asynccontextmanager
+
+    from langchain_oracledb.vectorstores import _vecdb
+
+    connection = MagicMock(version="23.26.4", transaction_in_progress=False)
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.var.return_value.getvalue.return_value = "23.5.0"
+    if asynchronous:
+        cursor.execute = AsyncMock()
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    @asynccontextmanager
+    async def aget(_):
+        yield connection
+
+    monkeypatch.setattr(_vecdb, "_get_connection", get)
+    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+        None, (23, 26, 1)
+    )
+    with pytest.raises(ValueError, match="COMPATIBLE >= 23.6"):
+        if asynchronous:
+            await transport.amigrate("DOCS")
+        else:
+            transport.migrate("DOCS")
+    assert [call.args[0] for call in cursor.execute.call_args_list] == [
+        _vecdb.COMPATIBILITY_SQL
+    ]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_public_index_creation_returns_submission(store, sdk, asynchronous):
+    from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
+
+    submission = {"job_id": "building-1", "status": "SUBMITTED"}
+    sdk.create_index = MagicMock(return_value=submission)
+    if asynchronous:
+        result = await acreate_index(sdk, store)
+    else:
+        result = create_index(sdk, store)
+    assert result == submission
+
+
+@pytest.mark.parametrize("include_vectors", [False, True])
+def test_public_sdk_and_native_provider_share_query_and_result_contract(
+    sdk, include_vectors
+):
+    """Run the same fixture through the public SDK and adapted native provider."""
+    from langchain_oracledb.vectorstores._vecdb_adapter import (
+        SQLNetAdapter,
+        search_request,
+    )
+
+    payload = search_request(
+        "DOCS",
+        "COSINE",
+        [1.0, 0.0],
+        2,
+        {"tenant": "one"},
+        include_vectors,
+        {"output_selector": ["tenant"], "advanced_options": {"accuracy": 90}},
+    )
+    hit = {
+        "id": "fixture",
+        "metadata": {"text": "Oracle λ", "tenant": "one"},
+        "distance": 0.25,
+    }
+    if include_vectors:
+        hit["vector"] = [1.0, 0.0]
+    service = MagicMock()
+    service.query.return_value = {"items": [hit]}
+    # Restore the public method that the SDK fixture normally records directly.
+    with patch.object(sdk, "_get_active_service", return_value=service):
+        public_response = type(sdk).query(sdk, **payload)
+    assert service.query.call_args.kwargs == {**payload, "debug_flags": None}
+    _, binds = SQLNetAdapter((23, 26, 3)).statement("search", payload)
+    for field in ("query_by", "filters", "advanced_options", "output_selector"):
+        assert json.loads(binds[field + "_json"]) == payload[field]
+    backend = VecDBBackend(
+        NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
+    )
+    public_results = backend.search_results(public_response, include_vectors)
+    native_results = backend.search_results({"results": [hit]}, include_vectors)
+    assert public_results[0][:2] == native_results[0][:2]
+    if include_vectors:
+        assert public_results[0][2].tolist() == native_results[0][2].tolist()
+
+
+def test_sdk_public_ords_configuration_contract(sdk):
+    sdk.config = SimpleNamespace(has_sqlnet_connection=False, has_rest_connection=True)
+    store = OracleVS(sdk, Embedding(), "DOCS", mutate_on_duplicate=True)
+    assert store.backend == "vecdb"
+    sdk.describe_vector_table.assert_called_once()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_native_index_submission_is_not_discarded(store, asynchronous):
+    from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
+
+    submission = {"job_id": "native-build", "status": "SUBMITTED"}
+    transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+        None, (23, 26, 4)
+    )
+    transport.call = MagicMock(return_value=submission)
+    transport.acall = AsyncMock(return_value=submission)
+    store._vecdb.transport = transport
+    if asynchronous:
+        result = await acreate_index(None, store)
+    else:
+        result = create_index(None, store)
+    assert result == submission
+
+
+def test_sdk_without_public_transport_configuration_is_rejected(sdk):
+    sdk.config = SimpleNamespace(has_sqlnet_connection=False, has_rest_connection=False)
+    with pytest.raises(ValueError, match="ORDS-configured"):
+        OracleVS(sdk, Embedding(), "DOCS")
+    sdk.describe_vector_table.assert_not_called()
+    sdk.create_vector_table.assert_not_called()

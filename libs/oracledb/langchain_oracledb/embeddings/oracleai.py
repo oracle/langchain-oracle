@@ -106,6 +106,8 @@ class OracleEmbeddings(BaseModel, Embeddings):
         Returns:
             List of embeddings, one for each input text.
         """
+        if not texts:
+            return []
 
         embeddings: List[List[float]] = []
         cursor = None
@@ -128,7 +130,17 @@ class OracleEmbeddings(BaseModel, Embeddings):
                     chunks.append(json.dumps(chunk))
 
                 vector_array_type = self.conn.gettype("SYS.VECTOR_ARRAY_T")
-                inputs = vector_array_type.newobject(chunks)
+                # Newer databases define VECTOR_ARRAY_T as a CLOB collection.
+                # Keep the string collection path for earlier definitions.
+                inputs_data = (
+                    [
+                        self.conn.createlob(oracledb.DB_TYPE_CLOB, chunk)
+                        for chunk in chunks
+                    ]
+                    if vector_array_type.element_type == oracledb.DB_TYPE_CLOB
+                    else chunks
+                )
+                inputs = vector_array_type.newobject(inputs_data)
                 cursor.setinputsizes(None, oracledb.DB_TYPE_JSON)
                 cursor.execute(
                     tag_sql(
