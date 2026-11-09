@@ -1,6 +1,5 @@
-"""Large text input locators are cleaned up even when an upsert fails."""
+"""The driver owns temporary LOBs bound to SQL upserts, including on failure."""
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import oracledb
@@ -8,11 +7,7 @@ import pytest
 from langchain_core.embeddings import Embeddings
 
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores.oraclevs import (
-    INTERNAL_ID_KEY,
-    _aclose_bound_lob,
-    _close_bound_lob,
-)
+from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY
 
 
 class Embedding(Embeddings):
@@ -24,55 +19,45 @@ class Embedding(Embeddings):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("failed", [False, True], ids=["success", "failure"])
 @pytest.mark.asyncio
-async def test_failed_upsert_releases_all_input_lobs(asynchronous):
+async def test_bound_lob_lifetime_is_owned_by_driver(asynchronous, failed):
     conn = MagicMock(
         spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
     )
     cursor = conn.cursor.return_value.__enter__.return_value
+    cursor.getbatcherrors.return_value = []
     lobs = [MagicMock(), MagicMock()]
     if asynchronous:
         for lob in lobs:
             lob.write = AsyncMock()
             lob.close = AsyncMock()
         conn.createlob = AsyncMock(side_effect=lobs)
-        cursor.executemany = AsyncMock(side_effect=RuntimeError("upsert failed"))
+        conn.commit = AsyncMock()
+        cursor.executemany = AsyncMock()
     else:
         conn.createlob.side_effect = lobs
+    if failed:
         cursor.executemany.side_effect = RuntimeError("upsert failed")
     store = OracleVS.__new__(OracleVS)
     store.client, store.embedding_function = conn, Embedding()
     store._vecdb, store.table_name, store.mutate_on_duplicate = None, '"DOCS"', True
     metadatas = [{"tenant": "a"}, {"tenant": "b"}]
-    with pytest.raises(RuntimeError, match="upsert failed"):
+    texts = ["x" * 64000, "short"]
+
+    async def upsert():
         if asynchronous:
-            await store.aadd_texts(["x" * 64000, "short"], metadatas, ids=["a", "b"])
-        else:
-            store.add_texts(["x" * 64000, "short"], metadatas, ids=["a", "b"])
-    for lob in lobs:
-        lob.close.assert_called_once_with()
-    assert all(INTERNAL_ID_KEY not in metadata for metadata in metadatas)
-    conn.commit.assert_not_called()
+            return await store.aadd_texts(texts, metadatas, ids=["a", "b"])
+        return store.add_texts(texts, metadatas, ids=["a", "b"])
 
-
-@pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("code", [64219, 3113])
-@pytest.mark.asyncio
-async def test_only_consumed_locator_errors_are_ignored(asynchronous, code):
-    error = oracledb.DatabaseError(SimpleNamespace(code=code))
-    lob = MagicMock()
-    lob.close = (
-        AsyncMock(side_effect=error) if asynchronous else MagicMock(side_effect=error)
-    )
-
-    async def close():
-        if asynchronous:
-            await _aclose_bound_lob(lob)
-        else:
-            _close_bound_lob(lob)
-
-    if code == 64219:
-        await close()
+    if failed:
+        with pytest.raises(RuntimeError, match="upsert failed"):
+            await upsert()
+        conn.commit.assert_not_called()
     else:
-        with pytest.raises(oracledb.DatabaseError):
-            await close()
+        assert await upsert() == ["a", "b"]
+        conn.commit.assert_called_once_with()
+    for lob, text in zip(lobs, texts):
+        lob.write.assert_called_once_with(text)
+        lob.close.assert_not_called()
+    assert all(INTERNAL_ID_KEY not in metadata for metadata in metadatas)

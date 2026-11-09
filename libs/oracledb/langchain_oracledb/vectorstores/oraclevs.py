@@ -16,7 +16,6 @@ import json
 import logging
 import re
 import uuid
-from contextlib import AsyncExitStack, ExitStack
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1058,23 +1057,6 @@ def _read_similarity_output(
     return docs
 
 
-def _close_bound_lob(lob: Any) -> None:
-    try:
-        lob.close()
-    except oracledb.DatabaseError as error:
-        # The server can consume a temporary input locator during MERGE.
-        if getattr(error.args[0], "code", None) != 64219:
-            raise
-
-
-async def _aclose_bound_lob(lob: Any) -> None:
-    try:
-        await lob.close()
-    except oracledb.DatabaseError as error:
-        if getattr(error.args[0], "code", None) != 64219:
-            raise
-
-
 # SQL queries to insert data into tables.
 # INSERT_QUERY is used when we do not wish to update the row when there is duplicate id.
 # MERGE_QUERY is used when we wish to update the row when there is duplicate id.
@@ -1729,36 +1711,35 @@ class OracleVS(VectorStore):
                         INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
                     if not isinstance(self.embeddings, OracleEmbeddings):
-                        with ExitStack() as temporary_lobs:
-                            # Large MERGE text must use LOB locators. Keep the
-                            # array uniformly typed and close locators before the
-                            # cursor releases its input binds.
-                            if self.mutate_on_duplicate and any(
-                                len(row[3].encode("utf-8")) > 32767 for row in docs
-                            ):
-                                for i, row in enumerate(docs):
-                                    lob = connection.createlob(oracledb.DB_TYPE_CLOB)
-                                    temporary_lobs.callback(_close_bound_lob, lob)
-                                    lob.write(row[3])
-                                    docs[i] = (*row[:3], lob)
-                            cursor.setinputsizes(
-                                None,
-                                oracledb.DB_TYPE_VECTOR,
-                                oracledb.DB_TYPE_JSON,
-                                oracledb.DB_TYPE_CLOB,
-                            )
-                            cursor.executemany(
-                                selected_query.format(
-                                    table_name=self.table_name,
-                                    id_value=":1",
-                                    embedding_value=":2",
-                                    metadata_value=":3",
-                                    text_value=":4",
-                                ),
-                                docs,
-                                batcherrors=True,
-                            )
-                            batch_errors = cursor.getbatcherrors() or []
+                        # Large MERGE text must use LOB locators. Keep the
+                        # array uniformly typed. Leave bound LOB lifetimes to
+                        # the driver: MERGE may consume their locators, making
+                        # an explicit close unsafe for subsequent executions.
+                        if self.mutate_on_duplicate and any(
+                            len(row[3].encode("utf-8")) > 32767 for row in docs
+                        ):
+                            for i, row in enumerate(docs):
+                                lob = connection.createlob(oracledb.DB_TYPE_CLOB)
+                                lob.write(row[3])
+                                docs[i] = (*row[:3], lob)
+                        cursor.setinputsizes(
+                            None,
+                            oracledb.DB_TYPE_VECTOR,
+                            oracledb.DB_TYPE_JSON,
+                            oracledb.DB_TYPE_CLOB,
+                        )
+                        cursor.executemany(
+                            selected_query.format(
+                                table_name=self.table_name,
+                                id_value=":1",
+                                embedding_value=":2",
+                                metadata_value=":3",
+                                text_value=":4",
+                            ),
+                            docs,
+                            batcherrors=True,
+                        )
+                        batch_errors = cursor.getbatcherrors() or []
 
                     else:
                         proxy_was_set = False
@@ -1926,40 +1907,35 @@ class OracleVS(VectorStore):
                         INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
                     if not isinstance(self.embeddings, OracleEmbeddings):
-                        async with AsyncExitStack() as temporary_lobs:
-                            # Large MERGE text must use LOB locators. Keep the
-                            # array uniformly typed and close locators before the
-                            # cursor releases its input binds.
-                            if self.mutate_on_duplicate and any(
-                                len(row[3].encode("utf-8")) > 32767 for row in docs
-                            ):
-                                for i, row in enumerate(docs):
-                                    lob = await connection.createlob(
-                                        oracledb.DB_TYPE_CLOB
-                                    )
-                                    temporary_lobs.push_async_callback(
-                                        _aclose_bound_lob, lob
-                                    )
-                                    await lob.write(row[3])
-                                    docs[i] = (*row[:3], lob)
-                            cursor.setinputsizes(
-                                None,
-                                oracledb.DB_TYPE_VECTOR,
-                                oracledb.DB_TYPE_JSON,
-                                oracledb.DB_TYPE_CLOB,
-                            )
-                            await cursor.executemany(
-                                selected_query.format(
-                                    table_name=self.table_name,
-                                    id_value=":1",
-                                    embedding_value=":2",
-                                    metadata_value=":3",
-                                    text_value=":4",
-                                ),
-                                docs,
-                                batcherrors=True,
-                            )
-                            batch_errors = cursor.getbatcherrors() or []
+                        # Large MERGE text must use LOB locators. Keep the
+                        # array uniformly typed. Leave bound LOB lifetimes to
+                        # the driver: MERGE may consume their locators, making
+                        # an explicit close unsafe for subsequent executions.
+                        if self.mutate_on_duplicate and any(
+                            len(row[3].encode("utf-8")) > 32767 for row in docs
+                        ):
+                            for i, row in enumerate(docs):
+                                lob = await connection.createlob(oracledb.DB_TYPE_CLOB)
+                                await lob.write(row[3])
+                                docs[i] = (*row[:3], lob)
+                        cursor.setinputsizes(
+                            None,
+                            oracledb.DB_TYPE_VECTOR,
+                            oracledb.DB_TYPE_JSON,
+                            oracledb.DB_TYPE_CLOB,
+                        )
+                        await cursor.executemany(
+                            selected_query.format(
+                                table_name=self.table_name,
+                                id_value=":1",
+                                embedding_value=":2",
+                                metadata_value=":3",
+                                text_value=":4",
+                            ),
+                            docs,
+                            batcherrors=True,
+                        )
+                        batch_errors = cursor.getbatcherrors() or []
                     else:
                         proxy_was_set = False
                         try:
