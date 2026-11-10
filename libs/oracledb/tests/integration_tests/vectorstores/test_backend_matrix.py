@@ -17,6 +17,7 @@ import pytest
 from langchain_core.embeddings import Embeddings
 
 from langchain_oracledb import OracleVS
+from langchain_oracledb.vectorstores._vecdb_adapter import storage_id
 from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY
 from langchain_oracledb.vectorstores.utils import DistanceStrategy, drop_table_purge
 
@@ -538,11 +539,14 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
             for name in (literal, qualified):
                 cursor.execute(f"SELECT ID FROM {name} ORDER BY ID")
                 assert cursor.fetchall() == (
-                    [("added",), ("seed",)] if name == target else [("seed",)]
+                    [(storage_id("added"),), ("seed",)]
+                    if name == target
+                    else [("seed",)]
                 )
             cursor.execute(
                 f"SELECT JSON_VALUE(CONTENT_METADATA, '$.__orcl_internal_content') "
-                f"FROM {target} WHERE ID='added'"
+                f"FROM {target} WHERE ID=:id",
+                id=storage_id("added"),
             )
             assert cursor.fetchone()[0] == "oracle target"
     finally:

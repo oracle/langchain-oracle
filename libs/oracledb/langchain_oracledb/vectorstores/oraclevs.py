@@ -1175,9 +1175,10 @@ class OracleVS(VectorStore):
         VecDB applies these options when creating a new table.
 
         ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
-        compatible layouts and databases. Native VecDB package calls require
-        unqualified uppercase table names; auto uses SQL for a new name outside
-        that contract, while explicit ``backend="vecdb"`` rejects it. Inspect
+        compatible layouts and databases. Native VecDB package calls accept
+        unqualified table names, including lowercase and mixed-case names.
+        New schema-qualified names use SQL in auto mode and are rejected by
+        explicit ``backend="vecdb"``. Inspect
         ``store.backend`` for the selected backend. SDK clients must use ORDS;
         for native VecDB pass an oracledb connection or pool.
         REST SDK clients require ``mutate_on_duplicate=True``; otherwise
@@ -1320,8 +1321,9 @@ class OracleVS(VectorStore):
         params["vector_index_params"] follows the constructor's index contract
         and accepts the same options as create_index.
 
-        Uses the constructor's naming/backend contract. Native VecDB requires an
-        unqualified uppercase name; new unsupported names use SQL in auto mode.
+        Uses the constructor's naming/backend contract. Native VecDB accepts
+        unqualified names, including lowercase and mixed-case names. New
+        schema-qualified names use SQL in auto mode.
         Inspect the returned store's ``backend`` to see the selected backend.
         """
 
@@ -2782,10 +2784,11 @@ class OracleVS(VectorStore):
     ) -> OracleVS:
         """Create and populate a store using the constructor's backend contract.
 
-        With a native connection, the default lowercase ``langchain`` name uses
-        SQL in auto mode. Native VecDB needs an unqualified uppercase name.
-        ``backend="vecdb"`` rejects
-        unsupported names; inspect ``store.backend`` after auto selection.
+        With a native connection, unqualified names (including the default
+        lowercase ``langchain`` name) can select VecDB on compatible databases.
+        Existing SQL tables remain SQL-backed. New schema-qualified names use SQL
+        in auto mode and are rejected by ``backend="vecdb"``.
+        Inspect ``store.backend`` after auto selection.
         """
         (
             client,
@@ -2820,10 +2823,11 @@ class OracleVS(VectorStore):
     ) -> OracleVS:
         """Create and populate a store using the constructor's backend contract.
 
-        With a native connection, the default lowercase ``langchain`` name uses
-        SQL in auto mode. Native VecDB needs an unqualified uppercase name.
-        ``backend="vecdb"`` rejects
-        unsupported names; inspect ``store.backend`` after auto selection.
+        With a native connection, unqualified names (including the default
+        lowercase ``langchain`` name) can select VecDB on compatible databases.
+        Existing SQL tables remain SQL-backed. New schema-qualified names use SQL
+        in auto mode and are rejected by ``backend="vecdb"``.
+        Inspect ``store.backend`` after auto selection.
         """
         (
             client,
