@@ -34,6 +34,7 @@ from ._vecdb_adapter import (
     TEXT_KEY,
     SQLNetAdapter,
     _hybrid_documents,
+    _rest_json,
     _text_documents,
     as_dict,
     document,
@@ -1161,6 +1162,8 @@ class RestTransport:
 
     def call(self, operation: str, **params: Any) -> dict:
         method = "query" if operation == "search" else operation
+        if operation == "upsert_vectors":
+            params["vectors"] = _rest_json(params["vectors"])
         return as_dict(getattr(self.client, method)(**params))
 
     def migrate(self, name: str) -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from copy import deepcopy
 from decimal import Decimal
@@ -67,6 +68,23 @@ def _json_dumps(value: Any) -> str:
         return json.dumps(item, allow_nan=False)
 
     return encode(value)
+
+
+def _rest_json(value: Any) -> Any:
+    """Use SDK-supported JSON numbers, rejecting lossy Decimal conversions."""
+
+    def finite_float(text: str) -> float:
+        number = float(text)
+        if not math.isfinite(number) or Decimal(str(number)) != Decimal(text):
+            raise ValueError(
+                "oracle-vecdb REST SDK cannot preserve this metadata number's "
+                "precision; use a native connection for exact Decimal writes"
+            )
+        return number
+
+    # The SDK serializes Decimal as a string. Decode our exact JSON encoding
+    # into int/float values before handing the request to its public API.
+    return json.loads(_json_dumps(value), parse_float=finite_float)
 
 
 def as_dict(response: Any) -> dict[str, Any]:

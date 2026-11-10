@@ -54,9 +54,16 @@ print("Connection successful!")
 #### OracleVS backends and VecDB
 
 `OracleVS` defaults to `backend="auto"`: existing SQL tables remain SQL-backed,
-while package-registered VecDB tables use VecDB. New tables use VecDB when the
-server and requested name support it, otherwise SQL. Set `backend="sql"` or
-`backend="vecdb"` explicitly, and inspect `store.backend` for the selected backend.
+while existing VecDB stores created through `OracleVS` use VecDB. New tables use
+VecDB when the server and requested name support it, otherwise SQL. Set
+`backend="sql"` or `backend="vecdb"` explicitly, and inspect `store.backend` for
+the selected backend.
+
+VecDB support is limited to tables created and populated through `OracleVS`,
+which manages the document ID mapping and reserved content metadata. Tables
+created or populated directly through SQL, `DBMS_VECTOR_DATABASE`, or the VecDB
+SDK are not supported. There is currently no adapter to import external table
+formats.
 
 Native ownership checks use a bound, single-table
 `DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE` call. Older packages that reject

@@ -6,6 +6,8 @@ import json
 import subprocess
 import sys
 from contextlib import contextmanager
+from copy import deepcopy
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -261,6 +263,83 @@ def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
     assert sdk.query.call_args.kwargs["advanced_options"] == {
         "distance_metric": "EUCLIDEAN"
     }
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_rest_numeric_metadata_roundtrip_uses_real_sdk_serializer(
+    store, sdk, asynchronous
+):
+    from oracle_vecdb.services.ords.api_client import ApiClient
+    from oracle_vecdb.services.ords.models.upsert_vectors_request import (
+        UpsertVectorsRequest,
+    )
+    from oracle_vecdb.services.ords.models.upsert_vectors_request_vectors_inner import (
+        UpsertVectorsRequestVectorsInner,
+    )
+
+    metadata = {
+        "count": 1,
+        "large": 9007199254740993,
+        "nested": {"values": [1.25, 0.1, True, False, None, "1"]},
+    }
+    sdk.query.return_value["items"][0]["metadata"].update(metadata)
+    doc = store.similarity_search("query")[0]
+    assert isinstance(doc.metadata["count"], Decimal)
+    original = deepcopy(doc.metadata)
+    payloads = []
+
+    def serialize_request(**kwargs):
+        request = UpsertVectorsRequest(
+            vectors=[
+                UpsertVectorsRequestVectorsInner(**record)
+                for record in kwargs["vectors"]
+            ]
+        )
+        payloads.append(
+            json.loads(json.dumps(ApiClient().sanitize_for_serialization(request)))
+        )
+        return {"upserted_count": 1}
+
+    sdk.upsert_vectors.side_effect = serialize_request
+    if asynchronous:
+        await store.aadd_documents([doc])
+    else:
+        store.add_documents([doc])
+    written = payloads[0]["vectors"][0]["metadata"]
+    assert type(written["count"]) is int
+    assert written["large"] == 9007199254740993
+    assert type(written["large"]) is int
+    assert type(written["nested"]["values"][0]) is float
+    assert written["nested"]["values"][2] is True
+    assert written["nested"]["values"][3] is False
+    assert {key: written[key] for key in metadata} == metadata
+    assert doc.metadata == original
+    assert isinstance(doc.metadata["count"], Decimal)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "number",
+    [
+        Decimal("123456789.123456789"),
+        Decimal("1e-400"),
+        Decimal("1e400"),
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_rest_unrepresentable_metadata_numbers_do_not_write(
+    store, sdk, asynchronous, number
+):
+    with pytest.raises(ValueError, match="precision|not JSON compliant"):
+        if asynchronous:
+            await store.aadd_texts(["hello"], [{"nested": [number]}], ids=["a"])
+        else:
+            store.add_texts(["hello"], [{"nested": [number]}], ids=["a"])
+    sdk.upsert_vectors.assert_not_called()
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

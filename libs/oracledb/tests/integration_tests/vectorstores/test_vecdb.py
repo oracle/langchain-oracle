@@ -11,6 +11,8 @@ from langchain_core.embeddings import Embeddings
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores.utils import DistanceStrategy, drop_table_purge
 
+from ._backend_fixtures import check_native_backend, native_config
+
 
 class FixedEmbeddings(Embeddings):
     def embed_documents(self, texts):
@@ -109,26 +111,26 @@ async def test_rest_async_and_returned_embeddings(vecdb_store):
 
 
 @pytest.fixture
-def native_index_store(vecdb_store):
-    """Use a native client for operations outside the REST SDK API."""
-    dsn = os.environ.get("ORACLE_VECDB_NATIVE_DSN")
-    if not dsn:
-        pytest.skip("Set ORACLE_VECDB_NATIVE_DSN to test native index operations")
+def native_index_store():
+    """Create native index fixtures independently of the REST database."""
     import oracledb
 
-    with oracledb.connect(
-        user=os.environ["ORACLE_VECDB_USERNAME"],
-        password=os.environ["ORACLE_VECDB_PASSWORD"],
-        dsn=dsn,
-    ) as connection:
-        store = OracleVS(
-            connection,
-            FixedEmbeddings(),
-            vecdb_store.table_name,
-            distance_strategy=DistanceStrategy.COSINE,
-            mutate_on_duplicate=True,
-        )
-        yield store, connection
+    config = native_config("vecdb")
+    table = "LCV_NATIVE_" + uuid.uuid4().hex[:12].upper()
+    check_native_backend(config, "vecdb", table)
+    with oracledb.connect(**config) as connection:
+        try:
+            store = OracleVS(
+                connection,
+                FixedEmbeddings(),
+                table,
+                distance_strategy=DistanceStrategy.COSINE,
+                mutate_on_duplicate=True,
+                backend="vecdb",
+            )
+            yield store, connection
+        finally:
+            drop_table_purge(connection, table, backend="vecdb")
 
 
 def metadata_index(connection, store):

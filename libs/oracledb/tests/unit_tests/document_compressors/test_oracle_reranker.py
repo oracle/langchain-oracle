@@ -333,7 +333,12 @@ def test_reranker_load_error_propagates(rest):
     rest.load_model.assert_called_once()
 
 
-def test_contextual_compression_retriever(native, documents):
+@pytest.mark.parametrize("transport", ["native", "rest"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_contextual_compression_retriever(
+    native, documents, transport, asynchronous, request
+):
     classic = pytest.importorskip("langchain_classic.retrievers")
     from langchain_core.retrievers import BaseRetriever
 
@@ -341,8 +346,12 @@ def test_contextual_compression_retriever(native, documents):
         def _get_relevant_documents(self, query, *, run_manager):
             return documents
 
+    client = native[0] if transport == "native" else request.getfixturevalue("rest")
     retriever = classic.ContextualCompressionRetriever(
-        base_retriever=Retriever(), base_compressor=make_reranker(native[0], top_n=1)
+        base_retriever=Retriever(), base_compressor=make_reranker(client, top_n=1)
     )
-    result = retriever.invoke("query")
-    assert len(result) == 1 and result[0] is documents[1]
+    result = (
+        await retriever.ainvoke("query") if asynchronous else retriever.invoke("query")
+    )
+    expected = documents[1] if transport == "native" else documents[2]
+    assert len(result) == 1 and result[0] is expected
