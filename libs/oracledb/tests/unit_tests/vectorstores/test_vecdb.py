@@ -31,6 +31,7 @@ from langchain_oracledb.vectorstores._vecdb import (
     parse_version,
     table_identifier,
 )
+from langchain_oracledb.vectorstores._vecdb_adapter import LOGICAL_ID_KEY, storage_id
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 
@@ -63,7 +64,7 @@ def sdk():
             "items": [
                 {
                     "id": "a",
-                    "metadata": {"lc_oracle_content": "hello", "tenant": "one"},
+                    "metadata": {"__orcl_internal_content": "hello", "tenant": "one"},
                     "distance": 0.25,
                     "vector": [1.0, 0.0],
                 }
@@ -238,9 +239,13 @@ def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
     records = sdk.upsert_vectors.call_args.kwargs["vectors"]
     assert records == [
         {
-            "id": "a",
+            "id": storage_id("a"),
             "dense_vector": [1.0, 0.0],
-            "metadata": {"tenant": "one", "lc_oracle_content": "hello"},
+            "metadata": {
+                "tenant": "one",
+                "__orcl_internal_content": "hello",
+                LOGICAL_ID_KEY: "a",
+            },
         }
     ]
     hits = store.similarity_search_with_score(
@@ -263,11 +268,13 @@ def test_rest_store_roundtrip_mapping_without_metadata_mutation(store, sdk):
 async def test_reserved_content_key_and_bad_batch_do_not_write(
     store, sdk, asynchronous
 ):
-    with pytest.raises(ValueError, match="lc_oracle_content.*reserved"):
+    with pytest.raises(ValueError, match="__orcl_internal_content.*reserved"):
         if asynchronous:
-            await store.aadd_texts(["hello"], [{"lc_oracle_content": "user value"}])
+            await store.aadd_texts(
+                ["hello"], [{"__orcl_internal_content": "user value"}]
+            )
         else:
-            store.add_texts(["hello"], [{"lc_oracle_content": "user value"}])
+            store.add_texts(["hello"], [{"__orcl_internal_content": "user value"}])
     with pytest.raises(ValueError, match="Length mismatch"):
         store.add_texts(["hello"], ids=["one", "two"])
     sdk.upsert_vectors.assert_not_called()
@@ -286,7 +293,8 @@ async def test_user_text_metadata_roundtrip_filter_and_projection(
     record = sdk.upsert_vectors.call_args.kwargs["vectors"][0]
     assert record["metadata"] == {
         **metadata,
-        "lc_oracle_content": "document body",
+        "__orcl_internal_content": "document body",
+        LOGICAL_ID_KEY: "a",
     }
     sdk.query.return_value = {"items": [{**record, "distance": 0.25}]}
     sdk.list_vectors.return_value = {"items": [record]}
@@ -304,7 +312,8 @@ async def test_user_text_metadata_roundtrip_filter_and_projection(
     }
     assert sdk.query.call_args.kwargs["output_selector"] == [
         "text",
-        "lc_oracle_content",
+        "__orcl_internal_content",
+        LOGICAL_ID_KEY,
     ]
     assert metadata == {"text": "user label", "metadata": {"text": "nested label"}}
 
@@ -325,7 +334,7 @@ async def test_vecdb_uses_shared_empty_id_and_metadata_defaults(
         else store.add_texts(["hello"], metadatas=[], ids=[])
     )
     assert len(ids) == 1 and ids[0]
-    assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == ids[0]
+    assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == storage_id(ids[0])
 
 
 @pytest.mark.parametrize("kwargs", [{}, {"mutate_on_duplicate": False}])
@@ -346,7 +355,7 @@ async def test_insert_only_rest_rejected_before_preparing_table(
 
 def test_get_pages_id_batches_and_delete(store, sdk):
     sdk.list_vectors.return_value = {
-        "items": [{"id": "a", "metadata": {"lc_oracle_content": "hello"}}]
+        "items": [{"id": "a", "metadata": {"__orcl_internal_content": "hello"}}]
     }
     assert store.get_by_ids([str(i) for i in range(205)])[0].page_content == "hello"
     assert [call.kwargs["limit"] for call in sdk.list_vectors.call_args_list] == [
@@ -355,7 +364,7 @@ def test_get_pages_id_batches_and_delete(store, sdk):
         5,
     ]
     store.delete(["a"])
-    sdk.delete_vectors.assert_called_once_with(table_name="DOCS", ids=["a"])
+    sdk.delete_vectors.assert_called_once_with(table_name="DOCS", ids=[storage_id("a")])
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -645,7 +654,7 @@ def test_hybrid_retriever_calls_native_search_without_application_fusion(store, 
     assert ("vector" in params) == (mode != "keyword")
     if mode != "semantic":
         assert params["text"] == {
-            "json_textcontains": ["$.lc_oracle_content", '"hello"']
+            "json_textcontains": ["$.__orcl_internal_content", '"hello"']
         }
     if mode != "keyword":
         assert params["vector"] == {"search_text": "hello"}
@@ -682,12 +691,12 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     connection = MagicMock()
     cursor = connection.cursor.return_value.__enter__.return_value
-    original = {"lc_oracle_content": "hello", "tenant": "one"}
+    original = {"__orcl_internal_content": "hello", "tenant": "one"}
     cursor.fetchall.return_value = [("a", original, 9, 2, 7)]
     cursor.fetchone.return_value = ("HVI", "SIMPLIFIED_JSON_HYBRID")
     params = {
         "hybrid_index_name": "HVI",
-        "text": {"json_textcontains": ["$.lc_oracle_content", "x' OR 1=1"]},
+        "text": {"json_textcontains": ["$.__orcl_internal_content", "x' OR 1=1"]},
     }
 
     @contextmanager
@@ -704,7 +713,7 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
         "text_score": 2,
         "vector_score": 0,
     }
-    assert original == {"lc_oracle_content": "hello", "tenant": "one"}
+    assert original == {"__orcl_internal_content": "hello", "tenant": "one"}
     statement = cursor.execute.call_args.args[0]
     assert "DBMS_HYBRID_VECTOR.SEARCH(JSON(:search_params))" in statement
     assert "ORDER BY h.position" in statement
@@ -712,7 +721,7 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     request = json.loads(cursor.execute.call_args.kwargs["search_params"])
     assert request["hybrid_index_name"] == '"HVI"'
     assert request["text"]["json_textcontains"] == params["text"]["json_textcontains"]
-    assert request["text"]["inpath"] == ["$.lc_oracle_content"]
+    assert request["text"]["inpath"] == ["$.__orcl_internal_content"]
     assert request["return"]["format"] == "JSON"
 
 
@@ -798,7 +807,7 @@ def test_native_insert_only_skips_duplicate_rows():
         SimpleNamespace(code=1, offset=0, message="duplicate ID")
     ]
     records = [
-        {"id": id_, "dense_vector": [1.0], "metadata": {"lc_oracle_content": "x"}}
+        {"id": id_, "dense_vector": [1.0], "metadata": {"__orcl_internal_content": "x"}}
         for id_ in ["a", "b"]
     ]
 
@@ -818,7 +827,7 @@ def test_native_insert_only_skips_duplicate_rows():
 async def test_native_async_crud_uses_async_driver_not_thread_wrapping():
     transport = AsyncNativeTransport(None, (23, 26, 3))
     transport.acall = AsyncMock(return_value={"items": []})
-    transport.ainsert = AsyncMock(return_value=["a"])
+    transport.ainsert = AsyncMock(return_value=[storage_id("a")])
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     assert await backend.run_async("add", ["x"], [[1.0]], [{}], ["a"], False) == ["a"]
     transport.ainsert.assert_awaited_once()
@@ -871,7 +880,9 @@ def test_from_texts_propagates_backend_ids_and_mutation_mode(sdk):
         ids=["custom"],
     )
     assert store.backend == "vecdb"
-    assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == "custom"
+    assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == storage_id(
+        "custom"
+    )
 
 
 def test_layout_error_checks_actual_missing_column_not_request_context():
@@ -974,7 +985,9 @@ async def test_async_native_hybrid_transport_returns_database_scores():
     cursor.execute = AsyncMock()
     cursor.fetchone = AsyncMock(return_value=("HVI", "SIMPLIFIED_JSON_HYBRID"))
     cursor.fetchall = AsyncMock(
-        return_value=[("a", {"lc_oracle_content": "hello", "tenant": "one"}, 9, 2, 7)]
+        return_value=[
+            ("a", {"__orcl_internal_content": "hello", "tenant": "one"}, 9, 2, 7)
+        ]
     )
 
     @asynccontextmanager
@@ -1148,7 +1161,7 @@ async def test_facade_forwards_vecdb_options_without_mutating_them(
         "filters": {"tenant": {"$string": {"$eq": "one"}}},
         "include_vectors": False,
         "advanced_options": {**options, "distance_metric": store._vecdb.metric},
-        "output_selector": ["tenant", "lc_oracle_content"],
+        "output_selector": ["tenant", "__orcl_internal_content", LOGICAL_ID_KEY],
     }
     assert options == {"accuracy": 90, "advanced_params": {"rescore_factor": 2}}
     assert selector == ["tenant"]
@@ -1217,7 +1230,7 @@ async def test_native_facade_submits_projected_search_request(store, asynchronou
         "top_k": 4,
         "filters": None,
         "include_vectors": False,
-        "output_selector": ["lc_oracle_content"],
+        "output_selector": ["__orcl_internal_content", LOGICAL_ID_KEY],
         "advanced_options": {"accuracy": 75, "distance_metric": store._vecdb.metric},
     }
 
@@ -1263,7 +1276,7 @@ async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, capl
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
     records = [
-        {"id": key, "dense_vector": [1.0], "metadata": {"lc_oracle_content": key}}
+        {"id": key, "dense_vector": [1.0], "metadata": {"__orcl_internal_content": key}}
         for key in ["valid", "duplicate", "other"]
     ]
 
@@ -1362,7 +1375,7 @@ def test_public_sdk_and_native_provider_share_query_and_result_contract(
     )
     hit = {
         "id": "fixture",
-        "metadata": {"lc_oracle_content": "Oracle λ", "tenant": "one"},
+        "metadata": {"__orcl_internal_content": "Oracle λ", "tenant": "one"},
         "distance": 0.25,
     }
     if include_vectors:
@@ -1534,3 +1547,149 @@ async def test_vecdb_text_index_validates_common_arguments_first(
         else:
             create_text_index(sdk, "IDX", vector_store=store, **arguments)
     sdk.query.assert_not_called()
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_uuid_chunks_preserve_logical_ids_through_crud(
+    store, sdk, native, asynchronous
+):
+    """Exercise public chunking with a transport enforcing VecDB's ID limit."""
+    from copy import deepcopy
+    from uuid import UUID
+
+    records = {}
+
+    def execute(operation, **params):
+        if operation == "upsert_vectors":
+            for record in params["vectors"]:
+                assert len(record["id"].encode("utf-8")) == 40
+                records[record["id"]] = deepcopy(record)
+            return {}
+        if operation == "delete_vectors":
+            for id_ in params["ids"]:
+                records.pop(id_, None)
+            return {}
+        if operation == "list_vectors":
+            return {"items": [records[id_] for id_ in params["ids"] if id_ in records]}
+        if operation == "search":
+            selector = params.get("output_selector")
+            return {
+                "items": [
+                    {
+                        **record,
+                        "distance": 0.0,
+                        "metadata": {
+                            key: value
+                            for key, value in record["metadata"].items()
+                            if selector is None or key in selector
+                        },
+                    }
+                    for record in records.values()
+                ]
+            }
+        raise AssertionError(operation)
+
+    if native:
+        transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+            None, (23, 26, 3)
+        )
+        transport.call = MagicMock(side_effect=execute)
+        transport.acall = AsyncMock(side_effect=execute)
+        store._vecdb.transport = transport
+    else:
+        sdk.upsert_vectors.side_effect = lambda **params: execute(
+            "upsert_vectors", **params
+        )
+        sdk.list_vectors.side_effect = lambda **params: execute(
+            "list_vectors", **params
+        )
+        sdk.delete_vectors.side_effect = lambda **params: execute(
+            "delete_vectors", **params
+        )
+        sdk.query.side_effect = lambda **params: execute("search", **params)
+
+    class Splitter:
+        def split_text(self, text):
+            return text.split("|")
+
+    parent_id = str(UUID("12345678-1234-5678-1234-567812345678"))
+    source = Document(
+        id=parent_id, page_content="first|second", metadata={"tenant": "one"}
+    )
+    expected_ids = [f"{parent_id}#chunk-{i}" for i in range(2)]
+    if asynchronous:
+        ids = await store.aadd_documents([source], text_splitter=Splitter())
+        fetched = await store.aget_by_ids(ids)
+        hits = await store.asimilarity_search("query", output_selector=["tenant"])
+    else:
+        ids = store.add_documents([source], text_splitter=Splitter())
+        fetched = store.get_by_ids(ids)
+        hits = store.similarity_search("query", output_selector=["tenant"])
+    assert ids == expected_ids
+    assert len(records) == 2
+    assert list(records) == [storage_id(id_) for id_ in expected_ids]
+    assert [doc.id for doc in fetched] == expected_ids
+    assert [doc.id for doc in hits] == expected_ids
+    assert [doc.metadata for doc in fetched] == [
+        {"tenant": "one", "source_doc_index": 0, "chunk_index": i} for i in range(2)
+    ]
+    assert all(doc.metadata == {"tenant": "one"} for doc in hits)
+    assert [doc.page_content for doc in fetched] == ["first", "second"]
+    fetched[0].page_content = "updated"
+    if asynchronous:
+        assert await store.aadd_documents(fetched) == expected_ids
+        updated = await store.aget_by_ids(ids)
+        await store.adelete(ids)
+        assert await store.aget_by_ids(ids) == []
+    else:
+        assert store.add_documents(fetched) == expected_ids
+        updated = store.get_by_ids(ids)
+        store.delete(ids)
+        assert store.get_by_ids(ids) == []
+    assert updated[0].page_content == "updated"
+    assert records == {}
+    assert source.metadata == {"tenant": "one"}
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_insert_only_returns_successful_logical_ids(asynchronous):
+    transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+        None, (23, 26, 3)
+    )
+    transport.insert = MagicMock(return_value=[storage_id("second")])
+    transport.ainsert = AsyncMock(return_value=[storage_id("second")])
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    args = (["one", "two"], [[1.0], [2.0]], [{}, {}], ["first", "second"], False)
+    result = (
+        await backend.run_async("add", *args) if asynchronous else backend.add(*args)
+    )
+    assert result == ["second"]
+    call = transport.ainsert.call_args if asynchronous else transport.insert.call_args
+    assert [r["id"] for r in call.args[1]] == [
+        storage_id("first"),
+        storage_id("second"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "logical_id", ["a", "12345678-1234-5678-1234-567812345678#chunk-0", "文档"]
+)
+def test_storage_ids_hash_every_logical_id(logical_id):
+    import hashlib
+
+    assert (
+        storage_id(logical_id)
+        == hashlib.sha256(logical_id.encode("utf-8")).hexdigest()[:40]
+    )
+    assert len(storage_id(logical_id)) == 40
+
+
+def test_backend_rejects_reserved_logical_id_metadata():
+    transport = MagicMock()
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    with pytest.raises(ValueError, match="reserved"):
+        backend.add(["text"], [[1.0]], [{LOGICAL_ID_KEY: "spoofed"}], ["a"], True)
+    transport.call.assert_not_called()

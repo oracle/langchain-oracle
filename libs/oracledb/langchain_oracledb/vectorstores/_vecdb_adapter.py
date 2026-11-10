@@ -9,6 +9,7 @@ owns database-generation compatibility, output binds, and Document mapping.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -23,8 +24,49 @@ from .._vecdb_sdk.services.sqlnet.query_mapper import SQLNetQueryMapper
 from ._vecdb_filters import translate_filter
 
 # Internal document body field; user metadata remains flat.
-TEXT_KEY = "lc_oracle_content"
+TEXT_KEY = "__orcl_internal_content"
+LOGICAL_ID_KEY = "__orcl_internal_doc_id"
 CURRENT_VERSION = (23, 26, 3)
+
+
+def storage_id(logical_id: str) -> str:
+    """Map every public ID to a deterministic VecDB ID within its 40-byte limit."""
+    return hashlib.sha256(logical_id.encode("utf-8")).hexdigest()[:40]
+
+
+def _json_dumps(value: Any) -> str:
+    """Encode metadata Decimals as exact JSON numbers, never strings or floats."""
+    active: set[int] = set()
+
+    def encode(item: Any) -> str:
+        if isinstance(item, Decimal):
+            if not item.is_finite():
+                raise ValueError("Out of range Decimal values are not JSON compliant")
+            return str(item)
+        if isinstance(item, (dict, list, tuple)):
+            identity = id(item)
+            if identity in active:
+                raise ValueError("Circular reference detected")
+            active.add(identity)
+            try:
+                if isinstance(item, dict):
+                    entries = []
+                    for key, value in item.items():
+                        if not isinstance(key, str):
+                            # Retain the standard encoder's key coercion and errors.
+                            key = next(
+                                iter(
+                                    json.loads(json.dumps({key: None}, allow_nan=False))
+                                )
+                            )
+                        entries.append(f"{json.dumps(key)}: {encode(value)}")
+                    return "{" + ", ".join(entries) + "}"
+                return "[" + ", ".join(encode(value) for value in item) + "]"
+            finally:
+                active.remove(identity)
+        return json.dumps(item, allow_nan=False)
+
+    return encode(value)
 
 
 def as_dict(response: Any) -> dict[str, Any]:
@@ -68,8 +110,10 @@ def document(row: dict[str, Any]) -> Document:
     if not isinstance(text, str) or not isinstance(row.get("id"), str):
         raise ValueError("VecDB document is missing its ID or metadata text")
     # The SQL backend's private ID field is not part of public metadata.
-    metadata.pop(INTERNAL_ID_KEY, None)
-    return Document(id=row["id"], page_content=text, metadata=metadata)
+    logical_id = metadata.pop(INTERNAL_ID_KEY, row["id"])
+    if not isinstance(logical_id, str):
+        raise ValueError("VecDB document has an invalid logical ID")
+    return Document(id=logical_id, page_content=text, metadata=metadata)
 
 
 def _hybrid_documents(
@@ -139,7 +183,9 @@ def search_request(
         ):
             raise ValueError("output_selector must be a list of metadata key strings")
         # Selectors project metadata only. ID/distance/vector remain response fields.
-        request["output_selector"] = list(dict.fromkeys([*selector, TEXT_KEY]))
+        request["output_selector"] = list(
+            dict.fromkeys([*selector, TEXT_KEY, LOGICAL_ID_KEY])
+        )
     validate_operation_arguments("query", request)
     return request
 
@@ -239,9 +285,7 @@ class SQLNetAdapter:
                 "annotations",
                 "debug_flags",
             }:
-                params[key] = (
-                    json.dumps(value, allow_nan=False) if value is not None else None
-                )
+                params[key] = _json_dumps(value) if value is not None else None
                 arguments.append(f"{key} => JSON(:{key})")
             else:
                 arguments.append(f"{key} => :{key}")

@@ -185,7 +185,7 @@ synchronous connection, pool, or REST client; clients remain caller-owned.
   exposes those Oracle Text scores. Keyword-only hybrid retrieval reports
   `vector_score=0`. Numeric document metadata is decoded as `Decimal`, matching
   SQL JSON metadata; booleans and nulls retain their types.
-- VecDB reserves metadata key `lc_oracle_content` for document content;
+- VecDB reserves metadata key `__orcl_internal_content` for document content;
   user metadata can contain `text`. Search scores remain
   lower-is-better distances; `output_selector` and `advanced_options` expose SDK
   query options.

@@ -5,6 +5,7 @@
 import json
 from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +18,9 @@ from langchain_oracledb.vectorstores._vecdb import (
     VecDBBackend,
 )
 from langchain_oracledb.vectorstores._vecdb_adapter import (
+    LOGICAL_ID_KEY,
     SQLNetAdapter,
+    _json_dumps,
     as_dict,
     document,
     hybrid_search_request,
@@ -172,7 +175,7 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
     params = {
         "hybrid_index_name": "HVI",
         "vector": {"search_vector": [1.0, 0.0], "aggregator_params": ["AVGN", 5, 50]},
-        "text": {"json_textcontains": ["$.lc_oracle_content", '"oracle"']},
+        "text": {"json_textcontains": ["$.__orcl_internal_content", '"oracle"']},
         "search_fusion": "UNION",
         "return": {"topN": 7},
     }
@@ -180,8 +183,11 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
     result = hybrid_search_request("DOCS", params)
     assert result["vector"]["search_vector"] == "[1.0, 0.0]"
     assert result["vector"]["aggregator_params"] == ["AVGN", 5, 50]
-    assert result["text"]["inpath"] == ["$.lc_oracle_content"]
-    assert result["text"]["json_textcontains"] == ["$.lc_oracle_content", '"oracle"']
+    assert result["text"]["inpath"] == ["$.__orcl_internal_content"]
+    assert result["text"]["json_textcontains"] == [
+        "$.__orcl_internal_content",
+        '"oracle"',
+    ]
     assert result["return"]["topN"] == 7
     assert result["return"]["format"] == "JSON"
     assert "rowid" in result["return"]["values"]
@@ -202,7 +208,7 @@ def test_hybrid_rejects_invalid_vectors_without_native_access(vector):
 def test_hybrid_mode_survives_request_adaptation(mode):
     params = {"hybrid_index_name": "HVI", "search_fusion": mode}
     if mode == "TEXT_ONLY":
-        params["text"] = {"json_textcontains": ["$.lc_oracle_content", "hello"]}
+        params["text"] = {"json_textcontains": ["$.__orcl_internal_content", "hello"]}
     else:
         params["vector"] = {"search_vector": [1.0]}
     assert hybrid_search_request("DOCS", params)["search_fusion"] == mode
@@ -212,7 +218,7 @@ def test_hybrid_mode_survives_request_adaptation(mode):
 def test_response_adapter_keeps_full_text_id_and_metadata_without_mutation(key):
     item = {
         "id": "a",
-        "metadata": {"lc_oracle_content": "full document", "tenant": "one"},
+        "metadata": {"__orcl_internal_content": "full document", "tenant": "one"},
         "score": 9,
     }
     original = deepcopy(item)
@@ -228,7 +234,9 @@ def test_response_adapter_accepts_pydantic_shape():
     class Response(BaseModel):
         items: list[dict]
 
-    response = Response(items=[{"id": "a", "metadata": {"lc_oracle_content": "hello"}}])
+    response = Response(
+        items=[{"id": "a", "metadata": {"__orcl_internal_content": "hello"}}]
+    )
     assert as_dict(response)["items"][0]["id"] == "a"
 
 
@@ -266,7 +274,7 @@ def test_retriever_mode_maps_to_explicit_sdk_fusion(mode, fusion):
         assert "search_vector" not in request["vector"]
     else:
         assert request["text"]["json_textcontains"] == [
-            "$.lc_oracle_content",
+            "$.__orcl_internal_content",
             '"oracle"',
         ]
     assert request["search_fusion"] == fusion
@@ -287,7 +295,7 @@ def test_retriever_overrides_preserve_options_and_do_not_mutate_inputs():
     assert "search_vector" not in request["vector"]
     assert request["vector"]["aggregator_params"] == ["AVGN", 5, 50]
     assert request["text"]["json_textcontains"] == [
-        "$.lc_oracle_content",
+        "$.__orcl_internal_content",
         '"oracle"',
     ]
     assert request["search_fusion"] == "INTERSECT"
@@ -329,3 +337,81 @@ def test_explicit_sdk_hnsw_settings_override_mapped_defaults():
         "efConstruction": 200,
     }
     assert requested == {"advanced_params": {"neighbors": 16}}
+
+
+@pytest.mark.parametrize("version", [(23, 26, 1), (23, 26, 3)])
+def test_retrieved_numeric_metadata_can_be_modified_and_upserted(version):
+    connection = MagicMock()
+    cursor = connection.cursor.return_value.__enter__.return_value
+    cursor.var.return_value.getvalue.return_value = (
+        '{"vectors": [{"id": "a", "metadata": {'
+        '"__orcl_internal_content": "original", "count": 1, '
+        '"nested": [12345678901234567890123456789012345678, '
+        '0.12345678901234567890123456789012345678], "enabled": true}}]}'
+    )
+    backend = VecDBBackend(
+        NativeTransport(object(), version), "DOCS", DistanceStrategy.COSINE
+    )
+
+    @contextmanager
+    def get(_):
+        yield connection
+
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        doc = backend.get(["a"])[0]
+        assert isinstance(doc.metadata["count"], Decimal)
+        doc.metadata["count"] += 1
+        doc.page_content = "updated"
+        expected = deepcopy(doc.metadata)
+        assert backend.add(
+            [doc.page_content], [[1.0]], [doc.metadata], [doc.id], True
+        ) == ["a"]
+
+    payload = cursor.execute.call_args.kwargs["vectors"]
+    record = json.loads(payload, parse_int=Decimal, parse_float=Decimal)[0]
+    assert record["metadata"] == {
+        **expected,
+        "__orcl_internal_content": "updated",
+        LOGICAL_ID_KEY: "a",
+    }
+    assert record["metadata"]["count"] == Decimal(2)
+    assert record["metadata"]["nested"] == [
+        Decimal("12345678901234567890123456789012345678"),
+        Decimal("0.12345678901234567890123456789012345678"),
+    ]
+    assert record["metadata"]["enabled"] is True
+    assert doc.metadata == expected
+
+
+@pytest.mark.parametrize("value", ["NaN", "sNaN", "Infinity", "-Infinity"])
+def test_upsert_rejects_nonfinite_decimal_metadata_before_native_access(value):
+    backend = VecDBBackend(
+        NativeTransport(object(), (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
+    )
+    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as get:
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            backend.add(["text"], [[1.0]], [{"count": Decimal(value)}], ["a"], True)
+    get.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {
+            "text": 'quote" and unicode: é',
+            "flag": True,
+            "empty": None,
+            "values": (1, 0.5),
+        },
+        {1: "integer key", False: "boolean key", None: "null key"},
+    ],
+)
+def test_decimal_serializer_preserves_standard_json_encoding(value):
+    assert _json_dumps(value) == json.dumps(value, allow_nan=False)
+
+
+def test_decimal_serializer_rejects_circular_metadata():
+    metadata = {}
+    metadata["self"] = metadata
+    with pytest.raises(ValueError, match="Circular reference"):
+        _json_dumps(metadata)

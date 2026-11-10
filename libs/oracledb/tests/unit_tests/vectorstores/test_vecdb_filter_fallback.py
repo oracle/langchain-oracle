@@ -43,7 +43,7 @@ def test_fallback_projection_keeps_id_score_and_requested_embeddings():
     request = search_request(
         "DOCS", "COSINE", [1.0], 1, None, True, {"output_selector": ["tenant"]}
     )
-    metadata = {"tenant": "a", "other": "hidden", "lc_oracle_content": "body"}
+    metadata = {"tenant": "a", "other": "hidden", "__orcl_internal_content": "body"}
     response = _filter_response([("a", metadata, 0.25, [1.0])], request)
     assert response == {
         "results": [
@@ -51,7 +51,7 @@ def test_fallback_projection_keeps_id_score_and_requested_embeddings():
                 "id": "a",
                 "distance": 0.25,
                 "vector": [1.0],
-                "metadata": {"tenant": "a", "lc_oracle_content": "body"},
+                "metadata": {"tenant": "a", "__orcl_internal_content": "body"},
             }
         ]
     }

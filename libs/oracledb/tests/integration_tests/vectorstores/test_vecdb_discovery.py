@@ -46,7 +46,10 @@ async def test_discovery_is_reused_and_external_column_change_refreshes(
                     [
                         "one",
                         array.array("f", [1.0, 0.0, 0.0]),
-                        {"lc_oracle_content": "oracle database", "text": "userlabel"},
+                        {
+                            "__orcl_internal_content": "oracle database",
+                            "text": "userlabel",
+                        },
                     ],
                 )
                 connection.commit()

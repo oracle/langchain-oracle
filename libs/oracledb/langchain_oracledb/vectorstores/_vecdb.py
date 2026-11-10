@@ -30,6 +30,7 @@ from .._telemetry import tag_sql
 from .._vecdb_sdk.parameter_validation import validate_operation_arguments
 from ._vecdb_adapter import (
     CURRENT_VERSION,
+    LOGICAL_ID_KEY,
     TEXT_KEY,
     SQLNetAdapter,
     _hybrid_documents,
@@ -39,6 +40,7 @@ from ._vecdb_adapter import (
     hybrid_search_request,
     rows,
     search_request,
+    storage_id,
     validate_hybrid_request,
 )
 from ._vecdb_capabilities import (
@@ -1338,15 +1340,19 @@ class VecDBBackend:
             raise ValueError("Text and embedding batch sizes must match")
         records = []
         for text, vector, metadata, id_ in zip(texts, vectors, metadatas, ids):
+            if LOGICAL_ID_KEY in metadata:
+                raise ValueError(
+                    f"Document metadata key {LOGICAL_ID_KEY!r} is reserved"
+                )
             if TEXT_KEY in metadata:
                 raise ValueError(
                     f"Document metadata key {TEXT_KEY!r} is reserved for content"
                 )
             records.append(
                 {
-                    "id": id_,
+                    "id": storage_id(id_),
                     "dense_vector": vector,
-                    "metadata": {**metadata, TEXT_KEY: text},
+                    "metadata": {**metadata, TEXT_KEY: text, LOGICAL_ID_KEY: id_},
                 }
             )
         return records
@@ -1369,7 +1375,9 @@ class VecDBBackend:
                     "set mutate_on_duplicate=True to enable upserts "
                     "(existing IDs will be overwritten)"
                 )
-            return self.transport.insert(self.name, records)
+            inserted = self.transport.insert(self.name, records)
+            logical_ids = {record["id"]: id_ for record, id_ in zip(records, ids)}
+            return [logical_ids[id_] for id_ in inserted]
         self.transport.call("upsert_vectors", table_name=self.name, vectors=records)
         return ids
 
@@ -1433,7 +1441,7 @@ class VecDBBackend:
             return []
         result: list[Document] = []
         for offset in range(0, len(ids), 100):
-            batch = ids[offset : offset + 100]
+            batch = [storage_id(id_) for id_ in ids[offset : offset + 100]]
             response = self.query(
                 "list_vectors",
                 table_name=self.name,
@@ -1445,7 +1453,11 @@ class VecDBBackend:
         return result
 
     def delete(self, ids: Optional[list[str]]) -> None:
-        self.transport.call("delete_vectors", table_name=self.name, ids=ids)
+        self.transport.call(
+            "delete_vectors",
+            table_name=self.name,
+            ids=None if ids is None else [storage_id(id_) for id_ in ids],
+        )
 
     def text_search(self, query: str, k: int, scores: bool = False) -> list[Document]:
         return self.transport.text_search(self.name, query, k, scores)
@@ -1662,21 +1674,25 @@ class VecDBBackend:
             if not records:
                 return []
             if not mutate:
-                return await self.transport.ainsert(self.name, records)
+                inserted = await self.transport.ainsert(self.name, records)
+                logical_ids = {record["id"]: id_ for record, id_ in zip(records, ids)}
+                return [logical_ids[id_] for id_ in inserted]
             await self.transport.acall(
                 "upsert_vectors", table_name=self.name, vectors=records
             )
             return ids
         if method == "delete":
             await self.transport.acall(
-                "delete_vectors", table_name=self.name, ids=args[0]
+                "delete_vectors",
+                table_name=self.name,
+                ids=None if args[0] is None else [storage_id(id_) for id_ in args[0]],
             )
             return
         if method == "get":
             ids = args[0]
             result: list[Document] = []
             for offset in range(0, len(ids), 100):
-                batch = ids[offset : offset + 100]
+                batch = [storage_id(id_) for id_ in ids[offset : offset + 100]]
                 response = await self.aquery(
                     "list_vectors",
                     table_name=self.name,

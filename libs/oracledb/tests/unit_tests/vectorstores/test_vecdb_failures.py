@@ -30,7 +30,7 @@ def test_emitted_function_contract(version, operation):
                 {
                     "id": "one",
                     "dense_vector": [1.0],
-                    "metadata": {"lc_oracle_content": "one"},
+                    "metadata": {"__orcl_internal_content": "one"},
                 }
             ],
         }
@@ -135,7 +135,11 @@ async def test_insert_failure_preserves_primary_error(
     transport.columns = MagicMock(return_value=_vecdb.CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=_vecdb.CURRENT_COLUMNS)
     records = [
-        {"id": "one", "dense_vector": [1.0], "metadata": {"lc_oracle_content": "one"}}
+        {
+            "id": "one",
+            "dense_vector": [1.0],
+            "metadata": {"__orcl_internal_content": "one"},
+        }
     ]
     with pytest.raises(type(error)) as caught:
         if asynchronous:

@@ -636,7 +636,7 @@ class TestGetPreferenceParameters:
         vs.embedding_function = _make_embeddings(provider="database", model="allminilm")
         pref = _make_preference(vs=vs)
         assert pref._get_preference_parameters()["paths"] == [
-            {"type": "STRING", "path_list": ["$.lc_oracle_content"]}
+            {"type": "STRING", "path_list": ["$.__orcl_internal_content"]}
         ]
 
     def test_database_provider_sets_model_key(self):

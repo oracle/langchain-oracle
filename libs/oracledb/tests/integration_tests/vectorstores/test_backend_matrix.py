@@ -133,7 +133,7 @@ def database_matrix():
                                 "seed",
                                 array.array("f", [1, 0, 0]),
                                 {
-                                    "lc_oracle_content": "oracle existing seed",
+                                    "__orcl_internal_content": "oracle existing seed",
                                     "tenant": "base",
                                 },
                             ],
@@ -541,7 +541,7 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
                     [("added",), ("seed",)] if name == target else [("seed",)]
                 )
             cursor.execute(
-                f"SELECT JSON_VALUE(CONTENT_METADATA, '$.lc_oracle_content') "
+                f"SELECT JSON_VALUE(CONTENT_METADATA, '$.__orcl_internal_content') "
                 f"FROM {target} WHERE ID='added'"
             )
             assert cursor.fetchone()[0] == "oracle target"
@@ -898,17 +898,17 @@ async def test_native_vecdb_batch_commits_successful_rows(
         {
             "id": valid,
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"lc_oracle_content": "valid"},
+            "metadata": {"__orcl_internal_content": "valid"},
         },
         {
             "id": "seed",
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"lc_oracle_content": "duplicate"},
+            "metadata": {"__orcl_internal_content": "duplicate"},
         },
         {
             "id": "fatal",
             "dense_vector": [1.0, 0.0],
-            "metadata": {"lc_oracle_content": "wrong dimension"},
+            "metadata": {"__orcl_internal_content": "wrong dimension"},
         },
     ]
     connection = (
@@ -945,7 +945,8 @@ async def test_native_vecdb_batch_commits_successful_rows(
                     f'SELECT CONTENT_METADATA FROM "{name}" WHERE ID=:id', id="seed"
                 )
                 assert (
-                    cursor.fetchone()[0]["lc_oracle_content"] == "oracle existing seed"
+                    cursor.fetchone()[0]["__orcl_internal_content"]
+                    == "oracle existing seed"
                 )
     finally:
         if asynchronous:
@@ -1059,7 +1060,7 @@ async def test_native_pool_operation_keeps_checkout_schema(
         {
             "id": id_,
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"lc_oracle_content": "oracle pool insert"},
+            "metadata": {"__orcl_internal_content": "oracle pool insert"},
         }
     ]
     pool = (AlternatingAsyncPool if asynchronous else AlternatingPool)(
@@ -1142,7 +1143,7 @@ async def test_native_function_signatures_compile_without_execution(
                 {
                     "id": "never",
                     "dense_vector": [1.0, 0.0, 0.0],
-                    "metadata": {"lc_oracle_content": "never"},
+                    "metadata": {"__orcl_internal_content": "never"},
                 }
             ],
         }
@@ -1203,7 +1204,7 @@ async def test_native_insert_real_driver_failure_outcomes(
         {
             "id": identifier,
             "dense_vector": [1.0, 0.0, 0.0],
-            "metadata": {"lc_oracle_content": "failure fixture"},
+            "metadata": {"__orcl_internal_content": "failure fixture"},
         }
     ]
     connection = (
@@ -1453,7 +1454,7 @@ async def test_native_metadata_replacement_recovers_real_index_and_ingestion(
                 "id": identifier,
                 "dense_vector": [1.0, 0.0, 0.0],
                 "metadata": {
-                    "lc_oracle_content": "recoveryprobe",
+                    "__orcl_internal_content": "recoveryprobe",
                     "tenant": "afterrestore",
                 },
             }

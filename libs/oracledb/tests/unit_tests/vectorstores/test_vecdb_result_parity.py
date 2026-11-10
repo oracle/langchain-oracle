@@ -13,7 +13,11 @@ from langchain_oracledb.vectorstores._vecdb_adapter import (
 
 
 def test_numeric_metadata_matches_sql_without_mutating_input():
-    metadata = {"lc_oracle_content": "oracle", "count": 2, "nested": [1.25, True, None]}
+    metadata = {
+        "__orcl_internal_content": "oracle",
+        "count": 2,
+        "nested": [1.25, True, None],
+    }
     result = document({"id": "a", "metadata": metadata})
     assert type(result.metadata["count"]) is Decimal
     assert type(result.metadata["nested"][0]) is Decimal
@@ -24,7 +28,7 @@ def test_numeric_metadata_matches_sql_without_mutating_input():
 
 def test_json_response_preserves_decimal_precision():
     row = as_dict(
-        '{"id":"a","metadata":{"lc_oracle_content":"oracle",'
+        '{"id":"a","metadata":{"__orcl_internal_content":"oracle",'
         '"number":123456789.123456789,"count":9007199254740993}}'
     )
     result = document(row)
@@ -36,8 +40,8 @@ def test_json_response_preserves_decimal_precision():
 def test_keyword_result_uses_database_score_and_order(scores):
     docs = _text_documents(
         [
-            ("z", {"lc_oracle_content": "most relevant"}, 37),
-            ("a", {"lc_oracle_content": "less relevant"}, 12),
+            ("z", {"__orcl_internal_content": "most relevant"}, 37),
+            ("a", {"__orcl_internal_content": "less relevant"}, 12),
         ],
         scores,
     )
@@ -50,7 +54,7 @@ def test_keyword_result_uses_database_score_and_order(scores):
 @pytest.mark.parametrize("keyword_only", [False, True])
 def test_keyword_hybrid_vector_contribution_is_zero(keyword_only):
     result = _hybrid_documents(
-        [("a", {"lc_oracle_content": "oracle"}, 9, 2, 58.16)],
+        [("a", {"__orcl_internal_content": "oracle"}, 9, 2, 58.16)],
         True,
         keyword_only=keyword_only,
     )
@@ -61,7 +65,7 @@ def test_keyword_hybrid_vector_contribution_is_zero(keyword_only):
 
 @pytest.mark.parametrize("hybrid", [False, True])
 def test_text_search_results_preserve_user_text_metadata(hybrid):
-    metadata = {"lc_oracle_content": "document body", "text": "user label"}
+    metadata = {"__orcl_internal_content": "document body", "text": "user label"}
     result = (
         _hybrid_documents([("a", metadata, 9, 2, 7)], False)
         if hybrid
@@ -69,4 +73,7 @@ def test_text_search_results_preserve_user_text_metadata(hybrid):
     )
     assert result[0].page_content == "document body"
     assert result[0].metadata == {"text": "user label"}
-    assert metadata == {"lc_oracle_content": "document body", "text": "user label"}
+    assert metadata == {
+        "__orcl_internal_content": "document body",
+        "text": "user label",
+    }

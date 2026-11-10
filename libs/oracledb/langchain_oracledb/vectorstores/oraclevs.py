@@ -1174,7 +1174,7 @@ class OracleVS(VectorStore):
             self.query = query
             self.distance_strategy = distance_strategy
             self.params = params
-            self.mutate_on_duplicate = mutate_on_duplicate
+            self.mutate_on_duplicate: Optional[bool] = mutate_on_duplicate
             self._vecdb = VecDBBackend(
                 transport,
                 table_name,

@@ -69,7 +69,7 @@ def test_preflight_never_accepts_ddl_or_non_adapter_sql(statement):
                     {
                         "id": "one",
                         "dense_vector": [1.0],
-                        "metadata": {"lc_oracle_content": "one"},
+                        "metadata": {"__orcl_internal_content": "one"},
                     }
                 ],
             },
@@ -163,7 +163,10 @@ async def test_get_by_ids_executes_one_statement_per_batch(native):
     assert cursor.execute.call_count == 2
     assert [
         json.loads(call.kwargs["ids_json"]) for call in cursor.execute.call_args_list
-    ] == [ids[:100], ids[100:]]
+    ] == [
+        [_vecdb.storage_id(id_) for id_ in ids[:100]],
+        [_vecdb.storage_id(id_) for id_ in ids[100:]],
+    ]
     assert all("IF FALSE" not in call.args[0] for call in cursor.execute.call_args_list)
     if asynchronous:
         assert cursor.execute.await_count == 2
