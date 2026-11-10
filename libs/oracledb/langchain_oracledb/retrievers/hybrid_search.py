@@ -541,7 +541,8 @@ def create_hybrid_index(
     """Create a HYBRID VECTOR INDEX if it does not already exist.
 
     For a VecDB store, this replaces the metadata guide/text index while retaining
-    its physical name, data-guide callback, and compatible settings. Existing HVI
+    its physical name, data-guide callback, and compatible settings. VecDB
+    retrieval discovers that physical index; its idx_name is ignored. Existing HVI
     indexes are reused. Replacement requires a connection without pending work.
 
     The index uses either the provided OracleVectorizerPreference or, if
@@ -804,7 +805,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
     vector_store: OracleVS
     """OracleVS VectorStore"""
     idx_name: str
-    """Hybrid Index name"""
+    """SQL hybrid index name. VecDB ignores this and discovers its physical index."""
     search_mode: Optional[Literal["keyword", "hybrid", "semantic"]] = (
         "hybrid"  # keyword, hybrid, semantic
     )

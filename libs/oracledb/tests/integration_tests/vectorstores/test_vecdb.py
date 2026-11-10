@@ -225,7 +225,7 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
     text = OracleTextSearchRetriever(vector_store=store)
     assert [doc.id for doc in text.invoke("newpathmarker")] == ["new"]
     hybrid = OracleHybridSearchRetriever(
-        vector_store=store, idx_name=actual_name, return_scores=True
+        vector_store=store, idx_name="REQUESTED_HYBRID_NAME", return_scores=True
     )
     hits = hybrid.invoke("oracle")
     assert hits
@@ -233,7 +233,7 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
     assert any(doc.metadata["vector_score"] > 0 for doc in hits)
     keyword = OracleHybridSearchRetriever(
         vector_store=store,
-        idx_name=actual_name,
+        idx_name="REQUESTED_HYBRID_NAME",
         search_mode="keyword",
         return_scores=True,
     )
@@ -362,6 +362,7 @@ async def test_native_hybrid_explicit_index_and_discovery(
     from langchain_oracledb.embeddings import OracleEmbeddings
     from langchain_oracledb.retrievers.hybrid_search import (
         OracleHybridSearchRetriever,
+        acreate_hybrid_index,
         create_hybrid_index,
     )
 
@@ -373,9 +374,6 @@ async def test_native_hybrid_explicit_index_and_discovery(
         conn=connection, params={"provider": "database", "model": model}
     )
     seed.add_texts(["oracle database"], ids=["one"])
-    create_hybrid_index(connection, "REQUESTED_ALIAS", vector_store=seed)
-    actual_name, _ = metadata_index(connection, seed)
-    sync_metadata_index(connection, actual_name)
     config = native_config("vecdb")
     if asynchronous:
         client = (
@@ -397,8 +395,20 @@ async def test_native_hybrid_explicit_index_and_discovery(
     )
     try:
         store = await OracleVS.acreate(**kwargs) if asynchronous else OracleVS(**kwargs)
-        # Explicit names are physical names; creation may reuse the guide index.
-        for name in (actual_name, f'"{actual_name}"'):
+        store.embedding_function = seed.embedding_function
+        if asynchronous:
+            assert (
+                await acreate_hybrid_index(client, "MY_INDEX", vector_store=store)
+                is None
+            )
+        else:
+            assert create_hybrid_index(client, "MY_INDEX", vector_store=store) is None
+        # Catalog inspection is only for deterministic fixture synchronization,
+        # not to configure the retriever or choose its index name.
+        actual_name, _ = metadata_index(connection, seed)
+        sync_metadata_index(connection, actual_name)
+        # Reuse the requested creation name; callers need no catalog lookup.
+        for name in ("MY_INDEX", '"MY_INDEX"'):
             retriever = OracleHybridSearchRetriever(
                 vector_store=store, idx_name=name, search_mode="keyword"
             )
@@ -415,17 +425,15 @@ async def test_native_hybrid_explicit_index_and_discovery(
             else store._vecdb.hybrid_search(params, False)
         )
         assert [doc.id for doc in hits] == ["one"]
-        missing = OracleHybridSearchRetriever(
+        # VecDB owns the index, so even a different configured name resolves
+        # to the same physical index rather than targeting an unrelated index.
+        other = OracleHybridSearchRetriever(
             vector_store=store,
-            idx_name="MISSING_" + uuid.uuid4().hex[:12].upper(),
+            idx_name="IGNORED_" + uuid.uuid4().hex[:12].upper(),
             search_mode="keyword",
         )
-        # A typo must not silently search the valid, discovered index instead.
-        with pytest.raises(oracledb.DatabaseError, match="DRG-10502"):
-            if asynchronous:
-                await missing.ainvoke("oracle")
-            else:
-                missing.invoke("oracle")
+        hits = await other.ainvoke("oracle") if asynchronous else other.invoke("oracle")
+        assert [doc.id for doc in hits] == ["one"]
     finally:
         if asynchronous:
             await client.close()

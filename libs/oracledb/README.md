@@ -232,6 +232,10 @@ synchronous connection, pool, or REST client; clients remain caller-owned.
   For example, `create_index(store.client, store, {"idx_type": "IVF",
   "neighbor_part": 32, "accuracy": 90})` maps `neighbor_part` to VecDB partitions.
   VecDB owns the physical index name, so `idx_name` is not applied.
+- For VecDB, hybrid index creation retains the table's physical metadata index
+  name. `OracleHybridSearchRetriever` discovers and uses that index, ignoring
+  `idx_name`. The requested name can be reused in the usual create/retrieve flow;
+  no catalog lookup is needed. For SQL stores, `idx_name` selects the index.
 - No distribution setting is injected. Supply `distribute_params` explicitly only
   when appropriate for the target database. Explicit HNSW/IVF requests use the
   LangChain construction defaults where the package requires concrete values;

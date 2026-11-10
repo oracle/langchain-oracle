@@ -1057,15 +1057,12 @@ class NativeTransport:
         validate_hybrid_request(params)
         with _get_connection(self.client) as connection:
             info = self._search_info(name)
-            requested = params.get("hybrid_index_name")
-            if requested:
-                _identifier_parts(requested)
-                requested = _quote_indentifier(requested)
-            # Discover the physical index only when the caller did not select one.
-            if not requested and info.hybrid_index is None:
+            # VecDB conversion retains the table's metadata index name. The
+            # caller's creation/retriever name need not be that physical name.
+            if info.hybrid_index is None:
                 info = self.discover(name)
             for attempt in range(2):
-                index = requested or info.hybrid_index
+                index = info.hybrid_index
                 if index is None:
                     raise ValueError(
                         "Create a hybrid vector index on the VecDB "
@@ -2069,15 +2066,12 @@ class AsyncNativeTransport(NativeTransport):
         validate_hybrid_request(params)
         async with _aget_connection(self.client) as connection:
             info = await self._asearch_info(name)
-            requested = params.get("hybrid_index_name")
-            if requested:
-                _identifier_parts(requested)
-                requested = _quote_indentifier(requested)
-            # Discover the physical index only when the caller did not select one.
-            if not requested and info.hybrid_index is None:
+            # VecDB conversion retains the table's metadata index name. The
+            # caller's creation/retriever name need not be that physical name.
+            if info.hybrid_index is None:
                 info = await self.adiscover(name)
             for attempt in range(2):
-                index = requested or info.hybrid_index
+                index = info.hybrid_index
                 if index is None:
                     raise ValueError(
                         "Create a hybrid vector index on the VecDB "

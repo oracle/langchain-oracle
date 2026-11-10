@@ -613,13 +613,13 @@ async def test_stale_layout_refresh_retries_only_once(sessions):
 
 
 @pytest.mark.asyncio
-async def test_explicitly_qualified_hybrid_index_is_preserved(sessions):
+async def test_vecdb_ignores_qualified_requested_hybrid_index(sessions):
     s = sessions
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
     s.a.log.clear()
-    qualified = '"SCHEMA_A"."GUIDE"'
+    qualified = '"OTHER_SCHEMA"."REQUESTED"'
     result = await invoke(
         s,
         "hybrid_search",
@@ -628,7 +628,7 @@ async def test_explicitly_qualified_hybrid_index_is_preserved(sessions):
     )
     assert result[0].page_content == "SCHEMA_A"
     assert len(s.a.log) == 1
-    assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == qualified
+    assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == '"GUIDE"'
 
 
 @pytest.mark.asyncio
@@ -764,7 +764,7 @@ async def test_sql_filter_fallback_refreshes_layout_on_same_session(sessions):
 @pytest.mark.parametrize("requested", ["REQUESTED", '"REQUESTED"', '"index.with.dot"'])
 @pytest.mark.parametrize("discovered_hybrid", [False, True])
 @pytest.mark.asyncio
-async def test_explicit_hybrid_index_takes_precedence_over_cached_discovery(
+async def test_vecdb_search_uses_physical_index_instead_of_requested_name(
     sessions, requested, discovered_hybrid
 ):
     s = sessions
@@ -772,38 +772,47 @@ async def test_explicit_hybrid_index_takes_precedence_over_cached_discovery(
     if discovered_hybrid:
         s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
-    # An explicit index may differ from the metadata index found at preparation.
-    s.a.index_name = requested.strip('"')
     s.a.log.clear()
     params = {"text": {"search_text": "oracle"}, "hybrid_index_name": requested}
+    if not discovered_hybrid:
+        with pytest.raises(ValueError, match="Create a hybrid vector index"):
+            await invoke(s, "hybrid_search", params, False)
+        assert not any("search_params" in binds for _, binds in s.a.log)
+        return
     result = await invoke(s, "hybrid_search", params, False)
     assert result[0].page_content == "SCHEMA_A"
     assert len(s.a.log) == 1
-    assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == (
-        f'"{s.a.index_name}"'
-    )
+    assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == '"GUIDE"'
     assert params["hybrid_index_name"] == requested
 
 
 @pytest.mark.asyncio
-async def test_missing_explicit_hybrid_index_never_falls_back_to_discovered_index(
-    sessions,
-):
+async def test_vecdb_creation_and_retrieval_share_the_retained_physical_index(sessions):
     s = sessions
     use_one_session(s)
-    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
-    await invoke(s, "prepare")
-    s.a.log.clear()
-    with pytest.raises(RuntimeError, match="DRG-10502"):
-        await invoke(
-            s,
-            "hybrid_search",
-            {"text": {"search_text": "oracle"}, "hybrid_index_name": "MISSING"},
-            False,
+    store = OracleVS.__new__(OracleVS)
+    store._vecdb = s.backend
+    store.client = s.pool
+    store.table_name = s.backend.quoted
+    store.embedding_function = MagicMock(spec=OracleEmbeddings)
+    store.embedding_function.params = {"provider": "database", "model": "MODEL"}
+    if s.asynchronous:
+        assert (
+            await acreate_hybrid_index(s.pool, "MY_INDEX", vector_store=store) is None
         )
-    searches = [
-        json.loads(binds["search_params"])["hybrid_index_name"]
-        for _, binds in s.a.log
-        if "search_params" in binds
-    ]
-    assert searches == ['"MISSING"', '"MISSING"']
+    else:
+        assert create_hybrid_index(s.pool, "MY_INDEX", vector_store=store) is None
+    s.a.log.clear()
+    from langchain_oracledb.retrievers.hybrid_search import OracleHybridSearchRetriever
+
+    retriever = OracleHybridSearchRetriever(
+        vector_store=store, idx_name="MY_INDEX", search_mode="keyword"
+    )
+    result = (
+        await retriever.ainvoke("oracle")
+        if s.asynchronous
+        else retriever.invoke("oracle")
+    )
+    assert result[0].page_content == "SCHEMA_A"
+    assert len(s.a.log) == 1
+    assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == '"GUIDE"'
