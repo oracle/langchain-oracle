@@ -1057,21 +1057,20 @@ class NativeTransport:
         validate_hybrid_request(params)
         with _get_connection(self.client) as connection:
             info = self._search_info(name)
-            # An index may have been created externally since store initialization.
-            if info.hybrid_index is None:
+            requested = params.get("hybrid_index_name")
+            if requested:
+                _identifier_parts(requested)
+                requested = _quote_indentifier(requested)
+            # Discover the physical index only when the caller did not select one.
+            if not requested and info.hybrid_index is None:
                 info = self.discover(name)
             for attempt in range(2):
-                if info.hybrid_index is None:
+                index = requested or info.hybrid_index
+                if index is None:
                     raise ValueError(
                         "Create a hybrid vector index on the VecDB "
                         "metadata column first"
                     )
-                requested = params.get("hybrid_index_name")
-                index = (
-                    requested
-                    if requested and len(_identifier_parts(requested)) == 2
-                    else info.hybrid_index
-                )
                 request = hybrid_search_request(
                     name, {**params, "hybrid_index_name": index}
                 )
@@ -2070,21 +2069,20 @@ class AsyncNativeTransport(NativeTransport):
         validate_hybrid_request(params)
         async with _aget_connection(self.client) as connection:
             info = await self._asearch_info(name)
-            # An index may have been created externally since store initialization.
-            if info.hybrid_index is None:
+            requested = params.get("hybrid_index_name")
+            if requested:
+                _identifier_parts(requested)
+                requested = _quote_indentifier(requested)
+            # Discover the physical index only when the caller did not select one.
+            if not requested and info.hybrid_index is None:
                 info = await self.adiscover(name)
             for attempt in range(2):
-                if info.hybrid_index is None:
+                index = requested or info.hybrid_index
+                if index is None:
                     raise ValueError(
                         "Create a hybrid vector index on the VecDB "
                         "metadata column first"
                     )
-                requested = params.get("hybrid_index_name")
-                index = (
-                    requested
-                    if requested and len(_identifier_parts(requested)) == 2
-                    else info.hybrid_index
-                )
                 request = hybrid_search_request(
                     name, {**params, "hybrid_index_name": index}
                 )

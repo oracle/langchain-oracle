@@ -64,7 +64,7 @@ async def test_scores_vectors_filters_and_long_text(oracle_backend, asynchronous
                 embeddings,
                 store.table_name,
                 backend="auto",
-                mutate_on_duplicate=True,
+                mutate_on_duplicate=store.mutate_on_duplicate,
             )
             assert (await reopened.aget_by_ids(["one"]))[0].page_content == long_text
         else:
@@ -73,7 +73,7 @@ async def test_scores_vectors_filters_and_long_text(oracle_backend, asynchronous
                 embeddings,
                 store.table_name,
                 backend="auto",
-                mutate_on_duplicate=True,
+                mutate_on_duplicate=store.mutate_on_duplicate,
             )
             assert reopened.get_by_ids(["one"])[0].page_content == long_text
         assert reopened.backend == store.backend
@@ -96,7 +96,11 @@ async def test_drop_api_is_repeatable(oracle_backend, asynchronous):
             await store.aadd_texts(["oracle"], ids=["one"])
             await adrop_table_purge(store.client, store.table_name)
             replacement = await OracleVS.acreate(
-                store.client, embeddings, store.table_name, backend=store.backend
+                store.client,
+                embeddings,
+                store.table_name,
+                backend=store.backend,
+                mutate_on_duplicate=store.mutate_on_duplicate,
             )
             assert await replacement.aget_by_ids(["one"]) == []
             await adrop_table_purge(store.client, store.table_name)
@@ -105,7 +109,11 @@ async def test_drop_api_is_repeatable(oracle_backend, asynchronous):
             store.add_texts(["oracle"], ids=["one"])
             drop_table_purge(store.client, store.table_name)
             replacement = OracleVS(
-                store.client, embeddings, store.table_name, backend=store.backend
+                store.client,
+                embeddings,
+                store.table_name,
+                backend=store.backend,
+                mutate_on_duplicate=store.mutate_on_duplicate,
             )
             assert replacement.get_by_ids(["one"]) == []
             drop_table_purge(store.client, store.table_name)

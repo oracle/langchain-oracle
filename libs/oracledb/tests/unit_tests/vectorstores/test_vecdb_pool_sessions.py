@@ -759,3 +759,51 @@ async def test_sql_filter_fallback_refreshes_layout_on_same_session(sessions):
     assert len(queries) == 2
     assert "CONTENT_METADATA AS metadata" in queries[0]
     assert "METADATA AS metadata" in queries[1]
+
+
+@pytest.mark.parametrize("requested", ["REQUESTED", '"REQUESTED"', '"index.with.dot"'])
+@pytest.mark.parametrize("discovered_hybrid", [False, True])
+@pytest.mark.asyncio
+async def test_explicit_hybrid_index_takes_precedence_over_cached_discovery(
+    sessions, requested, discovered_hybrid
+):
+    s = sessions
+    use_one_session(s)
+    if discovered_hybrid:
+        s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    await invoke(s, "prepare")
+    # An explicit index may differ from the metadata index found at preparation.
+    s.a.index_name = requested.strip('"')
+    s.a.log.clear()
+    params = {"text": {"search_text": "oracle"}, "hybrid_index_name": requested}
+    result = await invoke(s, "hybrid_search", params, False)
+    assert result[0].page_content == "SCHEMA_A"
+    assert len(s.a.log) == 1
+    assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == (
+        f'"{s.a.index_name}"'
+    )
+    assert params["hybrid_index_name"] == requested
+
+
+@pytest.mark.asyncio
+async def test_missing_explicit_hybrid_index_never_falls_back_to_discovered_index(
+    sessions,
+):
+    s = sessions
+    use_one_session(s)
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    await invoke(s, "prepare")
+    s.a.log.clear()
+    with pytest.raises(RuntimeError, match="DRG-10502"):
+        await invoke(
+            s,
+            "hybrid_search",
+            {"text": {"search_text": "oracle"}, "hybrid_index_name": "MISSING"},
+            False,
+        )
+    searches = [
+        json.loads(binds["search_params"])["hybrid_index_name"]
+        for _, binds in s.a.log
+        if "search_params" in binds
+    ]
+    assert searches == ['"MISSING"', '"MISSING"']

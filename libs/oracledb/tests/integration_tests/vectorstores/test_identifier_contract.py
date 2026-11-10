@@ -77,7 +77,11 @@ async def test_identifier_crud_and_case_isolation(oracle_backend, asynchronous, 
             )
             assert await factory.aadd_texts(["oracle updated"], ids=["one"]) == ["one"]
             reopened = await OracleVS.acreate(
-                store.client, embeddings, name, backend="auto"
+                store.client,
+                embeddings,
+                name,
+                backend="auto",
+                mutate_on_duplicate=store.mutate_on_duplicate,
             )
             assert (await reopened.aget_by_ids(["one"]))[
                 0
@@ -90,7 +94,13 @@ async def test_identifier_crud_and_case_isolation(oracle_backend, asynchronous, 
                 ["oracle original"], embeddings, ids=["one"], **kwargs
             )
             assert factory.add_texts(["oracle updated"], ids=["one"]) == ["one"]
-            reopened = OracleVS(store.client, embeddings, name, backend="auto")
+            reopened = OracleVS(
+                store.client,
+                embeddings,
+                name,
+                backend="auto",
+                mutate_on_duplicate=store.mutate_on_duplicate,
+            )
             assert reopened.get_by_ids(["one"])[0].page_content == "oracle updated"
             assert reopened.similarity_search("oracle", k=1)[0].id == "one"
             reopened.delete(["one"])

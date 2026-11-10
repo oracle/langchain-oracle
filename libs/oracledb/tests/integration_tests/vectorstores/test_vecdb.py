@@ -225,7 +225,7 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
     text = OracleTextSearchRetriever(vector_store=store)
     assert [doc.id for doc in text.invoke("newpathmarker")] == ["new"]
     hybrid = OracleHybridSearchRetriever(
-        vector_store=store, idx_name="REQUESTED_HYBRID_NAME", return_scores=True
+        vector_store=store, idx_name=actual_name, return_scores=True
     )
     hits = hybrid.invoke("oracle")
     assert hits
@@ -233,7 +233,7 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
     assert any(doc.metadata["vector_score"] > 0 for doc in hits)
     keyword = OracleHybridSearchRetriever(
         vector_store=store,
-        idx_name="REQUESTED_HYBRID_NAME",
+        idx_name=actual_name,
         search_mode="keyword",
         return_scores=True,
     )
@@ -349,3 +349,85 @@ async def test_rest_projected_metadata_and_query_options(vecdb_store, asynchrono
     assert results[0].id == "projection"
     assert results[0].page_content == "oracle projection"
     assert results[0].metadata == {"tenant": "one"}
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("pooled", [False, True], ids=["direct", "pool"])
+@pytest.mark.asyncio
+async def test_native_hybrid_explicit_index_and_discovery(
+    native_index_store, asynchronous, pooled
+):
+    import oracledb
+
+    from langchain_oracledb.embeddings import OracleEmbeddings
+    from langchain_oracledb.retrievers.hybrid_search import (
+        OracleHybridSearchRetriever,
+        create_hybrid_index,
+    )
+
+    model = os.environ.get("ORACLE_VECDB_HYBRID_MODEL")
+    if not model:
+        pytest.skip("Set ORACLE_VECDB_HYBRID_MODEL to an installed embedding model")
+    seed, connection = native_index_store
+    seed.embedding_function = OracleEmbeddings(
+        conn=connection, params={"provider": "database", "model": model}
+    )
+    seed.add_texts(["oracle database"], ids=["one"])
+    create_hybrid_index(connection, "REQUESTED_ALIAS", vector_store=seed)
+    actual_name, _ = metadata_index(connection, seed)
+    sync_metadata_index(connection, actual_name)
+    config = native_config("vecdb")
+    if asynchronous:
+        client = (
+            oracledb.create_pool_async(min=2, max=2, **config)
+            if pooled
+            else await oracledb.connect_async(**config)
+        )
+    else:
+        client = (
+            oracledb.create_pool(min=2, max=2, **config)
+            if pooled
+            else oracledb.connect(**config)
+        )
+    kwargs = dict(
+        client=client,
+        embedding_function=FixedEmbeddings(),
+        table_name=seed.table_name,
+        mutate_on_duplicate=True,
+    )
+    try:
+        store = await OracleVS.acreate(**kwargs) if asynchronous else OracleVS(**kwargs)
+        # Explicit names are physical names; creation may reuse the guide index.
+        for name in (actual_name, f'"{actual_name}"'):
+            retriever = OracleHybridSearchRetriever(
+                vector_store=store, idx_name=name, search_mode="keyword"
+            )
+            hits = (
+                await retriever.ainvoke("oracle")
+                if asynchronous
+                else retriever.invoke("oracle")
+            )
+            assert [doc.id for doc in hits] == ["one"]
+        params = {"text": {"search_text": "oracle"}, "search_fusion": "TEXT_ONLY"}
+        hits = (
+            await store._vecdb.run_async("hybrid_search", params, False)
+            if asynchronous
+            else store._vecdb.hybrid_search(params, False)
+        )
+        assert [doc.id for doc in hits] == ["one"]
+        missing = OracleHybridSearchRetriever(
+            vector_store=store,
+            idx_name="MISSING_" + uuid.uuid4().hex[:12].upper(),
+            search_mode="keyword",
+        )
+        # A typo must not silently search the valid, discovered index instead.
+        with pytest.raises(oracledb.DatabaseError, match="DRG-10502"):
+            if asynchronous:
+                await missing.ainvoke("oracle")
+            else:
+                missing.invoke("oracle")
+    finally:
+        if asynchronous:
+            await client.close()
+        else:
+            client.close()

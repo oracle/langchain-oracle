@@ -44,6 +44,7 @@ async def filter_store(filter_seed, oracle_backend, asynchronous):
             filter_seed.embedding_function,
             filter_seed.table_name,
             backend=filter_seed.backend,
+            mutate_on_duplicate=filter_seed.mutate_on_duplicate,
         )
         yield store
     finally:
