@@ -1498,7 +1498,7 @@ async def test_native_metadata_replacement_recovers_real_index_and_ingestion(
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_native_signature_preflight_rejects_before_package_execution(
+async def test_native_invalid_signature_fails_before_package_execution(
     database_matrix, asynchronous
 ):
     from langchain_oracledb.vectorstores._vecdb import (
@@ -1511,18 +1511,19 @@ async def test_native_signature_preflight_rejects_before_package_execution(
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         client, (23, 26, 4)
     )
-    # Use a nonexistent table, even though the unreachable block cannot invoke DROP.
+    # An invalid argument must fail compilation before DROP can execute.
     statement, binds = transport._statement(
         "drop_vector_table", {"name": "LCM_NEVER_DROP"}
     )
     invalid = statement.replace("name =>", "unsupported_argument =>", 1)
     transport._statement = lambda *args, **kwargs: (invalid, binds)
     try:
-        with pytest.raises(ValueError, match="cannot compile its expected signature"):
+        with pytest.raises(oracledb.DatabaseError) as caught:
             if asynchronous:
                 await transport.acall("drop_vector_table", name="LCM_NEVER_DROP")
             else:
                 transport.call("drop_vector_table", name="LCM_NEVER_DROP")
+        assert caught.value.args[0].code == 6550
         for name, snapshot in baseline.items():
             assert_preserved(connection, name, snapshot)
     finally:

@@ -1188,6 +1188,7 @@ class OracleVS(VectorStore):
             NativeTransport,
             RestTransport,
             VecDBBackend,
+            _inspect_columns,
             is_sdk_client,
             native_selection,
             table_identifier,
@@ -1229,7 +1230,16 @@ class OracleVS(VectorStore):
             return
 
         with _get_connection(client) as connection:
-            selected, version = native_selection(connection, table_name, backend)
+            with connection.cursor() as cursor:
+                columns = _inspect_columns(cursor, table_name)
+            description: dict[str, Any] = {}
+            selected, version = native_selection(
+                connection,
+                table_name,
+                backend,
+                columns=columns,
+                description=description,
+            )
             prepared_index = (
                 _sql_index_ddl(table_name, distance_strategy, vector_index_params)
                 if selected == "sql" and vector_index_params is not None
@@ -1256,7 +1266,7 @@ class OracleVS(VectorStore):
                     embedding=embedding_function,
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
-                self._vecdb.prepare()
+                self._vecdb.prepare(columns=columns, description=description)
                 self._vecdb.transport.client = client
                 self.backend = "vecdb"
             else:
@@ -1330,6 +1340,7 @@ class OracleVS(VectorStore):
         from ._vecdb import (
             AsyncNativeTransport,
             VecDBBackend,
+            _ainspect_columns,
             anative_selection,
             is_sdk_client,
         )
@@ -1356,7 +1367,16 @@ class OracleVS(VectorStore):
         self.backend = "sql"
 
         async with _aget_connection(client) as connection:
-            selected, version = await anative_selection(connection, table_name, backend)
+            with connection.cursor() as cursor:
+                columns = await _ainspect_columns(cursor, table_name)
+            description: dict[str, Any] = {}
+            selected, version = await anative_selection(
+                connection,
+                table_name,
+                backend,
+                columns=columns,
+                description=description,
+            )
             prepared_index = (
                 _sql_index_ddl(table_name, distance_strategy, vector_index_params)
                 if selected == "sql" and vector_index_params is not None
@@ -1383,7 +1403,9 @@ class OracleVS(VectorStore):
                     embedding=embedding_function,
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
-                await self._vecdb.run_async("prepare")
+                await self._vecdb.run_async(
+                    "prepare", columns=columns, description=description
+                )
                 self._vecdb.transport.client = client
                 self.backend = "vecdb"
             else:

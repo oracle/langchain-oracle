@@ -201,7 +201,7 @@ def test_auto_preserves_existing_sql_even_on_current_database():
         "23.26.3", {"ID", "EMBEDDING", "TEXT", "METADATA"}
     )
     assert native_selection(conn, "DOCS", "auto")[0] == "sql"
-    assert cursor.execute.call_count == 3
+    assert cursor.execute.call_count == 2
     with pytest.raises(ValueError) as error:
         native_selection(conn, "DOCS", "vecdb")
     assert str(error.value) == (
@@ -833,7 +833,6 @@ async def test_async_native_query_retries_once():
 
 def test_native_text_index_replaces_guide_preserving_settings():
     transport = NativeTransport(object(), (23, 26, 3))
-    transport.preflight_index = MagicMock()
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     connection = MagicMock()
     connection.transaction_in_progress = False
@@ -993,9 +992,7 @@ def test_native_pool_initialization_does_not_acquire_a_second_connection():
         nonlocal created
         if statement == _vecdb.VECDB_CAPABILITY_SQL:
             cursor.fetchone.return_value = (1, "23.6.0.0.0")
-        if "create_vector_table" in statement.lower() and not statement.startswith(
-            "BEGIN IF FALSE THEN"
-        ):
+        if "create_vector_table" in statement.lower():
             created = True
         if "column_name FROM" in statement:
             cursor.fetchall.return_value = (

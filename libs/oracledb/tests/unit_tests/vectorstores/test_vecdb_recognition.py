@@ -33,8 +33,11 @@ def database(request):
 
     def execute(statement, **binds):
         state["statement"] = statement
-        if "SELECT SYS.DBMS_VECTOR_DATABASE." in statement and state["error"]:
-            raise state["error"]
+        if "SELECT SYS.DBMS_VECTOR_DATABASE." in statement:
+            if state["error"]:
+                raise state["error"]
+            if not state["available"]:
+                raise oracledb.DatabaseError(SimpleNamespace(code=904))
 
     def fetchone():
         if state["statement"] == _vecdb.VECDB_CAPABILITY_SQL:
@@ -74,15 +77,19 @@ async def test_targeted_description_identifies_package_tables(registered, databa
     assert await recognize(database) is registered
     assert cursor.execute.call_args.args == (_vecdb.VECDB_TABLE_SQL,)
     assert cursor.execute.call_args.kwargs == {"name": '"DOCS"'}
-    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_count == 1
 
 
+@pytest.mark.parametrize("code", [904, 6550, 6576])
 @pytest.mark.asyncio
-async def test_absent_package_does_not_execute_package_code(database):
+async def test_absent_package_compile_error_uses_availability_fallback(database, code):
     _, _, cursor, state = database
     state["available"] = False
+    state["error"] = oracledb.DatabaseError(SimpleNamespace(code=code))
     assert not await recognize(database)
-    cursor.execute.assert_called_once_with(_vecdb.VECDB_RECOGNITION_SQL)
+    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_args_list[0].args[0] == _vecdb.VECDB_TABLE_SQL
+    assert cursor.execute.call_args.args[0] == _vecdb.VECDB_RECOGNITION_SQL
 
 
 @pytest.mark.asyncio
@@ -95,10 +102,9 @@ async def test_existing_sql_store_selects_sql_without_vecdb_package(database):
         else _vecdb.native_selection(connection, "DOCS", "auto")
     )
     assert selected[0] == "sql"
-    assert not any(
-        "SELECT SYS.DBMS_VECTOR_DATABASE." in c.args[0]
-        for c in cursor.execute.call_args_list
-    )
+    statements = [call.args[0] for call in cursor.execute.call_args_list]
+    assert statements.count(_vecdb.VECDB_TABLE_SQL) == 1
+    assert statements.count(_vecdb.VECDB_RECOGNITION_SQL) == 1
 
 
 @pytest.mark.parametrize(
@@ -114,7 +120,7 @@ async def test_unqualified_description_matching_ignores_other_objects(database, 
     assert not await recognize(database)
 
 
-@pytest.mark.parametrize("code", [942, 1031, 6550, 3113])
+@pytest.mark.parametrize("code", [904, 942, 1031, 6550, 6576, 3113])
 @pytest.mark.asyncio
 async def test_recognition_errors_never_become_nonmembership(database, code):
     _, _, cursor, state = database
@@ -126,8 +132,9 @@ async def test_recognition_errors_never_become_nonmembership(database, code):
         await recognize(database)
     assert caught.value is error
     # ORA-00942 additionally checks that this is a direct table, rather than
-    # a SQL synonym the package cannot describe. Other errors are never retried.
-    assert cursor.execute.call_count == (3 if code == 942 else 2)
+    # a SQL synonym the package cannot describe. Compilation errors additionally
+    # check availability but still propagate when the operation is available.
+    assert cursor.execute.call_count == (2 if code in {904, 942, 6550, 6576} else 1)
 
 
 @pytest.mark.parametrize(
@@ -292,7 +299,7 @@ async def test_targeted_description_preserves_quoted_owner_and_literal_dots(data
 @pytest.mark.asyncio
 async def test_missing_description_row_is_not_nonmembership(database):
     _, _, cursor, _ = database
-    cursor.fetchone.side_effect = [(1,), None]
+    cursor.fetchone.side_effect = [None]
     with pytest.raises(ValueError, match="Missing VecDB recognition response"):
         await recognize(database)
 
@@ -324,7 +331,7 @@ async def test_legacy_qualified_lookup_returns_only_filtered_membership(database
     }
     cursor.var.assert_called_once_with(int)
     if asynchronous:
-        assert cursor.execute.await_count == 3
+        assert cursor.execute.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -333,7 +340,7 @@ async def test_unqualified_invalid_name_is_not_registry_fallback(database):
     state["error"] = oracledb.DatabaseError(SimpleNamespace(code=44003))
     with pytest.raises(oracledb.DatabaseError):
         await recognize(database)
-    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_count == 1
     assert all(
         "LIST_VECTOR_TABLES" not in call.args[0]
         for call in cursor.execute.call_args_list

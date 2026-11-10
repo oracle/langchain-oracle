@@ -46,14 +46,10 @@ from ._vecdb_adapter import (
     validate_hybrid_request,
 )
 from ._vecdb_capabilities import (
-    INDEX_FEATURES_SQL,
-    function_preflight,
     index_status_query,
     native_index_status,
-    require_index_features,
     sdk_index_state,
     sdk_index_status,
-    signature_error,
 )
 from ._vecdb_filters import SQLFilterRequired
 from .utils import (
@@ -461,7 +457,9 @@ def _membership_flag(value: Any) -> bool:
     return bool(value)
 
 
-def _described_table(name: str, result: tuple) -> bool:
+def _described_table(
+    name: str, result: tuple, description: Optional[dict] = None
+) -> bool:
     payload, schema = result
     # The package returns SQL NULL for an existing, unregistered SQL table.
     if payload is None:
@@ -471,7 +469,10 @@ def _described_table(name: str, result: tuple) -> bool:
         raise ValueError("Malformed VecDB table identity")
     parts = _identifier_parts(name)
     owner = parts[0] if len(parts) == 2 else schema
-    return response["owner"] == owner and response["table_name"] == parts[-1]
+    matched = response["owner"] == owner and response["table_name"] == parts[-1]
+    if matched and description is not None:
+        description.update(response)
+    return matched
 
 
 def _is_sql_synonym(cursor: Any, name: str) -> bool:
@@ -507,15 +508,21 @@ async def _ais_sql_synonym(cursor: Any, name: str) -> bool:
     return {"ID", "TEXT", "METADATA", "EMBEDDING"} <= columns
 
 
-def _is_vecdb_table(cursor: Any, name: str) -> bool:
+def _is_vecdb_table(
+    cursor: Any, name: str, *, description: Optional[dict] = None
+) -> bool:
     """Describe one exact table without transferring the package registry."""
-    cursor.execute(VECDB_RECOGNITION_SQL)
-    if not cursor.fetchone()[0]:
-        return False
     statement, binds = _description_statement(name)
     try:
         cursor.execute(statement, **binds)
     except oracledb.DatabaseError as error:
+        # A direct call avoids a capability query on every successful reopen.
+        # Only an unavailable operation can turn a compile error into nonmembership.
+        if getattr(error.args[0], "code", None) in {904, 6550, 6576}:
+            cursor.execute(VECDB_RECOGNITION_SQL)
+            if not cursor.fetchone()[0]:
+                return False
+            raise
         if getattr(error.args[0], "code", None) == 942 and _is_sql_synonym(
             cursor, name
         ):
@@ -538,17 +545,23 @@ def _is_vecdb_table(cursor: Any, name: str) -> bool:
     result = cursor.fetchone()
     if result is None:
         raise ValueError("Missing VecDB recognition response")
-    return _described_table(name, result)
+    return _described_table(name, result, description)
 
 
-async def _ais_vecdb_table(cursor: Any, name: str) -> bool:
-    await cursor.execute(VECDB_RECOGNITION_SQL)
-    if not (await cursor.fetchone())[0]:
-        return False
+async def _ais_vecdb_table(
+    cursor: Any, name: str, *, description: Optional[dict] = None
+) -> bool:
     statement, binds = _description_statement(name)
     try:
         await cursor.execute(statement, **binds)
     except oracledb.DatabaseError as error:
+        # A direct call avoids a capability query on every successful reopen.
+        # Only an unavailable operation can turn a compile error into nonmembership.
+        if getattr(error.args[0], "code", None) in {904, 6550, 6576}:
+            await cursor.execute(VECDB_RECOGNITION_SQL)
+            if not (await cursor.fetchone())[0]:
+                return False
+            raise
         if getattr(error.args[0], "code", None) == 942 and await _ais_sql_synonym(
             cursor, name
         ):
@@ -572,7 +585,7 @@ async def _ais_vecdb_table(cursor: Any, name: str) -> bool:
     payload, schema = result
     if hasattr(payload, "read"):
         payload = await payload.read()
-    return _described_table(name, (payload, schema))
+    return _described_table(name, (payload, schema), description)
 
 
 def _table_kind(columns: set[str], registered: bool) -> str:
@@ -620,6 +633,22 @@ def layout_error(error: Exception) -> bool:
             r'(?:CONTENT_METADATA|SPARSE_VECTOR|CONTENT_TYPE|CONTENT)"?'
             r"(?=\s*(?::|$))",
             message,
+        )
+    )
+
+
+def _insert_layout_error(error: Exception, metadata_column: str) -> bool:
+    """Recognize rejection of the exact cached column in our INSERT statement."""
+    return (
+        isinstance(error, oracledb.DatabaseError)
+        and getattr(error.args[0], "code", None) == 904
+        and bool(
+            re.search(
+                r'ORA-00904:\s*(?:(?:"[^"]+"|\w+)\.)*"?'
+                + re.escape(metadata_column)
+                + r'"?(?=\s*(?::|$))',
+                str(error).upper().replace('\\"', '"'),
+            )
         )
     )
 
@@ -687,16 +716,9 @@ def _table_info(columns: set[str], existing: Optional[tuple]) -> _TableInfo:
     return _TableInfo(frozenset(columns), index)
 
 
-def _metadata_search_error(error: Exception) -> bool:
-    """Refresh only missing layout columns or a missing cached index."""
-    return layout_error(error) or bool(
-        re.search(
-            r'ORA-00904:\s*(?:(?:"[^"]+"|\w+)\.)*"?METADATA"?(?=\s*(?::|$))',
-            str(error),
-            re.IGNORECASE,
-        )
-        or re.search(r"\b(?:ORA-01418|DRG-10502):", str(error))
-    )
+def _missing_index_error(error: Exception) -> bool:
+    """Rediscover only when a search reports a missing index."""
+    return bool(re.search(r"\b(?:ORA-01418|DRG-10502):", str(error)))
 
 
 def _is_native_pool(client: Any, *, asynchronous: bool = False) -> bool:
@@ -864,26 +886,8 @@ class NativeTransport:
                         if f"JSON(:{key})" in statement
                     }
                 )
-                if operation not in {"search", "query", "list_vectors"}:
-                    try:
-                        cursor.execute(
-                            function_preflight(statement), result=out, **binds
-                        )
-                    except Exception as error:
-                        signature_error(operation, connection.version, error)
                 cursor.execute(statement, result=out, **binds)
                 return as_dict(out.getvalue())
-
-    @_with_native_session
-    def preflight_index(self, hybrid: bool = False) -> None:
-        with _get_connection(self.client) as connection:
-            with connection.cursor() as cursor:
-                if connection.transaction_in_progress:
-                    raise RuntimeError(
-                        "Index DDL requires a connection without pending work"
-                    )
-                cursor.execute(INDEX_FEATURES_SQL)
-                require_index_features(cursor.fetchall(), hybrid)
 
     @_with_native_session
     def describe_index(self, name: str, kind: str = "vector") -> dict:
@@ -920,6 +924,7 @@ class NativeTransport:
                 def inspect() -> set[str]:
                     return _inspect_columns(cursor, name)
 
+                cached = self._table_info_cache.get(self._table_key(name))
                 self._forget_table(name)
                 for action in _migration_actions(inspect(), quoted):
                     try:
@@ -931,10 +936,17 @@ class NativeTransport:
                             inspect(), quoted
                         ):
                             raise
-                if not CURRENT_COLUMNS <= inspect():
+                columns = inspect()
+                if not CURRENT_COLUMNS <= columns:
                     raise RuntimeError(
                         "VecDB migration did not produce the required layout"
                     )
+                self._remember_table(
+                    name,
+                    _TableInfo(
+                        frozenset(columns), cached.hybrid_index if cached else None
+                    ),
+                )
 
     @_with_native_session
     def create_metadata_index(
@@ -972,7 +984,6 @@ class NativeTransport:
                         raise ValueError(
                             "Index name is already used by an incompatible index"
                         )
-                self.preflight_index(hybrid)
                 self._forget_table(name)
                 build_started = False
                 try:
@@ -1019,9 +1030,11 @@ class NativeTransport:
         import array
 
         quoted, _ = table_identifier(name)
-        columns = self.columns(name)
-        _layout(columns)
-        meta = "CONTENT_METADATA" if "CONTENT_METADATA" in columns else "METADATA"
+        info = self._table_info_cache.get(self._table_key(name))
+        if info is None:
+            info = _table_info(self.columns(name), None)
+            self._remember_table(name, info)
+        meta = info.metadata_column
         values = [
             (r["id"], array.array("f", r["dense_vector"]), r["metadata"])
             for r in records
@@ -1033,12 +1046,31 @@ class NativeTransport:
                 cursor.setinputsizes(
                     None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON
                 )
-                cursor.executemany(
-                    f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
-                    "VALUES (:1, :2, :3)",
-                    values,
-                    batcherrors=True,
-                )
+                for attempt in range(2):
+                    try:
+                        cursor.executemany(
+                            f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
+                            "VALUES (:1, :2, :3)",
+                            values,
+                            batcherrors=True,
+                        )
+                        break
+                    except oracledb.DatabaseError as failure:
+                        # Never replay a partially executed batch or row-level errors.
+                        if (
+                            attempt
+                            or not _insert_layout_error(failure, meta)
+                            or cursor.rowcount != 0
+                            or cursor.getbatcherrors()
+                        ):
+                            raise
+                        self._forget_table(name)
+                        refreshed = _table_info(self.columns(name), None)
+                        info = _TableInfo(refreshed.columns, info.hybrid_index)
+                        self._remember_table(name, info)
+                        if info.metadata_column == meta:
+                            raise
+                        meta = info.metadata_column
                 errors = cursor.getbatcherrors() or []
                 for error in errors:
                     logger.warning(
@@ -1056,10 +1088,10 @@ class NativeTransport:
     def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
         validate_hybrid_request(params)
         with _get_connection(self.client) as connection:
-            info = self._search_info(name)
+            info = self._table_info_cache.get(self._table_key(name))
             # VecDB conversion retains the table's metadata index name. The
             # caller's creation/retriever name need not be that physical name.
-            if info.hybrid_index is None:
+            if info is None or info.hybrid_index is None:
                 info = self.discover(name)
             for attempt in range(2):
                 index = info.hybrid_index
@@ -1088,7 +1120,7 @@ class NativeTransport:
                             keyword_only=_hybrid_search_mode(params) == "keyword",
                         )
                 except Exception as error:
-                    if attempt or not _metadata_search_error(error):
+                    if attempt or not _missing_index_error(error):
                         raise
                     self._forget_table(name)
                     info = self.discover(name)
@@ -1105,7 +1137,7 @@ class NativeTransport:
                         cursor.execute(sql, **binds)
                         return _filter_response(cursor.fetchall(), request)
                 except Exception as error:
-                    if attempt or not _metadata_search_error(error):
+                    if attempt or not _missing_index_error(error):
                         raise
                     self._forget_table(name)
                     info = self.discover(name)
@@ -1130,7 +1162,7 @@ class NativeTransport:
                         )
                         return _text_documents(cursor.fetchall(), scores)
                 except Exception as error:
-                    if attempt or not _metadata_search_error(error):
+                    if attempt or not _missing_index_error(error):
                         raise
                     self._forget_table(name)
                     info = self.discover(name)
@@ -1202,12 +1234,24 @@ def _compatible_backend(
 
 
 def native_selection(
-    connection: Any, name: str, backend: str
+    connection: Any,
+    name: str,
+    backend: str,
+    *,
+    columns: Optional[set[str]] = None,
+    description: Optional[dict] = None,
 ) -> tuple[str, tuple[int, ...]]:
+    """Select a backend using columns already inspected on this connection, if given."""
     version = parse_version(connection.version)
     with connection.cursor() as cursor:
-        columns = _inspect_columns(cursor, name)
-        kind = _table_kind(columns, _is_vecdb_table(cursor, name) if columns else False)
+        if columns is None:
+            columns = _inspect_columns(cursor, name)
+        kind = _table_kind(
+            columns,
+            _is_vecdb_table(cursor, name, description=description)
+            if columns
+            else False,
+        )
         if backend == "sql":
             if kind == "vecdb":
                 raise ValueError(
@@ -1351,9 +1395,12 @@ class VecDBBackend:
         return params
 
     @_with_native_backend_session
-    def prepare(self) -> None:
+    def prepare(
+        self, *, columns: Optional[set[str]] = None, description: Optional[dict] = None
+    ) -> None:
         if isinstance(self.transport, NativeTransport):
-            columns = self.transport.columns(self.name)
+            if columns is None:
+                columns = self.transport.columns(self.name)
             created = not columns
             if created:
                 self.transport.call(
@@ -1363,7 +1410,9 @@ class VecDBBackend:
                 columns = self.transport.columns(self.name)
             elif self.managed_embeddings:
                 self._validate_embedding_config(
-                    self.transport.call("describe_vector_table", name=self.name)
+                    description
+                    if description
+                    else self.transport.call("describe_vector_table", name=self.name)
                 )
             self.transport.discover(self.name, columns)
             logger.info(
@@ -1725,7 +1774,9 @@ class VecDBBackend:
             await self.transport.acreate_text_index(self.name, args[0])
             return
         if method == "prepare":
-            columns = await self.transport.acolumns(self.name)
+            columns = kwargs.get("columns")
+            if columns is None:
+                columns = await self.transport.acolumns(self.name)
             created = not columns
             if created:
                 await self.transport.acall(
@@ -1734,8 +1785,13 @@ class VecDBBackend:
                 )
                 columns = await self.transport.acolumns(self.name)
             elif self.managed_embeddings:
+                description = kwargs.get("description")
                 self._validate_embedding_config(
-                    await self.transport.acall("describe_vector_table", name=self.name)
+                    description
+                    if description
+                    else await self.transport.acall(
+                        "describe_vector_table", name=self.name
+                    )
                 )
             await self.transport.adiscover(self.name, columns)
             logger.info(
@@ -1863,29 +1919,11 @@ class AsyncNativeTransport(NativeTransport):
                         if f"JSON(:{key})" in statement
                     }
                 )
-                if operation not in {"search", "query", "list_vectors"}:
-                    try:
-                        await cursor.execute(
-                            function_preflight(statement), result=out, **binds
-                        )
-                    except Exception as error:
-                        signature_error(operation, connection.version, error)
                 await cursor.execute(statement, result=out, **binds)
                 value = out.getvalue()
                 if hasattr(value, "read"):
                     value = await value.read()
                 return as_dict(value)
-
-    @_with_async_native_session
-    async def apreflight_index(self, hybrid: bool = False) -> None:
-        async with _aget_connection(self.client) as connection:
-            with connection.cursor() as cursor:
-                if connection.transaction_in_progress:
-                    raise RuntimeError(
-                        "Index DDL requires a connection without pending work"
-                    )
-                await cursor.execute(INDEX_FEATURES_SQL)
-                require_index_features(await cursor.fetchall(), hybrid)
 
     @_with_async_native_session
     async def adescribe_index(self, name: str, kind: str = "vector") -> dict:
@@ -1922,6 +1960,7 @@ class AsyncNativeTransport(NativeTransport):
                 async def inspect() -> set[str]:
                     return await _ainspect_columns(cursor, name)
 
+                cached = self._table_info_cache.get(self._table_key(name))
                 self._forget_table(name)
                 for action in _migration_actions(await inspect(), quoted):
                     try:
@@ -1932,10 +1971,17 @@ class AsyncNativeTransport(NativeTransport):
                             1430,
                         } or action in _migration_actions(await inspect(), quoted):
                             raise
-                if not CURRENT_COLUMNS <= await inspect():
+                columns = await inspect()
+                if not CURRENT_COLUMNS <= columns:
                     raise RuntimeError(
                         "VecDB migration did not produce the required layout"
                     )
+                self._remember_table(
+                    name,
+                    _TableInfo(
+                        frozenset(columns), cached.hybrid_index if cached else None
+                    ),
+                )
 
     @_with_async_native_session
     async def acreate_metadata_index(
@@ -1973,7 +2019,6 @@ class AsyncNativeTransport(NativeTransport):
                         raise ValueError(
                             "Index name is already used by an incompatible index"
                         )
-                await self.apreflight_index(hybrid)
                 self._forget_table(name)
                 build_started = False
                 try:
@@ -2028,9 +2073,11 @@ class AsyncNativeTransport(NativeTransport):
         import array
 
         quoted, _ = table_identifier(name)
-        columns = await self.acolumns(name)
-        _layout(columns)
-        meta = "CONTENT_METADATA" if "CONTENT_METADATA" in columns else "METADATA"
+        info = self._table_info_cache.get(self._table_key(name))
+        if info is None:
+            info = _table_info(await self.acolumns(name), None)
+            self._remember_table(name, info)
+        meta = info.metadata_column
         values = [
             (r["id"], array.array("f", r["dense_vector"]), r["metadata"])
             for r in records
@@ -2042,12 +2089,31 @@ class AsyncNativeTransport(NativeTransport):
                 cursor.setinputsizes(
                     None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON
                 )
-                await cursor.executemany(
-                    f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
-                    "VALUES (:1, :2, :3)",
-                    values,
-                    batcherrors=True,
-                )
+                for attempt in range(2):
+                    try:
+                        await cursor.executemany(
+                            f"INSERT INTO {quoted} (ID, DENSE_VECTOR, {meta}) "
+                            "VALUES (:1, :2, :3)",
+                            values,
+                            batcherrors=True,
+                        )
+                        break
+                    except oracledb.DatabaseError as failure:
+                        # Never replay a partially executed batch or row-level errors.
+                        if (
+                            attempt
+                            or not _insert_layout_error(failure, meta)
+                            or cursor.rowcount != 0
+                            or cursor.getbatcherrors()
+                        ):
+                            raise
+                        self._forget_table(name)
+                        refreshed = _table_info(await self.acolumns(name), None)
+                        info = _TableInfo(refreshed.columns, info.hybrid_index)
+                        self._remember_table(name, info)
+                        if info.metadata_column == meta:
+                            raise
+                        meta = info.metadata_column
                 errors = cursor.getbatcherrors() or []
                 for error in errors:
                     logger.warning(
@@ -2065,10 +2131,10 @@ class AsyncNativeTransport(NativeTransport):
     async def ahybrid_search(self, name: str, params: dict, scores: bool) -> list:
         validate_hybrid_request(params)
         async with _aget_connection(self.client) as connection:
-            info = await self._asearch_info(name)
+            info = self._table_info_cache.get(self._table_key(name))
             # VecDB conversion retains the table's metadata index name. The
             # caller's creation/retriever name need not be that physical name.
-            if info.hybrid_index is None:
+            if info is None or info.hybrid_index is None:
                 info = await self.adiscover(name)
             for attempt in range(2):
                 index = info.hybrid_index
@@ -2097,7 +2163,7 @@ class AsyncNativeTransport(NativeTransport):
                             keyword_only=_hybrid_search_mode(params) == "keyword",
                         )
                 except Exception as error:
-                    if attempt or not _metadata_search_error(error):
+                    if attempt or not _missing_index_error(error):
                         raise
                     self._forget_table(name)
                     info = await self.adiscover(name)
@@ -2114,7 +2180,7 @@ class AsyncNativeTransport(NativeTransport):
                         await cursor.execute(sql, **binds)
                         return _filter_response(await cursor.fetchall(), request)
                 except Exception as error:
-                    if attempt or not _metadata_search_error(error):
+                    if attempt or not _missing_index_error(error):
                         raise
                     self._forget_table(name)
                     info = await self.adiscover(name)
@@ -2141,7 +2207,7 @@ class AsyncNativeTransport(NativeTransport):
                         )
                         return _text_documents(await cursor.fetchall(), scores)
                 except Exception as error:
-                    if attempt or not _metadata_search_error(error):
+                    if attempt or not _missing_index_error(error):
                         raise
                     self._forget_table(name)
                     info = await self.adiscover(name)
@@ -2149,13 +2215,23 @@ class AsyncNativeTransport(NativeTransport):
 
 
 async def anative_selection(
-    connection: Any, name: str, backend: str
+    connection: Any,
+    name: str,
+    backend: str,
+    *,
+    columns: Optional[set[str]] = None,
+    description: Optional[dict] = None,
 ) -> tuple[str, tuple[int, ...]]:
+    """Select a backend using columns already inspected on this connection, if given."""
     version = parse_version(connection.version)
     with connection.cursor() as cursor:
-        columns = await _ainspect_columns(cursor, name)
+        if columns is None:
+            columns = await _ainspect_columns(cursor, name)
         kind = _table_kind(
-            columns, await _ais_vecdb_table(cursor, name) if columns else False
+            columns,
+            await _ais_vecdb_table(cursor, name, description=description)
+            if columns
+            else False,
         )
         if backend == "sql":
             if kind == "vecdb":

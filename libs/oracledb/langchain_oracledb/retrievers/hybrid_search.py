@@ -595,7 +595,8 @@ def create_hybrid_index(
                     vector_store=store if vector_store is not None else None,
                     params=params,
                 )
-        transport.preflight_index(hybrid=True)
+        if getattr(transport.client, "transaction_in_progress", False) is True:
+            raise RuntimeError("Index DDL requires a connection without pending work")
 
     drop = False
     if vector_store:
@@ -702,7 +703,8 @@ async def acreate_hybrid_index(
                 params,
             )
             return
-        await transport.apreflight_index(hybrid=True)
+        if getattr(transport.client, "transaction_in_progress", False) is True:
+            raise RuntimeError("Index DDL requires a connection without pending work")
     if (not vector_store and not vectorizer_preference) or (
         vector_store and vectorizer_preference
     ):

@@ -153,7 +153,6 @@ def test_invalid_hybrid_options_fail_before_drop(options):
 def sync_transport(parameters=GUIDE):
     transport = NativeTransport(object(), (23, 26, 4))
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
-    transport.preflight_index = MagicMock()
     connection = MagicMock()
     connection.transaction_in_progress = False
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -239,7 +238,6 @@ def test_requested_name_collision_is_checked_without_dropping():
 async def test_async_native_replacement_and_recovery(failure):
     transport = AsyncNativeTransport(object(), (23, 26, 4))
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
-    transport.apreflight_index = AsyncMock()
     connection = MagicMock()
     connection.transaction_in_progress = False
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -338,7 +336,6 @@ async def test_repeated_cancellation_finishes_recovery_before_cursor_release(sta
 
     transport = AsyncNativeTransport(object(), (23, 26, 4))
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
-    transport.apreflight_index = AsyncMock()
     connection = MagicMock(transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.fetchall = AsyncMock(return_value=[("OLD", TEXT)])
@@ -405,7 +402,6 @@ async def test_caller_serialization_builds_once_and_second_call_observes_hybrid(
 
     transport = AsyncNativeTransport(object(), (23, 26, 4))
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
-    transport.apreflight_index = AsyncMock()
     connection = MagicMock(transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
     parameters = TEXT

@@ -101,8 +101,6 @@ class Session:
 
     def execute(self, statement, parameters=None, **binds):
         self.log.append((statement, binds))
-        if statement.startswith("BEGIN IF FALSE THEN"):
-            return
         if "SELECT object_name, procedure_name FROM all_procedures" in statement:
             self.rows = [
                 ("DBMS_VECTOR_DATABASE", "HANDLE_MVI_INDEX"),
@@ -188,6 +186,15 @@ class Session:
 
     def executemany(self, statement, values, **kwargs):
         self.log.append((statement, {}))
+        meta = "CONTENT_METADATA" if "CONTENT_METADATA" in statement else "METADATA"
+        if meta not in self.columns:
+            self.cursor.rowcount = 0
+            raise oracledb.DatabaseError(
+                SimpleNamespace(
+                    code=904, message=f'ORA-00904: "{meta}": invalid identifier'
+                )
+            )
+        self.cursor.rowcount = len(values)
 
 
 @pytest.fixture(params=[False, True], ids=["sync", "async"])
@@ -266,17 +273,7 @@ async def test_query_layout_migration_and_retry_keep_the_failed_queries_session(
     assert result[0][0].page_content == "SCHEMA_A"
     assert s.a.columns == CURRENT_COLUMNS
     assert len([sql for sql, _ in s.a.log if sql.startswith("ALTER TABLE")]) == 4
-    assert (
-        len(
-            [
-                sql
-                for sql, _ in s.a.log
-                if ".search(" in sql.lower()
-                and not sql.startswith("BEGIN IF FALSE THEN")
-            ]
-        )
-        == 2
-    )
+    assert len([sql for sql, _ in s.a.log if ".search(" in sql.lower()]) == 2
     assert_one_session(s)
 
 
@@ -491,20 +488,15 @@ def use_one_session(s):
 
 
 @pytest.mark.asyncio
-async def test_search_refreshes_when_another_session_has_different_layout(sessions):
+async def test_search_layout_error_propagates_without_discovery(sessions):
     s = sessions
     await invoke(s, "prepare")  # SCHEMA_A uses the legacy metadata column.
     s.a.log.clear()
-    result = await invoke(s, "text_search", "oracle", 1)  # SCHEMA_B uses the new one.
-    assert result[0].page_content == "SCHEMA_B"
+    with pytest.raises(RuntimeError, match="ORA-00904"):
+        await invoke(s, "text_search", "oracle", 1)  # SCHEMA_B has a different layout.
     assert not s.a.log
-    assert len([sql for sql, _ in s.b.log if "JSON_TEXTCONTAINS" in sql]) == 2
-    assert len([sql for sql, _ in s.b.log if "column_name FROM" in sql]) == 1
-    s.b.log.clear()
-    s.pool.acquire.side_effect = None
-    s.pool.acquire.return_value = s.b.connection
-    await invoke(s, "text_search", "oracle", 1)
     assert len(s.b.log) == 1
+    assert "JSON_TEXTCONTAINS" in s.b.log[0][0]
 
 
 @pytest.mark.asyncio
@@ -557,7 +549,7 @@ async def test_local_index_creation_updates_snapshot_for_next_search(sessions):
 
 
 @pytest.mark.asyncio
-async def test_migration_invalidates_layout_before_next_search(sessions):
+async def test_migration_updates_layout_before_next_search(sessions):
     s = sessions
     use_one_session(s)
     await invoke(s, "prepare")
@@ -570,7 +562,7 @@ async def test_migration_invalidates_layout_before_next_search(sessions):
     assert result[0].page_content == "SCHEMA_A"
     assert s.a.log[-1][0].startswith("SELECT /* lc_oracledb mode=text backend=vecdb")
     assert ' id, CONTENT_METADATA, SCORE(1) FROM "DOCS"' in s.a.log[-1][0]
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len(s.a.log) == 1
     s.a.log.clear()
     await invoke(s, "text_search", "oracle", 1)
     assert len(s.a.log) == 1
@@ -597,19 +589,84 @@ async def test_unrelated_search_errors_do_not_trigger_discovery(sessions, operat
     assert len(s.a.log) == 1
 
 
+@pytest.mark.parametrize("operation", ["text_search", "hybrid_search"])
+@pytest.mark.parametrize(
+    "message",
+    [
+        'ORA-00904: "METADATA": invalid identifier',
+        'ORA-00904: "CONTENT_METADATA": invalid identifier',
+    ],
+)
 @pytest.mark.asyncio
-async def test_stale_layout_refresh_retries_only_once(sessions):
+async def test_stale_layout_does_not_retry(sessions, operation, message):
     s = sessions
     use_one_session(s)
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
-    error = RuntimeError('ORA-00904: "METADATA": invalid identifier')
+    error = RuntimeError(message)
+    s.a.search_errors = [error]
+    s.a.log.clear()
+    with pytest.raises(RuntimeError) as caught:
+        if operation == "text_search":
+            await invoke(s, operation, "oracle", 1)
+        else:
+            await invoke(s, operation, {"text": {"search_text": "oracle"}}, False)
+    assert caught.value is error
+    assert len(s.a.log) == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ORA-01418: specified index does not exist",
+        "ORA-20000: Oracle Text error: DRG-10502: index does not exist",
+    ],
+)
+@pytest.mark.asyncio
+async def test_missing_index_retries_only_once(sessions, message):
+    s = sessions
+    use_one_session(s)
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    await invoke(s, "prepare")
+    error = RuntimeError(message)
     s.a.search_errors = [error, error]
     s.a.log.clear()
     with pytest.raises(RuntimeError) as caught:
-        await invoke(s, "text_search", "oracle", 1)
+        await invoke(s, "hybrid_search", {"text": {"search_text": "oracle"}}, False)
     assert caught.value is error
-    assert len([sql for sql, _ in s.a.log if "JSON_TEXTCONTAINS" in sql]) == 2
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "search_params" in sql]) == 2
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_discovers_index_created_externally_after_init(sessions):
+    s = sessions
+    use_one_session(s)
+    await invoke(s, "prepare")  # No hybrid index yet.
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    s.a.index_name = "EXTERNAL"
+    s.a.log.clear()
+    result = await invoke(
+        s, "hybrid_search", {"text": {"search_text": "oracle"}}, False
+    )
+    assert result[0].page_content == "SCHEMA_A"
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+    searches = [binds for sql, binds in s.a.log if "search_params" in sql]
+    assert len(searches) == 1
+    assert json.loads(searches[0]["search_params"])["hybrid_index_name"] == '"EXTERNAL"'
+    s.a.log.clear()
+    await invoke(s, "hybrid_search", {"text": {"search_text": "oracle"}}, False)
+    assert len(s.a.log) == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_without_index_discovers_only_once(sessions):
+    s = sessions
+    use_one_session(s)
+    with pytest.raises(ValueError, match="Create a hybrid vector index"):
+        await invoke(s, "hybrid_search", {"text": {"search_text": "oracle"}}, False)
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+    assert not any("search_params" in sql for sql, _ in s.a.log)
 
 
 @pytest.mark.asyncio
@@ -749,16 +806,14 @@ async def test_sql_filter_fallback_uses_one_pool_checkout(sessions):
 
 
 @pytest.mark.asyncio
-async def test_sql_filter_fallback_refreshes_layout_on_same_session(sessions):
+async def test_sql_filter_fallback_layout_error_propagates_without_discovery(sessions):
     s = sessions
     s.transport._remember_table("DOCS", _TableInfo(frozenset(CURRENT_COLUMNS), None))
-    result = await invoke(s, "search", [1.0], 1, {"payload": {"$eq": {"a": 1}}}, True)
-    assert result[0][0].id == "SCHEMA_A"
+    with pytest.raises(RuntimeError, match="ORA-00904"):
+        await invoke(s, "search", [1.0], 1, {"payload": {"$eq": {"a": 1}}}, True)
     assert_one_session(s)
-    queries = [sql for sql, _ in s.a.log if "VECTOR_DISTANCE(dense_vector" in sql]
-    assert len(queries) == 2
-    assert "CONTENT_METADATA AS metadata" in queries[0]
-    assert "METADATA AS metadata" in queries[1]
+    assert len(s.a.log) == 1
+    assert "CONTENT_METADATA AS metadata" in s.a.log[0][0]
 
 
 @pytest.mark.parametrize("requested", ["REQUESTED", '"REQUESTED"', '"index.with.dot"'])
@@ -816,3 +871,166 @@ async def test_vecdb_creation_and_retrieval_share_the_retained_physical_index(se
     assert result[0].page_content == "SCHEMA_A"
     assert len(s.a.log) == 1
     assert json.loads(s.a.log[0][1]["search_params"])["hybrid_index_name"] == '"GUIDE"'
+
+
+@pytest.mark.parametrize(
+    "columns", [CURRENT_COLUMNS, {"ID", "DENSE_VECTOR", "METADATA"}]
+)
+@pytest.mark.asyncio
+async def test_insert_only_batches_reuse_initialized_layout(sessions, columns):
+    s = sessions
+    use_one_session(s)
+    s.a.columns = set(columns)
+    await invoke(s, "prepare")
+    s.a.log.clear()
+    for id_ in ("one", "two"):
+        assert await invoke(s, "add", ["oracle"], [[1.0]], [{}], [id_], False) == [id_]
+    assert len(s.a.log) == 2
+    meta = "CONTENT_METADATA" if "CONTENT_METADATA" in columns else "METADATA"
+    assert all(
+        sql.startswith('INSERT INTO "DOCS"') and f"{meta})" in sql for sql, _ in s.a.log
+    )
+    assert s.a.connection.commit.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_insert_only_without_initialized_cache_inspects_once(sessions):
+    s = sessions
+    use_one_session(s)
+    for id_ in ("one", "two"):
+        assert await invoke(s, "add", ["oracle"], [[1.0]], [{}], [id_], False) == [id_]
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if sql.startswith("INSERT")]) == 2
+    assert not any("all_indexes" in sql for sql, _ in s.a.log)
+
+
+@pytest.mark.asyncio
+async def test_own_migration_updates_insert_layout_without_rediscovery(sessions):
+    s = sessions
+    use_one_session(s)
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    await invoke(s, "prepare")
+    if s.asynchronous:
+        await s.transport.amigrate("DOCS")
+    else:
+        s.transport.migrate("DOCS")
+    s.a.log.clear()
+    assert await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["one"], False) == ["one"]
+    assert len(s.a.log) == 1
+    assert "DENSE_VECTOR, CONTENT_METADATA)" in s.a.log[0][0]
+    s.a.log.clear()
+    await invoke(s, "hybrid_search", {"text": {"search_text": "oracle"}}, False)
+    assert len(s.a.log) == 1  # Migration also retained the known physical index.
+
+
+@pytest.mark.parametrize(
+    "old_columns,new_columns",
+    [
+        ({"ID", "DENSE_VECTOR", "METADATA"}, CURRENT_COLUMNS),
+        (CURRENT_COLUMNS, {"ID", "DENSE_VECTOR", "METADATA"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_insert_refreshes_only_after_external_metadata_column_change(
+    sessions, old_columns, new_columns
+):
+    s = sessions
+    use_one_session(s)
+    s.a.columns = set(old_columns)
+    await invoke(s, "prepare")
+    s.a.columns = set(new_columns)
+    s.a.log.clear()
+    acquired = s.pool.acquire.call_count
+    assert await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["one"], False) == ["one"]
+    assert s.pool.acquire.call_count == acquired + 1
+    assert s.a.cursor.executemany.call_count == 2
+    assert s.a.connection.commit.call_count == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert not any(
+        "all_indexes" in sql or sql.startswith("ALTER") for sql, _ in s.a.log
+    )
+    s.a.log.clear()
+    assert await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["two"], False) == ["two"]
+    assert len(s.a.log) == 1
+
+
+def missing_insert_column(column="METADATA"):
+    return oracledb.DatabaseError(
+        SimpleNamespace(code=904, message=f'ORA-00904: "{column}": invalid identifier')
+    )
+
+
+@pytest.mark.parametrize(
+    "rowcount,batcherrors",
+    [(1, []), (0, [SimpleNamespace(offset=0, code=904)]), (-1, []), (None, [])],
+)
+@pytest.mark.asyncio
+async def test_insert_never_replays_partial_or_uncertain_execution(
+    sessions, rowcount, batcherrors
+):
+    s = sessions
+    use_one_session(s)
+    await invoke(s, "prepare")
+    error = missing_insert_column()
+    s.a.cursor.rowcount = rowcount
+    s.a.cursor.getbatcherrors.return_value = batcherrors
+    s.a.cursor.executemany.side_effect = error
+    s.a.log.clear()
+    with pytest.raises(oracledb.DatabaseError) as caught:
+        await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["one"], False)
+    assert caught.value is error
+    s.a.cursor.executemany.assert_called_once()
+    s.a.connection.commit.assert_not_called()
+    assert not s.a.log
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        missing_insert_column("UNRELATED"),
+        oracledb.DatabaseError(
+            SimpleNamespace(code=1031, message="ORA-01031: insufficient privileges")
+        ),
+        oracledb.DatabaseError(
+            SimpleNamespace(
+                code=3113, message="ORA-03113: end-of-file on communication channel"
+            )
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_insert_other_errors_do_not_refresh(sessions, error):
+    s = sessions
+    use_one_session(s)
+    await invoke(s, "prepare")
+    s.a.cursor.rowcount = 0
+    s.a.cursor.executemany.side_effect = error
+    s.a.log.clear()
+    with pytest.raises(oracledb.DatabaseError) as caught:
+        await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["one"], False)
+    assert caught.value is error
+    s.a.cursor.executemany.assert_called_once()
+    s.a.connection.commit.assert_not_called()
+    assert not s.a.log
+
+
+@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.asyncio
+async def test_insert_refresh_does_not_retry_unchanged_layout_or_retry_twice(
+    sessions, changed
+):
+    s = sessions
+    use_one_session(s)
+    await invoke(s, "prepare")
+    error = missing_insert_column()
+    s.a.cursor.rowcount = 0
+    s.a.cursor.executemany.side_effect = error
+    if changed:
+        s.a.columns = set(CURRENT_COLUMNS)
+    s.a.log.clear()
+    with pytest.raises(oracledb.DatabaseError) as caught:
+        await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["one"], False)
+    assert caught.value is error
+    assert s.a.cursor.executemany.call_count == (2 if changed else 1)
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    s.a.connection.commit.assert_not_called()

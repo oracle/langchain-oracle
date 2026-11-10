@@ -203,7 +203,7 @@ async def test_explicit_sql_rejects_package_recognized_vecdb_before_mutation(
             await anative_selection(conn, "DOCS", "sql")
         else:
             native_selection(conn, "DOCS", "sql")
-    assert cursor.execute.call_count == 3
+    assert cursor.execute.call_count == 2
     assert "all_tab_columns" in cursor.execute.call_args_list[0].args[0]
     assert (
         "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"

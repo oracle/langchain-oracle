@@ -87,6 +87,18 @@ def environment(request):
                 )
             )
             stack.enter_context(
+                patch(
+                    "langchain_oracledb.vectorstores._vecdb._"
+                    + prefix
+                    + "inspect_columns",
+                    new=mock_type(
+                        side_effect=lambda cursor, name: CURRENT_COLUMNS
+                        if existing
+                        else set()
+                    ),
+                )
+            )
+            stack.enter_context(
                 patch.object(
                     transport,
                     prefix + "columns",

@@ -5,56 +5,6 @@
 import re
 from typing import Any
 
-import oracledb
-
-INDEX_FEATURES_SQL = (
-    "SELECT object_name, procedure_name FROM all_procedures "
-    "WHERE (owner='SYS' AND object_name='DBMS_VECTOR_DATABASE' "
-    "AND procedure_name='HANDLE_MVI_INDEX') "
-    "OR (owner='CTXSYS' AND object_name='DBMS_HYBRID_VECTOR' "
-    "AND procedure_name='SEARCH')"
-)
-
-
-def function_preflight(statement: str) -> str:
-    """Compile the exact block and bind types without invoking its operations.
-
-    Only adapter-generated PL/SQL is accepted. Never parse/execute DDL to discover
-    whether it is supported. The unreachable branch still resolves signatures.
-    """
-    prefix = statement.lstrip().split(maxsplit=1)
-    if not prefix or prefix[0].upper() not in {"BEGIN", "DECLARE"}:
-        raise ValueError("VecDB signature preflight requires an adapter PL/SQL block")
-    return f"BEGIN IF FALSE THEN {statement} END IF; END;"
-
-
-def signature_error(operation: str, version: str, error: Exception) -> None:
-    # Only compilation failures establish an unavailable signature. Permission,
-    # network, and unknown execution errors retain their original driver types.
-    if (
-        isinstance(error, oracledb.DatabaseError)
-        and getattr(error.args[0], "code", None) == 6550
-    ):
-        raise ValueError(
-            f"Native VecDB operation {operation!r} cannot compile its expected "
-            f"signature on Oracle Database {version}; verify the package "
-            "signature and execute privileges. No operation was executed."
-        ) from error
-    raise error
-
-
-def require_index_features(found: list, hybrid: bool) -> None:
-    required = {("DBMS_VECTOR_DATABASE", "HANDLE_MVI_INDEX")}
-    if hybrid:
-        required.add(("DBMS_HYBRID_VECTOR", "SEARCH"))
-    missing = required - {tuple(row) for row in found}
-    if missing:
-        names = ", ".join(f"{package}.{method}" for package, method in sorted(missing))
-        raise ValueError(
-            f"Native VecDB {'hybrid' if hybrid else 'metadata'} indexing requires "
-            f"visible package operations: {names}. No index DDL was executed."
-        )
-
 
 def index_status_query(owner: str, kind: str) -> str:
     if kind not in {"vector", "metadata"}:

@@ -115,6 +115,8 @@ async def test_sql_constructor_ensures_requested_index(asynchronous, index_reque
     )
     prefix = "langchain_oracledb.vectorstores."
     with (
+        patch(prefix + "_vecdb._inspect_columns", return_value=set()),
+        patch(prefix + "_vecdb._ainspect_columns", new=AsyncMock(return_value=set())),
         patch(prefix + "_vecdb.native_selection", return_value=("sql", (23, 26, 3))),
         patch(
             prefix + "_vecdb.anative_selection",
@@ -194,6 +196,14 @@ async def test_sql_invalid_options_fail_before_table_creation(asynchronous):
         spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
     )
     with (
+        patch(
+            "langchain_oracledb.vectorstores._vecdb._inspect_columns",
+            return_value=set(),
+        ),
+        patch(
+            "langchain_oracledb.vectorstores._vecdb._ainspect_columns",
+            new=AsyncMock(return_value=set()),
+        ),
         patch(
             "langchain_oracledb.vectorstores._vecdb.native_selection",
             return_value=("sql", (23, 26, 3)),

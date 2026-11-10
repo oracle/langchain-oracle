@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""Operation-local preflight and explicit index readiness contracts."""
+"""Single-execution package calls and explicit index readiness contracts."""
 
 import json
 from contextlib import asynccontextmanager, contextmanager
@@ -12,10 +12,6 @@ import pytest
 
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores import _vecdb
-from langchain_oracledb.vectorstores._vecdb_capabilities import (
-    INDEX_FEATURES_SQL,
-    function_preflight,
-)
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 
@@ -44,15 +40,6 @@ def native(request, monkeypatch):
         _vecdb.AsyncNativeTransport if asynchronous else _vecdb.NativeTransport
     )(connection, (23, 26, 4))
     return asynchronous, connection, cursor, transport
-
-
-@pytest.mark.parametrize(
-    "statement",
-    ["CREATE TABLE DOCS(ID NUMBER)", "SELECT 1 FROM DUAL", "", "DROP INDEX IDX"],
-)
-def test_preflight_never_accepts_ddl_or_non_adapter_sql(statement):
-    with pytest.raises(ValueError, match="PL/SQL"):
-        function_preflight(statement)
 
 
 @pytest.mark.parametrize(
@@ -85,19 +72,21 @@ def test_preflight_never_accepts_ddl_or_non_adapter_sql(statement):
     ],
 )
 @pytest.mark.asyncio
-async def test_other_package_operations_compile_exact_statement_first(
+async def test_package_operations_execute_once_without_compile_preflight(
     native, operation, params
 ):
     asynchronous, _, cursor, transport = native
+    statement, binds = transport._statement(operation, params)
     if asynchronous:
         await transport.acall(operation, **params)
     else:
         transport.call(operation, **params)
-    preflight, execution = cursor.execute.call_args_list
-    assert preflight.args[0] == function_preflight(execution.args[0])
-    assert preflight.kwargs == execution.kwargs
+    cursor.execute.assert_called_once_with(
+        statement, result=cursor.var.return_value, **binds
+    )
+    assert "IF FALSE" not in statement
     if asynchronous:
-        assert cursor.execute.await_count == 2
+        assert cursor.execute.await_count == 1
 
 
 @pytest.mark.parametrize("operation", ["search", "query", "list_vectors"])
@@ -172,80 +161,38 @@ async def test_get_by_ids_executes_one_statement_per_batch(native):
         assert cursor.execute.await_count == 2
 
 
+@pytest.mark.parametrize(
+    "operation,params",
+    [
+        ("drop_vector_table", {"name": "DOCS"}),
+        ("upsert_vectors", {"table_name": "DOCS", "vectors": []}),
+    ],
+)
 @pytest.mark.parametrize("code", [6550, 1031, 3113])
 @pytest.mark.asyncio
-async def test_compile_failure_blocks_operation_and_retains_unknown_errors(
-    native, code
+async def test_package_errors_propagate_without_preflight_or_retry(
+    native, operation, params, code
 ):
     asynchronous, _, cursor, transport = native
     error = oracledb.DatabaseError(SimpleNamespace(code=code))
     cursor.execute.side_effect = error
-    with pytest.raises(
-        ValueError if code == 6550 else oracledb.DatabaseError
-    ) as caught:
-        if asynchronous:
-            await transport.acall("drop_vector_table", name="DOCS")
-        else:
-            transport.call("drop_vector_table", name="DOCS")
-    if code == 6550:
-        assert caught.value.__cause__ is error
-        assert "drop_vector_table" in str(caught.value)
-        assert "No operation was executed" in str(caught.value)
-    else:
-        assert caught.value is error
-    cursor.execute.assert_called_once()
-    assert cursor.execute.call_args.args[0].startswith("BEGIN IF FALSE THEN")
-
-
-@pytest.mark.asyncio
-async def test_execution_error_has_no_signature_retry(native):
-    asynchronous, _, cursor, transport = native
-    error = oracledb.DatabaseError(SimpleNamespace(code=3113))
-    cursor.execute.side_effect = [None, error]
     with pytest.raises(oracledb.DatabaseError) as caught:
         if asynchronous:
-            await transport.acall("drop_vector_table", name="DOCS")
+            await transport.acall(operation, **params)
         else:
-            transport.call("drop_vector_table", name="DOCS")
+            transport.call(operation, **params)
     assert caught.value is error
-    assert cursor.execute.call_count == 2
-
-
-@pytest.mark.parametrize("hybrid", [False, True])
-@pytest.mark.parametrize("available", [False, True])
-@pytest.mark.asyncio
-async def test_feature_preflight_before_any_index_ddl(native, hybrid, available):
-    asynchronous, _, cursor, transport = native
-    cursor.fetchall.return_value = [("DBMS_VECTOR_DATABASE", "HANDLE_MVI_INDEX")]
-    if hybrid and available:
-        cursor.fetchall.return_value.append(("DBMS_HYBRID_VECTOR", "SEARCH"))
-    if not hybrid and not available:
-        cursor.fetchall.return_value = []
-    if available:
-        if asynchronous:
-            await transport.apreflight_index(hybrid)
-        else:
-            transport.preflight_index(hybrid)
-    else:
-        with pytest.raises(ValueError, match="No index DDL"):
-            if asynchronous:
-                await transport.apreflight_index(hybrid)
-            else:
-                transport.preflight_index(hybrid)
-    cursor.execute.assert_called_once_with(INDEX_FEATURES_SQL)
+    cursor.execute.assert_called_once()
+    assert "IF FALSE" not in cursor.execute.call_args.args[0]
+    if asynchronous:
+        assert cursor.execute.await_count == 1
 
 
 @pytest.mark.parametrize("operation", ["create_index", "rebuild_index"])
 @pytest.mark.asyncio
-async def test_pending_work_blocks_preference_or_index_mutation(native, operation):
+async def test_pending_work_blocks_index_mutation(native, operation):
     asynchronous, connection, cursor, transport = native
     connection.transaction_in_progress = True
-    with pytest.raises(RuntimeError, match="pending work"):
-        if asynchronous:
-            await transport.apreflight_index(True)
-        else:
-            transport.preflight_index(True)
-    cursor.execute.assert_not_called()
     with pytest.raises(RuntimeError, match="pending work"):
         if asynchronous:
             await transport.acall(operation, table_name="DOCS", index_params={})
@@ -359,7 +306,36 @@ async def test_sql_backend_status_is_explicitly_unsupported():
 
 
 @pytest.mark.asyncio
-async def test_public_hybrid_gate_runs_before_temporary_preference_creation(
+async def test_public_hybrid_creation_has_no_capability_query(native, monkeypatch):
+    from langchain_oracledb.retrievers.hybrid_search import (
+        OracleVectorizerPreference,
+        acreate_hybrid_index,
+        create_hybrid_index,
+    )
+
+    asynchronous, connection, cursor, transport = native
+    error = oracledb.DatabaseError(SimpleNamespace(code=1031))
+    create = MagicMock(side_effect=error)
+    acreate = AsyncMock(side_effect=error)
+    monkeypatch.setattr(OracleVectorizerPreference, "create_preference", create)
+    monkeypatch.setattr(OracleVectorizerPreference, "acreate_preference", acreate)
+    store = OracleVS.__new__(OracleVS)
+    store._vecdb = _vecdb.VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    with pytest.raises(RuntimeError, match="DB error") as caught:
+        if asynchronous:
+            await acreate_hybrid_index(connection, "IDX", vector_store=store)
+        else:
+            create_hybrid_index(connection, "IDX", vector_store=store)
+    assert caught.value.__cause__ is error
+    if asynchronous:
+        acreate.assert_awaited_once_with(store)
+    else:
+        create.assert_called_once_with(store)
+    cursor.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_public_hybrid_pending_work_blocks_preference_creation(
     native, monkeypatch
 ):
     from langchain_oracledb.retrievers.hybrid_search import (
@@ -369,21 +345,21 @@ async def test_public_hybrid_gate_runs_before_temporary_preference_creation(
     )
 
     asynchronous, connection, cursor, transport = native
-    cursor.fetchall.return_value = [("DBMS_VECTOR_DATABASE", "HANDLE_MVI_INDEX")]
+    connection.transaction_in_progress = True
     create = MagicMock()
     acreate = AsyncMock()
     monkeypatch.setattr(OracleVectorizerPreference, "create_preference", create)
     monkeypatch.setattr(OracleVectorizerPreference, "acreate_preference", acreate)
     store = OracleVS.__new__(OracleVS)
     store._vecdb = _vecdb.VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
-    with pytest.raises(ValueError, match="DBMS_HYBRID_VECTOR.SEARCH"):
+    with pytest.raises(RuntimeError, match="pending work"):
         if asynchronous:
             await acreate_hybrid_index(connection, "IDX", vector_store=store)
         else:
             create_hybrid_index(connection, "IDX", vector_store=store)
     create.assert_not_called()
     acreate.assert_not_awaited()
-    cursor.execute.assert_called_once_with(INDEX_FEATURES_SQL)
+    cursor.execute.assert_not_called()
 
 
 @pytest.mark.parametrize("kind,job", [("invalid", None), ("vector", "job")])

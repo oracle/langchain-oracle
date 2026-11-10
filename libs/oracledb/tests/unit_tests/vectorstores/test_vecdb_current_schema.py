@@ -93,7 +93,11 @@ def schemas(request, monkeypatch):
             parts = _vecdb._identifier_parts(state["binds"]["name"])
             schema = parts[0] if len(parts) == 2 else state["schema"]
             return (
-                {"owner": schema, "table_name": parts[-1]}
+                {
+                    "owner": schema,
+                    "table_name": parts[-1],
+                    **state.get("description_extra", {}),
+                }
                 if "DENSE_VECTOR" in state["tables"].get(schema, set())
                 else None,
                 state["schema"],
@@ -254,3 +258,77 @@ async def test_new_index_collision_check_uses_current_schema(schemas, collision)
     statements = [c.args[0] for c in cursor.execute.call_args_list]
     assert "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')" in statements[2]
     assert any(s.startswith("CREATE SEARCH INDEX") for s in statements) is not collision
+
+
+@pytest.mark.parametrize(
+    "columns", [CURRENT_COLUMNS, {"ID", "DENSE_VECTOR", "METADATA"}]
+)
+@pytest.mark.asyncio
+async def test_constructor_reuses_selection_columns_during_prepare(
+    schemas, monkeypatch, columns
+):
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
+    from langchain_oracledb import OracleVS
+    from langchain_oracledb.vectorstores import oraclevs
+
+    asynchronous, connection, cursor, state, _ = schemas
+    state["tables"]["ACTIVE"] = set(columns)
+    monkeypatch.setattr(oraclevs, "_get_connection", _vecdb._get_connection)
+    monkeypatch.setattr(oraclevs, "_aget_connection", _vecdb._aget_connection)
+    embedding = DeterministicFakeEmbedding(size=3)
+    store = (
+        await OracleVS.acreate(connection, embedding, "DOCS")
+        if asynchronous
+        else OracleVS(connection, embedding, "DOCS")
+    )
+    assert store.backend == "vecdb"
+    statements = [call.args[0] for call in cursor.execute.call_args_list]
+    assert sum("column_name FROM" in sql for sql in statements) == 1
+    assert sum("i.parameters" in sql for sql in statements) == 1
+    assert len(statements) == 4  # Columns, ownership description, compatibility, index.
+    info = store._vecdb.transport._table_info_cache[
+        store._vecdb.transport._table_key('"DOCS"')
+    ]
+    assert info.columns == frozenset(columns)
+
+
+@pytest.mark.parametrize("stored_model", ["MODEL", "OTHER", None])
+@pytest.mark.asyncio
+async def test_managed_constructor_reuses_ownership_description(
+    schemas, monkeypatch, stored_model
+):
+    from langchain_oracledb import OracleVS
+    from langchain_oracledb.embeddings import OracleEmbeddings
+    from langchain_oracledb.vectorstores import oraclevs
+
+    asynchronous, connection, cursor, state, _ = schemas
+    state["description_extra"] = {
+        "embed_params": {
+            "model": stored_model,
+            "embed_metadata_jsonpath": _vecdb.TEXT_KEY,
+        }
+    }
+    monkeypatch.setattr(oraclevs, "_get_connection", _vecdb._get_connection)
+    monkeypatch.setattr(oraclevs, "_aget_connection", _vecdb._aget_connection)
+    embedding = OracleEmbeddings(
+        conn=connection, params={"provider": "database", "model": "MODEL"}
+    )
+
+    async def construct():
+        if asynchronous:
+            return await OracleVS.acreate(
+                connection, embedding, "DOCS", mutate_on_duplicate=True
+            )
+        return OracleVS(connection, embedding, "DOCS", mutate_on_duplicate=True)
+
+    if stored_model == "MODEL":
+        store = await construct()
+        assert store._vecdb.managed_embeddings
+    else:
+        with pytest.raises(ValueError, match="embedding configuration does not match"):
+            await construct()
+    statements = [call.args[0] for call in cursor.execute.call_args_list]
+    assert sum("DESCRIBE_VECTOR_TABLE(" in sql for sql in statements) == 1
+    assert _vecdb.VECDB_RECOGNITION_SQL not in statements
+    assert len(statements) == (4 if stored_model == "MODEL" else 3)
