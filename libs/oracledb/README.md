@@ -65,6 +65,17 @@ created or populated directly through SQL, `DBMS_VECTOR_DATABASE`, or the VecDB
 SDK are not supported. There is currently no adapter to import external table
 formats.
 
+With `OracleEmbeddings`, an in-database model (`provider="database"`), and
+`mutate_on_duplicate=True`, new VecDB stores use managed embeddings on native
+Oracle Database 23.26.3+ and REST. The table uses the configured model and
+`__orcl_internal_content` as its embedding content path. Upserts send IDs and
+metadata without vectors; embedding generation and storage finish before the
+call returns. Reopening requires the same model and content path; existing BYOV
+tables are not converted automatically. Other embedding providers, insert-only
+writes, older native databases, and embeddings with additional provider options
+or a proxy retain their existing write paths. Query embedding behavior is
+unchanged.
+
 Native ownership checks use a bound, single-table
 `DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE` call. Older packages that reject
 cross-schema or case-sensitive descriptions use a server-filtered registry lookup

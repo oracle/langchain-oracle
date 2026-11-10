@@ -1181,6 +1181,8 @@ class OracleVS(VectorStore):
                 distance_strategy,
                 table_type=self._annotation_type(),
                 vector_index_params=vector_index_params,
+                embedding=embedding_function,
+                mutate_on_duplicate=mutate_on_duplicate,
             )
             self._vecdb.prepare()
             self.backend = "vecdb"
@@ -1208,6 +1210,8 @@ class OracleVS(VectorStore):
                     distance_strategy,
                     table_type=self._annotation_type(),
                     vector_index_params=vector_index_params,
+                    embedding=embedding_function,
+                    mutate_on_duplicate=mutate_on_duplicate,
                 )
                 self._vecdb.prepare()
                 self._vecdb.transport.client = client
@@ -1326,6 +1330,8 @@ class OracleVS(VectorStore):
                     distance_strategy,
                     table_type=self._annotation_type(),
                     vector_index_params=vector_index_params,
+                    embedding=embedding_function,
+                    mutate_on_duplicate=mutate_on_duplicate,
                 )
                 await self._vecdb.run_async("prepare")
                 self._vecdb.transport.client = client
@@ -1675,9 +1681,12 @@ class OracleVS(VectorStore):
                 )
 
         if self._vecdb is not None:
+            vectors: Optional[List[List[float]]] = None
+            if not self._vecdb.managed_embeddings:
+                vectors = self._embed_documents(texts) if texts else []
             return self._vecdb.add(
                 texts,
-                self._embed_documents(texts) if texts else [],
+                vectors,
                 metadatas,
                 original_ids,
                 self.mutate_on_duplicate,
@@ -1885,7 +1894,9 @@ class OracleVS(VectorStore):
                 )
 
         if self._vecdb is not None:
-            vectors = await self._aembed_documents(texts) if texts else []
+            vectors: Optional[List[List[float]]] = None
+            if not self._vecdb.managed_embeddings:
+                vectors = await self._aembed_documents(texts) if texts else []
             return await self._vecdb.run_async(
                 "add", texts, vectors, metadatas, original_ids, self.mutate_on_duplicate
             )

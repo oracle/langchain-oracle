@@ -1261,6 +1261,8 @@ class VecDBBackend:
         *,
         table_type: TableType = "vector_store",
         vector_index_params: Optional[dict] = None,
+        embedding: Any = None,
+        mutate_on_duplicate: Optional[bool] = False,
     ):
         self.transport = transport
         self.table_type = table_type
@@ -1275,9 +1277,69 @@ class VecDBBackend:
             else metric
         )
         self._creation_index_params = self.index_params(vector_index_params)
+        self._embed_params = self._managed_embed_params(embedding, mutate_on_duplicate)
         validate_operation_arguments(
-            "create_vector_table", {"index_params": self._creation_index_params}
+            "create_vector_table",
+            {
+                "index_params": self._creation_index_params,
+                "embed_params": self._embed_params,
+            },
         )
+
+    def _managed_embed_params(
+        self, embedding: Any, mutate: Optional[bool]
+    ) -> Optional[dict]:
+        from ..embeddings import OracleEmbeddings
+
+        if not mutate or not isinstance(embedding, OracleEmbeddings):
+            return None
+        if (
+            isinstance(self.transport, NativeTransport)
+            and self.transport.version < CURRENT_VERSION
+        ):
+            return None
+        params = embedding.params
+        # Extra provider options and proxy settings retain their existing path.
+        if (
+            params.get("provider", "database") != "database"
+            or set(params) - {"provider", "model"}
+            or embedding.proxy
+        ):
+            return None
+        model = params.get("model")
+        if not isinstance(model, str) or not model.strip():
+            return None
+        return {"model": model, "embed_metadata_jsonpath": TEXT_KEY}
+
+    @property
+    def managed_embeddings(self) -> bool:
+        return self._embed_params is not None
+
+    def _validate_embedding_config(self, description: dict) -> None:
+        expected = self._embed_params
+        if expected is None:
+            return
+        stored = description.get("embed_params")
+
+        def model_name(value: Any) -> Optional[str]:
+            if not isinstance(value, str):
+                return None
+            value = value.strip()
+            if value.startswith('"') and value.endswith('"'):
+                return value[1:-1]
+            return value.upper()
+
+        if (
+            not isinstance(stored, dict)
+            or model_name(stored.get("model")) != model_name(expected["model"])
+            or stored.get("embed_metadata_jsonpath") != TEXT_KEY
+        ):
+            raise ValueError(
+                "Existing VecDB table embedding configuration does not match "
+                "OracleEmbeddings model and content path; reopen with its original "
+                "configuration or use a new table. BYOV tables are not converted "
+                "to managed embeddings automatically."
+            )
 
     def _table_creation_params(self) -> dict:
         params = {
@@ -1287,6 +1349,8 @@ class VecDBBackend:
         }
         if self._creation_index_params is not None:
             params["index_params"] = self._creation_index_params
+        if self._embed_params is not None:
+            params["embed_params"] = dict(self._embed_params)
         return params
 
     @_with_native_backend_session
@@ -1300,6 +1364,10 @@ class VecDBBackend:
                     **self._table_creation_params(),
                 )
                 columns = self.transport.columns(self.name)
+            elif self.managed_embeddings:
+                self._validate_embedding_config(
+                    self.transport.call("describe_vector_table", name=self.name)
+                )
             self.transport.discover(self.name, columns)
             logger.info(
                 "Table %s %s...",
@@ -1308,7 +1376,7 @@ class VecDBBackend:
             )
             return
         try:
-            self.transport.call("describe_vector_table", name=self.name)
+            description = self.transport.call("describe_vector_table", name=self.name)
         except Exception as exc:
             if getattr(exc, "status", None) != 404:
                 raise
@@ -1318,6 +1386,7 @@ class VecDBBackend:
             )
             logger.info("Table %s created successfully...", self.quoted)
         else:
+            self._validate_embedding_config(description)
             logger.info("Table %s already exists...", self.quoted)
 
     @_with_native_backend_session
@@ -1333,16 +1402,18 @@ class VecDBBackend:
     def records(
         self,
         texts: list[str],
-        vectors: list[list[float]],
+        vectors: Optional[list[list[float]]],
         metadatas: list[dict],
         ids: list[str],
     ) -> list[dict]:
         if not texts:
             return []
-        if len(texts) != len(vectors):
+        if vectors is None and not self.managed_embeddings:
+            raise ValueError("Explicit vectors are required for a BYOV table")
+        if vectors is not None and len(texts) != len(vectors):
             raise ValueError("Text and embedding batch sizes must match")
         records = []
-        for text, vector, metadata, id_ in zip(texts, vectors, metadatas, ids):
+        for offset, (text, metadata, id_) in enumerate(zip(texts, metadatas, ids)):
             if LOGICAL_ID_KEY in metadata:
                 raise ValueError(
                     f"Document metadata key {LOGICAL_ID_KEY!r} is reserved"
@@ -1351,19 +1422,19 @@ class VecDBBackend:
                 raise ValueError(
                     f"Document metadata key {TEXT_KEY!r} is reserved for content"
                 )
-            records.append(
-                {
-                    "id": storage_id(id_),
-                    "dense_vector": vector,
-                    "metadata": {**metadata, TEXT_KEY: text, LOGICAL_ID_KEY: id_},
-                }
-            )
+            record: dict[str, Any] = {
+                "id": storage_id(id_),
+                "metadata": {**metadata, TEXT_KEY: text, LOGICAL_ID_KEY: id_},
+            }
+            if vectors is not None:
+                record["dense_vector"] = vectors[offset]
+            records.append(record)
         return records
 
     def add(
         self,
         texts: list[str],
-        vectors: list[list[float]],
+        vectors: Optional[list[list[float]]],
         metadatas: list[dict],
         ids: list[str],
         mutate: bool,
@@ -1372,6 +1443,8 @@ class VecDBBackend:
         if not records:
             return []
         if not mutate:
+            if vectors is None:
+                raise ValueError("Managed VecDB embeddings require upsert writes")
             if isinstance(self.transport, RestTransport):
                 raise ValueError(
                     "oracle-vecdb REST SDK does not support insert-only writes; "
@@ -1664,6 +1737,10 @@ class VecDBBackend:
                     **self._table_creation_params(),
                 )
                 columns = await self.transport.acolumns(self.name)
+            elif self.managed_embeddings:
+                self._validate_embedding_config(
+                    await self.transport.acall("describe_vector_table", name=self.name)
+                )
             await self.transport.adiscover(self.name, columns)
             logger.info(
                 "Table %s %s...",
@@ -1677,6 +1754,8 @@ class VecDBBackend:
             if not records:
                 return []
             if not mutate:
+                if vectors is None:
+                    raise ValueError("Managed VecDB embeddings require upsert writes")
                 inserted = await self.transport.ainsert(self.name, records)
                 logical_ids = {record["id"]: id_ for record, id_ in zip(records, ids)}
                 return [logical_ids[id_] for id_ in inserted]
