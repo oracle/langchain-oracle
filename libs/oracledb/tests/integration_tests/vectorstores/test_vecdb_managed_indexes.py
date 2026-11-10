@@ -98,12 +98,15 @@ async def test_vecdb_index_creation_and_reconfiguration(
             await asyncio.sleep(1)
         pytest.fail(f"VecDB did not apply index configuration: {found}")
 
-    options = {"idx_type": kind, "accuracy": 85}
-    options.update(
-        {"neighbors": 16, "efConstruction": 100}
-        if kind == "HNSW"
-        else {"neighbor_part": 4}
-    )
+    options = {
+        "organization": "INMEMORY GRAPH" if kind == "HNSW" else "PARTITIONS",
+        "accuracy": 85,
+        "advanced_params": (
+            {"neighbors": 16, "efConstruction": 100}
+            if kind == "HNSW"
+            else {"partitions": 4}
+        ),
+    }
     kwargs = {
         "client": client,
         "embedding_function": ContractEmbeddings(),
@@ -111,7 +114,7 @@ async def test_vecdb_index_creation_and_reconfiguration(
         "backend": "vecdb",
         "distance_strategy": DistanceStrategy.COSINE,
         "mutate_on_duplicate": True,
-        "vector_index_params": options,
+        "params": {"vector_index_params": options},
     }
     try:
         store = await OracleVS.acreate(**kwargs) if asynchronous else OracleVS(**kwargs)

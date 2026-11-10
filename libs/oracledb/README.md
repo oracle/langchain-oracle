@@ -212,12 +212,20 @@ synchronous connection, pool, or REST client; clients remain caller-owned.
   logged and excluded from returned IDs; successful rows are committed, along
   with any pending work on that connection. Driver/commit failures propagate
   without an automatic rollback, as on the SQL backend.
-- VecDB creates its vector index with the table. To configure a new table, pass
-  `vector_index_params={"idx_type": "HNSW", "neighbors": 32, "efConstruction": 200}`
-  to `OracleVS`, `acreate()`, `from_texts()`, or `afrom_texts()`. This VecDB-only
-  option uses the same LangChain HNSW/IVF keys as `create_index()`; it is applied
-  only to new tables, and SQL stores reject it. Reopening preserves existing
-  index settings.
+- Configure indexes through `params={"vector_index_params": {...}}` in
+  `OracleVS`, `acreate()`, `from_texts()`, or `afrom_texts()`. The nested dictionary
+  accepts the same options as `create_index(params=...)`. SQL creates a missing
+  vector index; reopening preserves an existing vector index. VecDB applies
+  these options when creating a new table.
+- Index options accept OracleVS names (`idx_type`, `parallel`, `neighbor_part`)
+  and VecDB names (`organization`, `parallel_creation`, `partitions`).
+  `organization="INMEMORY GRAPH"` selects HNSW; `"PARTITIONS"` selects IVF.
+  `advanced_params={"neighbors": 32, "efConstruction": 200}` and
+  `advanced_params={"partitions": 32}` are accepted alongside the equivalent flat
+  fields. Conflicting aliases raise an error. SQL rejects VecDB-specific options
+  it cannot represent. For example:
+  `params={"vector_index_params": {"organization": "INMEMORY GRAPH",
+  "advanced_params": {"neighbors": 32, "efConstruction": 200}}}`.
 - `create_index()` and `acreate_index()` leave an existing VecDB vector index
   unchanged when no parameters (or an empty dictionary) are supplied. Explicit
   parameters request a vector-only rebuild; a missing index is created instead.

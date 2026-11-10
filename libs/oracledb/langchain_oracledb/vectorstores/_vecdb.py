@@ -28,6 +28,7 @@ from langchain_core.documents import Document
 from .._annotations import TableType, table_annotations
 from .._telemetry import tag_sql
 from .._vecdb_sdk.parameter_validation import validate_operation_arguments
+from ._index_params import normalize_index_params
 from ._vecdb_adapter import (
     CURRENT_VERSION,
     LOGICAL_ID_KEY,
@@ -1578,8 +1579,7 @@ class VecDBBackend:
         return self.transport.describe_index(self.name, kind)
 
     def index_params(self, params: Optional[dict]) -> Optional[dict]:
-        if params is not None and not isinstance(params, dict):
-            raise TypeError("Index parameters must be a dictionary")
+        params = normalize_index_params(params, metric=self.metric)
         if not params:
             return None
         from .oraclevs import (

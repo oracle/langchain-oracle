@@ -4,13 +4,10 @@
 
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import oracledb
 import pytest
-from langchain_core.embeddings import DeterministicFakeEmbedding
 
-from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores._vecdb import (
     CURRENT_COLUMNS,
     AsyncNativeTransport,
@@ -161,40 +158,6 @@ def test_rest_only_missing_index_with_existing_table_allows_create(status):
         with pytest.raises(RuntimeError, match="provider failure"):
             backend.create_index(None)
         transport.client.create_index.assert_not_called()
-
-
-@pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.asyncio
-async def test_sql_rejects_creation_only_vecdb_option(asynchronous):
-    conn = MagicMock(
-        spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
-    )
-    with (
-        patch(
-            "langchain_oracledb.vectorstores._vecdb.native_selection",
-            return_value=("sql", (23, 26, 3)),
-        ),
-        patch(
-            "langchain_oracledb.vectorstores._vecdb.anative_selection",
-            new=AsyncMock(return_value=("sql", (23, 26, 3))),
-        ),
-    ):
-        with pytest.raises(ValueError, match="vector_index_params requires a VecDB"):
-            if asynchronous:
-                await OracleVS.acreate(
-                    conn,
-                    DeterministicFakeEmbedding(size=3),
-                    "DOCS",
-                    vector_index_params={"idx_type": "HNSW"},
-                )
-            else:
-                OracleVS(
-                    conn,
-                    DeterministicFakeEmbedding(size=3),
-                    "DOCS",
-                    vector_index_params={"idx_type": "HNSW"},
-                )
-    conn.cursor.assert_not_called()
 
 
 @pytest.mark.parametrize(

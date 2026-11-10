@@ -56,6 +56,7 @@ from .._annotations import (
 )
 from .._telemetry import tag_sql
 from ..embeddings import OracleEmbeddings
+from ._index_params import constructor_index_params, normalize_index_params
 from .utils import (
     DistanceStrategy,
     _aclear_session_proxy,
@@ -497,39 +498,98 @@ def create_index(
     """
     if vector_store._vecdb is not None:
         return vector_store._vecdb.create_index(params)
+    options = _sql_index_params(params, vector_store.distance_strategy)
     with _get_connection(client) as connection:
-        if params:
-            if "idx_name" in params:
-                params["idx_name"] = _quote_indentifier(params["idx_name"])
-            if params["idx_type"] == "HNSW":
-                _create_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            elif params["idx_type"] == "IVF":
-                _create_ivf_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            else:
-                _create_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-        else:
-            _create_hnsw_index(
-                connection,
-                vector_store.table_name,
-                vector_store.distance_strategy,
-                params,
-            )
+        create = (
+            _create_ivf_index
+            if (options or {}).get("idx_type") == "IVF"
+            else _create_hnsw_index
+        )
+        create(
+            connection, vector_store.table_name, vector_store.distance_strategy, options
+        )
     return None
+
+
+def _sql_index_params(
+    params: Optional[dict[str, Any]], distance_strategy: DistanceStrategy
+) -> Optional[dict[str, Any]]:
+    options = normalize_index_params(
+        params, metric=_get_distance_function(distance_strategy)
+    )
+    if options is not None:
+        options.pop("distance_metric", None)
+        if "auto_index" in options:
+            if options.pop("auto_index") is not True:
+                raise ValueError("SQL index creation requires auto_index=True")
+    return options
+
+
+def _sql_index_ddl(
+    table_name: str,
+    distance_strategy: DistanceStrategy,
+    params: Optional[dict[str, Any]],
+) -> Tuple[str, str]:
+    options = _sql_index_params(params, distance_strategy)
+    builder = (
+        _get_ivf_index_ddl
+        if (options or {}).get("idx_type") == "IVF"
+        else _get_hnsw_index_ddl
+    )
+    return builder(_quote_indentifier(table_name), distance_strategy, options)
+
+
+# Resolve synonyms and quoted/schema-qualified names as Oracle SQL does. An
+# existing index, even if unusable, must not authorize another constructor CREATE.
+_SQL_VECTOR_INDEX_QUERY = """
+WITH FUNCTION lc_index_table(table_name VARCHAR2) RETURN NUMBER IS
+    schema_name VARCHAR2(128);
+    part1 VARCHAR2(128);
+    part2 VARCHAR2(128);
+    link_name VARCHAR2(128);
+    part_type BINARY_INTEGER;
+    object_id NUMBER;
+BEGIN
+    SYS.DBMS_UTILITY.NAME_RESOLVE(
+        table_name, 2, schema_name, part1, part2, link_name, part_type, object_id);
+    RETURN object_id;
+END;
+SELECT i.index_name FROM all_indexes i
+JOIN all_objects t ON t.owner=i.table_owner AND t.object_name=i.table_name
+    AND t.object_type='TABLE'
+JOIN all_ind_columns c ON c.index_owner=i.owner AND c.index_name=i.index_name
+WHERE t.object_id=(SELECT lc_index_table(:table_name) FROM dual)
+    AND i.index_type='VECTOR' AND c.column_name='EMBEDDING'
+FETCH FIRST 1 ROW ONLY
+"""
+
+
+def _ensure_sql_constructor_index(
+    connection: Connection, table_name: str, prepared: Tuple[str, str]
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(_SQL_VECTOR_INDEX_QUERY, table_name=table_name)
+        if cursor.fetchone() is not None:
+            logger.info(
+                "Table %s already has a vector index; preserving it", table_name
+            )
+            return
+        cursor.execute(prepared[1])
+        logger.info("Index %s created successfully...", prepared[0])
+
+
+async def _aensure_sql_constructor_index(
+    connection: AsyncConnection, table_name: str, prepared: Tuple[str, str]
+) -> None:
+    with connection.cursor() as cursor:
+        await cursor.execute(_SQL_VECTOR_INDEX_QUERY, table_name=table_name)
+        if await cursor.fetchone() is not None:
+            logger.info(
+                "Table %s already has a vector index; preserving it", table_name
+            )
+            return
+        await cursor.execute(prepared[1])
+        logger.info("Index %s created successfully...", prepared[0])
 
 
 def _get_hnsw_index_ddl(
@@ -741,39 +801,16 @@ async def acreate_index(
     """
     if vector_store._vecdb is not None:
         return await vector_store._vecdb.run_async("create_index", params)
+    options = _sql_index_params(params, vector_store.distance_strategy)
     async with _aget_connection(client) as connection:
-        if params:
-            if "idx_name" in params:
-                params["idx_name"] = _quote_indentifier(params["idx_name"])
-            if params["idx_type"] == "HNSW":
-                await _acreate_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            elif params["idx_type"] == "IVF":
-                await _acreate_ivf_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            else:
-                await _acreate_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-
-        else:
-            await _acreate_hnsw_index(
-                connection,
-                vector_store.table_name,
-                vector_store.distance_strategy,
-                params,
-            )
+        create = (
+            _acreate_ivf_index
+            if (options or {}).get("idx_type") == "IVF"
+            else _acreate_hnsw_index
+        )
+        await create(
+            connection, vector_store.table_name, vector_store.distance_strategy, options
+        )
 
     return None
 
@@ -1126,15 +1163,15 @@ class OracleVS(VectorStore):
         mutate_on_duplicate: Optional[bool] = False,
         *,
         backend: str = "auto",
-        vector_index_params: Optional[dict[str, Any]] = None,
     ):
         """
         Initialize the OracleVS store.
         For an async version, use OracleVS.acreate() instead.
 
-        vector_index_params accepts LangChain HNSW/IVF options for new VecDB
-        tables only. Reopening preserves existing indexes. SQL stores reject
-        this VecDB-only option.
+        params["vector_index_params"] accepts the same options as create_index,
+        using OracleVS or VecDB names, including nested advanced_params.
+        SQL creates a missing vector index; reopening preserves existing indexes.
+        VecDB applies these options when creating a new table.
 
         ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
         compatible layouts and databases. Native VecDB package calls require
@@ -1156,6 +1193,7 @@ class OracleVS(VectorStore):
 
         if backend not in {"auto", "sql", "vecdb"}:
             raise ValueError("backend must be auto, sql, or vecdb")
+        vector_index_params = constructor_index_params(params)
         self._vecdb = None
         self.backend = "sql"
         if is_sdk_client(client):
@@ -1190,8 +1228,11 @@ class OracleVS(VectorStore):
 
         with _get_connection(client) as connection:
             selected, version = native_selection(connection, table_name, backend)
-            if selected == "sql" and vector_index_params is not None:
-                raise ValueError("vector_index_params requires a VecDB backend")
+            prepared_index = (
+                _sql_index_ddl(table_name, distance_strategy, vector_index_params)
+                if selected == "sql" and vector_index_params is not None
+                else None
+            )
             self._initialize(
                 connection,
                 client,
@@ -1221,6 +1262,10 @@ class OracleVS(VectorStore):
                 _create_table(
                     connection, self.table_name, embedding_dim, self._annotation_type()
                 )
+                if prepared_index is not None:
+                    _ensure_sql_constructor_index(
+                        connection, self.table_name, prepared_index
+                    )
 
     @classmethod
     def from_vecdb_config(
@@ -1267,13 +1312,12 @@ class OracleVS(VectorStore):
         mutate_on_duplicate: Optional[bool] = False,
         *,
         backend: str = "auto",
-        vector_index_params: Optional[dict[str, Any]] = None,
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
 
-        vector_index_params follows the constructor's creation-only VecDB
-        contract and accepts the same LangChain HNSW/IVF options.
+        params["vector_index_params"] follows the constructor's index contract
+        and accepts the same options as create_index.
 
         Uses the constructor's naming/backend contract. Native VecDB requires an
         unqualified uppercase name; new unsupported names use SQL in auto mode.
@@ -1302,16 +1346,19 @@ class OracleVS(VectorStore):
                 params,
                 mutate_on_duplicate,
                 backend=backend,
-                vector_index_params=vector_index_params,
             )
+        vector_index_params = constructor_index_params(params)
         self = cls.__new__(cls)
         self._vecdb = None
         self.backend = "sql"
 
         async with _aget_connection(client) as connection:
             selected, version = await anative_selection(connection, table_name, backend)
-            if selected == "sql" and vector_index_params is not None:
-                raise ValueError("vector_index_params requires a VecDB backend")
+            prepared_index = (
+                _sql_index_ddl(table_name, distance_strategy, vector_index_params)
+                if selected == "sql" and vector_index_params is not None
+                else None
+            )
             self._initialize(
                 connection,
                 client,
@@ -1341,6 +1388,10 @@ class OracleVS(VectorStore):
                 await _acreate_table(
                     connection, self.table_name, embedding_dim, self._annotation_type()
                 )
+                if prepared_index is not None:
+                    await _aensure_sql_constructor_index(
+                        connection, self.table_name, prepared_index
+                    )
 
         return self
 
@@ -2693,6 +2744,10 @@ class OracleVS(VectorStore):
         if client is None:
             raise ValueError("client parameter is required...")
 
+        if "vector_index_params" in kwargs:
+            raise TypeError(
+                'Pass vector_index_params inside params={"vector_index_params": ...}'
+            )
         params = kwargs.get("params", {})
 
         table_name = str(kwargs.get("table_name", "langchain"))
@@ -2747,7 +2802,6 @@ class OracleVS(VectorStore):
             query=query,
             params=params,
             backend=kwargs.get("backend", "auto"),
-            vector_index_params=kwargs.get("vector_index_params"),
             mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 
@@ -2786,7 +2840,6 @@ class OracleVS(VectorStore):
             query=query,
             params=params,
             backend=kwargs.get("backend", "auto"),
-            vector_index_params=kwargs.get("vector_index_params"),
             mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 

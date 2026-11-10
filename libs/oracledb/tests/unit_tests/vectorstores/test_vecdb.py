@@ -1533,7 +1533,7 @@ async def test_public_vecdb_creation_options_forwarded(sdk, asynchronous, factor
         "table_name": "DOCS",
         "backend": "vecdb",
         "mutate_on_duplicate": True,
-        "vector_index_params": options,
+        "params": {"vector_index_params": options},
     }
     if factory:
         if asynchronous:
