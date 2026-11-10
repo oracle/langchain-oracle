@@ -2,6 +2,11 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Opt-in REST VecDB checks using isolated, automatically removed tables."""
 
+# Test setup: a DBA must run GRANT EXECUTE ON CTXSYS.CTX_DDL TO test_user;
+# for the native test schema. Direct CTX_DDL.SYNC_INDEX calls make writes
+# searchable before assertions; without the grant they fail with PLS-00201.
+# This privilege is required by these tests, not by the library.
+
 import os
 import uuid
 
@@ -11,7 +16,12 @@ from langchain_core.embeddings import Embeddings
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores.utils import DistanceStrategy, drop_table_purge
 
-from ._backend_fixtures import check_native_backend, native_config
+from ._backend_fixtures import (
+    aretry_ddl,
+    check_native_backend,
+    native_config,
+    retry_ddl,
+)
 
 
 class FixedEmbeddings(Embeddings):
@@ -130,7 +140,7 @@ def native_index_store():
             )
             yield store, connection
         finally:
-            drop_table_purge(connection, table, backend="vecdb")
+            retry_ddl(lambda: drop_table_purge(connection, table, backend="vecdb"), 54)
 
 
 def metadata_index(connection, store):
@@ -396,13 +406,26 @@ async def test_native_hybrid_explicit_index_and_discovery(
     try:
         store = await OracleVS.acreate(**kwargs) if asynchronous else OracleVS(**kwargs)
         store.embedding_function = seed.embedding_function
+        # The package's scheduled Text sync can temporarily leave the index
+        # LOADING. Retry setup only for ORA-29868; preserve all other failures.
         if asynchronous:
             assert (
-                await acreate_hybrid_index(client, "MY_INDEX", vector_store=store)
+                await aretry_ddl(
+                    lambda: acreate_hybrid_index(
+                        client, "MY_INDEX", vector_store=store
+                    ),
+                    29868,
+                )
                 is None
             )
         else:
-            assert create_hybrid_index(client, "MY_INDEX", vector_store=store) is None
+            assert (
+                retry_ddl(
+                    lambda: create_hybrid_index(client, "MY_INDEX", vector_store=store),
+                    29868,
+                )
+                is None
+            )
         # Catalog inspection is only for deterministic fixture synchronization,
         # not to configure the retriever or choose its index name.
         actual_name, _ = metadata_index(connection, seed)

@@ -6,6 +6,11 @@ SQL-created VecDB-shaped fixtures are unregistered and cannot select VecDB.
 Package-created VecDB fixtures exercise recognition and reopening when enabled.
 """
 
+# Test setup: a DBA must run GRANT EXECUTE ON CTXSYS.CTX_DDL TO test_user;
+# for the native test schema. Direct CTX_DDL.SYNC_INDEX calls make writes
+# searchable before assertions; without the grant they fail with PLS-00201.
+# This privilege is required by these tests, not by the library.
+
 import array
 import hashlib
 import json

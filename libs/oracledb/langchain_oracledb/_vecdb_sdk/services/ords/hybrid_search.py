@@ -1,6 +1,9 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
+# Adapted from oracle-vecdb: src/oracle_vecdb/services/ords/hybrid_search.py
+# Source commit: cee35a4ee240dcf764d1258f15ac56a6d93c4129
+
 """JSON hybrid request validation and index planning copied from VecDB.
 
 Transport execution is supplied by LangChain's adapter.

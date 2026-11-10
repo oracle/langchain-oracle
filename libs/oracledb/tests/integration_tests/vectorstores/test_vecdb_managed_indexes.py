@@ -3,6 +3,7 @@
 """Creation options and explicit index changes preserve VecDB-owned metadata."""
 
 import asyncio
+import json
 import uuid
 
 import oracledb
@@ -50,38 +51,41 @@ async def test_vecdb_index_creation_and_reconfiguration(
             )
 
     def configuration():
+        indexes = {}
         if oracle_backend == "rest":
             details = as_dict(client.describe_vector_table(name=table))
-            params = details["index_params"]
-            if isinstance(params, str):
-                import json
-
-                params = json.loads(params)
-            vector = params["vector_index_params"]
-            return {
-                "organization": vector.get("organization", ""),
-                "accuracy": vector.get("accuracy"),
-                "metric": vector.get("distance_metric"),
-            }
-        with oracledb.connect(**config) as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT index_name,index_organization,distance_metric,index_accuracy "
-                "FROM user_vector_indexes WHERE table_name=:name",
-                name=table,
-            )
-            name, organization, metric, accuracy = cursor.fetchone()
-            cursor.execute(
-                "SELECT index_name,parameters FROM user_indexes WHERE table_name=:name "
-                "AND ityp_owner='CTXSYS' ORDER BY index_name",
-                name=table,
-            )
-            return {
-                "name": name,
-                "organization": organization,
-                "metric": metric,
-                "accuracy": accuracy,
-                "metadata": cursor.fetchall(),
-            }
+        else:
+            with oracledb.connect(**config) as conn, conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE(:name) "
+                    "FROM dual",
+                    name=table,
+                )
+                details = as_dict(cursor.fetchone()[0])
+                cursor.execute(
+                    "SELECT index_name FROM all_indexes "
+                    "WHERE table_owner=SYS_CONTEXT('USERENV','CURRENT_SCHEMA') "
+                    "AND table_name=:name AND index_type='VECTOR'",
+                    name=table,
+                )
+                indexes["name"] = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT index_name,parameters FROM all_indexes "
+                    "WHERE table_owner=SYS_CONTEXT('USERENV','CURRENT_SCHEMA') "
+                    "AND table_name=:name AND ityp_owner='CTXSYS' ORDER BY index_name",
+                    name=table,
+                )
+                indexes["metadata"] = cursor.fetchall()
+        params = details["index_params"]
+        if isinstance(params, str):
+            params = json.loads(params)
+        vector = params["vector_index_params"]
+        return {
+            "organization": vector.get("organization", ""),
+            "accuracy": vector.get("accuracy"),
+            "metric": vector.get("distance_metric"),
+            **indexes,
+        }
 
     async def assert_configuration(expected_kind, accuracy):
         # REST may submit background work. Wait here in the test, not in the API.

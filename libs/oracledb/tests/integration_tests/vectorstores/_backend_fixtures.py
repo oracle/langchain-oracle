@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 
@@ -15,6 +16,37 @@ from langchain_oracledb.vectorstores.utils import (
     adrop_table_purge,
     drop_table_purge,
 )
+
+
+def _ddl_error_code(error):
+    # Public helpers wrap database errors; inspect causes rather than messages.
+    while error is not None:
+        if isinstance(error, oracledb.DatabaseError) and error.args:
+            return getattr(error.args[0], "code", None)
+        error = error.__cause__
+    return None
+
+
+def retry_ddl(action, code):
+    """Allow five seconds for a scheduled Text sync to release test DDL."""
+    for attempt in range(11):
+        try:
+            return action()
+        except Exception as error:
+            if _ddl_error_code(error) != code or attempt == 10:
+                raise
+            time.sleep(0.5)
+
+
+async def aretry_ddl(action, code):
+    """Async test-only DDL retry; cancellation propagates immediately."""
+    for attempt in range(11):
+        try:
+            return await action()
+        except Exception as error:
+            if _ddl_error_code(error) != code or attempt == 10:
+                raise
+            await asyncio.sleep(0.5)
 
 
 def native_config(backend="sql"):
@@ -110,7 +142,7 @@ def backend_store(
         yield store
     finally:
         try:
-            drop_table_purge(client, table, backend=selected)
+            retry_ddl(lambda: drop_table_purge(client, table, backend=selected), 54)
         finally:
             if backend != "rest":
                 client.close()
@@ -153,7 +185,9 @@ async def async_backend_store(
         yield store
     finally:
         try:
-            await adrop_table_purge(client, table, backend=selected)
+            await aretry_ddl(
+                lambda: adrop_table_purge(client, table, backend=selected), 54
+            )
         finally:
             if backend != "rest":
                 await client.close()

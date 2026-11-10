@@ -1,6 +1,9 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
+# Adapted from oracle-vecdb: src/oracle_vecdb/parameter_validation.py
+# Source commit: b343f231f1c5df23526031ed236fb78e41e45ff4
+
 """Transport-neutral validation for PL/SQL parameter dependencies.
 
 The public facade accepts Python mappings that become JSON for either ORDS or

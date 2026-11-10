@@ -3,6 +3,9 @@
 ## Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 ##
 
+# Adapted from oracle-vecdb: src/oracle_vecdb/services/sqlnet/query_mapper.py
+# Source commit: b343f231f1c5df23526031ed236fb78e41e45ff4
+
 """SQL*Net DBMS_VECTOR_DATABASE query mappings."""
 
 from __future__ import annotations

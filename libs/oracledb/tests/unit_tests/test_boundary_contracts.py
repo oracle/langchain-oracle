@@ -135,13 +135,15 @@ def test_hybrid_json_vector_is_decoded_once():
     assert result["vector"]["search_vector"] == "[1, 0]"
 
 
-@pytest.mark.parametrize("backend,length", [("sql", 64), ("vecdb", 40)])
-def test_semantic_cache_ids_fit_backend_and_preserve_sql_ids(backend, length):
+@pytest.mark.parametrize("backend", ["sql", "vecdb"])
+def test_semantic_cache_logical_ids_are_stable_across_backends(backend):
     instance = cache.OracleSemanticCache.__new__(cache.OracleSemanticCache)
     instance._vector_store = MagicMock(backend=backend)
     instance.update("oracle", "model-a", [Generation(text="answer")])
     first_id = instance._vector_store.add_texts.call_args.kwargs["ids"][0]
-    assert first_id == cache._cache_entry_id("oracle", "model-a")[:length]
+    assert first_id == cache._cache_entry_id("oracle", "model-a")
+    instance.update("oracle", "model-a", [Generation(text="updated answer")])
+    assert instance._vector_store.add_texts.call_args.kwargs["ids"] == [first_id]
     instance.update("oracle", "model-b", [Generation(text="another")])
     assert instance._vector_store.add_texts.call_args.kwargs["ids"][0] != first_id
 

@@ -230,10 +230,6 @@ class OracleSemanticCache(BaseCache):
             self.RETURN_VAL: _dumps_generations(return_val),
         }
         entry_id = _cache_entry_id(prompt, llm_string)
-        if self._vector_store.backend == "vecdb":
-            # Package-created VecDB tables accept IDs up to 40 characters.
-            # Keep SQL cache IDs unchanged for existing cache entries.
-            entry_id = entry_id[:40]
         self._vector_store.add_texts(
             [prompt],
             [metadata],

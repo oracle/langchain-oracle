@@ -1,5 +1,10 @@
 """Portable filters, factories, and vector-backed cache behavior by backend."""
 
+# Test setup: a DBA must run GRANT EXECUTE ON CTXSYS.CTX_DDL TO test_user;
+# for the native test schema. Direct CTX_DDL.SYNC_INDEX calls make writes
+# searchable before assertions; without the grant they fail with PLS-00201.
+# This privilege is required by these tests, not by the library.
+
 import pytest
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
