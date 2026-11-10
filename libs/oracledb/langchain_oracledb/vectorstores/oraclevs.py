@@ -541,6 +541,7 @@ def _sql_index_ddl(
 
 # Resolve synonyms and quoted/schema-qualified names as Oracle SQL does. An
 # existing index, even if unusable, must not authorize another constructor CREATE.
+# NAME_RESOLVE context 0 selects tables; context 2 is documented for sequences.
 _SQL_VECTOR_INDEX_QUERY = """
 WITH FUNCTION lc_index_table(table_name VARCHAR2) RETURN NUMBER IS
     schema_name VARCHAR2(128);
@@ -551,7 +552,7 @@ WITH FUNCTION lc_index_table(table_name VARCHAR2) RETURN NUMBER IS
     object_id NUMBER;
 BEGIN
     SYS.DBMS_UTILITY.NAME_RESOLVE(
-        table_name, 2, schema_name, part1, part2, link_name, part_type, object_id);
+        table_name, 0, schema_name, part1, part2, link_name, part_type, object_id);
     RETURN object_id;
 END;
 SELECT i.index_name FROM all_indexes i
