@@ -1142,6 +1142,8 @@ class OracleVS(VectorStore):
         that contract, while explicit ``backend="vecdb"`` rejects it. Inspect
         ``store.backend`` for the selected backend. SDK clients must use ORDS;
         for native VecDB pass an oracledb connection or pool.
+        REST SDK clients require ``mutate_on_duplicate=True``; otherwise
+        construction raises ValueError before preparing the table.
         """
         from ._vecdb import (
             NativeTransport,
@@ -1159,6 +1161,13 @@ class OracleVS(VectorStore):
         if is_sdk_client(client):
             if backend == "sql":
                 raise ValueError("The SQL backend requires an oracledb connection")
+            transport = RestTransport(client)
+            if not mutate_on_duplicate:
+                raise ValueError(
+                    "oracle-vecdb REST SDK does not support insert-only writes; "
+                    "set mutate_on_duplicate=True to enable upserts "
+                    "(existing IDs will be overwritten)"
+                )
             self.client = client
             self.embedding_function = embedding_function
             self.table_name = table_identifier(table_name)[0]
@@ -1167,7 +1176,7 @@ class OracleVS(VectorStore):
             self.params = params
             self.mutate_on_duplicate = mutate_on_duplicate
             self._vecdb = VecDBBackend(
-                RestTransport(client),
+                transport,
                 table_name,
                 distance_strategy,
                 table_type=self._annotation_type(),
@@ -1215,6 +1224,10 @@ class OracleVS(VectorStore):
     ) -> OracleVS:
         """Create a REST VecDB store; install ``langchain-oracledb[vecdb]``.
 
+        ``mutate_on_duplicate`` defaults to True because REST supports upserts
+        only: writes update documents with existing IDs. Explicit False raises
+        ValueError during construction because insert-only writes are unsupported.
+
         Operations not exposed by the REST SDK raise an unsupported-operation error.
         SDK clients supplied directly to OracleVS remain caller-owned.
         """
@@ -1226,6 +1239,7 @@ class OracleVS(VectorStore):
             raise ImportError(
                 "REST VecDB requires Python 3.10-3.15 and langchain-oracledb[vecdb]"
             ) from exc
+        kwargs.setdefault("mutate_on_duplicate", True)
         return cls(
             client=OracleVecDB(config),
             embedding_function=embedding,

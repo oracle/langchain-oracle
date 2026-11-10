@@ -126,6 +126,28 @@ def test_factory_reports_missing_sdk():
             OracleVS.from_vecdb_config(object(), "DOCS", Embedding())
 
 
+@pytest.mark.parametrize("kwargs", [{}, {"mutate_on_duplicate": True}])
+def test_factory_defaults_to_upserts(sdk, kwargs):
+    with patch("oracle_vecdb.OracleVecDB", return_value=sdk):
+        store = OracleVS.from_vecdb_config(object(), "DOCS", Embedding(), **kwargs)
+
+    assert store.add_texts(["hello"], ids=["a"]) == ["a"]
+    sdk.upsert_vectors.assert_called_once()
+
+
+def test_factory_preserves_explicit_insert_only(sdk):
+    with (
+        patch("oracle_vecdb.OracleVecDB", return_value=sdk),
+        pytest.raises(ValueError, match="does not support insert-only"),
+    ):
+        OracleVS.from_vecdb_config(
+            object(), "DOCS", Embedding(), mutate_on_duplicate=False
+        )
+    sdk.describe_vector_table.assert_not_called()
+    sdk.create_vector_table.assert_not_called()
+    sdk.upsert_vectors.assert_not_called()
+
+
 def selection_connection(version, columns, supported=True, compatible="23.6.0.0.0"):
     connection = MagicMock(version=version)
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -306,10 +328,19 @@ async def test_vecdb_uses_shared_empty_id_and_metadata_defaults(
     assert sdk.upsert_vectors.call_args.kwargs["vectors"][0]["id"] == ids[0]
 
 
-def test_insert_only_rest_requires_native_instead_of_racy_upsert(sdk):
-    store = OracleVS(sdk, Embedding(), "DOCS")
+@pytest.mark.parametrize("kwargs", [{}, {"mutate_on_duplicate": False}])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_insert_only_rest_rejected_before_preparing_table(
+    sdk, kwargs, asynchronous
+):
     with pytest.raises(ValueError, match="REST SDK does not support"):
-        store.add_texts(["hello"], ids=["a"])
+        if asynchronous:
+            await OracleVS.acreate(sdk, Embedding(), "DOCS", **kwargs)
+        else:
+            OracleVS(sdk, Embedding(), "DOCS", **kwargs)
+    sdk.describe_vector_table.assert_not_called()
+    sdk.create_vector_table.assert_not_called()
     sdk.upsert_vectors.assert_not_called()
 
 
@@ -362,12 +393,12 @@ def test_only_404_causes_rest_creation(sdk):
         error.status = status
         sdk.describe_vector_table.side_effect = error
         with pytest.raises(RuntimeError):
-            OracleVS(sdk, Embedding(), "DOCS")
+            OracleVS(sdk, Embedding(), "DOCS", mutate_on_duplicate=True)
     sdk.create_vector_table.assert_not_called()
     error = RuntimeError("not found")
     error.status = 404
     sdk.describe_vector_table.side_effect = error
-    OracleVS(sdk, Embedding(), "DOCS")
+    OracleVS(sdk, Embedding(), "DOCS", mutate_on_duplicate=True)
     sdk.create_vector_table.assert_called_once_with(
         name="DOCS",
         table_params={"auto_generate_id": False},

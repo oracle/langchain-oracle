@@ -259,9 +259,16 @@ def test_retriever_mode_maps_to_explicit_sdk_fusion(mode, fusion):
     original = deepcopy(params)
     options = retriever_hybrid_options("oracle", mode, "HVI", 3, params, {})
     request = hybrid_search_request("DOCS", options)
+    assert ("vector" in request) == (mode == "semantic")
+    assert ("text" in request) == (mode == "keyword")
     if mode == "semantic":
         assert request["vector"]["search_text"] == "oracle"
         assert "search_vector" not in request["vector"]
+    else:
+        assert request["text"]["json_textcontains"] == [
+            "$.lc_oracle_content",
+            '"oracle"',
+        ]
     assert request["search_fusion"] == fusion
     assert request["return"]["topN"] == 3
     assert request["return"]["format"] == "JSON"
@@ -279,6 +286,10 @@ def test_retriever_overrides_preserve_options_and_do_not_mutate_inputs():
     assert request["vector"]["search_text"] == "oracle"
     assert "search_vector" not in request["vector"]
     assert request["vector"]["aggregator_params"] == ["AVGN", 5, 50]
+    assert request["text"]["json_textcontains"] == [
+        "$.lc_oracle_content",
+        '"oracle"',
+    ]
     assert request["search_fusion"] == "INTERSECT"
     assert overrides == original
     assert params["vector"] == {"accuracy": 90}

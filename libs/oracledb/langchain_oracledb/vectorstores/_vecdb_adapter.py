@@ -348,9 +348,16 @@ def hybrid_search_request(name: str, params: dict) -> dict:
         query_by = {"text": value}
     query_kind, query_value = HybridSearch._hybrid_search_input(query_by)
     top_k = options.get("return", {}).get("topN", 4)
-    return _LangChainHybridSearch()._hybrid_search_request(
+    request = _LangChainHybridSearch()._hybrid_search_request(
         name, query_kind, query_value, top_k, None, None, options
     )
+    # The generic SDK builder supplies both sections. Preserve a retriever's
+    # single-mode request after those defaults have been applied.
+    if "vector" in params and "text" not in params:
+        request.pop("text", None)
+    elif "text" in params and "vector" not in params:
+        request.pop("vector", None)
+    return request
 
 
 def validate_retriever_options(params: dict) -> dict:

@@ -16,6 +16,7 @@ SQL_COMMENTS = {
     "keyword": "/* lc_oracledb mode=keyword */",
     "semantic": "/* lc_oracledb mode=semantic */",
     "embedding": "/* lc_oracledb operation=embedding */",
+    "rerank": "/* lc_oracledb operation=rerank */",
 }
 
 _STATEMENT_START = re.compile(

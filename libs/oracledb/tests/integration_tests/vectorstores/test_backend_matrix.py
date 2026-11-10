@@ -944,7 +944,9 @@ async def test_native_vecdb_batch_commits_successful_rows(
                 cursor.execute(
                     f'SELECT CONTENT_METADATA FROM "{name}" WHERE ID=:id', id="seed"
                 )
-                assert cursor.fetchone()[0]["text"] == "oracle existing seed"
+                assert (
+                    cursor.fetchone()[0]["lc_oracle_content"] == "oracle existing seed"
+                )
     finally:
         if asynchronous:
             await connection.close()

@@ -98,11 +98,17 @@ async def test_rest_semantic_cache_creation_and_reopen(asynchronous, caplog):
         for _ in range(2):
             if asynchronous:
                 await _SemanticCacheVectorStore.acreate(
-                    client, DeterministicFakeEmbedding(size=3), "Tb1"
+                    client,
+                    DeterministicFakeEmbedding(size=3),
+                    "Tb1",
+                    mutate_on_duplicate=True,
                 )
             else:
                 _SemanticCacheVectorStore(
-                    client, DeterministicFakeEmbedding(size=3), "Tb1"
+                    client,
+                    DeterministicFakeEmbedding(size=3),
+                    "Tb1",
+                    mutate_on_duplicate=True,
                 )
     assert [
         record.getMessage()

@@ -10,7 +10,11 @@ import pytest
 
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores._vecdb import native_selection
-from langchain_oracledb.vectorstores.utils import adrop_table_purge, drop_table_purge
+from langchain_oracledb.vectorstores.utils import (
+    DistanceStrategy,
+    adrop_table_purge,
+    drop_table_purge,
+)
 
 
 def native_config(backend="sql"):
@@ -70,7 +74,13 @@ def check_native_backend(config, backend, table):
 
 
 @contextmanager
-def backend_store(backend, embeddings, *, table_name=None):
+def backend_store(
+    backend,
+    embeddings,
+    *,
+    table_name=None,
+    distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE,
+):
     table = (
         table_name
         if table_name is not None
@@ -89,7 +99,12 @@ def backend_store(backend, embeddings, *, table_name=None):
         )
     try:
         store = OracleVS(
-            client, embeddings, table, backend=selected, mutate_on_duplicate=True
+            client,
+            embeddings,
+            table,
+            distance_strategy=distance_strategy,
+            backend=selected,
+            mutate_on_duplicate=True,
         )
         assert store.backend == selected
         yield store
@@ -102,7 +117,13 @@ def backend_store(backend, embeddings, *, table_name=None):
 
 
 @asynccontextmanager
-async def async_backend_store(backend, embeddings, *, table_name=None):
+async def async_backend_store(
+    backend,
+    embeddings,
+    *,
+    table_name=None,
+    distance_strategy=DistanceStrategy.EUCLIDEAN_DISTANCE,
+):
     table = (
         table_name
         if table_name is not None
@@ -121,7 +142,12 @@ async def async_backend_store(backend, embeddings, *, table_name=None):
         )
     try:
         store = await OracleVS.acreate(
-            client, embeddings, table, backend=selected, mutate_on_duplicate=True
+            client,
+            embeddings,
+            table,
+            distance_strategy=distance_strategy,
+            backend=selected,
+            mutate_on_duplicate=True,
         )
         assert store.backend == selected
         yield store

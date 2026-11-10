@@ -1366,7 +1366,8 @@ class VecDBBackend:
             if isinstance(self.transport, RestTransport):
                 raise ValueError(
                     "oracle-vecdb REST SDK does not support insert-only writes; "
-                    "it exposes upserts"
+                    "set mutate_on_duplicate=True to enable upserts "
+                    "(existing IDs will be overwritten)"
                 )
             return self.transport.insert(self.name, records)
         self.transport.call("upsert_vectors", table_name=self.name, vectors=records)

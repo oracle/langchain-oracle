@@ -20,6 +20,10 @@ Required environment variables:
     VECDB_USER   — database username  (e.g. vector_user)
     VECDB_PASS   — database password
 
+For REST, set ORACLE_EMBEDDINGS_BACKEND=rest, ORACLE_EMBEDDINGS_MODEL, and
+ORACLE_VECDB_REST_URL plus ORACLE_VECDB_USERNAME/ORACLE_VECDB_PASSWORD or
+ORACLE_VECDB_ACCESS_TOKEN. ORACLE_VECDB_CA_CERT optionally supplies a CA bundle.
+
 Run:
     pytest tests/integration_tests/embeddings/test_oracledb_embeddings.py
 
@@ -36,41 +40,24 @@ Authors:
 from __future__ import annotations
 
 import math
-import os
 from typing import Type
 
-import oracledb
 import pytest
 from langchain_tests.integration_tests import EmbeddingsIntegrationTests
 
 from langchain_oracledb import OracleEmbeddings
+from tests._embedding_config import (
+    EMBEDDING_BACKEND,
+    EMBEDDING_MODEL,
+    check_embedding_configuration,
+    embedding_connection,
+)
 
 # ---------------------------------------------------------------------------
-# Credentials from environment variables
+# Backend configuration
 # ---------------------------------------------------------------------------
 
-USERNAME = os.environ.get("VECDB_USER")
-PASSWORD = os.environ.get("VECDB_PASS")
-DSN = os.environ.get("VECDB_HOST")
-
-# ---------------------------------------------------------------------------
-# Skip entire module if env vars are missing or DB is unreachable
-# ---------------------------------------------------------------------------
-
-if not all([USERNAME, PASSWORD, DSN]):
-    pytest.skip(
-        allow_module_level=True,
-        reason="VECDB_USER, VECDB_PASS, VECDB_HOST environment variables not set.",
-    )
-
-try:
-    with oracledb.connect(user=USERNAME, password=PASSWORD, dsn=DSN):
-        pass
-except Exception as e:
-    pytest.skip(
-        allow_module_level=True,
-        reason=f"Database connection failed: {e}",
-    )
+check_embedding_configuration()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,9 +79,8 @@ def cosine_similarity(a: list, b: list) -> float:
 @pytest.fixture
 def connection():
     """Fresh connection for each test. Closed after test completes."""
-    conn = oracledb.connect(user=USERNAME, password=PASSWORD, dsn=DSN)
-    yield conn
-    conn.close()
+    with embedding_connection() as conn:
+        yield conn
 
 
 @pytest.fixture
@@ -102,7 +88,7 @@ def embedder(connection):
     """OracleEmbeddings instance using the allminilm model."""
     return OracleEmbeddings(
         conn=connection,
-        params={"provider": "database", "model": "allminilm"},
+        params={"provider": "database", "model": EMBEDDING_MODEL},
     )
 
 
@@ -126,7 +112,7 @@ class TestOracleEmbeddingsStandard(EmbeddingsIntegrationTests):
     def embedding_model_params(self) -> dict:
         return {
             "conn": self._embedding_conn,
-            "params": {"provider": "database", "model": "allminilm"},
+            "params": {"provider": "database", "model": EMBEDDING_MODEL},
         }
 
 
@@ -141,7 +127,7 @@ class TestEmbedDocumentsValidation:
         """This documents provider behaviour:  is optional."""
         embedder = OracleEmbeddings(
             conn=connection,
-            params={"model": "allminilm"},  # provider omitted
+            params={"model": EMBEDDING_MODEL},  # provider omitted
         )
         result = embedder.embed_documents(["hello"])
         assert len(result) == 1
@@ -352,6 +338,10 @@ class TestFunctionalLoadOnnxModelValidation:
         with pytest.raises(Exception, match="Invalid input"):
             OracleEmbeddings.load_onnx_model(connection, "MY_DIR", "model.onnx", None)
 
+    @pytest.mark.skipif(
+        EMBEDDING_BACKEND == "rest",
+        reason="Directory loading requires a native connection",
+    )
     def test_nonexistent_dir_raises_oracle_error(self, connection):
         """A directory that doesn't exist in Oracle must raise an ORA error."""
         with pytest.raises(Exception, match="ORA-"):
