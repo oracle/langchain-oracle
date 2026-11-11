@@ -104,6 +104,7 @@ def _filter_response(result: list, request: dict) -> dict:
 
 
 LEGACY_VERSION = (23, 26, 1)
+QUOTED_NAMES_VERSION = (23, 27, 2)
 DENSE_COMPATIBLE = (23, 4, 0)
 SPARSE_COMPATIBLE = (23, 6, 0)
 COMPATIBILITY_SQL = "BEGIN DBMS_UTILITY.DB_VERSION(:db_version, :compatibility); END;"
@@ -223,7 +224,9 @@ async def _ainspect_columns(cursor: Any, name: str) -> set[str]:
     return {column[0] for column in cursor.description or ()}
 
 
-def _package_name_error(name: str) -> Optional[str]:
+def _package_name_error(
+    name: str, version: Optional[tuple[int, ...]] = None
+) -> Optional[str]:
     parts = _identifier_parts(name)
     if len(parts) != 1:
         return (
@@ -232,6 +235,16 @@ def _package_name_error(name: str) -> Optional[str]:
             "Use an unqualified name with CURRENT_SCHEMA set to the owning "
             "schema. Full support for this identifier requires support in "
             "the underlying VecDB package."
+        )
+    if (
+        version is not None
+        and version < QUOTED_NAMES_VERSION
+        and re.fullmatch(r"[A-Z][A-Z0-9_$#]*", name.strip()) is None
+    ):
+        return (
+            "Native VecDB requires unquoted uppercase table names before "
+            f"Oracle Database 23.27.2 and cannot preserve {name!r}. "
+            "Use backend='sql' or an unquoted uppercase table name."
         )
     return None
 
@@ -716,9 +729,18 @@ def _table_info(columns: set[str], existing: Optional[tuple]) -> _TableInfo:
     return _TableInfo(frozenset(columns), index)
 
 
-def _missing_index_error(error: Exception) -> bool:
-    """Rediscover only when a search reports a missing index."""
-    return bool(re.search(r"\b(?:ORA-01418|DRG-10502):", str(error)))
+def _metadata_search_error(error: Exception, metadata_column: str) -> bool:
+    """Refresh a missing index or the exact cached metadata column once."""
+    message = str(error).upper().replace('\\"', '"')
+    return bool(
+        re.search(r"\b(?:ORA-01418|DRG-10502):", message)
+        or re.search(
+            r'ORA-00904:\s*(?:(?:"[^"]+"|\w+)\.)*"?'
+            + re.escape(metadata_column)
+            + r'"?(?=\s*(?::|$))',
+            message,
+        )
+    )
 
 
 def _is_native_pool(client: Any, *, asynchronous: bool = False) -> bool:
@@ -1120,7 +1142,9 @@ class NativeTransport:
                             keyword_only=_hybrid_search_mode(params) == "keyword",
                         )
                 except Exception as error:
-                    if attempt or not _missing_index_error(error):
+                    if attempt or not _metadata_search_error(
+                        error, info.metadata_column
+                    ):
                         raise
                     self._forget_table(name)
                     info = self.discover(name)
@@ -1137,7 +1161,9 @@ class NativeTransport:
                         cursor.execute(sql, **binds)
                         return _filter_response(cursor.fetchall(), request)
                 except Exception as error:
-                    if attempt or not _missing_index_error(error):
+                    if attempt or not _metadata_search_error(
+                        error, info.metadata_column
+                    ):
                         raise
                     self._forget_table(name)
                     info = self.discover(name)
@@ -1162,7 +1188,9 @@ class NativeTransport:
                         )
                         return _text_documents(cursor.fetchall(), scores)
                 except Exception as error:
-                    if attempt or not _missing_index_error(error):
+                    if attempt or not _metadata_search_error(
+                        error, info.metadata_column
+                    ):
                         raise
                     self._forget_table(name)
                     info = self.discover(name)
@@ -1266,10 +1294,10 @@ def native_selection(
                     "use backend='auto' or backend='sql'"
                 )
             return "sql", version
-        if kind == "missing":
-            name_error = _package_name_error(name)
+        if kind == "missing" or (kind == "vecdb" and version < QUOTED_NAMES_VERSION):
+            name_error = _package_name_error(name, version)
             if name_error:
-                if backend == "vecdb":
+                if backend == "vecdb" or kind == "vecdb":
                     raise ValueError(name_error)
                 return "sql", version
         if version < LEGACY_VERSION:
@@ -2163,7 +2191,9 @@ class AsyncNativeTransport(NativeTransport):
                             keyword_only=_hybrid_search_mode(params) == "keyword",
                         )
                 except Exception as error:
-                    if attempt or not _missing_index_error(error):
+                    if attempt or not _metadata_search_error(
+                        error, info.metadata_column
+                    ):
                         raise
                     self._forget_table(name)
                     info = await self.adiscover(name)
@@ -2180,7 +2210,9 @@ class AsyncNativeTransport(NativeTransport):
                         await cursor.execute(sql, **binds)
                         return _filter_response(await cursor.fetchall(), request)
                 except Exception as error:
-                    if attempt or not _missing_index_error(error):
+                    if attempt or not _metadata_search_error(
+                        error, info.metadata_column
+                    ):
                         raise
                     self._forget_table(name)
                     info = await self.adiscover(name)
@@ -2207,7 +2239,9 @@ class AsyncNativeTransport(NativeTransport):
                         )
                         return _text_documents(await cursor.fetchall(), scores)
                 except Exception as error:
-                    if attempt or not _missing_index_error(error):
+                    if attempt or not _metadata_search_error(
+                        error, info.metadata_column
+                    ):
                         raise
                     self._forget_table(name)
                     info = await self.adiscover(name)
@@ -2247,10 +2281,10 @@ async def anative_selection(
                     "use backend='auto' or backend='sql'"
                 )
             return "sql", version
-        if kind == "missing":
-            name_error = _package_name_error(name)
+        if kind == "missing" or (kind == "vecdb" and version < QUOTED_NAMES_VERSION):
+            name_error = _package_name_error(name, version)
             if name_error:
-                if backend == "vecdb":
+                if backend == "vecdb" or kind == "vecdb":
                     raise ValueError(name_error)
                 return "sql", version
         if version < LEGACY_VERSION:

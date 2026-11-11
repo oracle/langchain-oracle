@@ -1098,12 +1098,9 @@ async def test_native_pool_operation_keeps_checkout_schema(
             assert [doc.page_content for doc in result] == ["oracle existing seed"]
         else:
             assert result == [id_]
-        # With cached text discovery, SQL rejects the missing SYS table. After
-        # insert-only writes there is no text snapshot, so discovery rejects it
-        # before search SQL. Both paths must fail in the second checkout.
-        error_type = oracledb.DatabaseError if operation == "text" else ValueError
-        message = "ORA-00942" if operation == "text" else "recognized VecDB table"
-        with pytest.raises(error_type, match=message):
+        # Both text search and insert cache the table layout. On the second
+        # checkout SQL must resolve the name in SYS and reject the missing table.
+        with pytest.raises(oracledb.DatabaseError, match="ORA-00942"):
             if asynchronous:
                 await transport.atext_search(name, "oracle", 1)
             else:

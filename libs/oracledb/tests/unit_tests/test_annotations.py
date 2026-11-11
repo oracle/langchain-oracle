@@ -178,6 +178,10 @@ async def test_store_subclass_selects_annotation_type_during_creation(
     ):
         if asynchronous:
             with (
+                patch(
+                    "langchain_oracledb.vectorstores._vecdb._ainspect_columns",
+                    new=AsyncMock(return_value=set()),
+                ),
                 patch.object(
                     OracleVS, "aget_embedding_dimension", new=AsyncMock(return_value=3)
                 ),

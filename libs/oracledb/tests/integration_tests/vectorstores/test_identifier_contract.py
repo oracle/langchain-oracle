@@ -4,6 +4,7 @@
 
 import uuid
 
+import oracledb
 import pytest
 
 from langchain_oracledb import OracleVS
@@ -15,7 +16,7 @@ from langchain_oracledb.vectorstores.utils import (
     drop_table_purge,
 )
 
-from ._backend_fixtures import async_backend_store, backend_store
+from ._backend_fixtures import async_backend_store, backend_store, native_config
 from .test_backend_contract import ContractEmbeddings
 
 
@@ -23,6 +24,7 @@ from .test_backend_contract import ContractEmbeddings
     "style",
     [
         "uppercase",
+        "quoted-uppercase",
         "lowercase",
         "mixed",
         "quoted-lowercase",
@@ -40,7 +42,8 @@ async def test_identifier_crud_and_case_isolation(oracle_backend, asynchronous, 
         )
     suffix = uuid.uuid4().hex[:12]
     names = {
-        "uppercase": f'"LCID_{suffix.upper()}"',
+        "uppercase": f"LCID_{suffix.upper()}",
+        "quoted-uppercase": f'"LCID_{suffix.upper()}"',
         "lowercase": f"lcid_{suffix}",
         "mixed": f"LCid_{suffix}",
         "quoted-lowercase": f'"lcid_{suffix}"',
@@ -50,6 +53,30 @@ async def test_identifier_crud_and_case_isolation(oracle_backend, asynchronous, 
     name = names[style]
     quoted = _quote_indentifier(name)
     embeddings = ContractEmbeddings()
+
+    if oracle_backend.startswith("vecdb") and style != "uppercase":
+        with oracledb.connect(**native_config(oracle_backend)) as connection:
+            version = tuple(int(part) for part in connection.version.split(".")[:3])
+            if version < (23, 27, 2):
+                # A rejected name must leave neither the exact nor folded table.
+                with pytest.raises(ValueError, match="unquoted uppercase.*23.27.2"):
+                    if asynchronous:
+                        async with async_backend_store(
+                            oracle_backend, embeddings, table_name=name
+                        ):
+                            pytest.fail("Unsupported VecDB name was accepted")
+                    else:
+                        with backend_store(oracle_backend, embeddings, table_name=name):
+                            pytest.fail("Unsupported VecDB name was accepted")
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT table_name FROM user_tables "
+                        "WHERE table_name IN (:exact,:folded)",
+                        exact=quoted[1:-1],
+                        folded=quoted[1:-1].upper(),
+                    )
+                    assert cursor.fetchall() == []
+                return
 
     async def check(store):
         assert store.table_name == quoted

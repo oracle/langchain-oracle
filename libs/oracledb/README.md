@@ -87,10 +87,13 @@ requiring `V$PARAMETER` access. Existing SQL stores skip that compatibility quer
 
 Native VecDB uses an `oracledb` connection or pool and requires Oracle Database
 23.26.1+ with `COMPATIBLE >=23.4` (or `>=23.6` for 23.26.3+). Package operations
-require unqualified table names. Names are quoted and retain their case, as on
-the SQL backend, including lowercase, mixed-case, and quoted names containing
-literal dots. The default `from_texts()` name `langchain` can therefore use VecDB
-in automatic mode on a supported server.
+require unqualified table names. Before Oracle Database 23.27.2, native VecDB
+accepts only unquoted uppercase names. For other new names, `backend="auto"`
+uses SQL to preserve the name, while explicit `backend="vecdb"` rejects the name
+before creating anything. This restriction also applies to 23.26.4.1.0.
+On 23.27.2+, native VecDB also accepts lowercase, mixed-case, and quoted names
+containing literal dots. The default `from_texts()` name `langchain` therefore
+uses SQL on older databases and is eligible for VecDB on 23.27.2+.
 
 REST resource names follow the SDK naming rules; case-sensitive quoted
 identifiers require a native connection or pool. Install the optional SDK extra

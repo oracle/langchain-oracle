@@ -488,15 +488,15 @@ def use_one_session(s):
 
 
 @pytest.mark.asyncio
-async def test_search_layout_error_propagates_without_discovery(sessions):
+async def test_search_refreshes_when_another_session_has_different_layout(sessions):
     s = sessions
     await invoke(s, "prepare")  # SCHEMA_A uses the legacy metadata column.
     s.a.log.clear()
-    with pytest.raises(RuntimeError, match="ORA-00904"):
-        await invoke(s, "text_search", "oracle", 1)  # SCHEMA_B has a different layout.
+    result = await invoke(s, "text_search", "oracle", 1)
+    assert result[0].page_content == "SCHEMA_B"
     assert not s.a.log
-    assert len(s.b.log) == 1
-    assert "JSON_TEXTCONTAINS" in s.b.log[0][0]
+    assert len([sql for sql, _ in s.b.log if "JSON_TEXTCONTAINS" in sql]) == 2
+    assert len([sql for sql, _ in s.b.log if "column_name FROM" in sql]) == 1
 
 
 @pytest.mark.asyncio
@@ -569,14 +569,24 @@ async def test_migration_updates_layout_before_next_search(sessions):
 
 
 @pytest.mark.parametrize("operation", ["text_search", "hybrid_search"])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ORA-01031: insufficient privileges",
+        'ORA-00904: "USER_FIELD": invalid identifier',
+        'ORA-00904: "CONTENT_METADATA": invalid identifier',
+    ],
+)
 @pytest.mark.asyncio
-async def test_unrelated_search_errors_do_not_trigger_discovery(sessions, operation):
+async def test_unrelated_search_errors_do_not_trigger_discovery(
+    sessions, operation, message
+):
     s = sessions
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
     error = oracledb.DatabaseError(
-        SimpleNamespace(code=1031, message="ORA-01031: insufficient privileges")
+        SimpleNamespace(code=1031 if "ORA-01031" in message else 904, message=message)
     )
     s.a.search_errors = [error]
     s.a.log.clear()
@@ -590,29 +600,42 @@ async def test_unrelated_search_errors_do_not_trigger_discovery(sessions, operat
 
 
 @pytest.mark.parametrize("operation", ["text_search", "hybrid_search"])
-@pytest.mark.parametrize(
-    "message",
-    [
-        'ORA-00904: "METADATA": invalid identifier',
-        'ORA-00904: "CONTENT_METADATA": invalid identifier',
-    ],
-)
+@pytest.mark.parametrize("metadata_column", ["METADATA", "CONTENT_METADATA"])
+@pytest.mark.parametrize("failures", [1, 2])
 @pytest.mark.asyncio
-async def test_stale_layout_does_not_retry(sessions, operation, message):
+async def test_stale_metadata_column_refreshes_once(
+    sessions, operation, metadata_column, failures
+):
     s = sessions
     use_one_session(s)
+    s.a.columns = {"ID", "DENSE_VECTOR", metadata_column}
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
-    error = RuntimeError(message)
-    s.a.search_errors = [error]
+    replacement = "CONTENT_METADATA" if metadata_column == "METADATA" else "METADATA"
+    s.a.columns = {"ID", "DENSE_VECTOR", replacement}
+    error = RuntimeError(f'ORA-00904: "{metadata_column}": invalid identifier')
+    # The fake database itself rejects the first query's renamed column.
+    s.a.search_errors = [error] * (failures - 1)
     s.a.log.clear()
-    with pytest.raises(RuntimeError) as caught:
+
+    async def search():
         if operation == "text_search":
-            await invoke(s, operation, "oracle", 1)
-        else:
-            await invoke(s, operation, {"text": {"search_text": "oracle"}}, False)
-    assert caught.value is error
-    assert len(s.a.log) == 1
+            return await invoke(s, operation, "oracle", 1)
+        return await invoke(s, operation, {"text": {"search_text": "oracle"}}, False)
+
+    if failures == 2:
+        with pytest.raises(RuntimeError) as caught:
+            await search()
+        assert caught.value is error
+    else:
+        assert (await search())[0].page_content == "SCHEMA_A"
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+    searches = [sql for sql, _ in s.a.log if "lc_oracledb mode=" in sql]
+    assert len(searches) == 2
+    assert (
+        s.pool.acquire.call_count == 2
+    )  # prepare, then one checkout for both attempts
 
 
 @pytest.mark.parametrize(
@@ -806,14 +829,16 @@ async def test_sql_filter_fallback_uses_one_pool_checkout(sessions):
 
 
 @pytest.mark.asyncio
-async def test_sql_filter_fallback_layout_error_propagates_without_discovery(sessions):
+async def test_sql_filter_fallback_refreshes_stale_metadata_on_same_checkout(sessions):
     s = sessions
     s.transport._remember_table("DOCS", _TableInfo(frozenset(CURRENT_COLUMNS), None))
-    with pytest.raises(RuntimeError, match="ORA-00904"):
-        await invoke(s, "search", [1.0], 1, {"payload": {"$eq": {"a": 1}}}, True)
+    result = await invoke(s, "search", [1.0], 1, {"payload": {"$eq": {"a": 1}}}, True)
+    assert result[0][0].page_content == "SCHEMA_A"
     assert_one_session(s)
-    assert len(s.a.log) == 1
-    assert "CONTENT_METADATA AS metadata" in s.a.log[0][0]
+    queries = [sql for sql, _ in s.a.log if "VECTOR_DISTANCE(dense_vector" in sql]
+    assert len(queries) == 2
+    assert "CONTENT_METADATA AS metadata" in queries[0]
+    assert "METADATA AS metadata" in queries[1]
 
 
 @pytest.mark.parametrize("requested", ["REQUESTED", '"REQUESTED"', '"index.with.dot"'])

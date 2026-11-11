@@ -146,18 +146,28 @@ async def test_missing_representable_name_still_selects_vecdb(database, name):
     )
 
 
+@pytest.mark.parametrize(
+    "backend,version",
+    [
+        ("sql", "26.1.0.24.0"),
+        ("auto", "23.26.3.0.0"),
+        ("auto", "23.26.4.1.0"),
+        ("auto", "23.27.1.0.0"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_explicit_sql_factory_creates_sql_table_on_vecdb_capable_database(
-    database,
+async def test_default_factory_preserves_lowercase_sql_table(
+    database, backend, version
 ):
     asynchronous, conn, cursor, state = database
+    conn.version = version
     if asynchronous:
         store = await OracleVS.afrom_texts(
-            ["seed"], Embedding(), client=conn, ids=["seed"], backend="sql"
+            ["seed"], Embedding(), client=conn, ids=["seed"], backend=backend
         )
     else:
         store = OracleVS.from_texts(
-            ["seed"], Embedding(), client=conn, ids=["seed"], backend="sql"
+            ["seed"], Embedding(), client=conn, ids=["seed"], backend=backend
         )
     assert store.backend == "sql" and store._vecdb is None
     assert store.table_name == '"langchain"'
@@ -172,6 +182,76 @@ async def test_explicit_sql_factory_creates_sql_table_on_vecdb_capable_database(
     assert not any(
         "DBMS_VECTOR_DATABASE" in c.args[0] for c in cursor.execute.call_args_list
     )
+
+
+@pytest.mark.parametrize(
+    "version,supports_quoted",
+    [
+        ("23.26.3.0.0", False),
+        ("23.26.4.1.0", False),
+        ("23.27.1.0.0", False),
+        ("23.27.2.0.0", True),
+        ("23.27.3.0.0", True),
+        ("26.1.0.24.0", True),
+    ],
+)
+@pytest.mark.parametrize(
+    "name", ["docs", "langchain", "Mixed", '"DOCS"', '"literal.dot"', '"O\'Brien"']
+)
+@pytest.mark.asyncio
+async def test_native_quoted_name_version_boundary(
+    database, version, supports_quoted, name
+):
+    database[1].version = version
+    assert await select(database, name) == ("vecdb" if supports_quoted else "sql")
+    if supports_quoted:
+        assert await select(database, name, "vecdb") == "vecdb"
+    else:
+        with pytest.raises(ValueError, match="unquoted uppercase.*23.27.2"):
+            await select(database, name, "vecdb")
+        assert not any(
+            c.args[0] == _vecdb.VECDB_CAPABILITY_SQL
+            for c in database[2].execute.call_args_list
+        )
+
+
+@pytest.mark.parametrize("version", ["23.26.3.0.0", "23.26.4.1.0", "23.27.1.0.0"])
+@pytest.mark.asyncio
+async def test_older_native_vecdb_still_accepts_unquoted_uppercase(database, version):
+    database[1].version = version
+    assert await select(database, "DOCS") == "vecdb"
+    assert await select(database, "DOCS", "vecdb") == "vecdb"
+
+
+@pytest.mark.parametrize("factory", [False, True])
+@pytest.mark.parametrize("name", ["langchain", "Mixed", '"DOCS"', '"Mixed.Dot"'])
+@pytest.mark.asyncio
+async def test_restricted_explicit_vecdb_names_never_create(database, factory, name):
+    asynchronous, conn, cursor, state = database
+    conn.version = "23.26.4.1.0"
+    with pytest.raises(ValueError, match="unquoted uppercase.*23.27.2"):
+        if factory:
+            kwargs = dict(client=conn, table_name=name, backend="vecdb")
+            if asynchronous:
+                await OracleVS.afrom_texts(["seed"], Embedding(), **kwargs)
+            else:
+                OracleVS.from_texts(["seed"], Embedding(), **kwargs)
+        elif asynchronous:
+            await OracleVS.acreate(conn, Embedding(), name, backend="vecdb")
+        else:
+            OracleVS(conn, Embedding(), name, backend="vecdb")
+    assert not state["exists"]
+    assert not any("CREATE" in c.args[0].upper() for c in cursor.execute.call_args_list)
+    cursor.executemany.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_existing_case_sensitive_vecdb_on_old_server_never_uses_sql(database):
+    database[1].version = "23.26.4.1.0"
+    database[3]["catalog"] = CURRENT_COLUMNS
+    for backend in ("auto", "vecdb"):
+        with pytest.raises(ValueError, match="unquoted uppercase.*23.27.2"):
+            await select(database, '"Mixed"', backend)
 
 
 @pytest.mark.parametrize("name", ["ALIAS", '"alias.dot"', '"OWNER"."ALIAS"'])
