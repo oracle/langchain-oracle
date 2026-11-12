@@ -22,6 +22,7 @@ from langchain_oracledb._annotations import (
     backfill_table_annotation,
     create_table_with_annotations,
 )
+from langchain_oracledb.vectorstores._vecdb import NativeTransport, parse_version
 from langchain_oracledb.vectorstores.oraclevs import OracleVS, create_index
 from langchain_oracledb.vectorstores.utils import (
     DistanceStrategy,
@@ -146,7 +147,7 @@ class OracleSemanticCache(BaseCache):
         """Initialize the Oracle semantic cache.
 
         Args:
-            client: ``oracledb.Connection`` or ``oracledb.ConnectionPool``.
+            client: Native Oracle connection/pool or oracle-vecdb REST client.
             embedding: Embedding model used to vectorize prompts.
             table_name: Table used to store semantic cache entries. Defaults to
                 ``langchain_semantic_cache``.
@@ -228,10 +229,11 @@ class OracleSemanticCache(BaseCache):
             self.LLM_HASH: _hash_value(llm_string),
             self.RETURN_VAL: _dumps_generations(return_val),
         }
+        entry_id = _cache_entry_id(prompt, llm_string)
         self._vector_store.add_texts(
             [prompt],
             [metadata],
-            ids=[_cache_entry_id(prompt, llm_string)],
+            ids=[entry_id],
         )
 
     def clear(self, **kwargs: Any) -> None:
@@ -247,27 +249,43 @@ class OracleSemanticCache(BaseCache):
             unsupported = ", ".join(sorted(kwargs))
             raise ValueError(f"Unsupported clear filters: {unsupported}")
 
+        if self._vector_store._vecdb is not None:
+            self._vector_store._vecdb.native_transport("semantic cache clearing")
+        with _get_connection(self._client) as connection:
+            metadata_column = "METADATA"
+            if self._vector_store.backend == "vecdb":
+                transport = NativeTransport(
+                    connection, parse_version(connection.version)
+                )
+                metadata_column = transport.discover(self._table_name).metadata_column
+            self._clear(connection, metadata_column, prompt, llm_string)
+
+    def _clear(
+        self, connection: Any, metadata_column: str, prompt: Any, llm_string: Any
+    ) -> None:
         query = f"DELETE FROM {self._quoted_table_name}"
+        metadata = _quote_indentifier(metadata_column)
         bind_vars: dict[str, Any] = {}
         conditions = []
 
         if prompt is not None:
             conditions.append(
-                f"JSON_VALUE(metadata, '$.{self.PROMPT_HASH}') = :prompt_hash"
+                f"JSON_VALUE({metadata}, '$.{self.PROMPT_HASH}') = :prompt_hash"
             )
             bind_vars["prompt_hash"] = _hash_value(prompt)
 
         if llm_string is not None:
-            conditions.append(f"JSON_VALUE(metadata, '$.{self.LLM_HASH}') = :llm_hash")
+            conditions.append(
+                f"JSON_VALUE({metadata}, '$.{self.LLM_HASH}') = :llm_hash"
+            )
             bind_vars["llm_hash"] = _hash_value(llm_string)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        with _get_connection(self._client) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(query, bind_vars)
-            connection.commit()
+        with connection.cursor() as cursor:
+            cursor.execute(query, bind_vars)
+        connection.commit()
 
     @staticmethod
     def drop_table(client: Any, table_name: str = DEFAULT_TABLE_NAME) -> None:

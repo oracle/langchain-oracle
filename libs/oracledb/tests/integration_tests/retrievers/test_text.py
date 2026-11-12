@@ -51,7 +51,7 @@ except Exception as e:
 @pytest.fixture(scope="function")
 def resource_names() -> Dict[str, str]:
     """Generate unique resource names to avoid collisions."""
-    suffix = uuid.uuid4().hex[:8]
+    suffix = uuid.uuid4().hex[:8].upper()
     return {
         # Vector store-backed table and index
         "table_vs": f"TB_FT_VS_{suffix}",

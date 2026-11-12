@@ -56,6 +56,7 @@ from .._annotations import (
 )
 from .._telemetry import tag_sql
 from ..embeddings import OracleEmbeddings
+from ._index_params import constructor_index_params, normalize_index_params
 from .utils import (
     DistanceStrategy,
     _aclear_session_proxy,
@@ -112,6 +113,21 @@ COMPARISON_MAP = {
 NOT_OPERS = ["$nin", "$not", "$exists"]
 
 
+def _comparison_operand(value: Any, bind_variables: List[str]) -> tuple[str, str, str]:
+    if isinstance(value, bool):
+        # SQL BOOLEAN passing values can retain a preceding True in cached
+        # statements. These two fixed JSON literals avoid that problem while
+        # preserving the implicit boolean conversion of the SQL contract.
+        return "@.boolean()", json.dumps(value), ""
+    index = len(bind_variables)
+    bind_variables.append(value)
+    return "@", f"$val{index}", f':value{index} as "val{index}"'
+
+
+def _passing_clause(passings: str) -> str:
+    return " PASSING " + passings if passings else ""
+
+
 def _get_comparison_string(
     oper: str, value: Any, bind_variables: List[str]
 ) -> tuple[str, str]:
@@ -120,13 +136,8 @@ def _get_comparison_string(
 
     # usual two sided operator case
     if COMPARISON_MAP[oper] != "":
-        bind_l = len(bind_variables)
-        bind_variables.append(value)
-
-        return (
-            COMPARISON_MAP[oper].format(f"$val{bind_l}"),
-            f':value{bind_l} as "val{bind_l}"',
-        )
+        item, operand, passing = _comparison_operand(value, bind_variables)
+        return COMPARISON_MAP[oper].replace("@", item).format(operand), passing
 
     # between - needs two bindings
     elif oper == "$between":
@@ -143,18 +154,16 @@ def _get_comparison_string(
         conditions = []
         passings = []
         if min_val is not None:
-            bind_l = len(bind_variables)
-            bind_variables.append(min_val)
-
-            conditions.append(f"@ >= $val{bind_l}")
-            passings.append(f':value{bind_l} as "val{bind_l}"')
+            item, operand, passing = _comparison_operand(min_val, bind_variables)
+            conditions.append(f"{item} >= {operand}")
+            if passing:
+                passings.append(passing)
 
         if max_val is not None:
-            bind_l = len(bind_variables)
-            bind_variables.append(max_val)
-
-            conditions.append(f"@ <= $val{bind_l}")
-            passings.append(f':value{bind_l} as "val{bind_l}"')
+            item, operand, passing = _comparison_operand(max_val, bind_variables)
+            conditions.append(f"{item} <= {operand}")
+            if passing:
+                passings.append(passing)
 
         passing_bind = ",".join(passings)
 
@@ -169,17 +178,23 @@ def _get_comparison_string(
 
         value_binds = []
         passings = []
+        comparisons = []
         for val in value:
-            bind_l = len(bind_variables)
-            bind_variables.append(val)
-
-            value_binds.append(f"$val{bind_l}")
-            passings.append(f':value{bind_l} as "val{bind_l}"')
+            item, operand, passing = _comparison_operand(val, bind_variables)
+            value_binds.append(operand)
+            comparisons.append(f"{item} == {operand}")
+            if passing:
+                passings.append(passing)
 
         passing_bind = ",".join(passings)
         condition = ""
 
-        if oper == "$all":
+        if any(isinstance(val, bool) for val in value) and (
+            oper == "$all" or all(isinstance(val, bool) for val in value)
+        ):
+            separator = " && " if oper == "$all" else " || "
+            condition = "(" + separator.join(comparisons) + ")"
+        elif oper == "$all":
             condition = "@ == " + " && @ == ".join(value_binds)
 
         else:
@@ -247,15 +262,17 @@ def _generate_condition(
         'PASSING {value_bind} AS "val")'
     )
     # combined checks with multiple operators and passing values
-    MULTIPLE_MASK = "JSON_EXISTS(metadata, '$.{key}?({filters})' PASSING {passes})"
+    MULTIPLE_MASK = "JSON_EXISTS(metadata, '$.{key}?({filters})'{passes})"
 
     _validate_metadata_key(metadata_key)
 
     if not isinstance(value, (dict, list, tuple)):
         # scalar-equality Clause
+        if isinstance(value, bool):
+            condition, _ = _get_comparison_string("$eq", value, bind_variables)
+            return MULTIPLE_MASK.format(key=metadata_key, filters=condition, passes="")
         bind = f":value{len(bind_variables)}"
         bind_variables.append(value)
-
         return SINGLE_MASK.format(key=metadata_key, oper="==", value_bind=bind)
 
     elif isinstance(value, dict):
@@ -292,7 +309,9 @@ def _generate_condition(
                     MULTIPLE_MASK.format(
                         key=metadata_key,
                         filters=" && ".join(comparison_values),
-                        passes=" , ".join(passing_values),
+                        passes=_passing_clause(
+                            " , ".join(p for p in passing_values if p)
+                        ),
                     )
                 )
 
@@ -324,7 +343,9 @@ def _generate_condition(
                     all_conditions.append(
                         " NOT "
                         + MULTIPLE_MASK.format(
-                            key=metadata_key, filters=result, passes=passings
+                            key=metadata_key,
+                            filters=result,
+                            passes=_passing_clause(passings),
                         )
                     )
 
@@ -357,72 +378,39 @@ def _generate_condition(
 
             return res
 
-        elif any(value_key.startswith("$") for value_key in value.keys()):
-            raise ValueError(
-                "Invalid filter: operator keys ($...) cannot be mixed with "
-                f"nested metadata keys in {value!r}."
-            )
-
         else:
-            # Nested metadata path: {"address": {"city": "NYC"}} is
-            # equivalent to {"address.city": "NYC"}. Recurse with the
-            # dotted path; operator dicts and scalars terminate the
-            # recursion, so arbitrary nesting depth is supported.
-            nested_conditions = [
-                _generate_condition(
-                    f"{metadata_key}.{sub_key}", sub_value, bind_variables
-                )
-                for sub_key, sub_value in value.items()
-            ]
+            from ._filters import render_field
 
-            res = " AND ".join(nested_conditions)
+            def combine(operator: Optional[str], clauses: list[str]) -> str:
+                result = " AND ".join(clauses)
+                return "(" + result + ")" if len(clauses) > 1 else result
 
-            if len(nested_conditions) > 1:
-                return "(" + res + ")"
-
-            return res
+            return render_field(
+                metadata_key,
+                value,
+                lambda key, operand: _generate_condition(key, operand, bind_variables),
+                combine,
+            )
 
     else:
         raise ValueError("Filter format is invalid.")
 
 
 def _generate_where_clause(filter: dict, bind_variables: List[str]) -> str:
-    if not isinstance(filter, dict):
-        raise ValueError("Filter syntax is incorrect. Must be a dictionary.")
+    from ._filters import render_filter
 
-    all_conditions = []
+    def combine(operator: Optional[str], clauses: list[str]) -> str:
+        if operator is not None:
+            separator, template = LOGICAL_MAP[operator]
+            return template.format(separator.join(clauses))
+        result = " AND ".join(clauses)
+        return "(" + result + ")" if len(clauses) > 1 else result
 
-    for key, value in filter.items():
-        # must be a logical if on a high level
-        if key.startswith("$"):
-            if key not in LOGICAL_MAP.keys():
-                raise ValueError(f"'{key}' is not a recognized logical operator.")
-
-            filter_format = LOGICAL_MAP[key]
-
-            if not isinstance(value, list):
-                raise ValueError("Logical operators require an array of values.")
-
-            combine_conditions = [
-                _generate_where_clause(v, bind_variables) for v in value
-            ]
-
-            res = filter_format[1].format(filter_format[0].join(combine_conditions))
-
-            all_conditions.append(res)
-
-        else:
-            # this is a metadata key - not an operator
-            res = _generate_condition(key, value, bind_variables)
-            all_conditions.append(res)
-
-    # combine everything with AND
-    res = " AND ".join(all_conditions)
-
-    if len(all_conditions) > 1:
-        res = "(" + res + ")"
-
-    return res
+    return render_filter(
+        filter,
+        lambda key, value: _generate_condition(key, value, bind_variables),
+        combine,
+    )
 
 
 def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
@@ -499,40 +487,110 @@ def create_index(
     client: Union[Connection, ConnectionPool],
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
-) -> None:
+) -> Optional[dict[str, Any]]:
+    """Ensure a vector index exists, or explicitly reconfigure a VecDB index.
+
+    Existing VecDB indexes are unchanged when params is empty. Explicit params
+    use LangChain HNSW/IVF options and rebuild an existing VecDB vector index.
+    A VecDB operation returns its provider response; a no-op or SQL returns None.
+    Use store.describe_vecdb_index() for readiness. Index maintenance requires
+    an idle connection and caller-owned serialization.
+    """
+    if vector_store._vecdb is not None:
+        return vector_store._vecdb.create_index(params)
+    options = _sql_index_params(params, vector_store.distance_strategy)
     with _get_connection(client) as connection:
-        if params:
-            if "idx_name" in params:
-                params["idx_name"] = _quote_indentifier(params["idx_name"])
-            if params["idx_type"] == "HNSW":
-                _create_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            elif params["idx_type"] == "IVF":
-                _create_ivf_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            else:
-                _create_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-        else:
-            _create_hnsw_index(
-                connection,
-                vector_store.table_name,
-                vector_store.distance_strategy,
-                params,
+        create = (
+            _create_ivf_index
+            if (options or {}).get("idx_type") == "IVF"
+            else _create_hnsw_index
+        )
+        create(
+            connection, vector_store.table_name, vector_store.distance_strategy, options
+        )
+    return None
+
+
+def _sql_index_params(
+    params: Optional[dict[str, Any]], distance_strategy: DistanceStrategy
+) -> Optional[dict[str, Any]]:
+    options = normalize_index_params(
+        params, metric=_get_distance_function(distance_strategy)
+    )
+    if options is not None:
+        options.pop("distance_metric", None)
+        if "auto_index" in options:
+            if options.pop("auto_index") is not True:
+                raise ValueError("SQL index creation requires auto_index=True")
+    return options
+
+
+def _sql_index_ddl(
+    table_name: str,
+    distance_strategy: DistanceStrategy,
+    params: Optional[dict[str, Any]],
+) -> Tuple[str, str]:
+    options = _sql_index_params(params, distance_strategy)
+    builder = (
+        _get_ivf_index_ddl
+        if (options or {}).get("idx_type") == "IVF"
+        else _get_hnsw_index_ddl
+    )
+    return builder(_quote_indentifier(table_name), distance_strategy, options)
+
+
+# Resolve synonyms and quoted/schema-qualified names as Oracle SQL does. An
+# existing index, even if unusable, must not authorize another constructor CREATE.
+# NAME_RESOLVE context 0 selects tables; context 2 is documented for sequences.
+_SQL_VECTOR_INDEX_QUERY = """
+WITH FUNCTION lc_index_table(table_name VARCHAR2) RETURN NUMBER IS
+    schema_name VARCHAR2(128);
+    part1 VARCHAR2(128);
+    part2 VARCHAR2(128);
+    link_name VARCHAR2(128);
+    part_type BINARY_INTEGER;
+    object_id NUMBER;
+BEGIN
+    SYS.DBMS_UTILITY.NAME_RESOLVE(
+        table_name, 0, schema_name, part1, part2, link_name, part_type, object_id);
+    RETURN object_id;
+END;
+SELECT i.index_name FROM all_indexes i
+JOIN all_objects t ON t.owner=i.table_owner AND t.object_name=i.table_name
+    AND t.object_type='TABLE'
+JOIN all_ind_columns c ON c.index_owner=i.owner AND c.index_name=i.index_name
+WHERE t.object_id=(SELECT lc_index_table(:table_name) FROM dual)
+    AND i.index_type='VECTOR' AND c.column_name='EMBEDDING'
+FETCH FIRST 1 ROW ONLY
+"""
+
+
+def _ensure_sql_constructor_index(
+    connection: Connection, table_name: str, prepared: Tuple[str, str]
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(_SQL_VECTOR_INDEX_QUERY, table_name=table_name)
+        if cursor.fetchone() is not None:
+            logger.info(
+                "Table %s already has a vector index; preserving it", table_name
             )
-    return
+            return
+        cursor.execute(prepared[1])
+        logger.info("Index %s created successfully...", prepared[0])
+
+
+async def _aensure_sql_constructor_index(
+    connection: AsyncConnection, table_name: str, prepared: Tuple[str, str]
+) -> None:
+    with connection.cursor() as cursor:
+        await cursor.execute(_SQL_VECTOR_INDEX_QUERY, table_name=table_name)
+        if await cursor.fetchone() is not None:
+            logger.info(
+                "Table %s already has a vector index; preserving it", table_name
+            )
+            return
+        await cursor.execute(prepared[1])
+        logger.info("Index %s created successfully...", prepared[0])
 
 
 def _get_hnsw_index_ddl(
@@ -733,40 +791,29 @@ async def acreate_index(
     client: Union[AsyncConnection, AsyncConnectionPool],
     vector_store: OracleVS,
     params: Optional[dict[str, Any]] = None,
-) -> None:
-    async with _aget_connection(client) as connection:
-        if params:
-            if "idx_name" in params:
-                params["idx_name"] = _quote_indentifier(params["idx_name"])
-            if params["idx_type"] == "HNSW":
-                await _acreate_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            elif params["idx_type"] == "IVF":
-                await _acreate_ivf_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
-            else:
-                await _acreate_hnsw_index(
-                    connection,
-                    vector_store.table_name,
-                    vector_store.distance_strategy,
-                    params,
-                )
+) -> Optional[dict[str, Any]]:
+    """Ensure a vector index exists, or explicitly reconfigure a VecDB index.
 
-        else:
-            await _acreate_hnsw_index(
-                connection,
-                vector_store.table_name,
-                vector_store.distance_strategy,
-                params,
-            )
+    Existing VecDB indexes are unchanged when params is empty. Explicit params
+    use LangChain HNSW/IVF options and rebuild an existing VecDB vector index.
+    A VecDB operation returns its provider response; a no-op or SQL returns None.
+    Use store.describe_vecdb_index() for readiness. Index maintenance requires
+    an idle connection and caller-owned serialization.
+    """
+    if vector_store._vecdb is not None:
+        return await vector_store._vecdb.run_async("create_index", params)
+    options = _sql_index_params(params, vector_store.distance_strategy)
+    async with _aget_connection(client) as connection:
+        create = (
+            _acreate_ivf_index
+            if (options or {}).get("idx_type") == "IVF"
+            else _acreate_hnsw_index
+        )
+        await create(
+            connection, vector_store.table_name, vector_store.distance_strategy, options
+        )
+
+    return None
 
 
 async def _acreate_hnsw_index(
@@ -1045,13 +1092,16 @@ def _read_similarity_output(
 # both expect values in the order (id, embedding, metadata, text)
 
 INSERT_QUERY = (
-    "INSERT INTO {table_name} (id, embedding, metadata, text) VALUES ({values})"
+    "INSERT INTO {table_name} (id, embedding, metadata, text) "
+    "VALUES ({id_value}, {embedding_value}, {metadata_value}, {text_value})"
 )
 MERGE_QUERY = """
 MERGE INTO {table_name} t
 USING (
-    VALUES ({values})
-) s(id, embedding, metadata, text)
+    SELECT {id_value} AS id, {embedding_value} AS embedding,
+           {metadata_value} AS metadata, {text_value} AS text
+    FROM dual
+) s
 ON (t.id = s.id)
 WHEN MATCHED THEN
     UPDATE SET 
@@ -1095,10 +1145,14 @@ class OracleVS(VectorStore):
     def _annotation_type(self) -> TableType:
         return "vector_store"
 
+    _vecdb: Any = None
+    client: Any
+    backend: str = "sql"
+
     @_handle_exceptions
     def __init__(
         self,
-        client: Union[Connection, ConnectionPool],
+        client: Any,
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1108,12 +1162,92 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
+        *,
+        backend: str = "auto",
     ):
         """
         Initialize the OracleVS store.
         For an async version, use OracleVS.acreate() instead.
+
+        params["vector_index_params"] accepts the same options as create_index,
+        using OracleVS or VecDB names, including nested advanced_params.
+        SQL creates a missing vector index; reopening preserves existing indexes.
+        VecDB applies these options when creating a new table.
+
+        ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
+        compatible layouts and databases. Native VecDB package calls accept
+        unqualified table names. Before Oracle Database 23.27.2, only unquoted
+        uppercase names are eligible: other new names use SQL in auto mode and
+        are rejected before creation by explicit ``backend="vecdb"``.
+        On 23.27.2+, lowercase, mixed-case, and quoted names are also eligible.
+        New schema-qualified names use SQL in auto mode and are rejected by
+        explicit ``backend="vecdb"``. Inspect
+        ``store.backend`` for the selected backend. SDK clients must use ORDS;
+        for native VecDB pass an oracledb connection or pool.
+        REST SDK clients require ``mutate_on_duplicate=True``; otherwise
+        construction raises ValueError before preparing the table.
         """
+        from ._vecdb import (
+            NativeTransport,
+            RestTransport,
+            VecDBBackend,
+            _inspect_columns,
+            is_sdk_client,
+            native_selection,
+            table_identifier,
+        )
+
+        if backend not in {"auto", "sql", "vecdb"}:
+            raise ValueError("backend must be auto, sql, or vecdb")
+        vector_index_params = constructor_index_params(params)
+        self._vecdb = None
+        self.backend = "sql"
+        if is_sdk_client(client):
+            if backend == "sql":
+                raise ValueError("The SQL backend requires an oracledb connection")
+            transport = RestTransport(client)
+            if not mutate_on_duplicate:
+                raise ValueError(
+                    "oracle-vecdb REST SDK does not support insert-only writes; "
+                    "set mutate_on_duplicate=True to enable upserts "
+                    "(existing IDs will be overwritten)"
+                )
+            self.client = client
+            self.embedding_function = embedding_function
+            self.table_name = table_identifier(table_name)[0]
+            self.query = query
+            self.distance_strategy = distance_strategy
+            self.params = params
+            self.mutate_on_duplicate: Optional[bool] = mutate_on_duplicate
+            self._vecdb = VecDBBackend(
+                transport,
+                table_name,
+                distance_strategy,
+                table_type=self._annotation_type(),
+                vector_index_params=vector_index_params,
+                embedding=embedding_function,
+                mutate_on_duplicate=mutate_on_duplicate,
+            )
+            self._vecdb.prepare()
+            self.backend = "vecdb"
+            return
+
         with _get_connection(client) as connection:
+            with connection.cursor() as cursor:
+                columns = _inspect_columns(cursor, table_name)
+            description: dict[str, Any] = {}
+            selected, version = native_selection(
+                connection,
+                table_name,
+                backend,
+                columns=columns,
+                description=description,
+            )
+            prepared_index = (
+                _sql_index_ddl(table_name, distance_strategy, vector_index_params)
+                if selected == "sql" and vector_index_params is not None
+                else None
+            )
             self._initialize(
                 connection,
                 client,
@@ -1125,16 +1259,63 @@ class OracleVS(VectorStore):
                 mutate_on_duplicate,
             )
 
-            embedding_dim = self.get_embedding_dimension()
-            _create_table(
-                connection, self.table_name, embedding_dim, self._annotation_type()
-            )
+            if selected == "vecdb":
+                self._vecdb = VecDBBackend(
+                    NativeTransport(connection, version),
+                    table_name,
+                    distance_strategy,
+                    table_type=self._annotation_type(),
+                    vector_index_params=vector_index_params,
+                    embedding=embedding_function,
+                    mutate_on_duplicate=mutate_on_duplicate,
+                )
+                self._vecdb.prepare(columns=columns, description=description)
+                self._vecdb.transport.client = client
+                self.backend = "vecdb"
+            else:
+                embedding_dim = self.get_embedding_dimension()
+                _create_table(
+                    connection, self.table_name, embedding_dim, self._annotation_type()
+                )
+                if prepared_index is not None:
+                    _ensure_sql_constructor_index(
+                        connection, self.table_name, prepared_index
+                    )
+
+    @classmethod
+    def from_vecdb_config(
+        cls, config: Any, table_name: str, embedding: Embeddings, **kwargs: Any
+    ) -> OracleVS:
+        """Create a REST VecDB store; install ``langchain-oracledb[vecdb]``.
+
+        ``mutate_on_duplicate`` defaults to True because REST supports upserts
+        only: writes update documents with existing IDs. Explicit False raises
+        ValueError during construction because insert-only writes are unsupported.
+
+        Operations not exposed by the REST SDK raise an unsupported-operation error.
+        SDK clients supplied directly to OracleVS remain caller-owned.
+        """
+        try:
+            from importlib import import_module
+
+            OracleVecDB = import_module("oracle_vecdb").OracleVecDB
+        except ImportError as exc:
+            raise ImportError(
+                "REST VecDB requires Python 3.10-3.15 and langchain-oracledb[vecdb]"
+            ) from exc
+        kwargs.setdefault("mutate_on_duplicate", True)
+        return cls(
+            client=OracleVecDB(config),
+            embedding_function=embedding,
+            table_name=table_name,
+            **kwargs,
+        )
 
     @classmethod
     @_ahandle_exceptions
     async def acreate(
         cls,
-        client: Union[AsyncConnection, AsyncConnectionPool],
+        client: Any,
         embedding_function: Union[
             Callable[[str], List[float]],
             Embeddings,
@@ -1144,14 +1325,68 @@ class OracleVS(VectorStore):
         query: Optional[str] = "What is a Oracle database",
         params: Optional[Dict[str, Any]] = None,
         mutate_on_duplicate: Optional[bool] = False,
+        *,
+        backend: str = "auto",
     ) -> OracleVS:
         """
         Initialize the OracleVS store with async connection.
+
+        params["vector_index_params"] follows the constructor's index contract
+        and accepts the same options as create_index.
+
+        Uses the constructor's naming/backend contract. Before Oracle Database
+        23.27.2, native VecDB accepts only unquoted uppercase names. Other new
+        names use SQL in auto mode and explicit VecDB rejects them before DDL.
+        On 23.27.2+, unqualified lowercase, mixed-case, and quoted names are
+        also eligible. New schema-qualified names use SQL in auto mode.
+        Inspect the returned store's ``backend`` to see the selected backend.
         """
 
+        from ._vecdb import (
+            AsyncNativeTransport,
+            VecDBBackend,
+            _ainspect_columns,
+            anative_selection,
+            is_sdk_client,
+        )
+
+        if backend not in {"auto", "sql", "vecdb"}:
+            raise ValueError("backend must be auto, sql, or vecdb")
+        if is_sdk_client(client):
+            import asyncio
+
+            return await asyncio.to_thread(
+                cls,
+                client,
+                embedding_function,
+                table_name,
+                distance_strategy,
+                query,
+                params,
+                mutate_on_duplicate,
+                backend=backend,
+            )
+        vector_index_params = constructor_index_params(params)
         self = cls.__new__(cls)
+        self._vecdb = None
+        self.backend = "sql"
 
         async with _aget_connection(client) as connection:
+            with connection.cursor() as cursor:
+                columns = await _ainspect_columns(cursor, table_name)
+            description: dict[str, Any] = {}
+            selected, version = await anative_selection(
+                connection,
+                table_name,
+                backend,
+                columns=columns,
+                description=description,
+            )
+            prepared_index = (
+                _sql_index_ddl(table_name, distance_strategy, vector_index_params)
+                if selected == "sql" and vector_index_params is not None
+                else None
+            )
             self._initialize(
                 connection,
                 client,
@@ -1163,10 +1398,30 @@ class OracleVS(VectorStore):
                 mutate_on_duplicate,
             )
 
-            embedding_dim = await self.aget_embedding_dimension()
-            await _acreate_table(
-                connection, self.table_name, embedding_dim, self._annotation_type()
-            )
+            if selected == "vecdb":
+                self._vecdb = VecDBBackend(
+                    AsyncNativeTransport(connection, version),
+                    table_name,
+                    distance_strategy,
+                    table_type=self._annotation_type(),
+                    vector_index_params=vector_index_params,
+                    embedding=embedding_function,
+                    mutate_on_duplicate=mutate_on_duplicate,
+                )
+                await self._vecdb.run_async(
+                    "prepare", columns=columns, description=description
+                )
+                self._vecdb.transport.client = client
+                self.backend = "vecdb"
+            else:
+                embedding_dim = await self.aget_embedding_dimension()
+                await _acreate_table(
+                    connection, self.table_name, embedding_dim, self._annotation_type()
+                )
+                if prepared_index is not None:
+                    await _aensure_sql_constructor_index(
+                        connection, self.table_name, prepared_index
+                    )
 
         return self
 
@@ -1214,6 +1469,28 @@ class OracleVS(VectorStore):
         self.distance_strategy = distance_strategy
         self.params = params
         self.mutate_on_duplicate = mutate_on_duplicate
+
+    def describe_vecdb_index(
+        self, *, kind: str = "vector", job_name: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Read VecDB index readiness or an ORDS job response without polling.
+
+        ``ready`` is True/False when known, otherwise None; ``details`` retains
+        provider status. A completed job alone never establishes index readiness.
+        ``kind="metadata"`` inspects native text/hybrid indexes. This is a snapshot,
+        not a synchronization guarantee; serialize index maintenance externally.
+        """
+        if self._vecdb is None:
+            raise ValueError("Index status requires a VecDB backend")
+        return self._vecdb.describe_index(kind, job_name)
+
+    async def adescribe_vecdb_index(
+        self, *, kind: str = "vector", job_name: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Async variant of describe_vecdb_index with the same readiness contract."""
+        if self._vecdb is None:
+            raise ValueError("Index status requires a VecDB backend")
+        return await self._vecdb.run_async("describe_index", kind, job_name)
 
     @property
     def embeddings(self) -> Optional[Embeddings]:
@@ -1459,7 +1736,6 @@ class OracleVS(VectorStore):
           List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
             also those successfully updated).
         """
-
         texts = list(texts)
         if ids and len(ids) != len(texts):
             raise ValueError(
@@ -1478,12 +1754,26 @@ class OracleVS(VectorStore):
                     f"but 'texts' has {len(texts)} items."
                 )
 
-        for i, _id in enumerate(original_ids):
-            if INTERNAL_ID_KEY in metadatas[i]:
+        for metadata in metadatas:
+            if INTERNAL_ID_KEY in metadata:
                 raise ValueError(
                     f'Metadata key "{INTERNAL_ID_KEY}" is '
                     "reserved and cannot used in metadata."
                 )
+
+        if self._vecdb is not None:
+            vectors: Optional[List[List[float]]] = None
+            if not self._vecdb.managed_embeddings:
+                vectors = self._embed_documents(texts) if texts else []
+            return self._vecdb.add(
+                texts,
+                vectors,
+                metadatas,
+                original_ids,
+                self.mutate_on_duplicate,
+            )
+
+        for i, _id in enumerate(original_ids):
             metadatas[i][INTERNAL_ID_KEY] = _id
 
         # with OracleEmbeddings, embeddings are generated in the database during insert;
@@ -1533,12 +1823,30 @@ class OracleVS(VectorStore):
                         INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
                     if not isinstance(self.embeddings, OracleEmbeddings):
+                        # Large MERGE text must use LOB locators. Keep the
+                        # array uniformly typed. Leave bound LOB lifetimes to
+                        # the driver: MERGE may consume their locators, making
+                        # an explicit close unsafe for subsequent executions.
+                        if self.mutate_on_duplicate and any(
+                            len(row[3].encode("utf-8")) > 32767 for row in docs
+                        ):
+                            for i, row in enumerate(docs):
+                                lob = connection.createlob(oracledb.DB_TYPE_CLOB)
+                                lob.write(row[3])
+                                docs[i] = (*row[:3], lob)
                         cursor.setinputsizes(
-                            None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+                            None,
+                            oracledb.DB_TYPE_VECTOR,
+                            oracledb.DB_TYPE_JSON,
+                            oracledb.DB_TYPE_CLOB,
                         )
                         cursor.executemany(
                             selected_query.format(
-                                table_name=self.table_name, values=":1, :2, :3, :4"
+                                table_name=self.table_name,
+                                id_value=":1",
+                                embedding_value=":2",
+                                metadata_value=":3",
+                                text_value=":4",
                             ),
                             docs,
                             batcherrors=True,
@@ -1562,10 +1870,12 @@ class OracleVS(VectorStore):
                             cursor.executemany(
                                 selected_query.format(
                                     table_name=self.table_name,
-                                    values=(
-                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                        ":meta, :text"
+                                    id_value=":id",
+                                    embedding_value=(
+                                        "dbms_vector_chain.utl_to_embedding(:text,json(:param))"  # noqa: E501
                                     ),
+                                    metadata_value=":meta",
+                                    text_value=":text",
                                 ),
                                 docs,
                                 batcherrors=True,
@@ -1639,7 +1949,6 @@ class OracleVS(VectorStore):
           List[str]: The ids successfully inserted (and, when mutate_on_duplicate=True,
             also those successfully updated).
         """
-
         texts = list(texts)
         if ids and len(ids) != len(texts):
             raise ValueError(
@@ -1658,12 +1967,22 @@ class OracleVS(VectorStore):
                     f"but 'texts' has {len(texts)} items."
                 )
 
-        for i, _id in enumerate(original_ids):
-            if INTERNAL_ID_KEY in metadatas[i]:
+        for metadata in metadatas:
+            if INTERNAL_ID_KEY in metadata:
                 raise ValueError(
                     f'Metadata key "{INTERNAL_ID_KEY}" is '
                     "reserved and cannot used in metadata."
                 )
+
+        if self._vecdb is not None:
+            vectors: Optional[List[List[float]]] = None
+            if not self._vecdb.managed_embeddings:
+                vectors = await self._aembed_documents(texts) if texts else []
+            return await self._vecdb.run_async(
+                "add", texts, vectors, metadatas, original_ids, self.mutate_on_duplicate
+            )
+
+        for i, _id in enumerate(original_ids):
             metadatas[i][INTERNAL_ID_KEY] = _id
 
         # with OracleEmbeddings, embeddings are generated in the database during insert;
@@ -1702,12 +2021,30 @@ class OracleVS(VectorStore):
                         INSERT_QUERY if not self.mutate_on_duplicate else MERGE_QUERY
                     )
                     if not isinstance(self.embeddings, OracleEmbeddings):
+                        # Large MERGE text must use LOB locators. Keep the
+                        # array uniformly typed. Leave bound LOB lifetimes to
+                        # the driver: MERGE may consume their locators, making
+                        # an explicit close unsafe for subsequent executions.
+                        if self.mutate_on_duplicate and any(
+                            len(row[3].encode("utf-8")) > 32767 for row in docs
+                        ):
+                            for i, row in enumerate(docs):
+                                lob = await connection.createlob(oracledb.DB_TYPE_CLOB)
+                                await lob.write(row[3])
+                                docs[i] = (*row[:3], lob)
                         cursor.setinputsizes(
-                            None, oracledb.DB_TYPE_VECTOR, oracledb.DB_TYPE_JSON, None
+                            None,
+                            oracledb.DB_TYPE_VECTOR,
+                            oracledb.DB_TYPE_JSON,
+                            oracledb.DB_TYPE_CLOB,
                         )
                         await cursor.executemany(
                             selected_query.format(
-                                table_name=self.table_name, values=":1, :2, :3, :4"
+                                table_name=self.table_name,
+                                id_value=":1",
+                                embedding_value=":2",
+                                metadata_value=":3",
+                                text_value=":4",
                             ),
                             docs,
                             batcherrors=True,
@@ -1730,10 +2067,12 @@ class OracleVS(VectorStore):
                             await cursor.executemany(
                                 selected_query.format(
                                     table_name=self.table_name,
-                                    values=(
-                                        ":id, dbms_vector_chain.utl_to_embedding(:text,json(:param)), "  # noqa: E501
-                                        ":meta, :text"
+                                    id_value=":id",
+                                    embedding_value=(
+                                        "dbms_vector_chain.utl_to_embedding(:text,json(:param))"  # noqa: E501
                                     ),
+                                    metadata_value=":meta",
+                                    text_value=":text",
                                 ),
                                 docs,
                                 batcherrors=True,
@@ -1876,10 +2215,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        docs_and_scores = []
-
-        embedding_arr: Any = array.array("f", embedding)
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -1888,6 +2223,12 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return self._vecdb.search(embedding, k, filter, **kwargs)
+        docs_and_scores = []
+
+        embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -1923,8 +2264,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float]]:
-        embedding_arr: Any = array.array("f", embedding)
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -1933,6 +2272,10 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return await self._vecdb.run_async("search", embedding, k, filter, **kwargs)
+        embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -1968,10 +2311,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
-        embedding_arr: Any = array.array("f", embedding)
-
-        documents = []
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -1980,6 +2319,12 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return self._vecdb.search(embedding, k, filter, True, **kwargs)
+        embedding_arr: Any = array.array("f", embedding)
+
+        documents = []
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -2015,8 +2360,6 @@ class OracleVS(VectorStore):
         filter: Optional[dict] = None,
         **kwargs: Any,
     ) -> List[Tuple[Document, float, NDArray[np.float32]]]:
-        embedding_arr: Any = array.array("f", embedding)
-
         db_filter = kwargs.get("db_filter", None)
         if db_filter:
             if filter:
@@ -2025,6 +2368,12 @@ class OracleVS(VectorStore):
                 )
 
             filter = db_filter
+
+        if self._vecdb is not None:
+            return await self._vecdb.run_async(
+                "search", embedding, k, filter, True, **kwargs
+            )
+        embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
             self.table_name,
@@ -2326,6 +2675,8 @@ class OracleVS(VectorStore):
           ids: The ids of the documents to get.
           **kwargs
         """
+        if self._vecdb is not None:
+            return self._vecdb.get(list(ids))
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
@@ -2348,6 +2699,8 @@ class OracleVS(VectorStore):
           ids: The ids of the documents to get.
           **kwargs
         """
+        if self._vecdb is not None:
+            return await self._vecdb.run_async("get", list(ids))
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
@@ -2370,6 +2723,11 @@ class OracleVS(VectorStore):
           ids: List of ids to delete.
           **kwargs
         """
+        if not ids:
+            raise ValueError("No ids provided to delete.")
+
+        if self._vecdb is not None:
+            return self._vecdb.delete(ids)
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 
@@ -2386,6 +2744,11 @@ class OracleVS(VectorStore):
           ids: List of ids to delete.
           **kwargs
         """
+        if not ids:
+            raise ValueError("No ids provided to delete.")
+
+        if self._vecdb is not None:
+            return await self._vecdb.run_async("delete", ids)
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 
@@ -2411,11 +2774,17 @@ class OracleVS(VectorStore):
         if client is None:
             raise ValueError("client parameter is required...")
 
+        if "vector_index_params" in kwargs:
+            raise TypeError(
+                'Pass vector_index_params inside params={"vector_index_params": ...}'
+            )
         params = kwargs.get("params", {})
 
         table_name = str(kwargs.get("table_name", "langchain"))
 
-        distance_strategy = kwargs.get("distance_strategy", None)
+        distance_strategy = kwargs.get(
+            "distance_strategy", DistanceStrategy.EUCLIDEAN_DISTANCE
+        )
         if not isinstance(distance_strategy, DistanceStrategy):
             try:
                 # Accept an equivalent value (e.g. a DistanceStrategy from
@@ -2440,6 +2809,16 @@ class OracleVS(VectorStore):
         metadatas: Optional[List[dict]] = None,
         **kwargs: Any,
     ) -> OracleVS:
+        """Create and populate a store using the constructor's backend contract.
+
+        With a native connection, VecDB requires unquoted uppercase names before
+        Oracle Database 23.27.2. The default lowercase ``langchain`` name uses SQL
+        in auto mode on older databases and is eligible for VecDB on 23.27.2+.
+        Explicit VecDB rejects unsupported names before creating anything.
+        Existing SQL tables remain SQL-backed. New schema-qualified names use SQL
+        in auto mode and are rejected by ``backend="vecdb"``.
+        Inspect ``store.backend`` after auto selection.
+        """
         (
             client,
             table_name,
@@ -2449,15 +2828,17 @@ class OracleVS(VectorStore):
         ) = OracleVS._from_texts_helper(**kwargs)
 
         vss = cls(
-            client=client,  # type: ignore[arg-type]
+            client=client,
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
             query=query,
             params=params,
+            backend=kwargs.get("backend", "auto"),
+            mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 
-        vss.add_texts(texts=list(texts), metadatas=metadatas)
+        vss.add_texts(texts=list(texts), metadatas=metadatas, ids=kwargs.get("ids"))
         return vss
 
     @classmethod
@@ -2469,6 +2850,16 @@ class OracleVS(VectorStore):
         metadatas: Optional[List[dict]] = None,
         **kwargs: Any,
     ) -> OracleVS:
+        """Create and populate a store using the constructor's backend contract.
+
+        With a native connection, VecDB requires unquoted uppercase names before
+        Oracle Database 23.27.2. The default lowercase ``langchain`` name uses SQL
+        in auto mode on older databases and is eligible for VecDB on 23.27.2+.
+        Explicit VecDB rejects unsupported names before creating anything.
+        Existing SQL tables remain SQL-backed. New schema-qualified names use SQL
+        in auto mode and are rejected by ``backend="vecdb"``.
+        Inspect ``store.backend`` after auto selection.
+        """
         (
             client,
             table_name,
@@ -2478,13 +2869,17 @@ class OracleVS(VectorStore):
         ) = OracleVS._from_texts_helper(**kwargs)
 
         vss = await OracleVS.acreate(
-            client=client,  # type: ignore[arg-type]
+            client=client,
             embedding_function=embedding,
             table_name=table_name,
             distance_strategy=distance_strategy,
             query=query,
             params=params,
+            backend=kwargs.get("backend", "auto"),
+            mutate_on_duplicate=kwargs.get("mutate_on_duplicate", False),
         )
 
-        await vss.aadd_texts(texts=list(texts), metadatas=metadatas)
+        await vss.aadd_texts(
+            texts=list(texts), metadatas=metadatas, ids=kwargs.get("ids")
+        )
         return vss

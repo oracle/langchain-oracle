@@ -14,7 +14,7 @@ from typing import Any, Dict, Tuple
 
 import oracledb
 import pytest
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_oracledb.embeddings import OracleEmbeddings
 from langchain_oracledb.retrievers.hybrid_search import (
@@ -51,7 +51,7 @@ except Exception as e:
 @pytest.fixture(scope="function")
 def resource_names() -> Dict[str, str]:
     """Generate unique resource names per test to avoid collisions."""
-    suffix = uuid.uuid4().hex[:8]
+    suffix = uuid.uuid4().hex[:8].upper()
     return {
         "table": f"TB_HY_{suffix}",
         "index": f"IDX_HY_{suffix}",
@@ -265,9 +265,7 @@ def test_preference(connection, cleanup, resource_names, db_embedder_params) -> 
         )
 
     # Non-OracleEmbeddings should fail in preference creation
-    model1 = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
-    )
+    model1 = DeterministicFakeEmbedding(size=384)
     vs = OracleVS(
         connection, model1, resource_names["table"], DistanceStrategy.EUCLIDEAN_DISTANCE
     )
@@ -410,9 +408,7 @@ async def test_preference_async(
         )
 
     # Non-OracleEmbeddings should fail
-    model1 = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
-    )
+    model1 = DeterministicFakeEmbedding(size=384)
     vs = await OracleVS.acreate(
         aconnection,
         model1,

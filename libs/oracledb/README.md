@@ -51,6 +51,206 @@ print("Connection successful!")
 
 ### Vector Stores
 
+#### OracleVS backends and VecDB
+
+`OracleVS` defaults to `backend="auto"`: existing SQL tables remain SQL-backed,
+while existing VecDB stores created through `OracleVS` use VecDB. New tables use
+VecDB when the server and requested name support it, otherwise SQL. Set
+`backend="sql"` or `backend="vecdb"` explicitly, and inspect `store.backend` for
+the selected backend.
+
+VecDB support is limited to tables created and populated through `OracleVS`,
+which manages the document ID mapping and reserved content metadata. Tables
+created or populated directly through SQL, `DBMS_VECTOR_DATABASE`, or the VecDB
+SDK are not supported. There is currently no adapter to import external table
+formats.
+
+With `OracleEmbeddings`, an in-database model (`provider="database"`), and
+`mutate_on_duplicate=True`, new VecDB stores use managed embeddings on native
+Oracle Database 23.26.3+ and REST. The table uses the configured model and
+`__orcl_internal_content` as its embedding content path. Upserts send IDs and
+metadata without vectors; embedding generation and storage finish before the
+call returns. Reopening requires the same model and content path; existing BYOV
+tables are not converted automatically. Other embedding providers, insert-only
+writes, older native databases, and embeddings with additional provider options
+or a proxy retain their existing write paths. Query embedding behavior is
+unchanged.
+
+Native ownership checks use a bound, single-table
+`DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE` call. Older packages that reject
+cross-schema or case-sensitive descriptions use a server-filtered registry lookup
+returning only a membership flag; Python does not download the full registry. The targeted
+`ALL_TAB_COLUMNS` query still checks table existence and layout.
+For native VecDB selection, one SELECT returns both `SEARCH` availability and
+`COMPATIBLE`, using an inline function around `DBMS_UTILITY.DB_VERSION` without
+requiring `V$PARAMETER` access. Existing SQL stores skip that compatibility query.
+
+Native VecDB uses an `oracledb` connection or pool and requires Oracle Database
+23.26.1+ with `COMPATIBLE >=23.4` (or `>=23.6` for 23.26.3+). Package operations
+require unqualified table names. Before Oracle Database 23.27.2, native VecDB
+accepts only unquoted uppercase names. For other new names, `backend="auto"`
+uses SQL to preserve the name, while explicit `backend="vecdb"` rejects the name
+before creating anything. This restriction also applies to 23.26.4.1.0.
+On 23.27.2+, native VecDB also accepts lowercase, mixed-case, and quoted names
+containing literal dots. The default `from_texts()` name `langchain` therefore
+uses SQL on older databases and is eligible for VecDB on 23.27.2+.
+
+REST resource names follow the SDK naming rules; case-sensitive quoted
+identifiers require a native connection or pool. Install the optional SDK extra
+for REST (Python 3.10–3.15):
+
+```bash
+pip install "langchain-oracledb[vecdb]"
+```
+
+```python
+import os
+
+from oracle_vecdb import Configuration
+from langchain_oracledb import OracleVS
+
+# embedding_model implements LangChain's Embeddings interface.
+store = OracleVS.from_vecdb_config(
+    config=Configuration(
+        rest_url=os.environ["ORACLE_VECDB_REST_URL"],
+        username=os.environ["ORACLE_VECDB_USERNAME"],
+        password=os.environ["ORACLE_VECDB_PASSWORD"],
+    ),
+    table_name="DOCUMENTS",
+    embedding=embedding_model,
+    mutate_on_duplicate=True,
+)
+store.add_texts(["Oracle vector search"], ids=["doc-1"])
+documents = store.similarity_search("vector search", k=4)
+```
+
+An existing ORDS-configured `OracleVecDB` client can also be supplied as `client`.
+REST writes require `mutate_on_duplicate=True`; insert-only writes, metadata
+text/hybrid search and indexing, vectorizer preferences, and migration require a
+native connection. Native stores also support the corresponding async APIs.
+
+### Rerank retrieved documents
+
+`OracleReranker` implements LangChain's `BaseDocumentCompressor` and works with
+documents from any retriever. Native connections and pools call
+`DBMS_VECTOR_CHAIN.UTL_TO_RERANK`; REST SDK clients use `client.rerank()` with a
+loaded database model. Reranking does not require an `OracleVS` or VecDB table.
+
+```python
+from langchain_oracledb import OracleReranker
+
+# conn can be an oracledb connection or an existing REST OracleVecDB client.
+# The database downloads the URL; model_url can be a preauthenticated URL.
+OracleReranker.load_onnx_model(
+    conn=conn,
+    model_name="BGE_RERANKER",
+    url=model_url,
+)
+
+reranker = OracleReranker(
+    conn=conn,
+    params={"provider": "database", "model": "BGE_RERANKER"},
+    top_n=3,
+)
+documents = retriever.invoke("How do I restore an Oracle database backup?")
+reranked = reranker.compress_documents(
+    documents, "How do I restore an Oracle database backup?"
+)
+```
+
+The model must be a reranker, rather than an embedding model. URL loading
+defaults model metadata to `{"function": "regression"}`. Pass `model_params`
+to specify a database cloud credential or override metadata. URL loading requires
+a new model name and an available database model-loading API or REST service;
+errors propagate without automatic fallback. Directory loading also accepts the
+existing positional form
+`OracleReranker.load_onnx_model(conn, "MODEL_DIR", "model.onnx", "BGE_RERANKER")`.
+It replaces an existing model and expects ONNX inputs `first_input` and
+`second_input`, database attributes `FIRST_INPUT` and `SECOND_INPUT`, and output
+`output`.
+
+Reranking preserves the original document objects, IDs, and metadata. Scores are
+used for descending ordering; ties use input order. `top_n` controls the final
+result count and overrides provider limit parameters. Empty input returns `[]`
+without an inference request. Native provider parameters also support external
+services configured through `UTL_TO_RERANK`; REST currently requires
+`provider="database"`.
+
+To use the compressor in a retrieval pipeline, install `langchain-classic` and
+wrap your retriever:
+
+```python
+from langchain_classic.retrievers import ContextualCompressionRetriever
+
+compression_retriever = ContextualCompressionRetriever(
+    base_retriever=retriever,
+    base_compressor=reranker,
+)
+reranked = compression_retriever.invoke("How do I restore an Oracle database backup?")
+```
+
+`acompress_documents()` runs the synchronous operation in an executor. Supply a
+synchronous connection, pool, or REST client; clients remain caller-owned.
+
+- Vector similarity filters preserve the OracleVS SQL filter contract on native
+  connections and pools, including async and MMR searches. Verified predicates
+  use VecDB QBE translations with explicit type conversion and negation.
+  Valid predicates without an equivalent translation use an exact SQL query
+  against the VecDB-managed table: filtering precedes distance ordering and
+  limiting (or `fetch_k` for MMR). Writes, indexes, and cleanup remain managed
+  by VecDB. SQL fallback honors `output_selector`; package index-search tuning
+  options do not change its exact distance ranking. REST uses the translated
+  QBE subset and raises `ValueError` for filters requiring SQL fallback.
+- Native VecDB keyword retrieval uses `JSON_TEXTCONTAINS` with `SCORE(1)`
+  and returns matches in descending relevance order. `return_scores=True`
+  exposes those Oracle Text scores. Keyword-only hybrid retrieval reports
+  `vector_score=0`. Numeric document metadata is decoded as `Decimal`, matching
+  SQL JSON metadata; booleans and nulls retain their types.
+- VecDB reserves metadata key `__orcl_internal_content` for document content;
+  user metadata can contain `text`. Search scores remain
+  lower-is-better distances; `output_selector` and `advanced_options` expose SDK
+  query options.
+- Native insert-only writes follow regular SQL insert behavior: autocommit and
+  pending transactions are accepted. Row errors (including duplicate IDs) are
+  logged and excluded from returned IDs; successful rows are committed, along
+  with any pending work on that connection. Driver/commit failures propagate
+  without an automatic rollback, as on the SQL backend.
+- Configure indexes through `params={"vector_index_params": {...}}` in
+  `OracleVS`, `acreate()`, `from_texts()`, or `afrom_texts()`. The nested dictionary
+  accepts the same options as `create_index(params=...)`. SQL creates a missing
+  vector index; reopening preserves an existing vector index. VecDB applies
+  these options when creating a new table.
+- Index options accept OracleVS names (`idx_type`, `parallel`, `neighbor_part`)
+  and VecDB names (`organization`, `parallel_creation`, `partitions`).
+  `organization="INMEMORY GRAPH"` selects HNSW; `"PARTITIONS"` selects IVF.
+  `advanced_params={"neighbors": 32, "efConstruction": 200}` and
+  `advanced_params={"partitions": 32}` are accepted alongside the equivalent flat
+  fields. Conflicting aliases raise an error. SQL rejects VecDB-specific options
+  it cannot represent. For example:
+  `params={"vector_index_params": {"organization": "INMEMORY GRAPH",
+  "advanced_params": {"neighbors": 32, "efConstruction": 200}}}`.
+- `create_index()` and `acreate_index()` leave an existing VecDB vector index
+  unchanged when no parameters (or an empty dictionary) are supplied. Explicit
+  parameters request a vector-only rebuild; a missing index is created instead.
+  For example, `create_index(store.client, store, {"idx_type": "IVF",
+  "neighbor_part": 32, "accuracy": 90})` maps `neighbor_part` to VecDB partitions.
+  VecDB owns the physical index name, so `idx_name` is not applied.
+- For VecDB, hybrid index creation retains the table's physical metadata index
+  name. `OracleHybridSearchRetriever` discovers and uses that index, ignoring
+  `idx_name`. The requested name can be reused in the usual create/retrieve flow;
+  no catalog lookup is needed. For SQL stores, `idx_name` selects the index.
+- No distribution setting is injected. Supply `distribute_params` explicitly only
+  when appropriate for the target database. Explicit HNSW/IVF requests use the
+  LangChain construction defaults where the package requires concrete values;
+  absent index configuration is omitted from the package request.
+- A VecDB creation/rebuild returns the provider response; a skipped operation
+  returns `None`. Check `describe_vecdb_index()` for readiness. Serialize index
+  maintenance and use an idle connection for native DDL. Explicit text/hybrid
+  index operations remain available with a native connection, and their freshness
+  follows the synchronization schedule.
+- `drop_table_purge()` and `adrop_table_purge()` use package/SDK cleanup for VecDB
+  and SQL cleanup for ordinary tables. Package failures never trigger a SQL drop.
+
 #### OracleVS
 
 Use Oracle Vector Database with `OracleVS`. More information can be found in [Oracle AI Vector Search: Vector Store](https://python.langchain.com/docs/integrations/vectorstores/oracle/) documentation.
@@ -68,10 +268,15 @@ from langchain_oracledb.vectorstores import DistanceStrategy
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/paraphrase-mpnet-base-v2"
 )
-vector_store = OracleVS(conn, embedding_model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+vector_store = OracleVS(
+    conn, embedding_model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+)
 
 # add texts to the vector database
-texts = ["A tablespace can be online (accessible) or offline (not accessible) whenever the database is open.\nA tablespace is usually online so that its data is available to users. The SYSTEM tablespace and temporary tablespaces cannot be taken offline.", "The database stores LOBs differently from other data types. Creating a LOB column implicitly creates a LOB segment and a LOB index. "]
+texts = [
+    "A tablespace can be online (accessible) or offline (not accessible) whenever the database is open.\nA tablespace is usually online so that its data is available to users. The SYSTEM tablespace and temporary tablespaces cannot be taken offline.",
+    "The database stores LOBs differently from other data types. Creating a LOB column implicitly creates a LOB segment and a LOB index. ",
+]
 metadata = [
     {"id": "100", "link": "Document Example Test 1"},
     {"id": "101", "link": "Document Example Test 2"},
@@ -96,13 +301,10 @@ vector_store.add_documents(
     ids=["200"],  # becomes 200#chunk-0, 200#chunk-1, ...
 )
 
-create_index(
-    conn, vector_store, params={"idx_name": "hnsw_oravs", "idx_type": "HNSW"}
-)
+create_index(conn, vector_store, params={"idx_name": "hnsw_oravs", "idx_type": "HNSW"})
 
 # perform siliarity search
 vector_store.similarity_search("How does a database stores LOBs?", 1)
-
 ```
 
 ### Document Loaders
@@ -247,6 +449,23 @@ embed = embedder.embed_query("Hello World!")
 # verify
 print(f"Embedding generated by OracleEmbeddings: {embed}")
 ```
+
+An existing REST-configured `OracleVecDB` client can also generate embeddings:
+
+```python
+embedder = OracleEmbeddings(
+    conn=rest_client,
+    params={"provider": "database", "model": "MY_EMBEDDING_MODEL"},
+)
+vectors = embedder.embed_documents(["Oracle database backup", "Vector search"])
+vector = embedder.embed_query("How do I restore a backup?")
+```
+
+REST calls use `client.generate_embedding()` and support the `model` parameter
+with `provider="database"` (also the default). Other native provider parameters
+and the native session `proxy` option are rejected for REST clients. The async
+embedding methods use LangChain's executor fallback. The SDK remains optional
+and clients remain caller-owned.
 
 ### Utilities
 

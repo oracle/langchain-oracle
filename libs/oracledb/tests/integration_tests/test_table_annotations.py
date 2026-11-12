@@ -23,16 +23,37 @@ from langchain_oracledb._annotations import (
     create_table_with_annotations,
     table_annotations,
 )
+from langchain_oracledb.cache import _SemanticCacheVectorStore
+from langchain_oracledb.vectorstores.utils import DistanceStrategy, drop_table_purge
+
+from .vectorstores._backend_fixtures import check_native_backend, native_config
 
 
-def test_sql_classes_create_annotations_and_preserve_them_on_reopen(sql_connection):
+@pytest.mark.parametrize("backend", ["sql", "vecdb"])
+def test_classes_create_annotations_and_preserve_them_on_reopen(
+    sql_connection, backend
+):
     conn = sql_connection
     prefix = "LCCA_" + uuid.uuid4().hex[:10].upper()
     names = [f"{prefix}_{i}" for i in range(6)]
     embedding = DeterministicFakeEmbedding(size=3)
+    check_native_backend(native_config(), backend, names[0])
+
+    def semantic_cache():
+        # The cache recognizes an existing table's backend. Seed that table with
+        # the cache subclass so its creation annotation also has the right type.
+        _SemanticCacheVectorStore(
+            conn,
+            embedding,
+            names[1],
+            backend=backend,
+            distance_strategy=DistanceStrategy.COSINE,
+        )
+        return OracleSemanticCache(conn, embedding, names[1])
+
     factories = [
-        lambda: OracleVS(conn, embedding, names[0]),
-        lambda: OracleSemanticCache(conn, embedding, names[1]),
+        lambda: OracleVS(conn, embedding, names[0], backend=backend),
+        semantic_cache,
         lambda: OracleCache(conn, names[2]),
         lambda: OracleChatMessageHistory.create_tables(
             conn, names[3], create_index=False
@@ -49,8 +70,8 @@ def test_sql_classes_create_annotations_and_preserve_them_on_reopen(sql_connecti
         "kv_store",
     ]
     expected = {
-        name: table_annotations(kind)["LANGCHAIN_ORACLE"]
-        for name, kind in zip(names, kinds)
+        name: table_annotations(kind, backend if i < 2 else "sql")["LANGCHAIN_ORACLE"]
+        for i, (name, kind) in enumerate(zip(names, kinds))
     }
     with conn.cursor() as cursor:
         try:
@@ -79,7 +100,7 @@ def test_sql_classes_create_annotations_and_preserve_them_on_reopen(sql_connecti
                     "SELECT COUNT(*) FROM user_tables WHERE table_name=:n", n=name
                 )
                 if cursor.fetchone()[0]:
-                    cursor.execute(f'DROP TABLE "{name}" PURGE')
+                    drop_table_purge(conn, name)
 
 
 @pytest.fixture

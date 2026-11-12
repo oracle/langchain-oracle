@@ -60,6 +60,7 @@ def _make_vs(table_name="MY_TABLE"):
     vs = MagicMock(spec=OracleVS)
     vs.table_name = table_name
     vs.client = MagicMock()
+    vs._vecdb = None
     return vs
 
 
@@ -628,6 +629,15 @@ class TestGetSearchParams:
 
 class TestGetPreferenceParameters:
     """Tests for _get_preference_parameters (no DB calls)."""
+
+    def test_vecdb_default_path_indexes_document_content(self):
+        vs = _make_vs()
+        vs._vecdb = object()
+        vs.embedding_function = _make_embeddings(provider="database", model="allminilm")
+        pref = _make_preference(vs=vs)
+        assert pref._get_preference_parameters()["paths"] == [
+            {"type": "STRING", "path_list": ["$.__orcl_internal_content"]}
+        ]
 
     def test_database_provider_sets_model_key(self):
         vs = _make_vs()

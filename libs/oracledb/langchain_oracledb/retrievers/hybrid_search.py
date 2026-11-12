@@ -19,10 +19,12 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import uuid
+from copy import copy
 from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union, cast
 
 import oracledb
@@ -105,6 +107,21 @@ def _validate_parameters(
         return True
 
     return False
+
+
+def _preference_client(store: OracleVS) -> Any:
+    if store._vecdb is not None:
+        return store._vecdb.native_transport("vectorizer preference management").client
+    return store.client
+
+
+def _bound_vecdb_store(store: OracleVS, transport: Any) -> OracleVS:
+    """Keep temporary preference and index DDL on one native checkout."""
+    bound = copy(store)
+    bound.client = transport.client
+    bound._vecdb = copy(store._vecdb)
+    bound._vecdb.transport = transport
+    return bound
 
 
 class OracleVectorizerPreference:
@@ -193,6 +210,12 @@ class OracleVectorizerPreference:
             else:
                 preference_params["embedder_spec"] = embeddings.params
 
+        if self.vs._vecdb is not None:
+            from ..vectorstores._vecdb_adapter import TEXT_KEY
+
+            preference_params.setdefault(
+                "paths", [{"type": "STRING", "path_list": [f"$.{TEXT_KEY}"]}]
+            )
         return preference_params
 
     @classmethod
@@ -225,9 +248,10 @@ class OracleVectorizerPreference:
             preference_name or "pref" + str(uuid.uuid4()).replace("-", "")[0:15]
         )
 
+        client = _preference_client(vector_store)
         preference_params = self._get_preference_parameters()
 
-        with _get_connection(vector_store.client) as connection:
+        with _get_connection(client) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     OracleVectorizerPreference.PREFERENCE_STR,
@@ -266,9 +290,10 @@ class OracleVectorizerPreference:
             preference_name or "pref" + str(uuid.uuid4()).replace("-", "")[0:15]
         )
 
+        client = _preference_client(vector_store)
         preference_params = self._get_preference_parameters()
 
-        async with _aget_connection(vector_store.client) as connection:
+        async with _aget_connection(client) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     OracleVectorizerPreference.PREFERENCE_STR,
@@ -280,7 +305,7 @@ class OracleVectorizerPreference:
 
     def drop_preference(self):
         """Drop this vectorizer preference using DBMS_VECTOR_CHAIN.DROP_PREFERENCE."""
-        with _get_connection(self.vs.client) as connection:
+        with _get_connection(_preference_client(self.vs)) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     "begin DBMS_VECTOR_CHAIN.DROP_PREFERENCE (:preference_name); end;",
@@ -289,7 +314,7 @@ class OracleVectorizerPreference:
 
     async def adrop_preference(self):
         """Async variant of drop_preference."""
-        async with _aget_connection(self.vs.client) as connection:
+        async with _aget_connection(_preference_client(self.vs)) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     "begin DBMS_VECTOR_CHAIN.DROP_PREFERENCE (:preference_name); end;",
@@ -326,6 +351,8 @@ def _get_hybrid_index_ddl(
     vectorizer_preference: OracleVectorizerPreference,
     idx_name: str,
     params: dict[str, Any],
+    metadata_parameters: Optional[str] = None,
+    metadata_column: Optional[str] = None,
 ):
     """Build the CREATE HYBRID VECTOR INDEX DDL statement.
 
@@ -389,9 +416,52 @@ def _get_hybrid_index_ddl(
             "under params['parameters']."
         )
 
+    if metadata_parameters is not None:
+        from langchain_oracledb.vectorstores._vecdb import (
+            DATAGUIDE_CALLBACK,
+            table_identifier,
+        )
+
+        table_identifier(vectorizer_preference.preference_name)
+        if re.search(
+            r"\bSYNC\s*\(\s*ON\s+COMMIT\s*\)", metadata_parameters, re.IGNORECASE
+        ):
+            raise ValueError(
+                "VecDB hybrid replacement cannot inherit SYNC (ON COMMIT); "
+                "use the original scheduled data-guide synchronization"
+            )
+
+        for key in index_parameters:
+            if key.lower() == "dataguide":
+                if (
+                    str(index_parameters[key]).upper().split()
+                    != DATAGUIDE_CALLBACK.split()
+                ):
+                    raise ValueError(
+                        "VecDB indexing must retain its data-guide callback"
+                    )
+                index_parameters = {
+                    k: v for k, v in index_parameters.items() if k != key
+                }
+                break
+        if any(k.lower() == "search_on" for k in index_parameters):
+            raise ValueError("SEARCH_ON is not a hybrid vector index parameter")
+        if any(k.lower() == "sync" for k in index_parameters):
+            raise ValueError(
+                "VecDB hybrid indexing preserves the existing synchronization "
+                "schedule; do not override sync"
+            )
+        for key in ("memory", "maintenance"):
+            if any(k.lower() == key for k in index_parameters):
+                metadata_parameters = re.sub(
+                    rf"\b{key}\s+\S+", "", metadata_parameters, flags=re.IGNORECASE
+                )
+
     params_str, filter_by_str, order_by_str, parallel_str = "", "", "", ""
 
     params_str = f"vectorizer {vectorizer_preference.preference_name} "
+    if metadata_parameters is not None:
+        params_str += metadata_parameters + " "
     for k, v in index_parameters.items():
         params_str += f"{k} {v} "
 
@@ -418,16 +488,46 @@ def _get_hybrid_index_ddl(
             raise ValueError("parallel must be a positive integer")
         parallel_str = f"PARALLEL {parallel} "
 
-    def oracle_string_literal(value: str) -> str:
-        return value.replace("'", "''")
+    column = "text"
+    if vectorizer_preference.vs._vecdb is not None:
+        from langchain_oracledb.vectorstores._vecdb import CURRENT_VERSION
 
-    create_index_query = f"""
-    CREATE HYBRID VECTOR INDEX {idx_name} ON 
-    {vectorizer_preference.vs.table_name}(text) 
-    PARAMETERS ('{oracle_string_literal(params_str)}') {filter_by_str} {order_by_str} {parallel_str}
-    """  # noqa E501
+        transport = vectorizer_preference.vs._vecdb.native_transport()
+        column = (
+            "CONTENT_METADATA" if transport.version >= CURRENT_VERSION else "METADATA"
+        )
 
-    return create_index_query
+    if metadata_column is not None:
+        if metadata_column not in {"METADATA", "CONTENT_METADATA"}:
+            raise ValueError("Unsupported VecDB metadata column")
+        column = metadata_column
+
+    from langchain_oracledb.vectorstores._vecdb_adapter import hybrid_index_ddl
+
+    return (
+        hybrid_index_ddl(
+            idx_name, vectorizer_preference.vs.table_name, column, params_str
+        )
+        + " "
+        + filter_by_str
+        + order_by_str
+        + parallel_str
+    )
+
+
+def _vecdb_hybrid_builder(
+    preference: OracleVectorizerPreference, params: Optional[dict[str, Any]]
+):
+    def build(index: str, metadata_parameters: str, column: str) -> str:
+        return _get_hybrid_index_ddl(
+            preference,
+            index,
+            params or {},
+            metadata_parameters=metadata_parameters,
+            metadata_column=column,
+        )
+
+    return build
 
 
 @_handle_exceptions
@@ -439,6 +539,11 @@ def create_hybrid_index(
     params: Optional[dict[str, Any]] = None,
 ) -> None:
     """Create a HYBRID VECTOR INDEX if it does not already exist.
+
+    For a VecDB store, this replaces the metadata guide/text index while retaining
+    its physical name, data-guide callback, and compatible settings. VecDB
+    retrieval discovers that physical index; its idx_name is ignored. Existing HVI
+    indexes are reused. Replacement requires a connection without pending work.
 
     The index uses either the provided OracleVectorizerPreference or, if
     vector_store is given, a temporary preference derived from its
@@ -470,6 +575,29 @@ def create_hybrid_index(
             "Exactly one of 'vector_store' or 'vectorizer_preference' must be provided."
         )
 
+    target = vector_store or (
+        vectorizer_preference.vs if vectorizer_preference else None
+    )
+    if target is not None and target._vecdb is not None:
+        from langchain_oracledb.vectorstores._vecdb import _is_native_pool
+
+        transport = target._vecdb.native_transport("hybrid index creation")
+        if _is_native_pool(transport.client):
+            with transport.session() as bound:
+                store = _bound_vecdb_store(target, bound)
+                preference = copy(vectorizer_preference)
+                if preference is not None:
+                    preference.vs = store
+                return create_hybrid_index(
+                    bound.client,
+                    idx_name,
+                    vectorizer_preference=preference,
+                    vector_store=store if vector_store is not None else None,
+                    params=params,
+                )
+        if getattr(transport.client, "transaction_in_progress", False) is True:
+            raise RuntimeError("Index DDL requires a connection without pending work")
+
     drop = False
     if vector_store:
         vectorizer_preference = OracleVectorizerPreference.create_preference(
@@ -482,19 +610,30 @@ def create_hybrid_index(
         vectorizer_preference,
     )
 
-    idx_name = _quote_indentifier(idx_name)
-    ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
-
-    with _get_connection(client) as connection:
-        if not _index_exists(connection, idx_name, vectorizer_preference.vs.table_name):
-            with connection.cursor() as cur:
-                cur.execute(ddl)
-                logger.info(f"Index {idx_name} created successfully...")
-        else:
-            logger.info(f"Index {idx_name} already exists...")
-
-    if drop:
-        vectorizer_preference.drop_preference()
+    try:
+        if vectorizer_preference.vs._vecdb is not None:
+            backend = vectorizer_preference.vs._vecdb
+            backend.native_transport().create_metadata_index(
+                backend.name,
+                idx_name,
+                hybrid=True,
+                build=_vecdb_hybrid_builder(vectorizer_preference, params),
+            )
+            return
+        idx_name = _quote_indentifier(idx_name)
+        ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
+        with _get_connection(client) as connection:
+            if not _index_exists(
+                connection, idx_name, vectorizer_preference.vs.table_name
+            ):
+                with connection.cursor() as cur:
+                    cur.execute(ddl)
+                    logger.info(f"Index {idx_name} created successfully...")
+            else:
+                logger.info(f"Index {idx_name} already exists...")
+    finally:
+        if drop:
+            vectorizer_preference.drop_preference()
 
 
 @_ahandle_exceptions
@@ -508,6 +647,10 @@ async def acreate_hybrid_index(
     """Async variant of create_hybrid_index.
 
     Creates the HYBRID VECTOR INDEX if it does not exist, using async APIs.
+    VecDB guide/text indexes are replaced with their name and compatible settings
+    retained; sync native clients are dispatched to a worker thread.
+    For VecDB, serialize the entire helper across maintenance callers/processes.
+    A returned submission or completed DDL does not guarantee text sync freshness.
 
     Args:
         client: oracledb async connection or async connection pool.
@@ -522,6 +665,46 @@ async def acreate_hybrid_index(
     Reference:
         https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/create-hybrid-vector-index.html
     """
+    target = vector_store or (
+        vectorizer_preference.vs if vectorizer_preference else None
+    )
+    if target is not None and target._vecdb is not None:
+        from langchain_oracledb.vectorstores._vecdb import (
+            AsyncNativeTransport,
+            _is_native_pool,
+        )
+
+        transport = target._vecdb.native_transport("hybrid index creation")
+        if isinstance(transport, AsyncNativeTransport) and _is_native_pool(
+            transport.client, asynchronous=True
+        ):
+            async with transport.asession() as bound:
+                store = _bound_vecdb_store(target, bound)
+                preference = copy(vectorizer_preference)
+                if preference is not None:
+                    preference.vs = store
+                return await acreate_hybrid_index(
+                    bound.client,
+                    idx_name,
+                    vectorizer_preference=preference,
+                    vector_store=store if vector_store is not None else None,
+                    params=params,
+                )
+        if not isinstance(
+            target._vecdb.native_transport("hybrid index creation"),
+            AsyncNativeTransport,
+        ):
+            await asyncio.to_thread(
+                create_hybrid_index,
+                target._vecdb.native_transport().client,
+                idx_name,
+                vectorizer_preference,
+                vector_store,
+                params,
+            )
+            return
+        if getattr(transport.client, "transaction_in_progress", False) is True:
+            raise RuntimeError("Index DDL requires a connection without pending work")
     if (not vector_store and not vectorizer_preference) or (
         vector_store and vectorizer_preference
     ):
@@ -541,21 +724,35 @@ async def acreate_hybrid_index(
         vectorizer_preference,
     )
 
-    idx_name = _quote_indentifier(idx_name)
-    ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
+    try:
+        if vectorizer_preference.vs._vecdb is not None:
+            backend = vectorizer_preference.vs._vecdb
+            await backend.native_transport().acreate_metadata_index(
+                backend.name,
+                idx_name,
+                hybrid=True,
+                build=_vecdb_hybrid_builder(vectorizer_preference, params),
+            )
+            return
+        idx_name = _quote_indentifier(idx_name)
+        ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
+        async with _aget_connection(client) as connection:
+            if not await _aindex_exists(
+                connection, idx_name, vectorizer_preference.vs.table_name
+            ):
+                async with connection.cursor() as cur:
+                    await cur.execute(ddl)
+                    logger.info(f"Index {idx_name} created successfully...")
+            else:
+                logger.info(f"Index {idx_name} already exists...")
+    finally:
+        if drop:
+            if vectorizer_preference.vs._vecdb is not None:
+                from langchain_oracledb.vectorstores._vecdb import _complete_cleanup
 
-    async with _aget_connection(client) as connection:
-        if not await _aindex_exists(
-            connection, idx_name, vectorizer_preference.vs.table_name
-        ):
-            async with connection.cursor() as cur:
-                await cur.execute(ddl)
-                logger.info(f"Index {idx_name} created successfully...")
-        else:
-            logger.info(f"Index {idx_name} already exists...")
-
-    if drop:
-        await vectorizer_preference.adrop_preference()
+                await _complete_cleanup(vectorizer_preference.adrop_preference())
+            else:
+                await vectorizer_preference.adrop_preference()
 
 
 class OracleHybridSearchRetriever(BaseRetriever):
@@ -610,7 +807,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
     vector_store: OracleVS
     """OracleVS VectorStore"""
     idx_name: str
-    """Hybrid Index name"""
+    """SQL hybrid index name. VecDB ignores this and discovers its physical index."""
     search_mode: Optional[Literal["keyword", "hybrid", "semantic"]] = (
         "hybrid"  # keyword, hybrid, semantic
     )
@@ -628,35 +825,11 @@ class OracleHybridSearchRetriever(BaseRetriever):
     # apply function to field
     @field_validator("params")
     def validate_params(cls, search_params):
-        search_params = search_params or {}
-        if "search_text" in search_params:
-            raise ValueError(
-                "Cannot provide search_text as a parameter at the top level; "
-                "it is derived from the query."
-            )
+        from langchain_oracledb.vectorstores._vecdb_adapter import (
+            validate_retriever_options,
+        )
 
-        vec = search_params.get("vector") or {}
-        if ("search_text" in vec) or ("search_vector" in vec):
-            raise ValueError(
-                "Cannot provide search_text as a parameter in params['vector']; "
-                "it is derived from the query."
-            )
-
-        txt = search_params.get("text") or {}
-        if ("search_text" in txt) or ("search_vector" in txt) or ("contains" in txt):
-            raise ValueError(
-                "Cannot provide search_text as a parameter in params['text']; "
-                "it is derived from the query."
-            )
-
-        if "return" in search_params:
-            raise ValueError(
-                "Cannot provide return as a parameter in params; "
-                "it is handled internally. Use `return_scores` "
-                "parameter to get the scores."
-            )
-
-        return search_params
+        return validate_retriever_options(search_params or {})
 
     def _get_search_params(self, query: str, **kwargs: Any) -> dict:
         """Build the JSON-serializable parameter dict for DBMS_HYBRID_VECTOR.SEARCH.
@@ -675,44 +848,19 @@ class OracleHybridSearchRetriever(BaseRetriever):
             dict: Parameters suitable for json(:search_params)
                 in DBMS_HYBRID_VECTOR.SEARCH.
         """
+        from langchain_oracledb.vectorstores._vecdb_adapter import (
+            validate_retriever_options,
+        )
+
         search_params = dict(self.params or {})
         search_params.update(kwargs.get("params", {}))
+        validate_retriever_options(search_params)
         search_params["hybrid_index_name"] = self.idx_name
-
-        if "search_text" in search_params:
-            raise ValueError(
-                "Cannot provide search_text as a parameter at the top level; "
-                "it is derived from the query."
-            )
-        if "return" in search_params:
-            raise ValueError(
-                "Cannot provide return as a parameter in params; "
-                "it is handled internally. Use `return_scores` "
-                "parameter to get the scores."
-            )
-
-        if self.search_mode == "hybrid" or self.search_mode == "semantic":
+        if self.search_mode in {"hybrid", "semantic"}:
             search_params["vector"] = dict(search_params.get("vector") or {})
-            if (
-                "search_text" in search_params["vector"]
-                or "search_vector" in search_params["vector"]
-            ):
-                raise ValueError(
-                    "Cannot provide search_text as a parameter in params['vector']; "
-                    "it is derived from the query."
-                )
             search_params["vector"]["search_text"] = query
-        if self.search_mode == "hybrid" or self.search_mode == "keyword":
+        if self.search_mode in {"hybrid", "keyword"}:
             search_params["text"] = dict(search_params.get("text") or {})
-            if (
-                "search_text" in search_params["text"]
-                or "search_vector" in search_params["text"]
-                or "contains" in search_params["text"]
-            ):
-                raise ValueError(
-                    "Cannot provide search_text as a parameter in params['text']; "
-                    "it is derived from the query."
-                )
             search_params["text"]["search_text"] = query
 
         search_params["return"] = {}
@@ -726,6 +874,20 @@ class OracleHybridSearchRetriever(BaseRetriever):
         search_params["return"]["format"] = "JSON"
 
         return search_params
+
+    def _get_vecdb_search_params(self, query: str, **kwargs: Any) -> dict:
+        from langchain_oracledb.vectorstores._vecdb_adapter import (
+            retriever_hybrid_options,
+        )
+
+        return retriever_hybrid_options(
+            query,
+            self.search_mode or "hybrid",
+            self.idx_name,
+            kwargs.get("k", self.k or 4),
+            self.params or {},
+            kwargs.get("params", {}),
+        )
 
     def _get_relevant_documents(self, query: str, **kwargs: Any) -> List[Document]:
         """Execute a synchronous hybrid search via DBMS_HYBRID_VECTOR.SEARCH.
@@ -746,6 +908,12 @@ class OracleHybridSearchRetriever(BaseRetriever):
         Reference:
             https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/search.html
         """
+        if self.vector_store._vecdb is not None:
+            self.vector_store._vecdb.native_transport("hybrid search")
+            search_params = self._get_vecdb_search_params(query, **kwargs)
+            return self.vector_store._vecdb.hybrid_search(
+                search_params, bool(self.return_scores)
+            )
 
         search_params = self._get_search_params(query, **kwargs)
 
@@ -812,6 +980,12 @@ class OracleHybridSearchRetriever(BaseRetriever):
         Reference:
             https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/search.html
         """
+        if self.vector_store._vecdb is not None:
+            self.vector_store._vecdb.native_transport("hybrid search")
+            search_params = self._get_vecdb_search_params(query, **kwargs)
+            return await self.vector_store._vecdb.run_async(
+                "hybrid_search", search_params, bool(self.return_scores)
+            )
         search_params = self._get_search_params(query, **kwargs)
 
         docs = []

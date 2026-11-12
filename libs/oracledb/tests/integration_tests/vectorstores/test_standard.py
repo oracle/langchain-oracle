@@ -1,5 +1,6 @@
 import os
 from collections.abc import Generator
+from contextlib import contextmanager
 from typing import AsyncGenerator
 
 import oracledb
@@ -8,21 +9,36 @@ import pytest_asyncio
 from langchain_core.vectorstores import VectorStore
 from langchain_tests.integration_tests.vectorstores import VectorStoreIntegrationTests
 
-from langchain_oracledb import OracleVS
 from langchain_oracledb.embeddings import OracleEmbeddings
-from langchain_oracledb.vectorstores.oraclevs import adrop_table_purge, drop_table_purge
 
-username = os.environ.get("VECDB_USER")
-password = os.environ.get("VECDB_PASS")
-dsn = os.environ.get("VECDB_HOST")
+from ._backend_fixtures import (
+    async_backend_store,
+    backend_store,
+    native_config,
+    rest_client,
+)
 
-try:
-    oracledb.connect(user=username, password=password, dsn=dsn)
-except Exception as e:
-    pytest.skip(
-        allow_module_level=True,
-        reason=f"Database connection failed: {e}, skipping tests.",
+
+@contextmanager
+def oracle_embeddings(backend):
+    client = (
+        rest_client()
+        if backend == "rest"
+        else oracledb.connect(**native_config(backend))
     )
+    model = os.environ.get(
+        "ORACLE_REST_EMBEDDING_MODEL"
+        if backend == "rest"
+        else "ORACLE_EMBEDDINGS_MODEL",
+        "ALLMINILM",
+    )
+    try:
+        yield OracleEmbeddings(
+            conn=client, params={"provider": "database", "model": model}
+        )
+    finally:
+        if backend != "rest":
+            client.close()
 
 
 class TestOracleVSStandardSync(VectorStoreIntegrationTests):
@@ -32,17 +48,9 @@ class TestOracleVSStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:
-        """Get an empty vectorstore for unit tests."""
-        conn = oracledb.connect(user=username, password=password, dsn=dsn)
-        drop_table_purge(conn, "standard_tests")
-        store = OracleVS(
-            conn,
-            embedding_function=self.get_embeddings(),
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        yield store
+    def vectorstore(self, oracle_backend) -> Generator[VectorStore, None, None]:
+        with backend_store(oracle_backend, self.get_embeddings()) as store:
+            yield store
 
 
 class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
@@ -52,23 +60,10 @@ class TestOracleVSOracleEmbeddingsStandardSync(VectorStoreIntegrationTests):
         return False
 
     @pytest.fixture()
-    def vectorstore(self) -> Generator[VectorStore, None, None]:
-        """Get an empty vectorstore for unit tests."""
-        conn = oracledb.connect(user=username, password=password, dsn=dsn)
-        drop_table_purge(conn, "standard_tests")
-        embedder_params = {"provider": "database", "model": "allminilm"}
-        proxy = ""
-
-        # instance
-        model = OracleEmbeddings(conn=conn, params=embedder_params, proxy=proxy)
-
-        store = OracleVS(
-            conn,
-            embedding_function=model,
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        yield store
+    def vectorstore(self, oracle_backend) -> Generator[VectorStore, None, None]:
+        with oracle_embeddings(oracle_backend) as model:
+            with backend_store(oracle_backend, model) as store:
+                yield store
 
 
 class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
@@ -78,22 +73,9 @@ class TestOracleVSStandardAsync(VectorStoreIntegrationTests):
         return False
 
     @pytest_asyncio.fixture
-    async def vectorstore(self) -> AsyncGenerator[VectorStore, None]:
-        """Get an empty vectorstore for unit tests (async version)."""
-
-        conn = await oracledb.connect_async(user=username, password=password, dsn=dsn)
-        await adrop_table_purge(conn, "standard_tests")
-
-        store = await OracleVS.acreate(
-            conn,
-            embedding_function=self.get_embeddings(),
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        try:
+    async def vectorstore(self, oracle_backend) -> AsyncGenerator[VectorStore, None]:
+        async with async_backend_store(oracle_backend, self.get_embeddings()) as store:
             yield store
-        finally:
-            await conn.close()
 
 
 class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
@@ -103,26 +85,9 @@ class TestOracleVSOracleEmbeddingsStandardAsync(VectorStoreIntegrationTests):
         return False
 
     @pytest_asyncio.fixture
-    async def vectorstore(self) -> AsyncGenerator[VectorStore, None]:
-        """Get an empty vectorstore for unit tests (async version)."""
-
-        conn = await oracledb.connect_async(user=username, password=password, dsn=dsn)
-        await adrop_table_purge(conn, "standard_tests")
-        embedder_params = {"provider": "database", "model": "allminilm"}
-        proxy = ""
-
-        # OracleEmbeddings does not support asyncconnection
-        conn_syn = oracledb.connect(user=username, password=password, dsn=dsn)
-        model = OracleEmbeddings(conn=conn_syn, params=embedder_params, proxy=proxy)
-
-        store = await OracleVS.acreate(
-            conn,
-            embedding_function=model,
-            table_name="standard_tests",
-            mutate_on_duplicate=True,
-        )
-        try:
-            yield store
-        finally:
-            conn_syn.close()
-            await conn.close()
+    async def vectorstore(self, oracle_backend) -> AsyncGenerator[VectorStore, None]:
+        # Embeddings use a sync native connection or REST SDK client even when
+        # vector-store operations use the async driver.
+        with oracle_embeddings(oracle_backend) as model:
+            async with async_backend_store(oracle_backend, model) as store:
+                yield store

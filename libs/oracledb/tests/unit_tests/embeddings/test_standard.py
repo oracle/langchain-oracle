@@ -1,26 +1,25 @@
-import os
 from typing import Type
 
-import oracledb
 import pytest
 from langchain_tests.unit_tests import EmbeddingsUnitTests
 
 from langchain_oracledb import OracleEmbeddings
+from tests._embedding_config import (
+    EMBEDDING_MODEL,
+    check_embedding_configuration,
+    embedding_connection,
+)
 
-username = os.environ.get("VECDB_USER")
-password = os.environ.get("VECDB_PASS")
-dsn = os.environ.get("VECDB_HOST")
-
-try:
-    oracledb.connect(user=username, password=password, dsn=dsn)
-except Exception as e:
-    pytest.skip(
-        allow_module_level=True,
-        reason=f"Database connection failed: {e}, skipping tests.",
-    )
+check_embedding_configuration()
 
 
 class TestOracleEmbeddingsModelIntegration(EmbeddingsUnitTests):
+    @pytest.fixture(autouse=True)
+    def embedding_connection(self):
+        with embedding_connection() as conn:
+            self._embedding_conn = conn
+            yield
+
     @property
     def embeddings_class(self) -> Type[OracleEmbeddings]:
         # Return the embeddings model class to test here
@@ -29,5 +28,7 @@ class TestOracleEmbeddingsModelIntegration(EmbeddingsUnitTests):
     @property
     def embedding_model_params(self) -> dict:
         # Return initialization parameters for the model.
-        conn = oracledb.connect(user=username, password=password, dsn=dsn)
-        return {"conn": conn, "params": {"provider": "database", "model": "allminilm"}}
+        return {
+            "conn": self._embedding_conn,
+            "params": {"provider": "database", "model": EMBEDDING_MODEL},
+        }

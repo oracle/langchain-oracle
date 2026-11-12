@@ -181,6 +181,10 @@ def create_text_index(
 ) -> None:
     """Create an Oracle Text SEARCH INDEX if it does not already exist.
 
+    For VecDB, the metadata guide index is replaced with a text-enabled JSON
+    index while retaining its name, callback, and synchronization settings. An
+    existing text or hybrid index is reused.
+
     Exactly one of vector_store or table_name must be provided.
     - If vector_store is given, column_name must be "text".
     - If table_name is given, column_name is required and used as-is (unquoted).
@@ -199,6 +203,8 @@ def create_text_index(
     ddl, resolved_table = _get_text_index_ddl(
         idx_name, vector_store, table_name, column_name
     )
+    if vector_store is not None and vector_store._vecdb is not None:
+        return vector_store._vecdb.create_text_index(idx_name)
 
     with _get_connection(client) as connection:
         if not _index_exists(connection, idx_name, resolved_table):
@@ -235,6 +241,8 @@ async def acreate_text_index(
     ddl, resolved_table = _get_text_index_ddl(
         idx_name, vector_store, table_name, column_name
     )
+    if vector_store is not None and vector_store._vecdb is not None:
+        return await vector_store._vecdb.run_async("create_text_index", idx_name)
 
     async with _aget_connection(client) as connection:
         if not await _aindex_exists(connection, idx_name, resolved_table):
@@ -448,6 +456,18 @@ class OracleTextSearchRetriever(BaseRetriever):
 
         Query notes:
         """
+        if self.vector_store is not None and self.vector_store._vecdb is not None:
+            expression = (
+                query
+                if self.operator_search
+                else _generate_accum_query(query, self.fuzzy)
+            )
+            if not expression:
+                return []
+            limit = _positive_int(kwargs.get("k", self.k or 4), "k")
+            return self.vector_store._vecdb.text_search(
+                expression, limit, self.return_scores
+            )
         if not self.operator_search:
             query = _generate_accum_query(query, self.fuzzy)
 
@@ -509,6 +529,19 @@ class OracleTextSearchRetriever(BaseRetriever):
 
         Query notes:
         """
+        if self.vector_store is not None and self.vector_store._vecdb is not None:
+            expression = (
+                query
+                if self.operator_search
+                else _generate_accum_query(query, self.fuzzy)
+            )
+            if not expression:
+                return []
+            limit = _positive_int(kwargs.get("k", self.k or 4), "k")
+            docs = await self.vector_store._vecdb.run_async(
+                "text_search", expression, limit, self.return_scores
+            )
+            return docs
         if not self.operator_search:
             query = _generate_accum_query(query, self.fuzzy)
 
