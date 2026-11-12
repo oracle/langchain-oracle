@@ -147,6 +147,8 @@ def _fake_history_connection(
             return None
 
     class FakeConnection:
+        transaction_in_progress = False
+
         def cursor(self) -> FakeCursor:
             return FakeCursor()
 
