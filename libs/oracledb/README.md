@@ -219,7 +219,20 @@ synchronous connection, pool, or REST client; clients remain caller-owned.
   `OracleVS`, `acreate()`, `from_texts()`, or `afrom_texts()`. The nested dictionary
   accepts the same options as `create_index(params=...)`. SQL creates a missing
   vector index; reopening preserves an existing vector index. VecDB applies
-  these options when creating a new table.
+  these options when creating a new table. The only supported outer key is
+  `vector_index_params`; flat index options and other outer keys raise
+  `ValueError`. `params=None`, `params={}`, and
+  `params={"vector_index_params": None}` request no index configuration;
+  `params={"vector_index_params": {}}` explicitly requests default index options.
+- For new VecDB tables, `params={"vector_index_params": {"auto_index": False}}`
+  preserves the SDK's manual vector-index policy. `auto_index` must be a boolean.
+  When omitted, the adapter sends no automatic-index policy, leaving the default
+  to VecDB. SQL rejects
+  `auto_index` as an unsupported option, regardless of its value.
+  Reopening an existing VecDB table preserves its policy. Explicit
+  `create_index()` and `acreate_index()` reject any supplied `auto_index` before
+  checking index existence or submitting work. Set this policy only in the
+  constructor; omit it from explicit index-maintenance options.
 - Index options accept OracleVS names (`idx_type`, `parallel`, `neighbor_part`)
   and VecDB names (`organization`, `parallel_creation`, `partitions`).
   `organization="INMEMORY GRAPH"` selects HNSW; `"PARTITIONS"` selects IVF.
@@ -234,7 +247,8 @@ synchronous connection, pool, or REST client; clients remain caller-owned.
   parameters request a vector-only rebuild; a missing index is created instead.
   For example, `create_index(store.client, store, {"idx_type": "IVF",
   "neighbor_part": 32, "accuracy": 90})` maps `neighbor_part` to VecDB partitions.
-  VecDB owns the physical index name, so `idx_name` is not applied.
+  VecDB owns the physical index name and rejects `idx_name` in vector-index
+  options. Use `idx_name` only for SQL vector indexes.
 - For VecDB, hybrid index creation retains the table's physical metadata index
   name. `OracleHybridSearchRetriever` discovers and uses that index, ignoring
   `idx_name`. The requested name can be reused in the usual create/retrieve flow;

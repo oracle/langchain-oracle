@@ -495,6 +495,8 @@ def create_index(
     A VecDB operation returns its provider response; a no-op or SQL returns None.
     Use store.describe_vecdb_index() for readiness. Index maintenance requires
     an idle connection and caller-owned serialization.
+    VecDB rejects auto_index for explicit maintenance and rejects idx_name;
+    physical index names are assigned by VecDB.
     """
     if vector_store._vecdb is not None:
         return vector_store._vecdb.create_index(params)
@@ -519,9 +521,6 @@ def _sql_index_params(
     )
     if options is not None:
         options.pop("distance_metric", None)
-        if "auto_index" in options:
-            if options.pop("auto_index") is not True:
-                raise ValueError("SQL index creation requires auto_index=True")
     return options
 
 
@@ -799,6 +798,8 @@ async def acreate_index(
     A VecDB operation returns its provider response; a no-op or SQL returns None.
     Use store.describe_vecdb_index() for readiness. Index maintenance requires
     an idle connection and caller-owned serialization.
+    VecDB rejects auto_index for explicit maintenance and rejects idx_name;
+    physical index names are assigned by VecDB.
     """
     if vector_store._vecdb is not None:
         return await vector_store._vecdb.run_async("create_index", params)
@@ -1173,6 +1174,8 @@ class OracleVS(VectorStore):
         using OracleVS or VecDB names, including nested advanced_params.
         SQL creates a missing vector index; reopening preserves existing indexes.
         VecDB applies these options when creating a new table.
+        VecDB accepts auto_index=False as a manual table-indexing policy;
+        explicit index helpers reject auto_index. VecDB does not accept idx_name.
 
         ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
         compatible layouts and databases. Native VecDB package calls accept

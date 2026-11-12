@@ -96,9 +96,15 @@ def normalize_index_params(
 def constructor_index_params(
     params: Optional[dict[str, Any]],
 ) -> Optional[dict[str, Any]]:
-    """Extract the optional constructor index request; an empty object is explicit."""
+    """Validate outer options and extract the optional nested index request."""
     if params is None:
         return None
     if not isinstance(params, dict):
         raise TypeError("OracleVS params must be a dictionary")
+    unknown = set(params) - {"vector_index_params"}
+    if unknown:
+        raise ValueError(
+            f"Unsupported OracleVS params: {sorted(unknown)}; "
+            'use params={"vector_index_params": {...}} for vector index options'
+        )
     return normalize_index_params(params.get("vector_index_params"))

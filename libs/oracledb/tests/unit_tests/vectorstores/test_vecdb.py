@@ -582,9 +582,19 @@ def test_generation_specific_index_json():
     new = VecDBBackend(
         NativeTransport(None, (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
     )
-    assert old.index_params({"idx_type": "HNSW"})["indexing"] == "auto"
+    assert "indexing" not in old.index_params({"idx_type": "HNSW"})
     assert (
-        new.index_params({"idx_type": "HNSW"})["vector_index_params"]["auto_index"]
+        "auto_index"
+        not in new.index_params({"idx_type": "HNSW"})["vector_index_params"]
+    )
+    assert (
+        old.index_params({"auto_index": True}, operation="create_table")["indexing"]
+        == "auto"
+    )
+    assert (
+        new.index_params({"auto_index": True}, operation="create_table")[
+            "vector_index_params"
+        ]["auto_index"]
         is True
     )
     assert (

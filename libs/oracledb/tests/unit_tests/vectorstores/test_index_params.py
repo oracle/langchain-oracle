@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import oracledb
 import pytest
+from langchain_core.documents import Document
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_oracledb import OracleVS
@@ -14,6 +15,77 @@ from langchain_oracledb.vectorstores import oraclevs
 from langchain_oracledb.vectorstores._index_params import normalize_index_params
 from langchain_oracledb.vectorstores._vecdb import NativeTransport, VecDBBackend
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
+
+
+async def construct_store(asynchronous, entrypoint, **kwargs):
+    """Exercise public constructors and inherited document factories."""
+    embedding = DeterministicFakeEmbedding(size=3)
+    if entrypoint == "constructor":
+        if asynchronous:
+            return await OracleVS.acreate(embedding_function=embedding, **kwargs)
+        return OracleVS(embedding_function=embedding, **kwargs)
+    if entrypoint == "texts":
+        if asynchronous:
+            return await OracleVS.afrom_texts(["seed"], embedding, **kwargs)
+        return OracleVS.from_texts(["seed"], embedding, **kwargs)
+    documents = [Document(page_content="seed")]
+    if asynchronous:
+        return await OracleVS.afrom_documents(documents, embedding, **kwargs)
+    return OracleVS.from_documents(documents, embedding, **kwargs)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("entrypoint", ["constructor", "texts", "documents"])
+@pytest.mark.parametrize("backend", ["auto", "sql", "vecdb"])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"idx_type": "IVF", "neighbor_part": 16},
+        {"typo": {}},
+        {"table_params": {}},
+        {"embed_params": {}},
+        {"metadata_index_params": {}},
+        {"index_params": {"vector_index_params": {}}},
+        {"vector_index_params": None, "typo": None},
+        {"vector_index_params": {}, "typo": {}},
+        {"vector_index_params": {"idx_type": "IVF"}, "typo": True},
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsupported_outer_options_fail_before_backend_access(
+    asynchronous, entrypoint, backend, params
+):
+    original = deepcopy(params)
+    unknown = sorted(set(params) - {"vector_index_params"})
+    with (
+        patch.object(oraclevs, "_get_connection") as acquire,
+        patch.object(oraclevs, "_aget_connection") as aacquire,
+        patch("langchain_oracledb.vectorstores._vecdb.VecDBBackend") as vecdb,
+        patch.object(OracleVS, "add_texts") as add,
+        patch.object(OracleVS, "aadd_texts", new_callable=AsyncMock) as aadd,
+    ):
+        with pytest.raises(ValueError) as caught:
+            await construct_store(
+                asynchronous,
+                entrypoint,
+                client=object(),
+                table_name="DOCS",
+                backend=backend,
+                params=params,
+            )
+        # Public exception decorators retain their existing validation prefixes.
+        prefix = "Validation failed: " * (1 if entrypoint == "constructor" else 2)
+        assert str(caught.value) == prefix + (
+            f"Unsupported OracleVS params: {unknown}; "
+            'use params={"vector_index_params": {...}} for vector index options'
+        )
+        # Invalid options cannot reach table creation, index rebuilds, or writes.
+        acquire.assert_not_called()
+        aacquire.assert_not_called()
+        vecdb.assert_not_called()
+        add.assert_not_called()
+        aadd.assert_not_called()
+    assert params == original
 
 
 @pytest.mark.parametrize(
@@ -104,12 +176,31 @@ def test_invalid_options_rejected(params, error):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("entrypoint", ["constructor", "texts", "documents"])
+@pytest.mark.parametrize("backend", ["sql", "vecdb"])
 @pytest.mark.parametrize(
-    "index_request",
-    [None, {}, {"organization": "PARTITIONS", "advanced_params": {"partitions": 8}}],
+    "options, index_request",
+    [
+        (None, None),
+        ({}, None),
+        ({"vector_index_params": None}, None),
+        ({"vector_index_params": {}}, {}),
+        (
+            {
+                "vector_index_params": {
+                    "organization": "PARTITIONS",
+                    "advanced_params": {"partitions": 8},
+                }
+            },
+            {"idx_type": "IVF", "neighbor_part": 8},
+        ),
+    ],
 )
 @pytest.mark.asyncio
-async def test_sql_constructor_ensures_requested_index(asynchronous, index_request):
+async def test_constructor_preserves_nested_index_contract(
+    asynchronous, entrypoint, backend, options, index_request
+):
+    original = deepcopy(options)
     conn = MagicMock(
         spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
     )
@@ -117,11 +208,15 @@ async def test_sql_constructor_ensures_requested_index(asynchronous, index_reque
     with (
         patch(prefix + "_vecdb._inspect_columns", return_value=set()),
         patch(prefix + "_vecdb._ainspect_columns", new=AsyncMock(return_value=set())),
-        patch(prefix + "_vecdb.native_selection", return_value=("sql", (23, 26, 3))),
+        patch(prefix + "_vecdb.native_selection", return_value=(backend, (23, 26, 3))),
         patch(
             prefix + "_vecdb.anative_selection",
-            new=AsyncMock(return_value=("sql", (23, 26, 3))),
+            new=AsyncMock(return_value=(backend, (23, 26, 3))),
         ),
+        patch.object(VecDBBackend, "prepare") as prepare,
+        patch.object(VecDBBackend, "run_async", new_callable=AsyncMock) as arun,
+        patch.object(OracleVS, "add_texts") as add,
+        patch.object(OracleVS, "aadd_texts", new_callable=AsyncMock) as aadd,
         patch.object(OracleVS, "_initialize"),
         patch.object(OracleVS, "get_embedding_dimension", return_value=3),
         patch.object(
@@ -139,20 +234,32 @@ async def test_sql_constructor_ensures_requested_index(asynchronous, index_reque
             self.table_name = "DOCS"
 
         with patch.object(OracleVS, "_initialize", initialize):
-            options = (
-                {} if index_request is None else {"vector_index_params": index_request}
-            )
-            kwargs = dict(
+            store = await construct_store(
+                asynchronous,
+                entrypoint,
                 client=conn,
-                embedding_function=DeterministicFakeEmbedding(size=3),
                 table_name="DOCS",
-                backend="sql",
+                backend=backend,
                 params=options,
             )
+        assert options == original
+        writer = aadd if asynchronous else add
+        assert writer.call_count == (0 if entrypoint == "constructor" else 1)
+        if backend == "vecdb":
+            assert store._vecdb._creation_index_params == store._vecdb.index_params(
+                index_request
+            )
             if asynchronous:
-                await OracleVS.acreate(**kwargs)
+                arun.assert_awaited_once_with("prepare", columns=set(), description={})
+                prepare.assert_not_called()
             else:
-                OracleVS(**kwargs)
+                prepare.assert_called_once_with(columns=set(), description={})
+                arun.assert_not_called()
+            create.assert_not_called()
+            acreate.assert_not_called()
+            ensure.assert_not_called()
+            aensure.assert_not_called()
+            return
         creator, ensurer = (acreate, aensure) if asynchronous else (create, ensure)
         creator.assert_called_once()
         if index_request is None:
@@ -190,8 +297,21 @@ async def test_constructor_preserves_existing_sql_index(asynchronous, exists):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("entrypoint", ["constructor", "texts", "documents"])
+@pytest.mark.parametrize(
+    "index_options",
+    [
+        {"advanced_params": {"algorithm": "CUSTOM"}},
+        {"auto_index": True},
+        {"auto_index": False},
+        {"auto_index": "manual"},
+        {"auto_index": None},
+    ],
+)
 @pytest.mark.asyncio
-async def test_sql_invalid_options_fail_before_table_creation(asynchronous):
+async def test_sql_invalid_options_fail_before_table_creation(
+    asynchronous, entrypoint, index_options
+):
     conn = MagicMock(
         spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
     )
@@ -216,19 +336,45 @@ async def test_sql_invalid_options_fail_before_table_creation(asynchronous):
         patch.object(oraclevs, "_acreate_table", new_callable=AsyncMock) as acreate,
     ):
         with pytest.raises(ValueError, match="Invalid"):
-            args = (conn, DeterministicFakeEmbedding(size=3), "DOCS")
-            kwargs = {
-                "params": {
-                    "vector_index_params": {"advanced_params": {"algorithm": "CUSTOM"}}
-                },
-                "backend": "sql",
-            }
-            if asynchronous:
-                await OracleVS.acreate(*args, **kwargs)
-            else:
-                OracleVS(*args, **kwargs)
+            await construct_store(
+                asynchronous,
+                entrypoint,
+                client=conn,
+                table_name="DOCS",
+                params={"vector_index_params": index_options},
+                backend="sql",
+            )
         create.assert_not_called()
         acreate.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("kind", ["HNSW", "IVF"])
+@pytest.mark.parametrize("automatic", [True, False, "manual", None])
+@pytest.mark.asyncio
+async def test_sql_index_helpers_reject_auto_index(asynchronous, kind, automatic):
+    conn = MagicMock(
+        spec=oracledb.AsyncConnection if asynchronous else oracledb.Connection
+    )
+    store = MagicMock()
+    store._vecdb = None
+    store.table_name = '"DOCS"'
+    store.distance_strategy = DistanceStrategy.COSINE
+    options = {"idx_type": kind, "auto_index": automatic}
+    original = deepcopy(options)
+    with (
+        patch.object(oraclevs, "_index_exists") as exists,
+        patch.object(oraclevs, "_aindex_exists", new_callable=AsyncMock) as aexists,
+    ):
+        with pytest.raises(ValueError, match="Invalid parameter: auto_index"):
+            if asynchronous:
+                await oraclevs.acreate_index(conn, store, options)
+            else:
+                oraclevs.create_index(conn, store, options)
+        exists.assert_not_called()
+        aexists.assert_not_called()
+    conn.cursor.assert_not_called()
+    assert options == original
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

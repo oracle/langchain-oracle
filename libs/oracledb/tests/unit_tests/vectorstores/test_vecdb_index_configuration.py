@@ -2,6 +2,7 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """LangChain index options map to VecDB creation and reconfiguration requests."""
 
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -16,7 +17,201 @@ from langchain_oracledb.vectorstores._vecdb import (
     VecDBBackend,
 )
 from langchain_oracledb.vectorstores._vecdb_adapter import SQLNetAdapter
+from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
+
+
+@pytest.fixture(params=["legacy", "current", "rest"])
+def policy_transport(request, asynchronous):
+    """Record policy payloads without assuming a server's index lifecycle."""
+    if request.param == "rest":
+        transport = RestTransport.__new__(RestTransport)
+    else:
+        version = (23, 26, 2) if request.param == "legacy" else (23, 26, 3)
+        transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
+            object(), version
+        )
+    transport.call = MagicMock(return_value={"message": "done"})
+    transport.acall = AsyncMock(return_value={"message": "done"})
+    transport.describe_index = MagicMock()
+    transport.adescribe_index = AsyncMock()
+    transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
+    transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
+    transport.discover = MagicMock()
+    transport.adiscover = AsyncMock()
+    return transport
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "automatic", [None, False, True], ids=["omitted", "manual", "auto"]
+)
+@pytest.mark.asyncio
+async def test_table_creation_preserves_automatic_policy(
+    policy_transport, asynchronous, automatic
+):
+    transport = policy_transport
+    options = {"idx_type": "IVF", "neighbor_part": 8}
+    if automatic is not None:
+        options["auto_index"] = automatic
+    original = deepcopy(options)
+    backend = VecDBBackend(
+        transport, "DOCS", DistanceStrategy.COSINE, vector_index_params=options
+    )
+    if isinstance(transport, RestTransport):
+        missing = RuntimeError("missing table")
+        missing.status = 404
+        # The second prepare reopens an existing table without changing policy.
+        transport.call.side_effect = [missing, {}, {"name": "DOCS"}]
+    for columns in (set(), CURRENT_COLUMNS):
+        if asynchronous:
+            await backend.run_async("prepare", columns=columns)
+        else:
+            backend.prepare(columns=columns)
+    call = (
+        transport.acall
+        if isinstance(transport, AsyncNativeTransport)
+        else transport.call
+    )
+    creates = [c for c in call.call_args_list if c.args == ("create_vector_table",)]
+    assert len(creates) == 1
+    request = creates[0].kwargs
+    mapped = request["index_params"]
+    if automatic is None:
+        assert "indexing" not in mapped
+        assert "auto_index" not in mapped.get("vector_index_params", mapped)
+    elif getattr(transport, "version", (23, 26, 3)) < (23, 26, 3):
+        assert mapped["indexing"] == ("auto" if automatic else "manual")
+        assert "auto_index" not in mapped
+    else:
+        assert mapped["vector_index_params"]["auto_index"] is automatic
+        assert "indexing" not in mapped["vector_index_params"]
+    if isinstance(transport, NativeTransport):
+        _, binds = SQLNetAdapter(transport.version).statement(
+            "create_vector_table", request
+        )
+        assert json.loads(binds["index_params"]) == mapped
+    assert not any(
+        c.args[0] in {"create_index", "rebuild_index"} for c in call.call_args_list
+    )
+    assert options == original
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("exists", [False, True])
+@pytest.mark.asyncio
+async def test_manual_table_allows_explicit_create_or_rebuild(
+    policy_transport, asynchronous, exists
+):
+    transport = policy_transport
+    backend = VecDBBackend(
+        transport,
+        "DOCS",
+        DistanceStrategy.COSINE,
+        vector_index_params={"auto_index": False},
+    )
+    status = {"details": {"indexes": [{"index_name": "GENERATED"}] if exists else []}}
+    transport.describe_index.return_value = status
+    transport.adescribe_index.return_value = status
+
+    def rest_call(operation, **kwargs):
+        if operation == "describe_index":
+            if exists:
+                return {"index_status": "READY"}
+            missing = RuntimeError("missing index")
+            missing.status = 404
+            raise missing
+        return {"message": "done"}
+
+    if isinstance(transport, RestTransport):
+        transport.call.side_effect = rest_call
+    store = SimpleNamespace(_vecdb=backend, client=object())
+    options = {"idx_type": "IVF"}
+    if asynchronous:
+        result = await acreate_index(store.client, store, options)
+    else:
+        result = create_index(store.client, store, options)
+    assert result == {"message": "done"}
+    call = (
+        transport.acall
+        if isinstance(transport, AsyncNativeTransport)
+        else transport.call
+    )
+    assert call.call_args.args == ("rebuild_index" if exists else "create_index",)
+    mapped = call.call_args.kwargs["index_params"]
+    assert "indexing" not in mapped
+    assert "auto_index" not in mapped.get("vector_index_params", mapped)
+    if getattr(transport, "version", (23, 26, 3)) < (23, 26, 3):
+        assert backend._creation_index_params["indexing"] == "manual"
+    else:
+        assert (
+            backend._creation_index_params["vector_index_params"]["auto_index"] is False
+        )
+    if exists:
+        assert mapped["index_type"] == "vector"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ({"auto_index": False}, "auto_index is a table-creation policy"),
+        ({"auto_index": True}, "auto_index is a table-creation policy"),
+        ({"auto_index": "manual"}, "auto_index is a table-creation policy"),
+        ({"auto_index": "false"}, "auto_index is a table-creation policy"),
+        ({"auto_index": 0}, "auto_index is a table-creation policy"),
+        ({"auto_index": 1}, "auto_index is a table-creation policy"),
+        ({"auto_index": None}, "auto_index is a table-creation policy"),
+        ({"idx_name": "MY_INDEX"}, "idx_name is unsupported"),
+        ({"idx_name": None}, "idx_name is unsupported"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_explicit_helpers_reject_policy_and_names_before_index_actions(
+    policy_transport, asynchronous, options, message
+):
+    transport = policy_transport
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    store = SimpleNamespace(_vecdb=backend, client=object())
+    original = deepcopy(options)
+    with pytest.raises(ValueError, match=message):
+        if asynchronous:
+            await acreate_index(store.client, store, options)
+        else:
+            create_index(store.client, store, options)
+    transport.call.assert_not_called()
+    transport.acall.assert_not_called()
+    transport.describe_index.assert_not_called()
+    transport.adescribe_index.assert_not_called()
+    assert options == original
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ({"auto_index": "manual"}, "auto_index must be a boolean"),
+        ({"auto_index": "false"}, "auto_index must be a boolean"),
+        ({"auto_index": 0}, "auto_index must be a boolean"),
+        ({"auto_index": 1}, "auto_index must be a boolean"),
+        ({"auto_index": None}, "auto_index must be a boolean"),
+        ({"idx_name": "MY_INDEX"}, "idx_name is unsupported"),
+    ],
+)
+def test_invalid_table_policy_and_names_fail_before_creation(
+    policy_transport, options, message
+):
+    original = deepcopy(options)
+    with pytest.raises(ValueError, match=message):
+        VecDBBackend(
+            policy_transport,
+            "DOCS",
+            DistanceStrategy.COSINE,
+            vector_index_params=options,
+        )
+    policy_transport.call.assert_not_called()
+    policy_transport.acall.assert_not_called()
+    assert options == original
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

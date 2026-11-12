@@ -19,7 +19,16 @@ from copy import copy
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import wraps
-from typing import Any, AsyncIterator, Callable, Iterator, Optional, TypeVar, cast
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Iterator,
+    Literal,
+    Optional,
+    TypeVar,
+    cast,
+)
 
 import numpy as np
 import oracledb
@@ -1345,7 +1354,9 @@ class VecDBBackend:
             if metric == DistanceStrategy.MAX_INNER_PRODUCT
             else metric
         )
-        self._creation_index_params = self.index_params(vector_index_params)
+        self._creation_index_params = self.index_params(
+            vector_index_params, operation="create_table"
+        )
         self._embed_params = self._managed_embed_params(embedding, mutate_on_duplicate)
         validate_operation_arguments(
             "create_vector_table",
@@ -1651,10 +1662,31 @@ class VecDBBackend:
             )
         return self.transport.describe_index(self.name, kind)
 
-    def index_params(self, params: Optional[dict]) -> Optional[dict]:
+    def index_params(
+        self,
+        params: Optional[dict],
+        *,
+        operation: Literal["create_table", "create_index"] = "create_index",
+    ) -> Optional[dict]:
+        """Map table policy separately from explicit index maintenance."""
+        if (
+            operation != "create_table"
+            and isinstance(params, dict)
+            and "auto_index" in params
+        ):
+            raise ValueError(
+                "auto_index is a table-creation policy and is unsupported for "
+                "explicit index creation or rebuild"
+            )
         params = normalize_index_params(params, metric=self.metric)
         if not params:
             return None
+        automatic_supplied = "auto_index" in params
+        automatic = params.pop("auto_index", None)
+        if automatic_supplied and type(automatic) is not bool:
+            raise ValueError("vector_index_params.auto_index must be a boolean")
+        if "idx_name" in params:
+            raise ValueError("VecDB owns physical index names; idx_name is unsupported")
         from .oraclevs import (
             _validate_index_type,
             _validate_int_param,
@@ -1670,7 +1702,7 @@ class VecDBBackend:
         params.setdefault("idx_name", kind)
         _validate_vector_index_common(params)
         params.pop("idx_type", None)
-        params.pop("idx_name", None)  # VecDB owns the physical index name.
+        params.pop("idx_name", None)
         accuracy = params.pop("accuracy", 90)
         parallel = params.pop("parallel", None)
         if kind == "IVF" and "partitions" in params:
@@ -1710,11 +1742,13 @@ class VecDBBackend:
                 mapped["advanced_params"] = {**advanced, **supplied}
             # Leave malformed SDK options for its validation to reject.
         if getattr(self.transport, "version", CURRENT_VERSION) < CURRENT_VERSION:
-            mapped["indexing"] = "auto"
+            if automatic_supplied:
+                mapped["indexing"] = "auto" if automatic else "manual"
             if parallel is not None:
                 mapped["parallel_creation"] = parallel
             return mapped
-        mapped["auto_index"] = True
+        if automatic_supplied:
+            mapped["auto_index"] = automatic
         mapped["organization"] = "INMEMORY GRAPH" if kind == "HNSW" else "PARTITIONS"
         result: dict[str, Any] = {"vector_index_params": mapped}
         if parallel is not None:

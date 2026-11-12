@@ -319,7 +319,8 @@ async def test_index_params_use_the_operation_session_version(sessions):
         s.transport.call = MagicMock(return_value={"job": "submitted"})
     assert await invoke(s, "create_index", {"idx_type": "HNSW"}) == {"job": "submitted"}
     call = s.transport.acall.call_args if s.asynchronous else s.transport.call.call_args
-    assert call.kwargs["index_params"]["indexing"] == "auto"
+    assert "indexing" not in call.kwargs["index_params"]
+    assert call.kwargs["index_params"]["organization"] == "INMEMORY GRAPH"
     assert "vector_index_params" not in call.kwargs["index_params"]
     assert s.pool.acquire.call_count == 1
     assert s.transport.version == (23, 26, 4)
