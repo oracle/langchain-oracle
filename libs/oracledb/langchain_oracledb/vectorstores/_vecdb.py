@@ -1669,6 +1669,15 @@ class VecDBBackend:
         operation: Literal["create_table", "create_index"] = "create_index",
     ) -> Optional[dict]:
         """Map table policy separately from explicit index maintenance."""
+        if operation == "create_table" and params is None:
+            # Preserve OracleVS's opt-in vector-index creation. An explicit {}
+            # instead leaves table index configuration to the provider.
+            if (
+                isinstance(self.transport, NativeTransport)
+                and self.transport.version < CURRENT_VERSION
+            ):
+                return {"indexing": "manual"}
+            return {"vector_index_params": {"auto_index": False}}
         if (
             operation != "create_table"
             and isinstance(params, dict)

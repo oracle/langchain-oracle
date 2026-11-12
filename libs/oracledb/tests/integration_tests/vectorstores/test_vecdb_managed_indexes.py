@@ -179,15 +179,8 @@ def test_missing_native_vector_index_uses_package_defaults(oracle_backend):
     from ._backend_fixtures import backend_store
 
     with backend_store("vecdb", ContractEmbeddings()) as store:
-        with store.client.cursor() as cursor:
-            output = cursor.var(oracledb.DB_TYPE_CLOB)
-            cursor.execute(
-                "BEGIN :output := DBMS_VECTOR_DATABASE.DROP_INDEX("
-                "table_name=>:name,index_params=>JSON(:params)); END;",
-                output=output,
-                name=store.table_name,
-                params='{"index_type":"vector"}',
-            )
+        # An omitted constructor request now creates a manual-policy table
+        # without a vector index; there is no initial index to drop.
         assert store.describe_vecdb_index()["details"]["indexes"] == []
         result = create_index(store.client, store)
         assert isinstance(result, dict)

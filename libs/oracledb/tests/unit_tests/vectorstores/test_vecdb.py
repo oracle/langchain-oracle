@@ -491,6 +491,7 @@ def test_only_404_causes_rest_creation(sdk):
         name="DOCS",
         table_params={"auto_generate_id": False},
         annotations=table_annotations("vector_store", "vecdb"),
+        index_params={"vector_index_params": {"auto_index": False}},
     )
 
 

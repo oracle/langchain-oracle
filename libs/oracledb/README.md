@@ -222,13 +222,16 @@ synchronous connection, pool, or REST client; clients remain caller-owned.
   these options when creating a new table. The only supported outer key is
   `vector_index_params`; flat index options and other outer keys raise
   `ValueError`. `params=None`, `params={}`, and
-  `params={"vector_index_params": None}` request no index configuration;
+  `params={"vector_index_params": None}` request no vector-index creation: SQL
+  skips index creation, and new VecDB tables receive `auto_index=False` for
+  backward compatibility (legacy native requests use `indexing="manual"`);
   `params={"vector_index_params": {}}` explicitly requests default index options.
 - For new VecDB tables, `params={"vector_index_params": {"auto_index": False}}`
   preserves the SDK's manual vector-index policy. `auto_index` must be a boolean.
-  When omitted, the adapter sends no automatic-index policy, leaving the default
-  to VecDB. SQL rejects
-  `auto_index` as an unsupported option, regardless of its value.
+  An explicit empty nested dictionary sends no index configuration, leaving
+  defaults to VecDB. Nonempty nested options forward a supplied policy; if
+  `auto_index` is absent, the adapter omits it. SQL rejects `auto_index` as an
+  unsupported option, regardless of its value.
   Reopening an existing VecDB table preserves its policy. Explicit
   `create_index()` and `acreate_index()` reject any supplied `auto_index` before
   checking index existence or submitting work. Set this policy only in the

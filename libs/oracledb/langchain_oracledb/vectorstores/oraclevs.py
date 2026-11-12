@@ -1174,6 +1174,8 @@ class OracleVS(VectorStore):
         using OracleVS or VecDB names, including nested advanced_params.
         SQL creates a missing vector index; reopening preserves existing indexes.
         VecDB applies these options when creating a new table.
+        Without a nested index request, new VecDB tables use auto_index=False;
+        an explicit empty dictionary leaves index defaults to VecDB.
         VecDB accepts auto_index=False as a manual table-indexing policy;
         explicit index helpers reject auto_index. VecDB does not accept idx_name.
 

@@ -246,9 +246,12 @@ async def test_constructor_preserves_nested_index_contract(
         writer = aadd if asynchronous else add
         assert writer.call_count == (0 if entrypoint == "constructor" else 1)
         if backend == "vecdb":
-            assert store._vecdb._creation_index_params == store._vecdb.index_params(
-                index_request
+            expected = (
+                {"vector_index_params": {"auto_index": False}}
+                if index_request is None
+                else store._vecdb.index_params(index_request)
             )
+            assert store._vecdb._creation_index_params == expected
             if asynchronous:
                 arun.assert_awaited_once_with("prepare", columns=set(), description={})
                 prepare.assert_not_called()

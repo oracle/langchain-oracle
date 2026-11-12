@@ -44,16 +44,22 @@ def policy_transport(request, asynchronous):
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize(
-    "automatic", [None, False, True], ids=["omitted", "manual", "auto"]
+    "options, automatic",
+    [
+        pytest.param(None, False, id="missing-index-request"),
+        pytest.param({}, None, id="empty-index-request"),
+        pytest.param(
+            {"idx_type": "IVF", "neighbor_part": 8}, None, id="omitted-policy"
+        ),
+        pytest.param({"auto_index": False}, False, id="manual-policy"),
+        pytest.param({"auto_index": True}, True, id="automatic-policy"),
+    ],
 )
 @pytest.mark.asyncio
 async def test_table_creation_preserves_automatic_policy(
-    policy_transport, asynchronous, automatic
+    policy_transport, asynchronous, options, automatic
 ):
     transport = policy_transport
-    options = {"idx_type": "IVF", "neighbor_part": 8}
-    if automatic is not None:
-        options["auto_index"] = automatic
     original = deepcopy(options)
     backend = VecDBBackend(
         transport, "DOCS", DistanceStrategy.COSINE, vector_index_params=options
@@ -76,8 +82,10 @@ async def test_table_creation_preserves_automatic_policy(
     creates = [c for c in call.call_args_list if c.args == ("create_vector_table",)]
     assert len(creates) == 1
     request = creates[0].kwargs
-    mapped = request["index_params"]
-    if automatic is None:
+    mapped = request.get("index_params")
+    if options == {}:
+        assert "index_params" not in request
+    elif automatic is None:
         assert "indexing" not in mapped
         assert "auto_index" not in mapped.get("vector_index_params", mapped)
     elif getattr(transport, "version", (23, 26, 3)) < (23, 26, 3):
@@ -90,7 +98,10 @@ async def test_table_creation_preserves_automatic_policy(
         _, binds = SQLNetAdapter(transport.version).statement(
             "create_vector_table", request
         )
-        assert json.loads(binds["index_params"]) == mapped
+        if mapped is None:
+            assert "index_params" not in binds
+        else:
+            assert json.loads(binds["index_params"]) == mapped
     assert not any(
         c.args[0] in {"create_index", "rebuild_index"} for c in call.call_args_list
     )

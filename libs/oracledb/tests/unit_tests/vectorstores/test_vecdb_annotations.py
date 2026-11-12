@@ -68,6 +68,11 @@ async def test_native_creation_and_reopen(
                 name='"DOCS"',
                 table_params={"auto_generate_id": False},
                 annotations=table_annotations(kind, "vecdb"),
+                index_params=(
+                    {"indexing": "manual"}
+                    if version < (23, 26, 3)
+                    else {"vector_index_params": {"auto_index": False}}
+                ),
             )
             # Both package generations bind annotations as JSON, never SQL text.
             sql, binds = transport._statement(
@@ -122,6 +127,7 @@ async def test_rest_semantic_cache_creation_and_reopen(asynchronous, caplog):
     client.create_vector_table.assert_called_once_with(
         name="Tb1",
         table_params={"auto_generate_id": False},
+        index_params={"vector_index_params": {"auto_index": False}},
         annotations={
             "LANGCHAIN_ORACLE": (
                 "format=1;package=langchain-oracledb;version=1.6.0;"
