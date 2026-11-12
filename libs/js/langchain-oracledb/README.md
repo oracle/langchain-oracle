@@ -155,6 +155,48 @@ await history.addMessages(messages);
 const storedMessages = await history.getMessages();
 ```
 
+## Hybrid Search
+Retriever that combines keyword and semantic search using Oracle hybrid vector indexes through the LangChain retriever interface.
+```typescript
+import {
+  createHybridIndex,
+  OracleHybridSearchRetriever,
+} from "@oracle/langchain-oracledb";
+
+// Use an initialized OracleVS configured with OracleEmbeddings.
+await createHybridIndex(oraclevs.client, "HYB_IDX", {
+  vectorStore: oraclevs,
+});
+
+const retriever = new OracleHybridSearchRetriever({
+  vectorStore: oraclevs,
+  idxName: "HYB_IDX",
+  searchMode: "hybrid",
+  k: 4,
+});
+
+const docs = await retriever.invoke("database recovery");
+```
+In hybrid mode, `invoke(query)` uses the query for both keyword and semantic search by default. To provide an Oracle Text expression for keyword search while keeping the query as the semantic input
+```typescript
+const results = await retriever.invoke(
+  "How can I restore a database after a failure?",
+  {
+    params: {
+      text: { contains: "RMAN AND recovery" },
+    },
+  }
+);
+```
+
+You can customize the search inputs through `params`:
+- `vector.search_text`: override the semantic query text.
+- `vector.search_vector`: supply a precomputed query embedding as a numeric array or serialized vector string, instead of `vector.search_text`.
+- `text.search_text`: override the keyword query text.
+- `text.contains`: supply an Oracle Text query expression.
+Each search uses the text passed to `invoke()` unless you provide its input explicitly through `params.vector` or `params.text`.
+
+`params` passed to `invoke()` apply only to that call. If you provide `params.vector` or `params.text`, include all params you want for that section, because defaults are replaced for that call.
 ## Development
 
 To develop the `@oracle/langchain-oracledb` package, you'll need to follow these instructions:
