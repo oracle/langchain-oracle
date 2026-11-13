@@ -65,13 +65,22 @@ describe("OracleChatMessageHistory", () => {
   });
 
   test("generates distinct index names for configurations with the same concatenated name", async () => {
-    const firstName = await generatedIndexName("customer_support_chat", "session_id");
-    const secondName = await generatedIndexName("customer_support", "chat_session_id");
+    const firstName = await generatedIndexName(
+      "customer_support_chat",
+      "session_id"
+    );
+    const secondName = await generatedIndexName(
+      "customer_support",
+      "chat_session_id"
+    );
     expect(firstName).not.toBe(secondName);
   });
 
   test("truncates long index names to 128 bytes while retaining the hash", async () => {
-    const name = await generatedIndexName(`table_${"x".repeat(80)}`, `session_${"y".repeat(80)}`);
+    const name = await generatedIndexName(
+      `table_${"x".repeat(80)}`,
+      `session_${"y".repeat(80)}`
+    );
     expect(name).toMatch(/^idx_.+_[0-9a-f]{8}$/);
     expect(Buffer.byteLength(name, "utf8")).toBe(128);
   });
