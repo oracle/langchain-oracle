@@ -118,7 +118,7 @@ class AsyncOracleStore(
         table_suffix: str | None = None,
     ) -> None:
         super().__init__()
-        self.conn = conn
+        self.conn = conn  # type: ignore[assignment]  # pools are accepted at runtime
         self.index_config = index
 
         if self.index_config:
@@ -148,9 +148,7 @@ class AsyncOracleStore(
             async with conn.cursor() as cur:
                 yield cur
 
-    async def _table_exists(
-        self, cur: oracledb.AsyncCursor, table_name: str
-    ) -> bool:
+    async def _table_exists(self, cur: oracledb.AsyncCursor, table_name: str) -> bool:
         await cur.execute(
             """
             SELECT 1
@@ -219,7 +217,7 @@ class AsyncOracleStore(
                 )
 
             # Validate distance type
-            index_type_config = new_config.get("index_type", {})
+            index_type_config = cast(dict[str, Any], new_config.get("index_type", {}))
             new_distance = index_type_config.get("distance_metric", "cosine").upper()
             if new_distance != existing_distance:
                 raise ValueError(
@@ -270,9 +268,11 @@ class AsyncOracleStore(
             detected_dims = _detect_dimensions(config)
 
             # Insert new configuration
-            index_type_config = config.get("index_type", {})
+            index_type_config = cast(dict[str, Any], config.get("index_type", {}))
             distance_type = index_type_config.get("distance_metric", "cosine").upper()
-            dict_params = config.get("index_type", {"type": "hnsw"})
+            dict_params = cast(
+                dict[str, Any], config.get("index_type", {"type": "hnsw"})
+            )
             dict_params["accuracy"] = config.get("accuracy", None)
             index_params = json.dumps(dict_params, sort_keys=True)
             dict_params.pop("accuracy")
@@ -529,7 +529,7 @@ class AsyncOracleStore(
                 continue
 
             rows = await cur.fetchall()
-            columns = [col.name for col in cur.description]
+            columns = [col.name for col in cast(list, cur.description)]
             rows = [
                 {columns[i].lower(): row[i] for i in range(len(row))} for row in rows
             ]
@@ -561,7 +561,7 @@ class AsyncOracleStore(
         search_ops: Sequence[tuple[int, SearchOp]],
         results: list[Result],
         cur: oracledb.AsyncCursor,
-    ) -> bool:
+    ) -> None:
         """Execute batch search operations."""
         queries, _ = prepared_statements
 
@@ -569,7 +569,7 @@ class AsyncOracleStore(
             await cur.execute(query, params)
             rows = await cur.fetchall()
 
-            col_names = [desc[0].lower() for desc in cur.description]
+            col_names = [desc[0].lower() for desc in cast(list, cur.description)]
             dict_rows = [dict(zip(col_names, row)) for row in rows]
 
             items = []
@@ -614,7 +614,7 @@ class AsyncOracleStore(
             await cur.execute(query, params)
             rows = await cur.fetchall()
 
-            col_names = [desc[0].lower() for desc in cur.description]
+            col_names = [desc[0].lower() for desc in cast(list, cur.description)]
             dict_rows = [dict(zip(col_names, row)) for row in rows]
 
             results[idx] = [

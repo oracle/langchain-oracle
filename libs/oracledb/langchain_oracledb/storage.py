@@ -34,9 +34,14 @@ from typing import (
 from langchain_core.documents import Document
 from langchain_core.stores import BaseStore
 
+from langchain_oracledb._annotations import (
+    backfill_table_annotation,
+    create_table_with_annotations,
+)
 from langchain_oracledb.vectorstores.utils import (
     _get_connection,
     _quote_indentifier,
+    _table_exists,
     _validate_indentifier,
     drop_table_purge,
 )
@@ -79,8 +84,13 @@ class _OracleKVStore(BaseStore[str, V], Generic[V]):
             )
         """
         with _get_connection(self._client) as connection:
+            if _table_exists(connection, self._quoted_table_name):
+                backfill_table_annotation(
+                    connection, self._quoted_table_name, "kv_store"
+                )
+                return
             with connection.cursor() as cursor:
-                cursor.execute(ddl)
+                create_table_with_annotations(cursor, ddl, "kv_store")
             connection.commit()
 
     # -- serialization hooks -------------------------------------------------

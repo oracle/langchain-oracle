@@ -4,7 +4,7 @@
 """Unit tests for the exact-match OracleCache (mocked connection)."""
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import oracledb
 import pytest
@@ -32,7 +32,8 @@ def _mock_connection() -> MagicMock:
 
 @pytest.fixture
 def conn() -> MagicMock:
-    return _mock_connection()
+    with patch("langchain_oracledb.cache._table_exists", return_value=False):
+        yield _mock_connection()
 
 
 def test_init_creates_table(conn: MagicMock) -> None:
