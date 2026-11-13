@@ -52,13 +52,16 @@ function defaultIndexName(tableName: string, sessionIdKey: string): string {
     `idx_${unqualifiedIdentifier(tableName)}_` +
     unqualifiedIdentifier(sessionIdKey);
 
-  const encoded = Buffer.from(baseName, "utf-8");
-  if (encoded.length <= 128) return baseName;
+  const value = `[${JSON.stringify(tableName)}, ${JSON.stringify(
+    sessionIdKey
+  )}]`;
 
-  const digest = createHash("sha1").update(encoded).digest("hex").slice(0, 8);
-  const prefix = new TextDecoder("utf-8").decode(encoded.subarray(0, 119), {
-    stream: true,
-  });
+  const digest = createHash("sha1").update(value).digest("hex").slice(0, 8);
+
+  const prefix = new TextDecoder("utf-8").decode(
+    Buffer.from(baseName, "utf-8").subarray(0, 119),
+    { stream: true }
+  );
 
   return `${prefix}_${digest}`;
 }
