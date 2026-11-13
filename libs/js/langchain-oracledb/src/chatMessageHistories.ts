@@ -60,7 +60,7 @@ function defaultIndexName(tableName: string, sessionIdKey: string): string {
     .slice(0, 8);
 
   const prefix = new TextDecoder("utf-8").decode(
-    Buffer.from(baseName, "utf-8").subarray(0, 19),
+    Buffer.from(baseName, "utf-8").subarray(0, 119),
     { stream: true}
   );
 

@@ -162,7 +162,7 @@ export class OracleSemanticCache extends BaseCache {
    * @param {EmbeddingsInterface} embeddings Embedding model used to vectorize prompts.
    * @param {OracleSemanticCacheDBConfig} dbConfig Oracle vector-store configuration.
    * @param {OracleDBClient | OracleDBClientProvider} dbConfig.client Connection, pool, or async provider to use.
-   * @param {string} dbConfig.tableName Cache table name. Defaults to `langchain_semantic_cache`.
+   * @param {string} dbConfig.tableName Cache table name. Defaults to `langchain_js_semantic_cache`.
    *
    * @param {OracleSemanticCacheOptions} options Optional index and distance threshold settings.
    * @param {boolean} options.createIndexIfMissing Whether initialize() creates a vector index
@@ -380,7 +380,7 @@ export class OracleSemanticCache extends BaseCache {
   /**
    * Drops and purges the semantic cache table if it exists, removing all entries.
    * @param {OracleDBClient | OracleDBClientProvider} client Connection, pool, or async provider to use.
-   * @param {string} tableName Table to drop. Defaults to `langchain_semantic_cache`.
+   * @param {string} tableName Table to drop. Defaults to `langchain_js_semantic_cache`.
    * @returns Promise that resolves when the table has been dropped or does not exist.
    */
   static async dropTable(
@@ -421,7 +421,7 @@ export class OracleCache extends BaseCache {
   /**
    * Creates an exact cache instance without performing database setup.
    * @param {OracleDBClient | OracleDBClientProvider} client Connection, pool, or async provider to use.
-   * @param {string} tableName Cache table name. Defaults to `langchain_exact_cache`.
+   * @param {string} tableName Cache table name. Defaults to `langchain_js_exact_cache`.
    * @throws If the client is missing or the table identifier is invalid.
    */
   constructor(
@@ -616,7 +616,7 @@ export class OracleCache extends BaseCache {
   /**
    * Drops and purges the exact cache table if it exists, removing all entries.
    * @param {OracleDBClient | OracleDBClientProvider} client Connection, pool, or async provider to use.
-   * @param {string} tableName Table to drop. Defaults to `langchain_exact_cache`.
+   * @param {string} tableName Table to drop. Defaults to `langchain_js_exact_cache`.
    * @returns Promise that resolves when the table has been dropped or does not exist.
    */
   static async dropTable(

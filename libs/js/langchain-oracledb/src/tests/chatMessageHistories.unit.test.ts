@@ -64,15 +64,25 @@ describe("OracleChatMessageHistory", () => {
     ).toThrow(/historySize must be greater than 0/);
   });
 
-  test("chat history default index name is truncated when needed", async () => {
-    const tableName = `table_${"x".repeat(80)}`;
-    const sessionIdKey = `session_${"y".repeat(80)}`;
+  test("generates distinct index names for configurations with the same concatenated name", async () => {
+    const firstName = await generatedIndexName("customer_support_chat", "session_id");
+    const secondName = await generatedIndexName("customer_support", "chat_session_id");
+    expect(firstName).not.toBe(secondName);
+  });
 
-    const name = await generatedIndexName(tableName, sessionIdKey);
+  test("truncates long index names to 128 bytes while retaining the hash", async () => {
+    const name = await generatedIndexName(`table_${"x".repeat(80)}`, `session_${"y".repeat(80)}`);
+    expect(name).toMatch(/^idx_.+_[0-9a-f]{8}$/);
+    expect(Buffer.byteLength(name, "utf8")).toBe(128);
+  });
 
-    expect(name).toMatch(/^idx_/);
+  test("truncates index names without splitting UTF-8 characters", async () => {
+    const name = await generatedIndexName("é".repeat(60), "session_id");
+    expect(name.slice(0, -9)).toBe(`idx_${"é".repeat(57)}`);
+    // Make sure there is no broken utf-8 encoding
+    expect(name).not.toContain("\uFFFD");
+    expect(name).toMatch(/_[0-9a-f]{8}$/);
     expect(Buffer.byteLength(name, "utf8")).toBeLessThanOrEqual(128);
-    expect(await generatedIndexName(tableName, sessionIdKey)).toBe(name);
   });
 
   test.each([
