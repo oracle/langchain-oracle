@@ -1,7 +1,6 @@
 # Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
-import hashlib
 import json
 import os
 import uuid
@@ -11,7 +10,10 @@ import oracledb
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from langchain_oracledb.chat_message_histories import OracleChatMessageHistory
+from langchain_oracledb.chat_message_histories import (
+    OracleChatMessageHistory,
+    _default_index_name,
+)
 from langchain_oracledb.vectorstores.utils import _index_exists, _quote_indentifier
 
 username = os.environ.get("VECDB_USER")
@@ -185,14 +187,7 @@ def test_chat_history_create_tables_supports_custom_columns_and_index(
         history_key=history_column,
     )
 
-    expected_index_name = (
-        f"idx_{table_name}_{session_column}"
-        if len(f"idx_{table_name}_{session_column}") <= 128
-        else (
-            f"{f'idx_{table_name}_{session_column}'[:119]}_"
-            f"{hashlib.sha1(f'idx_{table_name}_{session_column}'.encode('utf-8')).hexdigest()[:8]}"
-        )
-    )
+    expected_index_name = _default_index_name(table_name, session_column)
 
     with connection.cursor() as cursor:
         quoted_table_name = _quote_indentifier(table_name)
