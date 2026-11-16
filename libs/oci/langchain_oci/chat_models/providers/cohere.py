@@ -78,8 +78,26 @@ class CohereProvider(Provider):
         self.chat_api_format_v2 = None
 
     def normalize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize parameters. Returns params unchanged for Cohere."""
-        return params
+        """Normalize parameters for Cohere.
+
+        Cohere chat requests on OCI Generative AI have no log-probability
+        option, so ``logprobs`` / ``top_logprobs`` / ``log_probs`` raise a
+        clear error instead of being silently dropped. ``logprobs=False`` is
+        accepted and removed.
+        """
+        result = dict(params)
+        requested = {
+            key: result.pop(key)
+            for key in ("logprobs", "top_logprobs", "log_probs")
+            if key in result
+        }
+        if any(v for v in requested.values()):
+            raise ValueError(
+                "Cohere models on OCI Generative AI do not support logprobs; "
+                "remove logprobs/top_logprobs or use a Generic-API model "
+                "(e.g. meta.llama-*, openai.*, xai.*)."
+            )
+        return result
 
     def _load_v2_classes(self) -> None:
         """Lazy load Cohere V2 API classes for vision support.

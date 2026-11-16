@@ -47,6 +47,14 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 from langchain_core.vectorstores.utils import maximal_marginal_relevance
 
+from .._annotations import (
+    TableType,
+    abackfill_table_annotation,
+    acreate_table_with_annotations,
+    backfill_table_annotation,
+    create_table_with_annotations,
+)
+from .._telemetry import tag_sql
 from ..embeddings import OracleEmbeddings
 from .utils import (
     DistanceStrategy,
@@ -444,7 +452,12 @@ def _get_table_dict(embedding_dim: int) -> Dict:
     return cols_dict
 
 
-def _create_table(connection: Connection, table_name: str, embedding_dim: int) -> None:
+def _create_table(
+    connection: Connection,
+    table_name: str,
+    embedding_dim: int,
+    table_type: TableType = "vector_store",
+) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
     if not _table_exists(connection, table_name):
@@ -453,14 +466,18 @@ def _create_table(connection: Connection, table_name: str, embedding_dim: int) -
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
             )
             ddl = f"CREATE TABLE {table_name} ({ddl_body})"
-            cursor.execute(ddl)
+            create_table_with_annotations(cursor, ddl, table_type)
         logger.info(f"Table {table_name} created successfully...")
     else:
         logger.info(f"Table {table_name} already exists...")
+        backfill_table_annotation(connection, table_name, table_type)
 
 
 async def _acreate_table(
-    connection: AsyncConnection, table_name: str, embedding_dim: int
+    connection: AsyncConnection,
+    table_name: str,
+    embedding_dim: int,
+    table_type: TableType = "vector_store",
 ) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
@@ -470,10 +487,11 @@ async def _acreate_table(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
             )
             ddl = f"CREATE TABLE {table_name} ({ddl_body})"
-            await cursor.execute(ddl)
+            await acreate_table_with_annotations(cursor, ddl, table_type)
         logger.info(f"Table {table_name} created successfully...")
     else:
         logger.info(f"Table {table_name} already exists...")
+        await abackfill_table_annotation(connection, table_name, table_type)
 
 
 @_handle_exceptions
@@ -964,7 +982,7 @@ def _get_similarity_search_query(
     FETCH APPROX FIRST {k} ROWS ONLY
     """
 
-    return query, bind_variables
+    return tag_sql(query, "vector"), bind_variables
 
 
 def _read_similarity_output(
@@ -1074,6 +1092,9 @@ class OracleVS(VectorStore):
                 vectors = OracleVS(connection, embeddings, table_name, query)
     """
 
+    def _annotation_type(self) -> TableType:
+        return "vector_store"
+
     @_handle_exceptions
     def __init__(
         self,
@@ -1105,7 +1126,9 @@ class OracleVS(VectorStore):
             )
 
             embedding_dim = self.get_embedding_dimension()
-            _create_table(connection, self.table_name, embedding_dim)
+            _create_table(
+                connection, self.table_name, embedding_dim, self._annotation_type()
+            )
 
     @classmethod
     @_ahandle_exceptions
@@ -1141,7 +1164,9 @@ class OracleVS(VectorStore):
             )
 
             embedding_dim = await self.aget_embedding_dimension()
-            await _acreate_table(connection, self.table_name, embedding_dim)
+            await _acreate_table(
+                connection, self.table_name, embedding_dim, self._annotation_type()
+            )
 
         return self
 

@@ -70,6 +70,10 @@ from langgraph.prebuilt import ToolNode
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+from ..live_models import chat_model, chat_models, family_models
+
+_GEMINI_MODELS = family_models(r"^google\.gemini-", n=2)
+
 # --------------- tool functions ---------------
 
 
@@ -129,7 +133,9 @@ def _make_gemini_llm(model_id: str) -> ChatOCIGenAI:
         model_id=model_id,
         service_endpoint=endpoint,
         compartment_id=compartment_id,
-        model_kwargs={"max_tokens": 256},
+        # Pro spends most of a small budget on thinking tokens and returns an
+        # empty answer with finish_reason=max_tokens.
+        model_kwargs={"max_tokens": 4096 if "pro" in model_id else 256},
         auth_type=os.environ.get("OCI_AUTH_TYPE", "API_KEY"),
         auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "API_KEY_AUTH"),
         auth_file_location=os.path.expanduser("~/.oci/config"),
@@ -138,8 +144,9 @@ def _make_gemini_llm(model_id: str) -> ChatOCIGenAI:
 
 @pytest.fixture
 def gemini_llm():
-    """Gemini 2.5 Flash instance."""
-    return _make_gemini_llm("google.gemini-2.5-flash")
+    """Newest live Gemini instance."""
+    model_id = chat_model("google") or pytest.skip("no live Gemini chat model")
+    return _make_gemini_llm(model_id)
 
 
 @pytest.fixture
@@ -210,15 +217,7 @@ def create_agent(model_id: str, weather_tool: StructuredTool):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "meta.llama-3.3-70b-instruct",
-        "cohere.command-a-03-2025",
-        "cohere.command-r-plus-08-2024",
-    ],
-)
+@pytest.mark.parametrize("model_id", chat_models("meta", 2) + chat_models("cohere", 2))
 def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTool):
     """Test that tool calling works without infinite loops.
 
@@ -289,7 +288,7 @@ def test_tool_calling_no_infinite_loop(model_id: str, weather_tool: StructuredTo
 @pytest.mark.requires("oci")
 def test_meta_llama_tool_calling(weather_tool: StructuredTool):
     """Specific test for Meta Llama models to ensure fix works."""
-    model_id = "meta.llama-4-scout-17b-16e-instruct"
+    model_id = chat_model("meta") or pytest.skip("no live Meta Llama chat model")
     agent = create_agent(model_id, weather_tool)
 
     input_messages: list[BaseMessage] = [
@@ -313,7 +312,7 @@ def test_meta_llama_tool_calling(weather_tool: StructuredTool):
 @pytest.mark.requires("oci")
 def test_cohere_tool_calling(weather_tool: StructuredTool):
     """Specific test for Cohere models to ensure they work correctly."""
-    model_id = "cohere.command-a-03-2025"
+    model_id = chat_model("cohere") or pytest.skip("no live Cohere chat model")
     agent = create_agent(model_id, weather_tool)
 
     input_messages: list[BaseMessage] = [
@@ -332,13 +331,7 @@ def test_cohere_tool_calling(weather_tool: StructuredTool):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-4-scout-17b-16e-instruct",
-        "cohere.command-a-03-2025",
-    ],
-)
+@pytest.mark.parametrize("model_id", chat_models("meta", 1) + chat_models("cohere", 1))
 def test_multi_step_tool_orchestration(model_id: str):
     """Test multi-step tool orchestration without infinite loops.
 
@@ -681,9 +674,7 @@ def test_gemini_single_tool_call_unaffected(gemini_llm):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id", ["google.gemini-2.5-flash", "google.gemini-2.5-pro"]
-)
+@pytest.mark.parametrize("model_id", _GEMINI_MODELS)
 def test_gemini_models_parallel_tool_calls(model_id: str):
     """Verify parallel flattening works on both Gemini models."""
     llm = _make_gemini_llm(model_id)
@@ -757,8 +748,9 @@ def test_meta_llama_tool_result_guidance():
         region = os.getenv("OCI_REGION", "us-chicago-1")
         endpoint = f"https://inference.generativeai.{region}.oci.oraclecloud.com"
 
+    model_id = chat_model("meta") or pytest.skip("no live Meta Llama chat model")
     chat = ChatOCIGenAI(
-        model_id="meta.llama-3.3-70b-instruct",
+        model_id=model_id,
         service_endpoint=endpoint,
         compartment_id=compartment_id,
         model_kwargs={"temperature": 0.0, "max_tokens": 500},
@@ -809,9 +801,7 @@ def test_meta_llama_tool_result_guidance():
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id", ["google.gemini-2.5-flash", "google.gemini-2.5-pro"]
-)
+@pytest.mark.parametrize("model_id", _GEMINI_MODELS)
 def test_gemini_multi_turn_tool_calls_not_blocked(model_id: str):
     """Second user turn should not be blocked by tool calls from the first turn.
 

@@ -16,7 +16,7 @@ Usage:
 
 Output truncation diagnostic:
   export OCI_RUN_GEMINI_TRUNCATION_DIAGNOSTIC=1
-  export OCI_MODEL_ID="google.gemini-2.5-pro"  # optional
+  export OCI_MODEL_ID=<gemini-model-id>       # optional
   export OCI_MAX_TOKENS=8000                   # optional
   export OCI_TRUNCATION_TRIALS=10              # optional
   export OCI_TRUNCATION_LINES=800              # optional
@@ -29,6 +29,14 @@ from typing import Any, Dict
 import pytest
 
 from langchain_oci.chat_models import ChatOCIGenAI
+
+from ..live_models import family_models
+
+
+def _gemini_model(pattern: str) -> str:
+    """``OCI_MODEL_ID`` if set, else the newest live Gemini matching *pattern*."""
+    models = family_models(pattern, n=1, env_var="OCI_MODEL_ID")
+    return models[0] if models else pytest.skip("no live Gemini chat model")
 
 
 def _get_config() -> Dict[str, Any]:
@@ -59,7 +67,7 @@ def test_gemini_basic_invoke() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = _gemini_model(r"^google\.gemini-")
 
     llm = ChatOCIGenAI(
         model_id=model_id,
@@ -83,7 +91,7 @@ def test_gemini_max_output_tokens_mapping() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = _gemini_model(r"^google\.gemini-")
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -116,7 +124,7 @@ def test_gemini_both_tokens_params() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = _gemini_model(r"^google\.gemini-")
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -153,7 +161,7 @@ def test_gemini_streaming() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = _gemini_model(r"^google\.gemini-")
 
     llm = ChatOCIGenAI(
         model_id=model_id,
@@ -182,7 +190,7 @@ def test_gemini_streaming_with_max_output_tokens() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_INTEGRATION=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.0-flash-001")
+    model_id = _gemini_model(r"^google\.gemini-")
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -256,7 +264,7 @@ def test_gemini_output_truncation_diagnostic() -> None:
     Enable with: OCI_RUN_GEMINI_TRUNCATION_DIAGNOSTIC=1
 
     Optional environment variables:
-      - OCI_MODEL_ID: Model to test (default: google.gemini-2.5-pro)
+      - OCI_MODEL_ID: Model to test (default: newest live Gemini Pro)
       - OCI_MAX_TOKENS: Max output tokens (default: 8000)
       - OCI_TRUNCATION_TRIALS: Number of requests to run (default: 10)
       - OCI_TRUNCATION_LINES: Requested line count (default: 800)
@@ -266,7 +274,7 @@ def test_gemini_output_truncation_diagnostic() -> None:
         pytest.skip("Set OCI_RUN_GEMINI_TRUNCATION_DIAGNOSTIC=1 to run this test")
 
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-pro")
+    model_id = _gemini_model(r"^google\.gemini-.*-pro$")
     max_tokens = int(os.getenv("OCI_MAX_TOKENS", "8000"))
     temperature = float(os.getenv("OCI_TRUNCATION_TEMPERATURE", "0"))
     trials = int(os.getenv("OCI_TRUNCATION_TRIALS", "10"))

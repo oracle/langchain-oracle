@@ -1,6 +1,8 @@
 """Test configuration isolation and table suffix functionality."""
 
+import json
 from contextlib import asynccontextmanager, contextmanager
+from decimal import Decimal
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -11,6 +13,7 @@ from langgraph_oracledb.store.oracle.base import (
     OracleStore,
     _generate_suffix,
     _get_parameters_clause,
+    _normalize_existing_index_params,
 )
 
 
@@ -671,3 +674,57 @@ def test_non_vector_store_suffix():
         store2.teardown()
         with conn.cursor() as cur:
             cur.execute("drop table if exists STORE_CONFIGS purge")
+
+
+class TestNormalizeExistingIndexParams:
+    """The normalized params are json.dumps()-ed by _validate_configuration.
+
+    Oracle's JSON type returns every number as Decimal, so anything left in the
+    result that json cannot encode makes setup() fail on the second run.
+    """
+
+    def test_coerces_decimals_from_a_mapping(self):
+        params = _normalize_existing_index_params(
+            {
+                "type": "ivf",
+                "neighbor_partitions": Decimal("1"),
+                "accuracy": Decimal("90"),
+            }
+        )
+
+        assert params == {
+            "type": "ivf",
+            "neighbor_partitions": 1,
+            "accuracy": 90,
+        }
+        assert isinstance(params["neighbor_partitions"], int)
+        # The caller does exactly this, and it must not raise.
+        assert json.dumps(params, sort_keys=True)
+
+    def test_coerces_decimals_from_a_json_string(self):
+        params = _normalize_existing_index_params(
+            '{"type": "hnsw", "neighbors": 16, "efconstruction": 200}'
+        )
+
+        assert params == {"type": "hnsw", "neighbors": 16, "efconstruction": 200}
+        assert json.dumps(params, sort_keys=True)
+
+    def test_coerces_nested_and_non_integral_decimals(self):
+        params = _normalize_existing_index_params(
+            {"nested": {"values": [Decimal("2"), Decimal("2.5")]}}
+        )
+
+        assert params == {"nested": {"values": [2, 2.5]}}
+        assert isinstance(params["nested"]["values"][0], int)
+        assert isinstance(params["nested"]["values"][1], float)
+        assert json.dumps(params, sort_keys=True)
+
+    def test_still_rejects_unusable_values(self):
+        with pytest.raises(ValueError, match="not valid JSON"):
+            _normalize_existing_index_params("{not json")
+
+        with pytest.raises(ValueError, match="must decode to a JSON object"):
+            _normalize_existing_index_params("[1, 2]")
+
+        with pytest.raises(ValueError, match="unsupported format"):
+            _normalize_existing_index_params(object())

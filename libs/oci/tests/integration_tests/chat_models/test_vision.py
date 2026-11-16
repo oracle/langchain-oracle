@@ -69,6 +69,8 @@ from langchain_oci import (
     load_image,
 )
 
+from ..live_models import chat_model, vision_models
+
 try:
     from PIL import Image
 
@@ -112,6 +114,12 @@ def get_config():
     }
 
 
+def _vision_model(prefix: str) -> str:
+    """The live vision model whose id starts with *prefix*, or skip."""
+    model_id = next((m for m in vision_models() if m.startswith(prefix)), None)
+    return model_id or pytest.skip(f"no live {prefix}* vision model")
+
+
 # =============================================================================
 # Individual Model Fixtures - For model-specific tests
 # =============================================================================
@@ -119,14 +127,14 @@ def get_config():
 
 @pytest.fixture
 def vision_llm():
-    """Create a vision-capable ChatOCIGenAI instance with Llama 3.2 90B.
+    """Create a ChatOCIGenAI instance with a live Meta Llama vision model.
 
     Use `any_vision_llm` fixture for tests that should run across all models.
     This fixture is for Llama-specific tests only.
     """
     config = get_config()
     return ChatOCIGenAI(
-        model_id="meta.llama-3.2-90b-vision-instruct",
+        model_id=_vision_model("meta."),
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],
@@ -136,14 +144,14 @@ def vision_llm():
 
 @pytest.fixture
 def llama4_scout_llm():
-    """Create a ChatOCIGenAI instance with Llama 4 Scout (vision-capable).
+    """Create a ChatOCIGenAI instance with a live Llama 4 vision model.
 
     Use `any_vision_llm` fixture for tests that should run across all models.
     This fixture is for Llama 4 Scout-specific tests only.
     """
     config = get_config()
     return ChatOCIGenAI(
-        model_id="meta.llama-4-scout-17b-16e-instruct",
+        model_id=_vision_model("meta.llama-4-"),
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],
@@ -153,14 +161,14 @@ def llama4_scout_llm():
 
 @pytest.fixture
 def gemini_llm():
-    """Create a ChatOCIGenAI instance with Google Gemini 2.5 Flash.
+    """Create a ChatOCIGenAI instance with a live Gemini vision model.
 
     Use `any_vision_llm` fixture for tests that should run across all models.
     This fixture is for Gemini-specific tests only.
     """
     config = get_config()
     return ChatOCIGenAI(
-        model_id="google.gemini-2.5-flash",
+        model_id=_vision_model("google."),
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],
@@ -170,14 +178,14 @@ def gemini_llm():
 
 @pytest.fixture
 def grok4_llm():
-    """Create a ChatOCIGenAI instance with xAI Grok 4.
+    """Create a ChatOCIGenAI instance with a live xAI vision model.
 
     Use `any_vision_llm` fixture for tests that should run across all models.
     This fixture is for Grok-specific tests only.
     """
     config = get_config()
     return ChatOCIGenAI(
-        model_id="xai.grok-4",
+        model_id=_vision_model("xai."),
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],
@@ -195,7 +203,7 @@ def cohere_vision_llm():
     """
     config = get_config()
     return ChatOCIGenAI(
-        model_id="cohere.command-a-vision",
+        model_id=_vision_model("cohere."),
         compartment_id=config["compartment_id"],
         service_endpoint=config["service_endpoint"],
         auth_profile=config["auth_profile"],
@@ -208,13 +216,8 @@ def cohere_vision_llm():
 # =============================================================================
 
 # List of all vision-capable models for parametrized testing
-VISION_MODEL_IDS = [
-    "meta.llama-3.2-90b-vision-instruct",
-    "meta.llama-4-scout-17b-16e-instruct",
-    "google.gemini-2.5-flash",
-    "xai.grok-4",
-    # Note: cohere.command-a-vision requires dedicated AI cluster, tested separately
-]
+# Cohere vision is exercised separately by TestCohereVision.
+VISION_MODEL_IDS = [m for m in vision_models() if not m.startswith("cohere.")]
 
 
 @pytest.fixture(params=VISION_MODEL_IDS)
@@ -393,16 +396,7 @@ class TestVisionModelDetection:
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "meta.llama-3.2-90b-vision-instruct",
-        "meta.llama-4-scout-17b-16e-instruct",
-        "google.gemini-2.5-flash",
-        "xai.grok-4",
-        "cohere.command-a-vision",
-    ],
-)
+@pytest.mark.parametrize("model_id", vision_models())
 def test_vision_models_can_process_images(model_id):
     """Test that various vision-capable models can process images."""
     config = get_config()
@@ -458,9 +452,11 @@ class TestVisionErrorHandling:
     def test_text_only_model_with_image(self):
         """Test that text-only models handle images appropriately."""
         config = get_config()
-        # Cohere command-r models don't support vision (only command-a-vision does)
+        # Cohere's general chat models don't support vision (only *-vision does)
+        model_id = chat_model("cohere") or pytest.skip("no live Cohere chat model")
+        assert not is_vision_model(model_id)
         llm = ChatOCIGenAI(
-            model_id="cohere.command-r-16k",
+            model_id=model_id,
             compartment_id=config["compartment_id"],
             service_endpoint=config["service_endpoint"],
             auth_profile=config["auth_profile"],

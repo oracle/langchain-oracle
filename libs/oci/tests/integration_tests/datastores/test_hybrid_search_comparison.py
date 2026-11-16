@@ -1,18 +1,43 @@
 # ruff: noqa: T201
 """Compare semantic-only vs keyword-only vs hybrid (RRF) on live OpenSearch.
 
+All connection details come from the environment; the test skips when any
+required variable is unset or ``opensearch-py`` isn't installed.
+
+Required:
+    OPENSEARCH_ENDPOINT, OPENSEARCH_INDEX, OPENSEARCH_USERNAME,
+    OPENSEARCH_PASSWORD, OCI_COMPARTMENT_ID
+Optional:
+    OPENSEARCH_VECTOR_FIELD (default ``vector_field``)
+    OPENSEARCH_SEARCH_FIELDS (comma-separated, default ``title,content``)
+    OPENSEARCH_EMBEDDING_MODEL (default ``cohere.embed-v4.0``)
+    OCI_AUTH_TYPE (default ``SECURITY_TOKEN``), OCI_CONFIG_PROFILE
+    (default ``DEFAULT``), OCI_REGION (default ``us-chicago-1``)
+
 Run from libs/oci/:
     .venv/bin/pytest tests/integration_tests/datastores/ -v -s -k hybrid
 """
 
+import os
 import textwrap
 
 import pytest
 
-OPENSEARCH_ENDPOINT = "https://ai-dev.observ.us-ashburn-1.ocs.oraclecloud.com:9200"
-OPENSEARCH_INDEX = "hf_pubmed_research_20260324164844"
-OPENSEARCH_USERNAME = "ai_user"
-OPENSEARCH_PASSWORD = "%36${082h_9}1574"
+pytest.importorskip("opensearchpy", reason="opensearch-py not installed")
+
+_REQUIRED_ENV = (
+    "OPENSEARCH_ENDPOINT",
+    "OPENSEARCH_INDEX",
+    "OPENSEARCH_USERNAME",
+    "OPENSEARCH_PASSWORD",
+    "OCI_COMPARTMENT_ID",
+)
+_missing = [name for name in _REQUIRED_ENV if not os.environ.get(name)]
+if _missing:
+    pytest.skip(
+        f"hybrid search comparison needs {', '.join(_missing)}",
+        allow_module_level=True,
+    )
 
 QUERIES = [
     "cancer treatment outcomes",
@@ -25,12 +50,14 @@ def _build_store(embedding_model):
     from langchain_oci.datastores.vectorstores.opensearch import OpenSearch
 
     store = OpenSearch(
-        endpoint=OPENSEARCH_ENDPOINT,
-        index_name=OPENSEARCH_INDEX,
-        username=OPENSEARCH_USERNAME,
-        password=OPENSEARCH_PASSWORD,
-        vector_field="vector_field",
-        search_fields=["title", "content"],
+        endpoint=os.environ["OPENSEARCH_ENDPOINT"],
+        index_name=os.environ["OPENSEARCH_INDEX"],
+        username=os.environ["OPENSEARCH_USERNAME"],
+        password=os.environ["OPENSEARCH_PASSWORD"],
+        vector_field=os.environ.get("OPENSEARCH_VECTOR_FIELD", "vector_field"),
+        search_fields=os.environ.get("OPENSEARCH_SEARCH_FIELDS", "title,content").split(
+            ","
+        ),
         datastore_description="PubMed medical research papers",
     )
     store.connect(embedding_model)
@@ -60,16 +87,15 @@ def embedding_model():
     except ImportError:
         pytest.skip("langchain_oci not available")
 
+    region = os.environ.get("OCI_REGION", "us-chicago-1")
     return OCIGenAIEmbeddings(
-        model_id="cohere.embed-v4.0",
+        model_id=os.environ.get("OPENSEARCH_EMBEDDING_MODEL", "cohere.embed-v4.0"),
         service_endpoint=(
-            "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+            f"https://inference.generativeai.{region}.oci.oraclecloud.com"
         ),
-        compartment_id=(
-            "ocid1.tenancy.oc1..aaaaaaaah7ixt2oanvvualoahejm63r66c3pse5u4nd4gzviax7eeeqhrysq"
-        ),
-        auth_profile="BOAT-OC1",
-        auth_type="SECURITY_TOKEN",
+        compartment_id=os.environ["OCI_COMPARTMENT_ID"],
+        auth_profile=os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+        auth_type=os.environ.get("OCI_AUTH_TYPE", "SECURITY_TOKEN"),
     )
 
 

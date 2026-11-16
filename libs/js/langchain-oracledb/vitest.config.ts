@@ -1,3 +1,4 @@
+import "dotenv/config";
 import {
   configDefaults,
   defineConfig,
@@ -5,13 +6,19 @@ import {
 } from "vitest/config";
 
 export default defineConfig((env) => {
+  const { ORACLE_USERNAME, ORACLE_PASSWORD, ORACLE_DSN } = process.env;
+  const hasOracleCredentials = ORACLE_USERNAME && ORACLE_PASSWORD && ORACLE_DSN;
+  const excludeIntegrationTests = hasOracleCredentials
+    ? configDefaults.exclude
+    : [...configDefaults.exclude, "**/*.int.test.ts"];
+
   const common: UserConfigExport = {
     test: {
       environment: "node",
       hideSkippedTests: true,
       testTimeout: 30_000,
       maxWorkers: 0.5,
-      exclude: configDefaults.exclude,
+      exclude: excludeIntegrationTests,
       setupFiles: [import.meta.resolve("dotenv/config")],
       passWithNoTests: false,
     },
@@ -22,7 +29,7 @@ export default defineConfig((env) => {
       test: {
         ...common.test,
         testTimeout: 100_000,
-        exclude: configDefaults.exclude,
+        exclude: excludeIntegrationTests,
         include: ["**/*.standard.test.ts"],
         name: "standard-unit",
         environment: "node",
@@ -35,7 +42,8 @@ export default defineConfig((env) => {
       test: {
         ...common.test,
         testTimeout: 100_000,
-        exclude: configDefaults.exclude,
+        exclude: excludeIntegrationTests,
+        passWithNoTests: false,
         include: ["**/*.standard.int.test.ts"],
         name: "standard-int",
         environment: "node",
@@ -49,7 +57,8 @@ export default defineConfig((env) => {
         ...common.test,
         globals: false,
         testTimeout: 100_000,
-        exclude: configDefaults.exclude,
+        exclude: excludeIntegrationTests,
+        passWithNoTests: false,
         include: ["**/*.int.test.ts"],
         name: "int",
         environment: "node",

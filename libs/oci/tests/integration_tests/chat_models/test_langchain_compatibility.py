@@ -9,7 +9,7 @@ Setup:
     export OCI_GENAI_ENDPOINT=<endpoint-url>  # optional
     export OCI_CONFIG_PROFILE=<profile-name>  # optional, defaults to DEFAULT
     export OCI_AUTH_TYPE=<auth-type>  # optional, defaults to SECURITY_TOKEN
-    export OCI_MODEL_ID=<model-id>  # optional, defaults to llama-4
+    export OCI_MODEL_ID=<model-id>  # optional, defaults to a live Llama 4
 
 Run with:
     pytest tests/integration_tests/chat_models/test_langchain_compatibility.py -v
@@ -23,6 +23,9 @@ from pydantic import BaseModel
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+from ..live_models import chat_model as live_chat_model
+from ..live_models import family_models
+
 
 def get_test_config():
     """Get test configuration from environment."""
@@ -30,10 +33,14 @@ def get_test_config():
     if not compartment_id:
         pytest.skip("OCI_COMPARTMENT_ID not set")
 
+    model_id = (
+        os.environ.get("OCI_MODEL_ID")
+        or next(iter(family_models(r"^meta\.llama-4-")), None)
+        or live_chat_model("meta")
+        or pytest.skip("no live Meta chat model")
+    )
     return {
-        "model_id": os.environ.get(
-            "OCI_MODEL_ID", "meta.llama-4-maverick-17b-128e-instruct-fp8"
-        ),
+        "model_id": model_id,
         "service_endpoint": os.environ.get(
             "OCI_GENAI_ENDPOINT",
             "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",

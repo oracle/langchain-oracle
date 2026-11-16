@@ -38,6 +38,7 @@ else:
 _ORACLE_REQUIRED_MODULES = {
     "test_async_store.py",
     "test_checkpoint_async.py",
+    "test_checkpoint_numeric_channel_versions.py",
     "test_checkpoint_storage_async.py",
     "test_checkpoint_storage_sync.py",
     "test_checkpoint_sync.py",

@@ -4,7 +4,7 @@
 """Unit tests for OracleByteStore / OracleDocStore (mocked connection)."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import oracledb
 import pytest
@@ -27,7 +27,8 @@ def _mock_connection() -> MagicMock:
 
 @pytest.fixture
 def conn() -> MagicMock:
-    return _mock_connection()
+    with patch("langchain_oracledb.storage._table_exists", return_value=False):
+        yield _mock_connection()
 
 
 def test_init_creates_table_blob(conn: MagicMock) -> None:

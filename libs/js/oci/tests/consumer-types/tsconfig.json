@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    // This test checks the consumer assignments, not transitive declaration
+    // compatibility with this package's TypeScript 5.1 compiler.
+    "skipLibCheck": true
+  },
+  "files": ["esm.mts", "cjs.cts"]
+}

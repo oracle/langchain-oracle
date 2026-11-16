@@ -1,0 +1,105 @@
+{
+  "name": "@oracle/langgraph-checkpoint-oracledb",
+  "version": "0.1.0",
+  "description": "Oracle AI Database integration for LangGraph",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oracle/langchain-oracle.git",
+    "directory": "libs/js/langgraph-checkpoint-oracledb"
+  },
+  "homepage": "https://github.com/oracle/langchain-oracle/tree/main/libs/js/langgraph-checkpoint-oracledb",
+  "scripts": {
+    "build": "pnpm clean && pnpm build:esm && pnpm build:cjs && pnpm build:types:cjs && pnpm build:entrypoints && pnpm build:scripts",
+    "build:esm": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist/ && rm -rf dist/tests dist/**/tests",
+    "build:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc --outDir dist-cjs/ -p tsconfig.cjs.json && node scripts/move-cjs-to-dist.js && rm -rf dist-cjs",
+    "build:types:cjs": "NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.types.cjs.json && node scripts/rename-cjs-dts.js",
+    "build:entrypoints": "node scripts/create-entrypoints.js",
+    "build:scripts": "node scripts/check-tree-shaking.js",
+    "clean": "rm -rf dist/ dist-cjs/ dist-types-cjs/ .turbo/ && node scripts/create-entrypoints.js pre",
+    "lint": "pnpm lint:eslint && pnpm lint:dpdm",
+    "lint:eslint": "NODE_OPTIONS=--max-old-space-size=4096 eslint --cache --ext .ts,.js src/",
+    "lint:dpdm": "dpdm --exit-code circular:1 --no-warning --no-tree src/*.ts src/**/*.ts",
+    "prepack": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:int": "vitest run --mode int",
+    "format": "prettier --config .prettierrc --write \"src\" README.md",
+    "format:check": "prettier --config .prettierrc --check \"src\" README.md"
+  },
+  "author": "Oracle",
+  "license": "MIT",
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.2",
+    "@types/oracledb": "^6.9.0",
+    "oracledb": "^6.9.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": "^1.1.44",
+    "@langchain/langgraph-checkpoint": "^1.0.0"
+  },
+  "devDependencies": {
+    "@langchain/langgraph-checkpoint": "^1.0.0",
+    "@langchain/langgraph-checkpoint-validation": "^1.0.0",
+    "@tsconfig/recommended": "^1.0.3",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "dotenv": "^16.3.1",
+    "dpdm": "^3.12.0",
+    "eslint": "^8.33.0",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-import": "^2.27.5",
+    "eslint-plugin-no-instanceof": "^1.0.1",
+    "eslint-plugin-prettier": "^4.2.1",
+    "prettier": "^2.8.3",
+    "rollup": "^4.62.3",
+    "tsx": "^4.19.3",
+    "typescript": "^4.9.5 || ^5.4.5",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "files": [
+    "dist/",
+    "index.cjs",
+    "index.js",
+    "index.d.ts",
+    "index.d.cts",
+    "store.cjs",
+    "store.js",
+    "store.d.ts",
+    "store.d.cts"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      },
+      "require": {
+        "types": "./index.d.cts",
+        "default": "./index.cjs"
+      }
+    },
+    "./store": {
+      "import": {
+        "types": "./store.d.ts",
+        "default": "./store.js"
+      },
+      "require": {
+        "types": "./store.d.cts",
+        "default": "./store.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  }
+}

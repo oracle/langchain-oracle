@@ -2442,3 +2442,35 @@ class TestGeminiModelIdRouting:
         # No flattening: 1 Human + 1 AI (with 2 tool_calls) + 2 Tool = 4
         oci_msgs = result["messages"]
         assert len(oci_msgs) == 4
+
+
+class TestStreamDoneSentinel:
+    """The sync stream must tolerate the ``data: [DONE]`` terminal SSE frame.
+
+    OCI GenAI started closing Meta Llama chat streams with an OpenAI-style
+    ``[DONE]`` frame. ``json.loads("[DONE]")`` raises, which turned every
+    ``ChatOCIGenAI.stream()`` call on those models into a JSONDecodeError
+    after the last real chunk. The async transport already skipped the
+    sentinel; this pins the same behaviour for the sync path.
+    """
+
+    @staticmethod
+    def _stream_with_trailing(trailing: list) -> list:
+        oci_client = MagicMock()
+        llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=oci_client)
+        mock_stream_response = MagicMock()
+        mock_stream_response.data.events.return_value = _make_generic_stream_events(
+            text_parts=["Hel", "lo"]
+        ) + [MagicMock(data=data) for data in trailing]
+        oci_client.chat.return_value = mock_stream_response
+        return list(llm.stream([HumanMessage(content="hi")]))
+
+    def test_stream_skips_done_sentinel(self) -> None:
+        chunks = self._stream_with_trailing(["[DONE]"])
+        assert _merge_stream(chunks).content == "Hello"
+
+    def test_sentinel_and_empty_frames_add_no_chunks(self) -> None:
+        baseline = self._stream_with_trailing([])
+        with_noise = self._stream_with_trailing(["", "  [DONE]\n", None])
+        assert len(with_noise) == len(baseline)
+        assert _merge_stream(with_noise).content == "Hello"

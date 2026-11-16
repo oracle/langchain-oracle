@@ -18,11 +18,13 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, Tool
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
+from langchain_oci.chat_models.providers.generic import normalize_logprobs
 from langchain_oci.common.async_support import OCIAsyncClient, OCIAsyncRequestError
 from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
 )
+from langchain_oci.common.utils import OCIUtils
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 
@@ -45,6 +47,7 @@ class ChatOCIGenAIAsyncMixin:
             service_endpoint=self.service_endpoint,  # type: ignore[attr-defined]
             signer=base_client.signer,
             config=getattr(base_client, "config", {}),
+            timeout=getattr(base_client, "timeout", None),
         )
 
     async def aclose(self) -> None:
@@ -253,6 +256,21 @@ class ChatOCIGenAIAsyncMixin:
                 return
 
         async for event_data in _events_with_param_retry():
+            if self._provider.is_chat_stream_usage_only(event_data):  # type: ignore[attr-defined]
+                # GENERIC-format models report token usage (requested via
+                # stream_options.is_include_usage in _prepare_request) as one
+                # extra usage-only event after the finish event. Surface it on
+                # an empty chunk so the merged message carries usage_metadata
+                # like ainvoke does, instead of routing it through the content
+                # path as a spurious empty delta (see _stream).
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        usage_metadata=self._stream_usage_metadata(event_data),  # type: ignore[attr-defined]
+                    )
+                )
+                continue
+
             if not self._provider.is_chat_stream_end(event_data):  # type: ignore[attr-defined]
                 # Process streaming content
                 delta = self._provider.chat_stream_to_text(  # type: ignore[attr-defined]
@@ -300,6 +318,8 @@ class ChatOCIGenAIAsyncMixin:
                     message=AIMessageChunk(
                         content="",
                         additional_kwargs=generation_info,
+                        # COHERE-format models attach usage to the finish event.
+                        usage_metadata=self._stream_usage_metadata(event_data),  # type: ignore[attr-defined]
                     ),
                     generation_info=generation_info,
                 )
@@ -319,6 +339,12 @@ class ChatOCIGenAIAsyncMixin:
             "finish_reason": chat_response.get("finishReason"),
         }
 
+        # Token log probabilities (Generic API; requested via logprobs/top_logprobs)
+        choices = chat_response.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            logprobs = normalize_logprobs(choices[0].get("logprobs"))
+            if logprobs is not None:
+                info["logprobs"] = logprobs
         # Cohere-specific fields
         if "documents" in chat_response:
             info["documents"] = chat_response["documents"]
@@ -442,16 +468,9 @@ class ChatOCIGenAIAsyncMixin:
     ) -> Optional[UsageMetadata]:
         """Extract usage metadata from async response data.
 
-        Uses LangChain's UsageMetadata directly for consistency.
+        Shares :meth:`OCIUtils.usage_metadata_from_dict` with the streaming
+        paths so token details (cached / reasoning tokens) are reported the
+        same way ``invoke`` reports them.
         """
         chat_response = response_data.get("chatResponse", {})
-        usage = chat_response.get("usage")
-
-        if usage:
-            return UsageMetadata(
-                input_tokens=usage.get("promptTokens", 0),
-                output_tokens=usage.get("completionTokens", 0),
-                total_tokens=usage.get("totalTokens", 0),
-            )
-
-        return None
+        return OCIUtils.usage_metadata_from_dict(chat_response.get("usage"))

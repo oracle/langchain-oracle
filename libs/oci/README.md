@@ -251,14 +251,14 @@ text_vector = embeddings.embed_query("a photo of a cat")
 <sub>**Note:** Image embeddings require a multimodal model. Use `IMAGE_EMBEDDING_MODELS` to check supported models.</sub>
 
 ### 3c. Rerank Documents
-`OCIGenAIRerank` is a document compressor backed by OCI GenAI rerank models (e.g. `cohere.rerank-v3.5`, `cohere.rerank-v4.0-fast`, `cohere.rerank-v4.0-pro`). Use it standalone via `rerank()`/`arerank()` or plug it into a `ContextualCompressionRetriever`.
+`OCIGenAIRerank` is a document compressor backed by OCI GenAI rerank models (e.g. `cohere.rerank-v4.0-fast`, `cohere.rerank-v4.0-pro`). Use it standalone via `rerank()`/`arerank()` or plug it into a `ContextualCompressionRetriever`.
 
 ```python
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain_oci import OCIGenAIRerank
 
 reranker = OCIGenAIRerank(
-    model_id="cohere.rerank-v3.5",
+    model_id="cohere.rerank-v4.0-fast",
     service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
     compartment_id="ocid1.compartment.oc1..xxxxx",
     top_n=3,
@@ -365,6 +365,36 @@ llm_with_tools = llm.bind_tools(
 
 <sub>**Note:** Parallel tool calling is only supported for Llama 4+ models. Llama 3.x (including 3.3) and Cohere models will raise an error if this parameter is used.</sub>
 
+
+### 7. Token Log Probabilities
+
+Generic-API models (Meta Llama, OpenAI, and others that return them) can
+report per-token log probabilities. Pass the same `logprobs` / `top_logprobs`
+model kwargs `ChatOpenAI` uses; they map to the OCI request's `log_probs`
+(`top_logprobs=N` returns the N most likely tokens per position, `logprobs=True`
+alone returns one). The result is on `response_metadata["logprobs"]` with
+`tokens`, `token_logprobs`, `top_logprobs` (list of `{token: logprob}` dicts)
+and `text_offset`:
+
+```python
+from langchain_oci import ChatOCIGenAI
+
+llm = ChatOCIGenAI(
+    model_id="meta.llama-3.3-70b-instruct",
+    service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+    compartment_id="MY_COMPARTMENT_ID",
+    model_kwargs={"logprobs": True, "top_logprobs": 2},
+)
+response = llm.invoke("Say hi")
+print(response.response_metadata["logprobs"]["top_logprobs"][0])
+# {'Hi': -0.02, 'Hello': -3.9}
+```
+
+Notes: log probabilities are returned for `invoke`/`ainvoke` only (the service
+does not include them in streaming events); some models do not produce them
+(xAI Grok returns none), in which case the key is simply absent; Cohere models
+have no log-probability option, and Gemini models accept the option but never
+return log probabilities, so both raise a `ValueError` if you request them.
 
 ## Deepagents + Datastores (Integration Points)
 

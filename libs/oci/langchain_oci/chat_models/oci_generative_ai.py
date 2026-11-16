@@ -25,6 +25,7 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
+    LangSmithParams,
     generate_from_stream,
 )
 from langchain_core.messages import (
@@ -44,6 +45,7 @@ from langchain_core.output_parsers.openai_tools import (
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_json_schema
 from langchain_openai import ChatOpenAI
 from oci.exceptions import ServiceError
 from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
@@ -62,7 +64,11 @@ from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
 )
-from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, OCIUtils
+from langchain_oci.common.utils import (
+    CUSTOM_ENDPOINT_PREFIX,
+    OCIUtils,
+    is_sse_sentinel,
+)
 from langchain_oci.llms.oci_generative_ai import OCIGenAIBase
 from langchain_oci.llms.utils import enforce_stop_tokens
 
@@ -70,6 +76,11 @@ API_KEY = "<NOTUSED>"
 COMPARTMENT_ID_HEADER = "opc-compartment-id"
 CONVERSATION_STORE_ID_HEADER = "opc-conversation-store-id"
 OUTPUT_VERSION = "responses/v1"
+# httpx advertises zstd whenever `zstandard` is importable (langsmith pulls it
+# in), and OCI's OpenAI endpoints then compress the response with zstd. httpx
+# 0.28's zstd decoder can't handle those bodies and fails with "cannot use a
+# decompressobj multiple times", so we ask for gzip/deflate only.
+ACCEPT_ENCODING = "gzip, deflate"
 
 
 def _build_headers(
@@ -125,6 +136,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             Id of the OCIGenAI chat model to use, e.g., cohere.command-r-16k.
         is_stream: bool
             Whether to stream back partial progress
+        stream_usage: bool
+            Whether streamed responses report token usage in the final chunk's
+            ``usage_metadata`` (default True), matching non-streaming calls.
         model_kwargs: Optional[Dict]
             Keyword arguments to pass to the specific model used, e.g., temperature, max_tokens.
 
@@ -183,13 +197,86 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         arbitrary_types_allowed=True,
     )
 
+    use_responses_api: bool = False
+    """Whether to use the Responses API instead of the Chat API."""
+
+    stream_usage: bool = True
+    """Whether streamed responses report token usage.
+
+    When True, streaming requests set ``stream_options.is_include_usage`` so
+    OCI returns the token counts, which land in ``usage_metadata`` on the
+    final streamed chunk; the merged message then matches what ``invoke``
+    returns. A ``stream_options`` passed via ``model_kwargs`` takes
+    precedence. Set to False to send streaming requests exactly as before.
+    """
+
+    temperature: Optional[float] = None
+    """Sampling temperature. Takes precedence over model_kwargs["temperature"]."""
+
+    max_tokens: Optional[int] = None
+    """Maximum number of tokens to generate.
+    Takes precedence over model_kwargs["max_tokens"]."""
+
+    stop: Optional[List[str]] = None
+    """Default stop sequences, used when a call doesn't pass its own."""
+
     # Cached provider instance (not a Pydantic field to avoid serialization)
     _cached_provider_instance: Optional[Provider] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_streaming_alias(cls, values: Any) -> Any:
+        """Accept the standard ``streaming`` kwarg as an alias for ``is_stream``.
+
+        ``streaming`` is intentionally NOT a pydantic field: the ``@pre_init``
+        validator on OCIGenAIBase marks every field as explicitly set, and
+        langchain-core's ``_streaming_disabled`` hard-disables streaming when
+        a ``streaming`` field is "set" to False -- which would silently turn
+        every ``.stream()`` call into a non-streaming ``.invoke()``.
+        """
+        if isinstance(values, dict) and "streaming" in values:
+            values = dict(values)
+            values["is_stream"] = values.pop("streaming")
+        return values
+
+    @property
+    def streaming(self) -> bool:
+        """Standard-parameter alias for ``is_stream``."""
+        return self.is_stream
 
     @property
     def _llm_type(self) -> str:
         """Return the type of the language model."""
         return "oci_generative_ai_chat"
+
+    def _get_ls_params(
+        self, stop: Optional[List[str]] = None, **kwargs: Any
+    ) -> LangSmithParams:
+        """Get standard params for tracing."""
+        ls_params = super()._get_ls_params(stop=stop, **kwargs)
+        ls_params["ls_provider"] = "oci"
+        model_name = kwargs.get("model") or self.model_id
+        if model_name:
+            ls_params["ls_model_name"] = model_name
+        _model_kwargs = self.model_kwargs or {}
+        temperature = (
+            self.temperature
+            if self.temperature is not None
+            else _model_kwargs.get("temperature")
+        )
+        if temperature is not None:
+            ls_params["ls_temperature"] = temperature
+        max_tokens = (
+            self.max_tokens
+            if self.max_tokens is not None
+            else _model_kwargs.get("max_tokens")
+        )
+        if max_tokens is not None:
+            ls_params["ls_max_tokens"] = max_tokens
+        ls_stop = stop if stop is not None else self.stop
+        if ls_stop:
+            ls_params["ls_stop"] = ls_stop
+        return ls_params
 
     @property
     def _provider_map(self) -> Mapping[str, Provider]:
@@ -206,9 +293,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
     def _provider(self) -> Any:
         """Get the internal provider object (cached for stateful providers)."""
         if self._cached_provider_instance is None:
-            self._cached_provider_instance = self._get_provider(
-                provider_map=self._provider_map
-            )
+            if self.use_responses_api:
+                self._cached_provider_instance = GenericProvider()
+            else:
+                self._cached_provider_instance = self._get_provider(
+                    provider_map=self._provider_map
+                )
         return self._cached_provider_instance
 
     def _prepare_request(
@@ -232,6 +322,13 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 "Please make sure you have the oci package installed."
             ) from ex
 
+        if "tool_choice" in kwargs:
+            processed_tool_choice = self._provider.process_tool_choice(
+                kwargs.pop("tool_choice")
+            )
+            if processed_tool_choice is not None:
+                kwargs["tool_choice"] = processed_tool_choice
+
         oci_params = self._provider.messages_to_oci_params(
             messages,
             max_sequential_tool_calls=self.max_sequential_tool_calls,
@@ -241,8 +338,17 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         )
 
         oci_params["is_stream"] = stream
-        _model_kwargs = self.model_kwargs or {}
+        # Copy so per-request keys (e.g. stop sequences) never leak into the
+        # shared self.model_kwargs dict.
+        _model_kwargs = dict(self.model_kwargs or {})
 
+        if self.temperature is not None:
+            _model_kwargs["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            _model_kwargs["max_tokens"] = self.max_tokens
+
+        if stop is None:
+            stop = self.stop
         if stop is not None:
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
@@ -282,6 +388,20 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             # Use V1 API: Standard text-only chat requests
             # Used by all models that don't require multimodal capabilities
             chat_request = self._provider.oci_chat_request(**chat_params)
+
+        # OCI reports token usage on a chat stream only when asked to via
+        # stream_options.is_include_usage: GENERIC-format models then send one
+        # usage-only event after the finish event, COHERE-format models put it
+        # on the finish event (see Provider.chat_stream_usage). An explicit
+        # stream_options from model_kwargs wins; the param-compat retry drops
+        # the option if a model ever rejects it.
+        if (
+            stream
+            and self.stream_usage
+            and "stream_options" in getattr(chat_request, "swagger_types", {})
+            and getattr(chat_request, "stream_options", None) is None
+        ):
+            chat_request.stream_options = models.StreamOptions(is_include_usage=True)
 
         request = models.ChatDetails(
             compartment_id=self.compartment_id,
@@ -331,7 +451,11 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         formatted_tools = [self._provider.convert_to_oci_tool(tool) for tool in tools]
 
         if tool_choice is not None:
-            kwargs["tool_choice"] = self._provider.process_tool_choice(tool_choice)
+            # Stored raw and translated per-provider at request time
+            # (_prepare_request), so binding stays declarative: providers
+            # that reject tool_choice (e.g. Cohere) raise on invoke, not
+            # on bind.
+            kwargs["tool_choice"] = tool_choice
 
         # Add parallel tool calls support (only when explicitly enabled)
         if parallel_tool_calls:
@@ -352,6 +476,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             "function_calling", "json_schema", "json_mode"
         ] = "function_calling",
         include_raw: bool = False,
+        strict: Optional[bool] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, Union[Dict, BaseModel]]:
         """Model wrapper that returns outputs formatted to match the given schema.
@@ -379,6 +504,11 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 response will be returned. If an error occurs during output parsing it
                 will be caught and returned as well. The final output is always a dict
                 with keys "raw", "parsed", and "parsing_error".
+            strict:
+                Whether to enforce strict schema adherence. Only honored by the
+                "json_schema" method (mapped to the OCI response-format
+                ``is_strict`` flag, default True); accepted and ignored by the
+                other methods for cross-provider compatibility.
 
         Returns:
             A Runnable that takes any ChatModel input and returns as output:
@@ -400,6 +530,20 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         if kwargs:
             raise ValueError(f"Unsupported arguments: {kwargs}")
         is_pydantic_schema = OCIUtils.is_pydantic_class(schema)
+
+        # Structured-output metadata surfaced to tracing/callbacks
+        # (consumed and popped by BaseChatModel before the request is built).
+        try:
+            ls_format_schema = (
+                convert_to_json_schema(schema) if schema is not None else None
+            )
+        except ValueError:
+            ls_format_schema = None
+        ls_structured_output_format = {
+            "kwargs": {"method": method, "strict": strict},
+            "schema": ls_format_schema,
+        }
+
         if method == "function_calling":
             if schema is None:
                 raise ValueError("Schema must be provided for function_calling method.")
@@ -410,6 +554,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             bind_kwargs: Dict[str, Any] = {**kwargs}
             if self._provider.supports_tool_choice and "tool_choice" not in bind_kwargs:
                 bind_kwargs["tool_choice"] = "required"
+            bind_kwargs["ls_structured_output_format"] = ls_structured_output_format
             llm = self.bind_tools([schema], **bind_kwargs)
             tool_name = getattr(self._provider.convert_to_oci_tool(schema), "name")
             if is_pydantic_schema:
@@ -422,18 +567,24 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     key_name=tool_name, first_tool_only=True
                 )
         elif method == "json_mode":
-            llm = self.bind(response_format={"type": "JSON_OBJECT"})  # type: ignore[assignment, unused-ignore]
+            llm = self.bind(  # type: ignore[assignment, unused-ignore]
+                response_format={"type": "JSON_OBJECT"},
+                ls_structured_output_format=ls_structured_output_format,
+            )
             output_parser = (
                 PydanticOutputParser(pydantic_object=schema)
                 if is_pydantic_schema
                 else JsonOutputParser()
             )
         elif method == "json_schema":
-            json_schema_dict: Dict[str, Any] = (
-                schema.model_json_schema()  # type: ignore[union-attr]
-                if is_pydantic_schema
-                else schema  # type: ignore[assignment]
-            )
+            if is_pydantic_schema:
+                # model_json_schema is pydantic v2; v1 models expose schema()
+                schema_method = getattr(schema, "model_json_schema", None) or getattr(
+                    schema, "schema"
+                )
+                json_schema_dict: Dict[str, Any] = schema_method()
+            else:
+                json_schema_dict = schema  # type: ignore[assignment]
 
             # Resolve $ref references as OCI doesn't support $ref and $defs
             json_schema_dict = OCIUtils.resolve_schema_refs(json_schema_dict)
@@ -442,14 +593,17 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 name=json_schema_dict.get("title", "response"),
                 description=json_schema_dict.get("description", ""),
                 schema=json_schema_dict,
-                is_strict=True,
+                is_strict=strict if strict is not None else True,
             )
 
             response_format_obj = self._provider.oci_json_schema_response_format(
                 json_schema=response_json_schema
             )
 
-            llm = self.bind(response_format=response_format_obj)  # type: ignore[assignment, unused-ignore]
+            llm = self.bind(  # type: ignore[assignment, unused-ignore]
+                response_format=response_format_obj,
+                ls_structured_output_format=ls_structured_output_format,
+            )
             if is_pydantic_schema:
                 output_parser = PydanticOutputParser(pydantic_object=schema)
             else:
@@ -505,7 +659,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             return generate_from_stream(stream_iter)
 
         request = self._prepare_request(messages, stop=stop, stream=False, **kwargs)
-        response = self._chat_with_param_retry(request)
+        if self.use_responses_api:
+            response = self._call_responses_api(request, stream=False)
+        else:
+            response = self._chat_with_param_retry(request)
 
         content = self._provider.chat_response_to_text(response)
 
@@ -515,6 +672,9 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
         raw_tool_calls = self._provider.chat_tool_calls(response)
 
         generation_info = self._provider.chat_generation_info(response)
+        # Standard response_metadata key expected by LangChain tooling
+        # (traces, callbacks); model_id is kept for backwards compatibility.
+        generation_info.setdefault("model_name", response.data.model_id)
 
         if raw_tool_calls:
             generation_info["tool_calls"] = self._provider.format_response_tool_calls(
@@ -574,6 +734,280 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     raise
         raise RuntimeError("unreachable")  # pragma: no cover
 
+    def _get_oci_signer(self) -> Any:
+        """Get or create the OCI request signer for HTTP REST requests."""
+        signer = getattr(getattr(self, "client", None), "base_client", None)
+        if signer is not None and hasattr(signer, "signer"):
+            return signer.signer
+
+        from langchain_oci.common.auth import create_oci_client_kwargs
+
+        client_kwargs = create_oci_client_kwargs(
+            auth_type=self.auth_type or "API_KEY",
+            service_endpoint=self.service_endpoint,
+            auth_file_location=self.auth_file_location or "~/.oci/config",
+            auth_profile=self.auth_profile or "DEFAULT",
+        )
+        signer = client_kwargs.get("signer")
+        if signer is None and client_kwargs.get("config"):
+            import oci
+
+            signer = oci.signer.Signer.from_config(client_kwargs["config"])
+        return signer
+
+    def _call_responses_api(self, request_details: Any, stream: bool = False) -> Any:
+        """Call OCI Responses REST API endpoint (/v1/responses) directly via HTTP.
+
+        Builds an OpenAI Responses-compatible payload:
+        - ``input`` (not ``messages``)
+        - ``max_output_tokens`` (not ``max_tokens``)
+        - ``compartment_id`` / ``top_k`` stay out of the body; the compartment
+          is conveyed only via the ``opc-compartment-id`` header.
+        """
+        import requests as _requests
+
+        endpoint = (
+            self.service_endpoint
+            or "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com"
+        ).rstrip("/")
+        url = f"{endpoint}/v1/responses"
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self.compartment_id:
+            headers["opc-compartment-id"] = self.compartment_id
+
+        signer = self._get_oci_signer()
+
+        chat_req = getattr(request_details, "chat_request", None)
+        payload: Dict[str, Any] = {
+            "model": self.model_id,
+            "stream": stream,
+        }
+
+        if chat_req:
+            # Build ``input`` (OpenAI Responses schema) from SDK messages.
+            if hasattr(chat_req, "messages") and chat_req.messages:
+                formatted_input: List[Dict[str, Any]] = []
+                for msg in chat_req.messages:
+                    role = str(getattr(msg, "role", "user")).lower()
+                    content = getattr(msg, "content", "")
+                    # Flatten content list / SDK objects to plain text.
+                    if isinstance(content, list):
+                        parts_text: List[str] = []
+                        for part in content:
+                            if isinstance(part, dict):
+                                parts_text.append(part.get("text", ""))
+                            elif isinstance(part, str):
+                                parts_text.append(part)
+                            else:
+                                parts_text.append(getattr(part, "text", str(part)))
+                        content = "".join(parts_text)
+                    formatted_input.append({"role": role, "content": content})
+                payload["input"] = formatted_input
+
+            # Map max_tokens -> max_output_tokens; skip top_k / compartment_id.
+            _param_map = {
+                "max_tokens": "max_output_tokens",
+                "temperature": "temperature",
+                "top_p": "top_p",
+                "frequency_penalty": "frequency_penalty",
+                "presence_penalty": "presence_penalty",
+            }
+            for sdk_attr, api_key in _param_map.items():
+                val = getattr(chat_req, sdk_attr, None)
+                if val is not None:
+                    payload[api_key] = val
+
+        res = _requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            auth=signer,
+            stream=stream,
+            timeout=240,
+        )
+        res.raise_for_status()
+
+        if stream:
+            return res
+        else:
+            return self._process_responses_api_response(res.json(), res.headers)
+
+    @staticmethod
+    def _extract_responses_api_text(data_dict: Dict[str, Any]) -> str:
+        """Extract the assistant text from an OpenAI Responses API JSON body.
+
+        The actual schema nests text at::
+
+            output[].content[].text   (where content[].type == "output_text")
+        """
+        texts: List[str] = []
+        for item in data_dict.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            for part in item.get("content", []):
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "output_text"
+                    and "text" in part
+                ):
+                    texts.append(part["text"])
+        return "".join(texts)
+
+    def _process_responses_api_response(
+        self, data_dict: Dict[str, Any], headers: Any
+    ) -> Any:
+        """Wrap REST API response JSON into an OCI-compatible response object.
+
+        Uses ``types.SimpleNamespace`` instead of ``unittest.mock.MagicMock``
+        so attribute access is explicit and missing fields raise
+        ``AttributeError`` immediately (instead of silently returning new mocks).
+        """
+        from types import SimpleNamespace
+
+        model_id = data_dict.get("model", self.model_id or "")
+        model_version = data_dict.get("model_version", "1.0")
+
+        # --- extract text from the Responses schema ---
+        content_text = self._extract_responses_api_text(data_dict)
+
+        # Build an object graph compatible with GenericProvider expectations:
+        #   response.data.chat_response.choices[0].message.content[0].text
+        #   response.data.chat_response.choices[0].message.tool_calls
+        #   response.data.chat_response.choices[0].finish_reason
+        part = SimpleNamespace(text=content_text)
+        msg_obj = SimpleNamespace(
+            content=[part],
+            tool_calls=None,
+            reasoning_content=None,
+        )
+        choice_obj = SimpleNamespace(
+            message=msg_obj,
+            finish_reason="stop",
+        )
+
+        # Usage: Responses API returns input_tokens / output_tokens.
+        raw_usage = data_dict.get("usage", {})
+        usage = SimpleNamespace(
+            input_tokens=raw_usage.get("input_tokens", 0),
+            output_tokens=raw_usage.get("output_tokens", 0),
+            total_tokens=raw_usage.get(
+                "total_tokens",
+                raw_usage.get("input_tokens", 0) + raw_usage.get("output_tokens", 0),
+            ),
+        )
+
+        chat_response = SimpleNamespace(
+            choices=[choice_obj],
+            usage=usage,
+            time_created=None,
+        )
+
+        response_data = SimpleNamespace(
+            model_id=model_id,
+            model_version=model_version,
+            chat_response=chat_response,
+        )
+
+        response_wrapper = SimpleNamespace(
+            data=response_data,
+            request_id=headers.get(
+                "opc-request-id", headers.get("x-request-id", "req-1")
+            ),
+            headers={"content-length": str(headers.get("content-length", "0"))},
+        )
+
+        return response_wrapper
+
+    def _stream_responses_api(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        """Stream via the OCI Responses REST API with SSE parsing.
+
+        The Responses API emits Server-Sent Events with typed event names:
+        - ``response.output_text.delta``  — incremental text tokens
+        - ``response.completed``          — final event with full response
+        - other lifecycle events are acknowledged but not surfaced as chunks.
+        """
+        request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
+        raw_response = self._call_responses_api(request, stream=True)
+
+        # The service sends ``text/event-stream`` without a charset, so
+        # requests would fall back to ISO-8859-1 and garble multi-byte
+        # UTF-8 characters. SSE is always UTF-8.
+        raw_response.encoding = "utf-8"
+
+        event_type: Optional[str] = None
+        for raw_line in raw_response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                # Blank line = end of SSE event frame; reset.
+                event_type = None
+                continue
+
+            if raw_line.startswith("event:"):
+                event_type = raw_line[len("event:") :].strip()
+                continue
+
+            if raw_line.startswith("data:"):
+                data_str = raw_line[len("data:") :].strip()
+                if data_str == "[DONE]":
+                    break
+
+                try:
+                    event_data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                # Extract event type from data JSON if present (or fallback
+                # to event_type header line).
+                current_event_type = event_data.get("type", event_type)
+
+                if (
+                    current_event_type == "response.output_text.delta"
+                    or "delta" in event_data
+                ):
+                    delta = event_data.get("delta", "")
+                    if delta:
+                        chunk = ChatGenerationChunk(
+                            message=AIMessageChunk(content=delta)
+                        )
+                        if run_manager:
+                            run_manager.on_llm_new_token(delta, chunk=chunk)
+                        yield chunk
+
+                elif current_event_type == "response.completed":
+                    # Final event carries the full response; extract usage.
+                    resp = event_data.get("response", event_data)
+                    raw_usage = resp.get("usage", {})
+                    generation_info: Dict[str, Any] = {}
+                    if raw_usage:
+                        generation_info["usage"] = raw_usage
+                    generation_info["status"] = resp.get("status", "completed")
+                    generation_info["response_id"] = resp.get("id", "")
+                    yield ChatGenerationChunk(
+                        message=AIMessageChunk(
+                            content="",
+                            additional_kwargs=generation_info,
+                        ),
+                        generation_info=generation_info,
+                    )
+
+    def _stream_usage_metadata(self, event_data: Dict[str, Any]) -> Optional[Any]:
+        """Token usage carried by a stream event, as ``UsageMetadata`` (or None).
+
+        Shared by ``_stream`` and ``_astream``. The provider decides which
+        events carry usage (``Provider.chat_stream_usage``); the camelCase
+        wire payload is mapped like the non-streaming path maps SDK objects.
+        """
+        usage = self._provider.chat_stream_usage(event_data)
+        return OCIUtils.usage_metadata_from_dict(usage) if usage else None
+
     def _stream(
         self,
         messages: List[BaseMessage],
@@ -586,6 +1020,12 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
 
         Processes each event and yields chunks until the stream ends.
         """
+        if self.use_responses_api:
+            yield from self._stream_responses_api(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            )
+            return
+
         request = self._prepare_request(messages, stop=stop, stream=True, **kwargs)
         response = self._chat_with_param_retry(request)
         tool_call_ids: Dict[int, str] = {}
@@ -611,7 +1051,28 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 reset()
 
         for event in response.data.events():
+            # OCI GenAI terminates some chat streams (observed on Meta Llama
+            # models) with an OpenAI-style ``data: [DONE]`` sentinel that is
+            # not JSON. Skip it (and empty keep-alive frames) instead of
+            # failing the whole stream with a JSONDecodeError.
+            if is_sse_sentinel(event.data):
+                continue
             event_data = json.loads(event.data)
+
+            if self._provider.is_chat_stream_usage_only(event_data):
+                # GENERIC-format models report token usage (requested via
+                # stream_options.is_include_usage in _prepare_request) as one
+                # extra usage-only event after the finish event. Surface it on
+                # an empty chunk so the merged message carries usage_metadata
+                # like invoke does, instead of routing it through the content
+                # path as a spurious empty delta that drops the counts.
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        usage_metadata=self._stream_usage_metadata(event_data),
+                    )
+                )
+                continue
 
             if not self._provider.is_chat_stream_end(event_data):
                 # Process streaming content
@@ -655,10 +1116,14 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     yield ChatGenerationChunk(message=AIMessageChunk(content=tail))
 
                 generation_info = self._provider.chat_stream_generation_info(event_data)
+                if self.model_id:
+                    generation_info.setdefault("model_name", self.model_id)
                 yield ChatGenerationChunk(
                     message=AIMessageChunk(
                         content="",
                         additional_kwargs=generation_info,
+                        # COHERE-format models attach usage to the finish event.
+                        usage_metadata=self._stream_usage_metadata(event_data),
                     ),
                     generation_info=generation_info,
                 )
@@ -892,6 +1357,7 @@ class ChatOCIOpenAI(ChatOpenAI):
             default_headers = _build_chat_completions_headers(compartment_id)
             kwargs.pop("store", None)
             extra_super_kwargs = {}
+        default_headers["Accept-Encoding"] = ACCEPT_ENCODING
 
         super().__init__(
             model=model,

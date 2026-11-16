@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from langchain_oci.common.async_support import OCIAsyncClient
 from langchain_oci.common.auth import create_oci_client_kwargs
-from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX
+from langchain_oci.common.utils import CUSTOM_ENDPOINT_PREFIX, is_sse_sentinel
 from langchain_oci.llms.utils import enforce_stop_tokens
 
 
@@ -357,6 +357,10 @@ class OCIGenAI(LLM, OCIGenAIBase):
         response = self.client.generate_text(invocation_obj)
 
         for event in response.data.events():
+            # Skip the non-JSON ``data: [DONE]`` terminal frame / empty frames
+            # instead of raising JSONDecodeError (same guard as ChatOCIGenAI).
+            if is_sse_sentinel(event.data):
+                continue
             json_load = json.loads(event.data)
             if "text" in json_load:
                 event_data_text = json_load["text"]
@@ -379,6 +383,7 @@ class OCIGenAI(LLM, OCIGenAIBase):
             service_endpoint=self.service_endpoint,  # type: ignore[arg-type]
             signer=base_client.signer,
             config=getattr(base_client, "config", {}),
+            timeout=getattr(base_client, "timeout", None),
         )
 
     async def aclose(self) -> None:

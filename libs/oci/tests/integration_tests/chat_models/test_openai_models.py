@@ -44,6 +44,14 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from langchain_oci.chat_models import ChatOCIGenAI
 
+from ..live_models import family_models
+
+_GPT_OSS_MODELS = family_models(r"^openai\.gpt-oss-")
+
+
+def _gpt_oss_model() -> str:
+    return next(iter(_GPT_OSS_MODELS), None) or pytest.skip("no live gpt-oss model")
+
 
 @pytest.fixture
 def openai_config():
@@ -62,13 +70,7 @@ def openai_config():
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "openai.gpt-oss-20b",
-        "openai.gpt-oss-120b",
-    ],
-)
+@pytest.mark.parametrize("model_id", _GPT_OSS_MODELS)
 def test_openai_basic_completion(model_id: str, openai_config: dict):
     """Test basic completion with OpenAI models.
 
@@ -106,7 +108,7 @@ def test_openai_with_system_message(openai_config: dict):
     the model's behavior.
     """
     chat = ChatOCIGenAI(
-        model_id="openai.gpt-oss-20b",
+        model_id=_gpt_oss_model(),
         service_endpoint=openai_config["service_endpoint"],
         compartment_id=openai_config["compartment_id"],
         auth_type=openai_config["auth_type"],
@@ -137,7 +139,7 @@ def test_openai_streaming(openai_config: dict):
     3. Streaming completes without errors
     """
     chat = ChatOCIGenAI(
-        model_id="openai.gpt-oss-20b",
+        model_id=_gpt_oss_model(),
         service_endpoint=openai_config["service_endpoint"],
         compartment_id=openai_config["compartment_id"],
         auth_type=openai_config["auth_type"],
@@ -165,7 +167,7 @@ def test_openai_multiple_rounds(openai_config: dict):
     Verifies that conversation history is maintained properly.
     """
     chat = ChatOCIGenAI(
-        model_id="openai.gpt-oss-20b",
+        model_id=_gpt_oss_model(),
         service_endpoint=openai_config["service_endpoint"],
         compartment_id=openai_config["compartment_id"],
         auth_type=openai_config["auth_type"],
@@ -192,7 +194,7 @@ def test_openai_multiple_rounds(openai_config: dict):
 
 
 @pytest.mark.requires("oci")
-@pytest.mark.parametrize("model_id", ["openai.gpt-oss-20b", "openai.gpt-oss-120b"])
+@pytest.mark.parametrize("model_id", _GPT_OSS_MODELS)
 def test_openai_langchain_1x_compatibility(model_id: str, openai_config: dict):
     """Test LangChain 1.x specific compatibility.
 

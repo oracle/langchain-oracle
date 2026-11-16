@@ -4,10 +4,11 @@
 """Common utilities and shared modules for langchain-oci."""
 
 from langchain_oci.common.auth import OCIAuthType, create_oci_client_kwargs
-from langchain_oci.common.utils import OCIUtils
+from langchain_oci.common.utils import OCIUtils, is_sse_sentinel
 
 __all__ = [
     "OCIAuthType",
     "create_oci_client_kwargs",
     "OCIUtils",
+    "is_sse_sentinel",
 ]

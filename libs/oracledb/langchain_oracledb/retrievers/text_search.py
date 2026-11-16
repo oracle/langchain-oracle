@@ -41,6 +41,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import model_validator
 
+from langchain_oracledb._telemetry import tag_sql
 from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY, OracleVS
 from langchain_oracledb.vectorstores.utils import (
     _aget_connection,
@@ -476,6 +477,7 @@ class OracleTextSearchRetriever(BaseRetriever):
         WHERE CONTAINS({self.column_name}, :query, 1) > 0
         ORDER BY score DESC FETCH FIRST {row_limit} ROWS ONLY
         """
+        search_query = tag_sql(search_query, "text")
 
         # Pick connection source
         conn_src = self.vector_store.client if self.vector_store else self.client
@@ -535,6 +537,7 @@ class OracleTextSearchRetriever(BaseRetriever):
         WHERE CONTAINS({self.column_name}, :query, 1) > 0
         ORDER BY score DESC FETCH FIRST {row_limit} ROWS ONLY
         """
+        search_query = tag_sql(search_query, "text")
 
         conn_src = self.vector_store.client if self.vector_store else self.client
         async with _aget_connection(conn_src) as connection:

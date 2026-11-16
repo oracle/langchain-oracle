@@ -17,7 +17,7 @@ Usage:
     export OCI_CONFIG_PROFILE="DEFAULT"
     export OCI_AUTH_TYPE="API_KEY"
     export OCI_REGION="us-chicago-1"
-    export OCI_MODEL_ID="google.gemini-2.5-flash"  # or any multimodal model
+    export OCI_MODEL_ID=<model-id>  # optional, defaults to a live Gemini model
     export OCI_RUN_MULTIMODAL_INTEGRATION=1
 
     pytest tests/integration_tests/chat_models/test_multimodal_integration.py -v
@@ -31,6 +31,8 @@ import pytest
 from langchain_core.messages import HumanMessage
 
 from langchain_oci.chat_models import ChatOCIGenAI
+
+from ..live_models import chat_model
 
 
 def _get_config() -> Dict[str, Any]:
@@ -57,11 +59,15 @@ def _get_config() -> Dict[str, Any]:
 def _get_llm() -> ChatOCIGenAI:
     """Create a ChatOCIGenAI instance with environment configuration.
 
-    Uses OCI_MODEL_ID env var, defaulting to google.gemini-2.5-flash.
+    Uses OCI_MODEL_ID env var, defaulting to the newest live Gemini model.
     Override with any multimodal-capable model for testing.
     """
     cfg = _get_config()
-    model_id = os.getenv("OCI_MODEL_ID", "google.gemini-2.5-flash")
+    model_id = (
+        os.getenv("OCI_MODEL_ID")
+        or chat_model("google")
+        or pytest.skip("no live Gemini chat model")
+    )
 
     return ChatOCIGenAI(
         model_id=model_id,

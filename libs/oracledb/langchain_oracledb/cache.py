@@ -17,11 +17,17 @@ from langchain_core.load.dump import dumps
 from langchain_core.load.load import loads
 from langchain_core.outputs import Generation
 
+from langchain_oracledb._annotations import (
+    TableType,
+    backfill_table_annotation,
+    create_table_with_annotations,
+)
 from langchain_oracledb.vectorstores.oraclevs import OracleVS, create_index
 from langchain_oracledb.vectorstores.utils import (
     DistanceStrategy,
     _get_connection,
     _quote_indentifier,
+    _table_exists,
     _validate_indentifier,
     drop_table_purge,
 )
@@ -108,6 +114,11 @@ def _loads_generations(generations_str: str) -> Union[RETURN_VAL_TYPE, None]:
         return None
 
 
+class _SemanticCacheVectorStore(OracleVS):
+    def _annotation_type(self) -> TableType:
+        return "semantic_cache"
+
+
 class OracleSemanticCache(BaseCache):
     """Semantic cache backed by Oracle AI Vector Search.
 
@@ -159,7 +170,7 @@ class OracleSemanticCache(BaseCache):
         self._table_name = table_name
         self._score_threshold = score_threshold
         self._distance_strategy = distance_strategy
-        self._vector_store = OracleVS(
+        self._vector_store = _SemanticCacheVectorStore(
             client=client,
             embedding_function=embedding,
             table_name=table_name,
@@ -326,8 +337,13 @@ class OracleCache(BaseCache):
             )
         """
         with _get_connection(self._client) as connection:
+            if _table_exists(connection, self._quoted_table_name):
+                backfill_table_annotation(
+                    connection, self._quoted_table_name, "exact_cache"
+                )
+                return
             with connection.cursor() as cursor:
-                cursor.execute(ddl)
+                create_table_with_annotations(cursor, ddl, "exact_cache")
             connection.commit()
 
     def lookup(self, prompt: str, llm_string: str) -> Optional[RETURN_VAL_TYPE]:
