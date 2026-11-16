@@ -3,6 +3,8 @@
 
 # Adapted from oracle-vecdb: src/oracle_vecdb/services/ords/hybrid_search.py
 # Source commit: cee35a4ee240dcf764d1258f15ac56a6d93c4129
+# Request helpers verified against cace12d498e98b2e3d2dfd9b14bf0662f46838da;
+# their behavior is unchanged. Adapter discovery hooks remain local.
 
 """JSON hybrid request validation and index planning copied from VecDB.
 

@@ -181,24 +181,56 @@ async def test_stored_constructor_policy_and_reopen(
                 assert vector["auto_index"] is True
             elif request_kind == "options":
                 assert vector["accuracy"] == 85
-        # Omitted, empty, and explicit constructor requests must all preserve
-        # existing options and physical index identities, including manual tables.
+        missing_index = (
+            not initial["physical_indexes"]
+            if selected == "sql"
+            else request_kind in {"omitted", "outer-empty", "nested-null", "manual"}
+        )
+        # Null/manual requests leave a missing index alone. Explicit nested
+        # options ensure it exists; subsequent requests preserve its identity.
         for reopen_params in (
             None,
-            {"vector_index_params": {}},
-            {"vector_index_params": options},
+            {"vector_index_params": None},
+            *(
+                [{"vector_index_params": {"auto_index": False}}]
+                if selected == "vecdb"
+                else []
+            ),
+            {"vector_index_params": options if request_kind == "manual" else {}},
+            {"vector_index_params": {} if request_kind == "manual" else options},
         ):
-            await construct(params=reopen_params)
+            reopened = await construct(params=reopen_params)
             current = await asyncio.to_thread(snapshot)
-            if (
-                selected == "sql"
-                and not initial["physical_indexes"]
-                and reopen_params is not None
-            ):
-                assert current["physical_indexes"]
+            nested = (reopen_params or {}).get("vector_index_params")
+            requested = nested is not None and nested.get("auto_index") is not False
+            if missing_index and requested:
+                if selected == "vecdb":
+                    for _ in range(30):
+                        status = (
+                            await reopened.adescribe_vecdb_index()
+                            if asynchronous
+                            else reopened.describe_vecdb_index()
+                        )
+                        if status["ready"] is True:
+                            break
+                        await asyncio.sleep(1)
+                    else:
+                        pytest.fail(
+                            f"Constructor did not create the missing index: {status}"
+                        )
+                    current = await asyncio.to_thread(snapshot)
+                if oracle_backend != "rest":
+                    assert current["physical_indexes"]
+                if selected == "vecdb" and nested:
+                    assert (
+                        current["stored_options"]["vector_index_params"]["accuracy"]
+                        == 85
+                    )
                 initial = current
+                missing_index = False
             else:
                 assert current == initial
+        record_property("final_index_state", json.dumps(initial, default=str))
     finally:
         try:
             if created:

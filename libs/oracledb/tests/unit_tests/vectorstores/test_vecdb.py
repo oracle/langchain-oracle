@@ -815,9 +815,16 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     assert request["return"]["format"] == "JSON"
 
 
-def test_rest_hybrid_reports_unsupported_operation(store):
-    with pytest.raises(ValueError, match="REST SDK does not support"):
+def test_rest_hybrid_routes_to_shared_sql_transport(store, monkeypatch):
+    shared = store._vecdb.transport.hybrid_transport()
+    execute = MagicMock(return_value=[])
+    monkeypatch.setattr(shared, "hybrid_search", execute)
+    assert (
         OracleHybridSearchRetriever(vector_store=store, idx_name="HVI").invoke("hello")
+        == []
+    )
+    assert execute.call_args.args[0] == '"DOCS"'
+    assert execute.call_args.args[1]["vector"]["search_text"] == "hello"
 
 
 @pytest.mark.parametrize("params", [{"rrf_k": 60}, {"fetch_k": 20}])
@@ -1112,9 +1119,7 @@ def test_vecdb_hybrid_ddl_uses_metadata_column(store, version, column):
     assert "CREATE HYBRID VECTOR INDEX" in ddl
 
 
-@pytest.mark.parametrize(
-    "operation", ["text", "hybrid", "text_index", "hybrid_index", "preference"]
-)
+@pytest.mark.parametrize("operation", ["text", "text_index"])
 def test_rest_unsupported_operations_fail_without_native_fallback(store, operation):
     from langchain_oracledb.retrievers.hybrid_search import (
         OracleVectorizerPreference,
@@ -1149,9 +1154,7 @@ def test_rest_unsupported_operations_fail_without_native_fallback(store, operati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "operation", ["text", "hybrid", "text_index", "hybrid_index", "preference"]
-)
+@pytest.mark.parametrize("operation", ["text", "text_index"])
 async def test_async_rest_unsupported_operations_fail_without_native_fallback(
     store, operation
 ):

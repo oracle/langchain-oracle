@@ -109,9 +109,18 @@ def _validate_parameters(
     return False
 
 
+def _preference_connection(client: Any) -> Any:
+    from ..vectorstores._vecdb import _hybrid_connection, is_sdk_client
+    from ..vectorstores._vecdb_rest_sql import ORDSSQLConnection
+
+    return _hybrid_connection(
+        ORDSSQLConnection(client) if is_sdk_client(client) else client
+    )
+
+
 def _preference_client(store: OracleVS) -> Any:
     if store._vecdb is not None:
-        return store._vecdb.native_transport("vectorizer preference management").client
+        return store._vecdb.hybrid_transport().client
     return store.client
 
 
@@ -251,7 +260,7 @@ class OracleVectorizerPreference:
         client = _preference_client(vector_store)
         preference_params = self._get_preference_parameters()
 
-        with _get_connection(client) as connection:
+        with _preference_connection(client) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     OracleVectorizerPreference.PREFERENCE_STR,
@@ -283,6 +292,15 @@ class OracleVectorizerPreference:
 
         Reference: https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/create_preference.html
         """
+        from ..vectorstores._vecdb import RestTransport
+
+        if vector_store._vecdb is not None and isinstance(
+            vector_store._vecdb.transport, RestTransport
+        ):
+            return await asyncio.to_thread(
+                cls.create_preference, vector_store, preference_name, params
+            )
+
         self = cls.__new__(cls)
         self.params = params
         self.vs = vector_store
@@ -305,7 +323,7 @@ class OracleVectorizerPreference:
 
     def drop_preference(self):
         """Drop this vectorizer preference using DBMS_VECTOR_CHAIN.DROP_PREFERENCE."""
-        with _get_connection(_preference_client(self.vs)) as connection:
+        with _preference_connection(_preference_client(self.vs)) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     "begin DBMS_VECTOR_CHAIN.DROP_PREFERENCE (:preference_name); end;",
@@ -314,6 +332,13 @@ class OracleVectorizerPreference:
 
     async def adrop_preference(self):
         """Async variant of drop_preference."""
+        from ..vectorstores._vecdb import RestTransport
+
+        if self.vs._vecdb is not None and isinstance(
+            self.vs._vecdb.transport, RestTransport
+        ):
+            await asyncio.to_thread(self.drop_preference)
+            return
         async with _aget_connection(_preference_client(self.vs)) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(
@@ -329,7 +354,7 @@ def drop_preference(connection, preference_name):
         connection: oracledb connection.
         preference_name: Preference to drop.
     """
-    with _get_connection(connection) as connection:
+    with _preference_connection(connection) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 "begin DBMS_VECTOR_CHAIN.DROP_PREFERENCE (:preference_name); end;",
@@ -339,6 +364,11 @@ def drop_preference(connection, preference_name):
 
 async def adrop_preference(connection, preference_name):
     """Async variant of drop_preference."""
+    from ..vectorstores._vecdb import is_sdk_client
+
+    if is_sdk_client(connection):
+        await asyncio.to_thread(drop_preference, connection, preference_name)
+        return
     async with _aget_connection(connection) as connection:
         async with connection.cursor() as cursor:
             await cursor.execute(
@@ -492,7 +522,7 @@ def _get_hybrid_index_ddl(
     if vectorizer_preference.vs._vecdb is not None:
         from langchain_oracledb.vectorstores._vecdb import CURRENT_VERSION
 
-        transport = vectorizer_preference.vs._vecdb.native_transport()
+        transport = vectorizer_preference.vs._vecdb.hybrid_transport()
         column = (
             "CONTENT_METADATA" if transport.version >= CURRENT_VERSION else "METADATA"
         )
@@ -581,7 +611,7 @@ def create_hybrid_index(
     if target is not None and target._vecdb is not None:
         from langchain_oracledb.vectorstores._vecdb import _is_native_pool
 
-        transport = target._vecdb.native_transport("hybrid index creation")
+        transport = target._vecdb.hybrid_transport()
         if _is_native_pool(transport.client):
             with transport.session() as bound:
                 store = _bound_vecdb_store(target, bound)
@@ -613,8 +643,8 @@ def create_hybrid_index(
     try:
         if vectorizer_preference.vs._vecdb is not None:
             backend = vectorizer_preference.vs._vecdb
-            backend.native_transport().create_metadata_index(
-                backend.name,
+            backend.hybrid_transport().create_metadata_index(
+                backend.quoted,
                 idx_name,
                 hybrid=True,
                 build=_vecdb_hybrid_builder(vectorizer_preference, params),
@@ -622,7 +652,7 @@ def create_hybrid_index(
             return
         idx_name = _quote_indentifier(idx_name)
         ddl = _get_hybrid_index_ddl(vectorizer_preference, idx_name, params or {})
-        with _get_connection(client) as connection:
+        with _preference_connection(client) as connection:
             if not _index_exists(
                 connection, idx_name, vectorizer_preference.vs.table_name
             ):
@@ -674,7 +704,7 @@ async def acreate_hybrid_index(
             _is_native_pool,
         )
 
-        transport = target._vecdb.native_transport("hybrid index creation")
+        transport = target._vecdb.hybrid_transport()
         if isinstance(transport, AsyncNativeTransport) and _is_native_pool(
             transport.client, asynchronous=True
         ):
@@ -691,12 +721,12 @@ async def acreate_hybrid_index(
                     params=params,
                 )
         if not isinstance(
-            target._vecdb.native_transport("hybrid index creation"),
+            target._vecdb.hybrid_transport(),
             AsyncNativeTransport,
         ):
             await asyncio.to_thread(
                 create_hybrid_index,
-                target._vecdb.native_transport().client,
+                target._vecdb.hybrid_transport().client,
                 idx_name,
                 vectorizer_preference,
                 vector_store,
@@ -909,7 +939,6 @@ class OracleHybridSearchRetriever(BaseRetriever):
             https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/search.html
         """
         if self.vector_store._vecdb is not None:
-            self.vector_store._vecdb.native_transport("hybrid search")
             search_params = self._get_vecdb_search_params(query, **kwargs)
             return self.vector_store._vecdb.hybrid_search(
                 search_params, bool(self.return_scores)
@@ -981,7 +1010,6 @@ class OracleHybridSearchRetriever(BaseRetriever):
             https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/search.html
         """
         if self.vector_store._vecdb is not None:
-            self.vector_store._vecdb.native_transport("hybrid search")
             search_params = self._get_vecdb_search_params(query, **kwargs)
             return await self.vector_store._vecdb.run_async(
                 "hybrid_search", search_params, bool(self.return_scores)

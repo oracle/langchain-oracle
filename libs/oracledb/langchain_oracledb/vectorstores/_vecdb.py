@@ -817,6 +817,17 @@ def _with_async_native_backend_session(method: _NativeMethod) -> _NativeMethod:
     return cast(_NativeMethod, wrapped)
 
 
+@contextmanager
+def _hybrid_connection(client: Any) -> Iterator[Any]:
+    from ._vecdb_rest_sql import ORDSSQLConnection
+
+    if isinstance(client, ORDSSQLConnection):
+        yield client
+    else:
+        with _get_connection(client) as connection:
+            yield connection
+
+
 class NativeTransport:
     """Execute a bounded set of package calls using caller-owned connections."""
 
@@ -844,7 +855,7 @@ class NativeTransport:
 
     @_with_native_session
     def discover(self, name: str, columns: Optional[set[str]] = None) -> _TableInfo:
-        with _get_connection(self.client) as connection:
+        with _hybrid_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 if columns is None:
                     columns = self.columns(name)
@@ -871,7 +882,7 @@ class NativeTransport:
             yield bound
 
     def columns(self, name: str) -> set[str]:
-        with _get_connection(self.client) as connection:
+        with _hybrid_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 return _inspect_columns(cursor, name)
 
@@ -924,7 +935,7 @@ class NativeTransport:
     def describe_index(self, name: str, kind: str = "vector") -> dict:
         owner, binds = _catalog_target(name)
         statement = index_status_query(owner, kind)
-        with _get_connection(self.client) as connection:
+        with _hybrid_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(statement, **binds)
                 return native_index_status(cursor.fetchall())
@@ -990,7 +1001,7 @@ class NativeTransport:
     ) -> None:
         columns = self.columns(name)
         meta = "CONTENT_METADATA" if "CONTENT_METADATA" in columns else "METADATA"
-        with _get_connection(self.client) as connection:
+        with _hybrid_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 statement, binds = _metadata_index_query(name, meta)
                 cursor.execute(statement, **binds)
@@ -1118,7 +1129,7 @@ class NativeTransport:
     @_with_native_session
     def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
         validate_hybrid_request(params)
-        with _get_connection(self.client) as connection:
+        with _hybrid_connection(self.client) as connection:
             info = self._table_info_cache.get(self._table_key(name))
             # VecDB conversion retains the table's metadata index name. The
             # caller's creation/retriever name need not be that physical name.
@@ -1207,7 +1218,7 @@ class NativeTransport:
 
 
 class RestTransport:
-    """Only public SDK methods; no direct HTTP or private SDK attributes."""
+    """Stable SDK operations plus branch-derived SQL APIs over its ApiClient."""
 
     def __init__(self, client: Any):
         config = client.config
@@ -1225,6 +1236,21 @@ class RestTransport:
                 "OracleVS requires an ORDS-configured oracle-vecdb SDK client"
             )
         self.client = client
+        self._hybrid: Optional[NativeTransport] = None
+
+    def hybrid_transport(self) -> NativeTransport:
+        from ._vecdb_rest_sql import ORDSSQLConnection
+
+        if self._hybrid is None:
+            # These shared plans inspect actual columns; the version is only
+            # used as a default before that inspection, never for package calls.
+            self._hybrid = NativeTransport(
+                ORDSSQLConnection(self.client), CURRENT_VERSION
+            )
+        return self._hybrid
+
+    def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
+        return self.hybrid_transport().hybrid_search(name, params, scores)
 
     def call(self, operation: str, **params: Any) -> dict:
         method = "query" if operation == "search" else operation
@@ -1357,6 +1383,10 @@ class VecDBBackend:
         self._creation_index_params = self.index_params(
             vector_index_params, operation="create_table"
         )
+        self._constructor_index_requested = (
+            vector_index_params is not None
+            and vector_index_params.get("auto_index") is not False
+        )
         self._embed_params = self._managed_embed_params(embedding, mutate_on_duplicate)
         validate_operation_arguments(
             "create_vector_table",
@@ -1433,6 +1463,13 @@ class VecDBBackend:
             params["embed_params"] = dict(self._embed_params)
         return params
 
+    def _ensure_constructor_index(self) -> None:
+        """Create a missing requested index without reconfiguring an existing one."""
+        if self._constructor_index_requested and not self._vector_index_exists():
+            _, request = self._index_request(self._creation_index_params, False)
+            validate_operation_arguments("create_index", request)
+            self.transport.call("create_index", **request)
+
     @_with_native_backend_session
     def prepare(
         self, *, columns: Optional[set[str]] = None, description: Optional[dict] = None
@@ -1454,6 +1491,8 @@ class VecDBBackend:
                     else self.transport.call("describe_vector_table", name=self.name)
                 )
             self.transport.discover(self.name, columns)
+            if not created:
+                self._ensure_constructor_index()
             logger.info(
                 "Table %s %s...",
                 self.quoted,
@@ -1472,6 +1511,7 @@ class VecDBBackend:
             logger.info("Table %s created successfully...", self.quoted)
         else:
             self._validate_embedding_config(description)
+            self._ensure_constructor_index()
             logger.info("Table %s already exists...", self.quoted)
 
     @_with_native_backend_session
@@ -1630,9 +1670,16 @@ class VecDBBackend:
             raise ValueError(f"oracle-vecdb REST SDK does not support {operation}")
         return self.transport
 
+    def hybrid_transport(self) -> NativeTransport:
+        if isinstance(self.transport, RestTransport):
+            return self.transport.hybrid_transport()
+        return self.transport
+
     def hybrid_search(self, params: dict, scores: bool) -> list[Document]:
-        return self.native_transport("hybrid search").hybrid_search(
-            self.name, params, scores
+        return self.transport.hybrid_search(
+            self.quoted if isinstance(self.transport, RestTransport) else self.name,
+            params,
+            scores,
         )
 
     def create_text_index(self, index: str) -> None:
@@ -1644,8 +1691,12 @@ class VecDBBackend:
         if kind not in {"vector", "metadata"}:
             raise ValueError("Index kind must be 'vector' or 'metadata'")
         if isinstance(self.transport, RestTransport):
-            if kind != "vector":
-                raise ValueError("ORDS SDK metadata index status is unsupported")
+            if kind == "metadata":
+                if job_name is not None:
+                    raise ValueError(
+                        "Metadata index status does not accept a vector job name"
+                    )
+                return self.hybrid_transport().describe_index(self.quoted, kind)
             response = self.transport.call(
                 "describe_index_job" if job_name is not None else "describe_index",
                 **(
@@ -1777,6 +1828,9 @@ class VecDBBackend:
             self.transport.call("describe_vector_table", name=self.name)
             return False
         state = sdk_index_state(status["details"])
+        if state == "VECTOR INDEX IS NOT CREATED":
+            self.transport.call("describe_vector_table", name=self.name)
+            return False
         if state in {
             "READY",
             "VALID",
@@ -1794,6 +1848,17 @@ class VecDBBackend:
     def _index_request(self, mapped: Optional[dict], exists: bool) -> tuple[str, dict]:
         params: dict[str, Any] = {"table_name": self.name}
         operation = "rebuild_index" if exists else "create_index"
+        if not exists and isinstance(self.transport, RestTransport):
+            # ORDS otherwise leaves a stored manual policy in effect, even for
+            # an explicit CREATE. Enable only this missing-index creation;
+            # preserve omitted algorithm settings and never send it to REBUILD.
+            mapped = {
+                **(mapped or {}),
+                "vector_index_params": {
+                    **(mapped or {}).get("vector_index_params", {}),
+                    "auto_index": True,
+                },
+            }
         if mapped is not None:
             params["index_params"] = (
                 {**mapped, "index_type": "vector"} if exists else mapped
@@ -1865,6 +1930,12 @@ class VecDBBackend:
                     )
                 )
             await self.transport.adiscover(self.name, columns)
+            if not created and self._constructor_index_requested:
+                status = await self.transport.adescribe_index(self.name)
+                if not status["details"]["indexes"]:
+                    _, request = self._index_request(self._creation_index_params, False)
+                    validate_operation_arguments("create_index", request)
+                    await self.transport.acall("create_index", **request)
             logger.info(
                 "Table %s %s...",
                 self.quoted,
