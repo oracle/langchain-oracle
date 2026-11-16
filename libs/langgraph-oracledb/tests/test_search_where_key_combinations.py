@@ -19,6 +19,25 @@ def _jp(dotted: str) -> str:
     return "$" + "".join(f'."{seg}"' for seg in dotted.split("."))
 
 
+def _object_guard(dotted: str) -> str:
+    """Expected object guard for a dict filter at a dotted test key."""
+    subject = "@" + "".join(f'."{seg}"' for seg in dotted.split("."))
+    not_types = " && ".join(
+        f'!({subject}.type() == "{t}")'
+        for t in ("array", "string", "number", "boolean", "null")
+    )
+    return f"JSON_EXISTS(metadata, '$?(exists({subject}) && {not_types})')"
+
+
+def _null_predicate(dotted: str) -> str:
+    """Expected explicit-JSON-null predicate for a dotted test key."""
+    subject = "@" + "".join(f'."{seg}"' for seg in dotted.split("."))
+    return (
+        f"JSON_EXISTS(metadata, "
+        f"'$?({subject}.type() == \"null\" && {subject} == null)')"
+    )
+
+
 def get_connection_pool():
     """Get or create a connection pool for real execution checks."""
     global _connection_pool
@@ -131,15 +150,15 @@ def _assert_list_containment(where_clause, param_values, path, value) -> None:
 
 def _assert_containment_paths(where_clause, param_values, path, value) -> None:
     """Assert flattened containment predicates for dict filter values."""
+    assert _object_guard(path) in where_clause
     if not value:
-        assert f"JSON_EXISTS(metadata, '{_jp(path)}')" in where_clause
         return
     for sub_key, sub_value in value.items():
         sub_path = f"{path}.{sub_key}"
         if isinstance(sub_value, dict):
             _assert_containment_paths(where_clause, param_values, sub_path, sub_value)
         elif sub_value is None:
-            assert f"JSON_VALUE(metadata, '{_jp(sub_path)}') IS NULL" in where_clause
+            assert _null_predicate(sub_path) in where_clause
         elif isinstance(sub_value, bool):
             bool_str = "true" if sub_value else "false"
             assert (
@@ -180,7 +199,7 @@ def _assert_search_where_shape(saver, config, filter_dict, before) -> None:
     if filter_dict:
         for key, value in filter_dict.items():
             if value is None:
-                assert f"JSON_VALUE(metadata, '{_jp(key)}') IS NULL" in where_clause
+                assert _null_predicate(key) in where_clause
             elif isinstance(value, bool):
                 assert (
                     f"JSON_VALUE(metadata, '{_jp(key)}') = '{str(value).lower()}'"

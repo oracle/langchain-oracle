@@ -16,6 +16,7 @@ from langgraph.checkpoint.base import (
 )
 
 from langgraph_oracledb.checkpoint.oracle.sync import OracleSaver
+from tests.conftest import skip_if_no_oracle
 from tests.conftest_checkpointer import (
     _async_saver,
     _sync_saver,
@@ -43,7 +44,10 @@ def test_nested_leaf_types_use_typed_predicates() -> None:
     )
     assert 'JSON_VALUE(metadata, \'$."level"."depth"\' RETURNING NUMBER)' in where
     assert 'JSON_VALUE(metadata, \'$."meta"."name"\') = :' in where
-    assert 'JSON_VALUE(metadata, \'$."gone"."x"\') IS NULL' in where
+    assert (
+        'JSON_EXISTS(metadata, \'$?(@."gone"."x".type() == "null" '
+        '&& @."gone"."x" == null)\')'
+    ) in where
     assert 3 in params.values()
     assert "run-1" in params.values()
 
@@ -88,9 +92,46 @@ def test_list_non_finite_numbers_are_rejected() -> None:
         _where({"values": [float("inf")]})
 
 
-def test_empty_dict_requires_path_existence() -> None:
-    where, _ = _where({"empty": {}})
-    assert "JSON_EXISTS(metadata, '$.\"empty\"')" in where
+def _object_guard(subject: str) -> str:
+    not_types = " && ".join(
+        f'!({subject}.type() == "{t}")'
+        for t in ("array", "string", "number", "boolean", "null")
+    )
+    return f"JSON_EXISTS(metadata, '$?(exists({subject}) && {not_types})')"
+
+
+def test_empty_dict_requires_an_object() -> None:
+    """{} matches only an object, not a scalar, null or array (JS saver parity)."""
+    where, params = _where({"empty": {}})
+    assert where == "WHERE (" + _object_guard('@."empty"') + ")"
+    assert params == {}
+
+
+def test_every_dict_level_requires_an_object() -> None:
+    """Each dict level gets an object guard, so lax mode cannot unwrap arrays."""
+    where, params = _where({"a": {"b": {"c": 1}}, "d": {"e": {}}})
+    for subject in ('@."a"', '@."a"."b"', '@."d"', '@."d"."e"'):
+        assert _object_guard(subject) in where
+    assert 'JSON_VALUE(metadata, \'$."a"."b"."c"\' RETURNING NUMBER) = :' in where
+    assert list(params.values()) == [1]
+
+
+def test_null_leaves_match_explicit_json_null_only() -> None:
+    """None compiles to the JS saver's typed null predicate, not IS NULL.
+
+    ``JSON_VALUE(...) IS NULL`` is also true for a missing member and for
+    containers. The typed predicate needs no bind.
+    """
+    where, params = _where({"top": None, "nested": {"x": None}})
+    assert (
+        'JSON_EXISTS(metadata, \'$?(@."top".type() == "null" && @."top" == null)\')'
+    ) in where
+    assert (
+        'JSON_EXISTS(metadata, \'$?(@."nested"."x".type() == "null" '
+        '&& @."nested"."x" == null)\')'
+    ) in where
+    assert "IS NULL" not in where
+    assert params == {}
 
 
 def test_nested_keys_are_validated_against_path_injection() -> None:
@@ -170,6 +211,7 @@ def _put_checkpoints(saver, thread_id, metadatas):
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 def test_partial_nested_filter_matches_containing_metadata(
     saver_name: str, test_data
 ) -> None:
@@ -191,6 +233,7 @@ def test_partial_nested_filter_matches_containing_metadata(
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 def test_exact_dict_filter_still_matches_equal_metadata(
     saver_name: str, test_data
 ) -> None:
@@ -209,6 +252,7 @@ def test_exact_dict_filter_still_matches_equal_metadata(
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 def test_nested_filter_combined_with_scalar(saver_name: str, test_data) -> None:
     with _sync_saver(saver_name) as saver:
         _put_checkpoints(
@@ -230,6 +274,7 @@ def test_nested_filter_combined_with_scalar(saver_name: str, test_data) -> None:
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 def test_list_values_match_by_containment(saver_name: str, test_data) -> None:
     """Issue #296: align list filters with LangGraph.js and PostgresSaver."""
     with _sync_saver(saver_name) as saver:
@@ -251,6 +296,7 @@ def test_list_values_match_by_containment(saver_name: str, test_data) -> None:
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 def test_list_containment_matches_typed_elements(saver_name: str, test_data) -> None:
     with _sync_saver(saver_name) as saver:
         _put_checkpoints(
@@ -274,6 +320,7 @@ def test_list_containment_matches_typed_elements(saver_name: str, test_data) -> 
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 async def test_async_partial_nested_filter(saver_name: str, test_data) -> None:
     """AsyncOracleSaver shares _search_where: containment works there too."""
     async with _async_saver(saver_name) as saver:
@@ -315,6 +362,7 @@ _EMPTY_STRING_METADATAS = [
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 def test_nested_empty_string_matches_identical_metadata(
     saver_name: str, test_data
 ) -> None:
@@ -343,6 +391,7 @@ def test_nested_empty_string_matches_identical_metadata(
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
 async def test_async_nested_empty_string_matches_identical_metadata(
     saver_name: str, test_data
 ) -> None:
@@ -365,3 +414,127 @@ async def test_async_nested_empty_string_matches_identical_metadata(
 
         results = [c async for c in saver.alist(None, filter={"name": ""})]
         assert [r.metadata["kind"] for r in results] == ["top-identical"]
+
+
+async def _aput_checkpoints(saver, thread_id, metadatas):
+    for metadata in metadatas:
+        checkpoint = empty_checkpoint()
+        cfg = {
+            "configurable": {
+                "thread_id": thread_id,
+                "checkpoint_ns": "",
+                "checkpoint_id": checkpoint["id"],
+            }
+        }
+        await saver.aput(cfg, checkpoint, metadata, {})
+
+
+def _kinds(results):
+    return sorted(r.metadata["kind"] for r in results)
+
+
+# Stored metadata around a null leaf. Only "explicit-null" and "null-superset"
+# contain {"nested": {"x": None}}; only "top-null" contains {"x": None}.
+_NULL_METADATAS = [
+    {"nested": {"x": None}, "kind": "explicit-null"},
+    {"nested": {"x": None, "y": 1}, "kind": "null-superset"},
+    {"nested": {}, "kind": "missing-member"},
+    {"other": 1, "kind": "missing-parent"},
+    {"nested": {"x": ""}, "kind": "empty-string"},
+    {"nested": {"x": {}}, "kind": "object"},
+    {"nested": {"x": []}, "kind": "array"},
+    {"nested": {"x": [None]}, "kind": "array-of-null"},
+    {"nested": [{"x": None}], "kind": "array-parent"},
+    {"x": None, "kind": "top-null"},
+    {"x": "", "kind": "top-empty-string"},
+    {"x": {}, "kind": "top-object"},
+    {"x": [], "kind": "top-array"},
+]
+
+_NULL_CASES = [
+    ({"nested": {"x": None}}, ["explicit-null", "null-superset"]),
+    ({"x": None}, ["top-null"]),
+]
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
+def test_null_filter_matches_explicit_json_null_only(
+    saver_name: str, test_data
+) -> None:
+    """None matches an explicit JSON null, not a missing member, "" or a container."""
+    with _sync_saver(saver_name) as saver:
+        _put_checkpoints(saver, "thread-null", _NULL_METADATAS)
+        for filter_, expected in _NULL_CASES:
+            assert _kinds(saver.list(None, filter=filter_)) == expected, filter_
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
+async def test_async_null_filter_matches_explicit_json_null_only(
+    saver_name: str, test_data
+) -> None:
+    async with _async_saver(saver_name) as saver:
+        await _aput_checkpoints(saver, "thread-null-async", _NULL_METADATAS)
+        for filter_, expected in _NULL_CASES:
+            results = [c async for c in saver.alist(None, filter=filter_)]
+            assert _kinds(results) == expected, filter_
+
+
+# Stored metadata around dict filters at one and two levels. Objects match;
+# scalar, null, array and missing parents do not.
+_OBJECT_METADATAS = [
+    {"user": {"name": "a"}, "kind": "object"},
+    {"user": {}, "kind": "empty-object"},
+    {"user": 5, "kind": "number"},
+    {"user": "a", "kind": "string"},
+    {"user": True, "kind": "boolean"},
+    {"user": None, "kind": "null"},
+    {"user": [{"name": "a"}], "kind": "array"},
+    {"other": 1, "kind": "missing"},
+    {"user": {"profile": {"tz": "utc"}}, "kind": "deep-object"},
+    {"user": {"profile": [{"tz": "utc"}]}, "kind": "deep-array"},
+    {"user": {"profile": "utc"}, "kind": "deep-scalar"},
+    {"user": {"profile": None}, "kind": "deep-null"},
+]
+
+_OBJECT_CASES = [
+    (
+        {"user": {}},
+        [
+            "deep-array",
+            "deep-null",
+            "deep-object",
+            "deep-scalar",
+            "empty-object",
+            "object",
+        ],
+    ),
+    ({"user": {"name": "a"}}, ["object"]),
+    ({"user": {"profile": {}}}, ["deep-object"]),
+    ({"user": {"profile": {"tz": "utc"}}}, ["deep-object"]),
+]
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
+def test_dict_filters_require_an_object_at_every_level(
+    saver_name: str, test_data
+) -> None:
+    """Empty and nonempty dict filters reject scalar, null, array and missing parents."""
+    with _sync_saver(saver_name) as saver:
+        _put_checkpoints(saver, "thread-object-guard", _OBJECT_METADATAS)
+        for filter_, expected in _OBJECT_CASES:
+            assert _kinds(saver.list(None, filter=filter_)) == expected, filter_
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+@skip_if_no_oracle()
+async def test_async_dict_filters_require_an_object_at_every_level(
+    saver_name: str, test_data
+) -> None:
+    async with _async_saver(saver_name) as saver:
+        await _aput_checkpoints(saver, "thread-object-guard-async", _OBJECT_METADATAS)
+        for filter_, expected in _OBJECT_CASES:
+            results = [c async for c in saver.alist(None, filter=filter_)]
+            assert _kinds(results) == expected, filter_

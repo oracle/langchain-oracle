@@ -466,6 +466,8 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
             # Lists also use containment (issue #296): the stored value must be
             # an array containing every filter element, regardless of order or
             # duplicates, with dict/array elements matched recursively.
+            # Every dict level requires an object at its path, and None
+            # matches an explicit JSON null only, never a missing member.
             filter_conditions = []
             param_counter = 0
 
@@ -492,6 +494,22 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                 than being reinterpreted as a nested ``a`` -> ``b`` path.
                 """
                 return "$" + "".join(f'."{segment}"' for segment in segments)
+
+            def _member_subject(segments: tuple[str, ...]) -> str:
+                """Render ``segments`` as a member of the root filter item ``@``.
+
+                ``("user", "a.b")`` becomes ``@."user"."a.b"``, the subject form
+                the LangGraph.js Oracle saver uses inside ``$?(...)``.
+                """
+                return "@" + "".join(f'."{segment}"' for segment in segments)
+
+            def _add_root_predicate(predicate: str) -> None:
+                """Append a JSON-path filter evaluated against the whole document.
+
+                Only our own literals and validated member names reach the path
+                text, so no PASSING clause is needed.
+                """
+                filter_conditions.append(f"JSON_EXISTS(metadata, '$?({predicate})')")
 
             def _is_object_predicate(subject: str) -> str:
                 return " && ".join(
@@ -555,8 +573,13 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
                 """Append a predicate comparing one JSON path to a leaf value."""
                 path = _json_path(segments)
                 if value is None:
-                    # Check for null values
-                    filter_conditions.append(f"JSON_VALUE(metadata, '{path}') IS NULL")
+                    # Match an explicit JSON null only. ``JSON_VALUE(...) IS
+                    # NULL`` is also true for a missing member and for
+                    # containers, so use the typed predicate of the
+                    # LangGraph.js Oracle saver instead.
+                    _add_root_predicate(
+                        _element_predicate(_member_subject(segments), None, [])
+                    )
                 elif isinstance(value, bool):
                     # Oracle has issues with boolean parameter binding, so use
                     # literal comparison.
@@ -615,13 +638,16 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
             def _expand_filter(segments: tuple[str, ...], value: Any) -> None:
                 """Flatten dict filters into per-path containment predicates."""
                 if isinstance(value, dict):
-                    if not value:
-                        # {} is contained in any object at this path: only
-                        # require that the path exists.
-                        filter_conditions.append(
-                            f"JSON_EXISTS(metadata, '{_json_path(segments)}')"
-                        )
-                        return
+                    # Every dict level requires an object at its path: the
+                    # member exists and is not an array, string, number,
+                    # boolean or null. This is the guard the LangGraph.js
+                    # Oracle saver emits for each object, and it stops Oracle's
+                    # lax mode from unwrapping an array-valued parent so that
+                    # {"user": {"x": 1}} cannot match {"user": [{"x": 1}]}.
+                    # For {} the guard is the whole predicate.
+                    _add_root_predicate(
+                        _element_predicate(_member_subject(segments), {}, [])
+                    )
                     for sub_key, sub_value in value.items():
                         # SECURITY: nested keys become part of the JSON path
                         # expression, so validate them exactly like top-level
