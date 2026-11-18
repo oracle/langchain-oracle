@@ -729,6 +729,17 @@ class TestOracleTextSplitter:
         assert call_kwargs.kwargs["content"] == "my text"
         assert call_kwargs.kwargs["params"] == json.dumps(params)
 
+    @pytest.mark.parametrize("text", ["word " * 10000, "\u6587" * 12000])
+    def test_large_text_uses_a_clob_locator(self, text):
+        splitter, cursor = self.make_splitter([None])
+        splitter.split_text(text)
+        splitter.conn.createlob.assert_called_once_with(oracledb.DB_TYPE_CLOB, text)
+        assert (
+            cursor.execute.call_args.kwargs["content"]
+            is splitter.conn.createlob.return_value
+        )
+        cursor.close.assert_called_once()
+
     def test_sql_contains_utl_to_chunks(self):
         splitter, cursor = self.make_splitter([None])
         with patch("oracledb.defaults"):

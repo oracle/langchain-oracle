@@ -26,7 +26,7 @@ Required environment variables:
 Set them before running:
     export VECDB_HOST=cdb1_pdb1
     export VECDB_USER=vector_user
-    export VECDB_PASS=Linux1234#Solaris1234#
+    export VECDB_PASS=<database-password>
 
 Run:
     pytest tests/integration_tests/document_loaders/test_oracledb_loader.py

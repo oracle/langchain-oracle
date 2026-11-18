@@ -66,6 +66,7 @@ def test_unknown_operation_cannot_inject_sql_comments():
 @pytest.mark.asyncio
 async def test_sql_hybrid_tags_search_but_not_rowid_fetch(mode, asynchronous):
     store = MagicMock(spec=OracleVS)
+    store._vecdb = None
     store.client = object()
     store.table_name = '"DOCS"'
     store.embedding_function = DeterministicFakeEmbedding(size=3)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import re
@@ -198,49 +199,95 @@ async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
 
 
 @_handle_exceptions
-def drop_table_purge(client: Any, table_name: str) -> None:
-    """Drop a table and purge it from the database.
+def drop_table_purge(client: Any, table_name: str, *, backend: str = "auto") -> None:
+    """Drop a table using its owning backend; missing tables are a no-op.
 
-    Args:
-        client: oracledb connection object.
-        table_name: The name of the table to drop.
-
-    Raises:
-        RuntimeError: If an error occurs while dropping the table.
+    Package-recognized VecDB tables use DBMS_VECTOR_DATABASE.DROP_VECTOR_TABLE; REST
+    clients use the public SDK drop API. Ordinary tables use DROP TABLE PURGE.
+    Column names alone never establish VecDB ownership.
+    Package failures propagate without falling back to SQL DDL.
     """
+    from ._vecdb import (
+        NativeTransport,
+        RestTransport,
+        _is_vecdb_table,
+        _sql_layout,
+        is_sdk_client,
+        parse_version,
+    )
+
+    if backend not in {"auto", "sql", "vecdb"}:
+        raise ValueError("backend must be 'auto', 'sql', or 'vecdb'")
+    table_name = _quote_indentifier(table_name)
+    if is_sdk_client(client):
+        if backend == "sql":
+            raise ValueError("REST VecDB clients cannot drop ordinary SQL tables")
+        rest = RestTransport(client)
+        try:
+            rest.call("drop_vector_table", name=table_name.replace('"', ""))
+        except Exception as exc:
+            if getattr(exc, "status", None) != 404:
+                raise
+        return
     with _get_connection(client) as connection:
-        table_name = _quote_indentifier(table_name)
-        if _table_exists(connection, table_name):
-            with connection.cursor() as cursor:
-                ddl = f"DROP TABLE {table_name} PURGE"
-                cursor.execute(ddl)
-            logger.info(f"Table {table_name} dropped successfully...")
+        transport = NativeTransport(connection, parse_version(connection.version))
+        with connection.cursor() as cursor:
+            kind = _sql_layout(cursor, table_name)
+            if kind == "missing":
+                return
+            vecdb = (
+                backend != "sql"
+                and kind != "sql"
+                and _is_vecdb_table(cursor, table_name)
+            )
+        if backend == "vecdb" and not vecdb:
+            raise ValueError("Cannot drop an ordinary SQL table through VecDB")
+        if vecdb:
+            transport.call("drop_vector_table", name=table_name)
         else:
-            logger.info(f"Table {table_name} not found...")
-    return
+            with connection.cursor() as cursor:
+                cursor.execute(f"DROP TABLE {table_name} PURGE")
+        logger.info("Table %s dropped successfully", table_name)
 
 
 @_ahandle_exceptions
-async def adrop_table_purge(client: Any, table_name: str) -> None:
-    """Drop a table and purge it from the database.
+async def adrop_table_purge(
+    client: Any, table_name: str, *, backend: str = "auto"
+) -> None:
+    """Async drop_table_purge with the same backend and failure contracts."""
+    from ._vecdb import (
+        AsyncNativeTransport,
+        _ais_vecdb_table,
+        _asql_layout,
+        is_sdk_client,
+        parse_version,
+    )
 
-    Args:
-        client: oracledb connection object.
-        table_name: The name of the table to drop.
-
-    Raises:
-        RuntimeError: If an error occurs while dropping the table.
-    """
+    if backend not in {"auto", "sql", "vecdb"}:
+        raise ValueError("backend must be 'auto', 'sql', or 'vecdb'")
+    if is_sdk_client(client):
+        await asyncio.to_thread(drop_table_purge, client, table_name, backend=backend)
+        return
     table_name = _quote_indentifier(table_name)
-
     async with _aget_connection(client) as connection:
-        if await _atable_exists(connection, table_name):
-            with connection.cursor() as cursor:
-                ddl = f"DROP TABLE {table_name} PURGE"
-                await cursor.execute(ddl)
-            logger.info(f"Table {table_name} dropped successfully...")
+        transport = AsyncNativeTransport(connection, parse_version(connection.version))
+        with connection.cursor() as cursor:
+            kind = await _asql_layout(cursor, table_name)
+            if kind == "missing":
+                return
+            vecdb = (
+                backend != "sql"
+                and kind != "sql"
+                and await _ais_vecdb_table(cursor, table_name)
+            )
+        if backend == "vecdb" and not vecdb:
+            raise ValueError("Cannot drop an ordinary SQL table through VecDB")
+        if vecdb:
+            await transport.acall("drop_vector_table", name=table_name)
         else:
-            logger.info(f"Table {table_name} not found...")
+            with connection.cursor() as cursor:
+                await cursor.execute(f"DROP TABLE {table_name} PURGE")
+        logger.info("Table %s dropped successfully", table_name)
 
 
 @_handle_exceptions
@@ -324,7 +371,17 @@ def drop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
+    from ._vecdb import _index_query, is_sdk_client
+    from ._vecdb_rest_sql import ORDSSQLConnection
+
     idx_name = _quote_indentifier(idx_name)
+    if is_sdk_client(client):
+        with ORDSSQLConnection(client).cursor() as cursor:
+            statement, binds = _index_query(idx_name)
+            cursor.execute(statement, **binds)
+            if cursor.fetchone():
+                cursor.execute(f"DROP INDEX {idx_name}")
+        return
     with _get_connection(client) as connection:
         if _index_exists(connection, idx_name):
             with connection.cursor() as cursor:
@@ -347,6 +404,11 @@ async def adrop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
+    from ._vecdb import is_sdk_client
+
+    if is_sdk_client(client):
+        await asyncio.to_thread(drop_index, client, idx_name)
+        return
     idx_name = _quote_indentifier(idx_name)
 
     async with _aget_connection(client) as connection:

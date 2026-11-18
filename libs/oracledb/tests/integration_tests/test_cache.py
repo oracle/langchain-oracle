@@ -12,8 +12,18 @@ from langchain_core.embeddings import DeterministicFakeEmbedding
 from langchain_core.outputs import Generation
 from langchain_tests.integration_tests import SyncCacheTestSuite
 
-from langchain_oracledb.cache import OracleSemanticCache, _cache_entry_id, _hash_value
-from langchain_oracledb.vectorstores.utils import _index_exists, _quote_indentifier
+from langchain_oracledb.cache import (
+    OracleSemanticCache,
+    _hash_value,
+    _SemanticCacheVectorStore,
+)
+from langchain_oracledb.vectorstores.utils import (
+    DistanceStrategy,
+    _index_exists,
+    _quote_indentifier,
+)
+
+from .vectorstores._backend_fixtures import check_native_backend, native_config
 
 username = os.environ.get("VECDB_USER")
 password = os.environ.get("VECDB_PASS")
@@ -40,9 +50,23 @@ def connection() -> Generator[oracledb.Connection, None, None]:
             pass
 
 
-@pytest.fixture(scope="function")
-def cache_table_name() -> Generator[str, None, None]:
-    yield f"SEM_CACHE_{uuid.uuid4().hex[:8].upper()}"
+@pytest.fixture(params=["sql", "vecdb"])
+def cache_table_name(request, connection) -> Generator[str, None, None]:
+    name = f"SEM_CACHE_{uuid.uuid4().hex[:8].upper()}"
+    backend = request.param
+    check_native_backend(native_config(), backend, name)
+    _SemanticCacheVectorStore(
+        connection,
+        DeterministicFakeEmbedding(size=6),
+        name,
+        backend=backend,
+        distance_strategy=DistanceStrategy.COSINE,
+        mutate_on_duplicate=True,
+    )
+    try:
+        yield name
+    finally:
+        OracleSemanticCache.drop_table(connection, name)
 
 
 class TestOracleSemanticCacheStandard(SyncCacheTestSuite):
@@ -155,22 +179,9 @@ def test_semantic_cache_clear_supports_prompt_filter(
 
         cache.clear(prompt="prompt one")
 
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"SELECT COUNT(*) FROM {_quote_indentifier(cache_table_name)} "
-                "WHERE JSON_VALUE(metadata, '$.prompt_hash') = :prompt_hash",
-                prompt_hash=_hash_value("prompt one"),
-            )
-            removed_count = cursor.fetchone()[0]
-            cursor.execute(
-                f"SELECT COUNT(*) FROM {_quote_indentifier(cache_table_name)} "
-                "WHERE JSON_VALUE(metadata, '$.prompt_hash') = :prompt_hash",
-                prompt_hash=_hash_value("prompt two"),
-            )
-            remaining_count = cursor.fetchone()[0]
-
-        assert removed_count == 0
-        assert remaining_count == 1
+        remaining = cache._vector_store.similarity_search("prompt two", k=10)
+        assert [document.page_content for document in remaining] == ["prompt two"]
+        assert remaining[0].metadata[cache.PROMPT_HASH] == _hash_value("prompt two")
     finally:
         OracleSemanticCache.drop_table(connection, cache_table_name)
 
@@ -194,7 +205,7 @@ def test_semantic_cache_lookup_returns_none_for_non_string_return_val(
                     cache.RETURN_VAL: ["not", "a", "string"],
                 }
             ],
-            ids=[_cache_entry_id("prompt one", "model-a")],
+            ids=["invalid-return-val"],
         )
 
         assert cache.lookup("prompt one", "model-a") is None
@@ -222,7 +233,7 @@ def test_semantic_cache_can_create_vector_index_on_init(
     connection: oracledb.Connection, cache_table_name: str
 ) -> None:
     index_name = f"IDX_{cache_table_name}"
-    OracleSemanticCache(
+    cache = OracleSemanticCache(
         client=connection,
         embedding=DeterministicFakeEmbedding(size=6),
         table_name=cache_table_name,
@@ -231,10 +242,13 @@ def test_semantic_cache_can_create_vector_index_on_init(
     )
 
     try:
-        assert _index_exists(
-            connection,
-            _quote_indentifier(index_name),
-            cache_table_name,
-        )
+        if cache._vector_store.backend == "vecdb":
+            assert cache._vector_store.describe_vecdb_index()["ready"] is True
+        else:
+            assert _index_exists(
+                connection,
+                _quote_indentifier(index_name),
+                cache_table_name,
+            )
     finally:
         OracleSemanticCache.drop_table(connection, cache_table_name)

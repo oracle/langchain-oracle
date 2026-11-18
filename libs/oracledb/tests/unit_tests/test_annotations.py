@@ -165,9 +165,23 @@ async def test_store_subclass_selects_annotation_type_during_creation(
         self.table_name = '"DOCS"'
 
     module = "langchain_oracledb.vectorstores.oraclevs"
-    with patch.object(OracleVS, "_initialize", autospec=True, side_effect=initialize):
+    with (
+        patch.object(OracleVS, "_initialize", autospec=True, side_effect=initialize),
+        patch(
+            "langchain_oracledb.vectorstores._vecdb.native_selection",
+            return_value=("sql", (23, 4, 0)),
+        ),
+        patch(
+            "langchain_oracledb.vectorstores._vecdb.anative_selection",
+            new=AsyncMock(return_value=("sql", (23, 4, 0))),
+        ),
+    ):
         if asynchronous:
             with (
+                patch(
+                    "langchain_oracledb.vectorstores._vecdb._ainspect_columns",
+                    new=AsyncMock(return_value=set()),
+                ),
                 patch.object(
                     OracleVS, "aget_embedding_dimension", new=AsyncMock(return_value=3)
                 ),

@@ -3,36 +3,20 @@
 
 """Integration tests for nested metadata filters in OracleVS (issue #272).
 
-Requires a reachable Oracle Database 23ai+ via the usual env vars:
-VECDB_USER, VECDB_PASS, VECDB_HOST (dsn).
+Run the same nested-path behavior on every configured SQL, VecDB, and REST backend.
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any, List
 
-import oracledb
 import pytest
 from langchain_core.documents import Document
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
-from langchain_oracledb.vectorstores import DistanceStrategy, OracleVS
-from langchain_oracledb.vectorstores.oraclevs import drop_table_purge
+from langchain_oracledb.vectorstores import OracleVS
 
-username = os.environ.get("VECDB_USER")
-password = os.environ.get("VECDB_PASS")
-dsn = os.environ.get("VECDB_HOST")
-
-try:
-    oracledb.connect(user=username, password=password, dsn=dsn)
-except Exception as e:
-    pytest.skip(
-        allow_module_level=True,
-        reason=f"Database connection failed: {e}, skipping tests.",
-    )
-
-TABLE = "ORAVS_NESTED_FILTER_IT"
+from ._backend_fixtures import backend_store
 
 DOCS = [
     Document(
@@ -51,18 +35,15 @@ DOCS = [
 
 
 @pytest.fixture(scope="module")
-def vectorstore() -> Any:
-    conn = oracledb.connect(user=username, password=password, dsn=dsn)
-    drop_table_purge(conn, TABLE)
-    vs = OracleVS.from_documents(
-        DOCS,
-        DeterministicFakeEmbedding(size=64),
-        client=conn,
-        table_name=TABLE,
-        distance_strategy=DistanceStrategy.COSINE,
-    )
-    yield vs
-    drop_table_purge(conn, TABLE)
+def filter_seed(oracle_backend) -> Any:
+    with backend_store(oracle_backend, DeterministicFakeEmbedding(size=64)) as store:
+        store.add_documents(DOCS)
+        yield store
+
+
+@pytest.fixture
+def vectorstore(filter_seed) -> OracleVS:
+    return filter_seed
 
 
 def _contents(results: List[Document]) -> List[str]:
