@@ -115,20 +115,8 @@ def _filter_response(result: list, request: dict) -> dict:
 
 LEGACY_VERSION = (23, 26, 1)
 QUOTED_NAMES_VERSION = (23, 27, 2)
-DENSE_COMPATIBLE = (23, 4, 0)
-SPARSE_COMPATIBLE = (23, 6, 0)
-COMPATIBILITY_SQL = "BEGIN DBMS_UTILITY.DB_VERSION(:db_version, :compatibility); END;"
-# Initialization needs SEARCH capability and COMPATIBLE in the same round trip.
 VECDB_CAPABILITY_SQL = """
-WITH FUNCTION lc_compatible RETURN VARCHAR2 IS
-    db_version VARCHAR2(128);
-    compatibility VARCHAR2(128);
-BEGIN
-    SYS.DBMS_UTILITY.DB_VERSION(db_version, compatibility);
-    RETURN compatibility;
-END;
-SELECT COUNT(*) AS search_supported,
-       CASE WHEN COUNT(*) > 0 THEN lc_compatible() END AS compatibility
+SELECT COUNT(*) AS search_supported
 FROM all_procedures
 WHERE owner = 'SYS' AND object_name = 'DBMS_VECTOR_DATABASE'
   AND procedure_name = 'SEARCH'
@@ -234,6 +222,42 @@ async def _asql_layout(cursor: Any, name: str) -> str:
             return "other"
         raise
     return "sql"
+
+
+def _sparse_compatibility_error(error: oracledb.DatabaseError) -> bool:
+    """Recognize the database rejecting sparse storage, not arbitrary DDL errors."""
+    detail = error.args[0] if error.args else None
+    message = str(getattr(detail, "message", error)).upper()
+    return (
+        # Autonomous also gates sparse storage on rolling-patch enablement.
+        getattr(detail, "code", None) in {406, 45493}
+        and "ORA-00722" in message
+        and bool(re.search(r"SQL VECTOR SPARSE (?:TYPE|FORMAT)\b", message))
+    )
+
+
+def creation_can_fallback(
+    cursor: Any, name: str, error: oracledb.DatabaseError
+) -> bool:
+    """Permit SQL creation only after a sparse rejection left no table behind."""
+    if not _sparse_compatibility_error(error):
+        return False
+    try:
+        return _sql_layout(cursor, name) == "missing"
+    except Exception:
+        # Preserve the creation error if object absence cannot be established.
+        return False
+
+
+async def acreation_can_fallback(
+    cursor: Any, name: str, error: oracledb.DatabaseError
+) -> bool:
+    if not _sparse_compatibility_error(error):
+        return False
+    try:
+        return await _asql_layout(cursor, name) == "missing"
+    except Exception:
+        return False
 
 
 def _vecdb_layout(cursor: Any, name: str) -> set[str]:
@@ -611,12 +635,14 @@ def _migration_actions(columns: set[str], quoted: str) -> list[str]:
     if _layout(columns) != "vecdb":
         raise ValueError("Only recognized VecDB layouts can be migrated")
     actions = []
+    if "SPARSE_VECTOR" not in columns:
+        # Let Oracle validate sparse support before changing the legacy layout.
+        actions.append(f"ALTER TABLE {quoted} ADD SPARSE_VECTOR VECTOR(*, *, SPARSE)")
     if "METADATA" in columns:
         actions.append(
             f"ALTER TABLE {quoted} RENAME COLUMN METADATA TO CONTENT_METADATA"
         )
     for name, sql_type in (
-        ("SPARSE_VECTOR", "VECTOR(*, *, SPARSE)"),
         ("CONTENT", "BLOB"),
         ("CONTENT_TYPE", "VARCHAR2(256)"),
     ):
@@ -978,16 +1004,6 @@ class NativeTransport:
                     "VecDB migration requires a connection without pending work"
                 )
             with connection.cursor() as cursor:
-                db_version = cursor.var(str, size=128)
-                compatibility = cursor.var(str, size=128)
-                cursor.execute(
-                    COMPATIBILITY_SQL,
-                    db_version=db_version,
-                    compatibility=compatibility,
-                )
-                _compatible_backend(
-                    self.version, compatibility.getvalue(), "vecdb", "vecdb"
-                )
 
                 def inspect() -> set[str]:
                     return _inspect_columns(cursor, name)
@@ -1296,29 +1312,6 @@ def is_sdk_client(client: Any) -> bool:
     )
 
 
-def _compatible_backend(
-    version: tuple[int, ...], compatibility: str, kind: str, backend: str
-) -> str:
-    minimum = SPARSE_COMPATIBLE if version >= CURRENT_VERSION else DENSE_COMPATIBLE
-    if parse_version(compatibility) < minimum:
-        required = ".".join(map(str, minimum))
-        if backend == "vecdb" or kind == "vecdb":
-            message = (
-                f"VecDB requires COMPATIBLE >= {required}; "
-                f"configured value is {compatibility}"
-            )
-            if kind == "vecdb":
-                message += ". An existing VecDB table cannot use the SQL backend."
-            raise ValueError(message)
-        logger.info(
-            "Using SQL backend: COMPATIBLE %s is below VecDB requirement %s",
-            compatibility,
-            required,
-        )
-        return "sql"
-    return "vecdb"
-
-
 def native_selection(
     connection: Any,
     name: str,
@@ -1391,18 +1384,11 @@ def native_selection(
         if kind == "missing":
             # Choose a creation backend before DDL, including builds lacking SEARCH.
             cursor.execute(VECDB_CAPABILITY_SQL)
-            supported, compatibility = cursor.fetchone()
+            supported = cursor.fetchone()[0]
             if not supported:
                 if backend == "vecdb":
                     raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
                 return "sql", version
-        else:
-            db_version = cursor.var(str, size=128)
-            compatible = cursor.var(str, size=128)
-            cursor.execute(
-                COMPATIBILITY_SQL, db_version=db_version, compatibility=compatible
-            )
-            compatibility = compatible.getvalue()
         if (
             kind == "vecdb"
             and version < CURRENT_VERSION
@@ -1411,7 +1397,7 @@ def native_selection(
             raise ValueError(
                 "Current VecDB table layout cannot be used on a legacy database"
             )
-        return _compatible_backend(version, compatibility, kind, backend), version
+        return "vecdb", version
 
 
 class VecDBBackend:
@@ -2241,16 +2227,6 @@ class AsyncNativeTransport(NativeTransport):
                     "VecDB migration requires a connection without pending work"
                 )
             with connection.cursor() as cursor:
-                db_version = cursor.var(str, size=128)
-                compatibility = cursor.var(str, size=128)
-                await cursor.execute(
-                    COMPATIBILITY_SQL,
-                    db_version=db_version,
-                    compatibility=compatibility,
-                )
-                _compatible_backend(
-                    self.version, compatibility.getvalue(), "vecdb", "vecdb"
-                )
 
                 async def inspect() -> set[str]:
                     return await _ainspect_columns(cursor, name)
@@ -2584,18 +2560,11 @@ async def anative_selection(
         if kind == "missing":
             # Choose a creation backend before DDL, including builds lacking SEARCH.
             await cursor.execute(VECDB_CAPABILITY_SQL)
-            supported, compatibility = await cursor.fetchone()
+            supported = (await cursor.fetchone())[0]
             if not supported:
                 if backend == "vecdb":
                     raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
                 return "sql", version
-        else:
-            db_version = cursor.var(str, size=128)
-            compatible = cursor.var(str, size=128)
-            await cursor.execute(
-                COMPATIBILITY_SQL, db_version=db_version, compatibility=compatible
-            )
-            compatibility = compatible.getvalue()
         if (
             kind == "vecdb"
             and version < CURRENT_VERSION
@@ -2604,4 +2573,4 @@ async def anative_selection(
             raise ValueError(
                 "Current VecDB table layout cannot be used on a legacy database"
             )
-        return _compatible_backend(version, compatibility, kind, backend), version
+        return "vecdb", version

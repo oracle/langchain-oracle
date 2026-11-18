@@ -122,6 +122,13 @@ Native VecDB requires Oracle Database 23.26.1+ with a compatible database
 configuration. Use uppercase, unqualified table names for the widest
 compatibility. VecDB tables must be created and populated through `OracleVS`.
 
+The database validates feature availability during creation and migration; the
+connector does not infer it from `COMPATIBLE` or cloud deployment type. If a new
+`backend="auto"` store fails VecDB creation because sparse vector storage is
+unavailable, it uses SQL only after confirming the failed attempt left no table.
+Explicit `backend="vecdb"` requests and existing VecDB stores propagate the
+database error. Other creation errors do not trigger SQL fallback.
+
 Connect through REST with the optional VecDB SDK:
 
 ```python

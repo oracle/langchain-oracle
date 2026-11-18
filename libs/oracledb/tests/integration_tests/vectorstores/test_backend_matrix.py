@@ -26,6 +26,8 @@ from langchain_oracledb.vectorstores._vecdb_adapter import storage_id
 from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY
 from langchain_oracledb.vectorstores.utils import DistanceStrategy, drop_table_purge
 
+from ._backend_fixtures import sparse_storage_available
+
 
 class MatrixEmbeddings(Embeddings):
     def embed_documents(self, texts):
@@ -66,16 +68,7 @@ def database_matrix():
     tables["quoted_sql"] = f"LCM_{suffix}_Mixed"
     with oracledb.connect(**config) as connection:
         with connection.cursor() as cursor:
-            version, compatible = cursor.var(str), cursor.var(str)
-            cursor.execute(
-                "BEGIN DBMS_UTILITY.DB_VERSION(:version,:compatible); END;",
-                version=version,
-                compatible=compatible,
-            )
-            vecdb_enabled = tuple(map(int, compatible.getvalue().split(".")[:2])) >= (
-                23,
-                6,
-            )
+            vecdb_enabled = sparse_storage_available(connection)
             if tuple(map(int, connection.version.split(".")[:3])) < (23, 26, 3):
                 pytest.skip("This matrix targets the current VecDB generation")
         try:
@@ -173,14 +166,7 @@ def database_matrix():
 @pytest.fixture(scope="module")
 def vecdb_enabled(database_matrix):
     connection = database_matrix[0]
-    with connection.cursor() as cursor:
-        version, compatible = cursor.var(str), cursor.var(str)
-        cursor.execute(
-            "BEGIN DBMS_UTILITY.DB_VERSION(:version,:compatible); END;",
-            version=version,
-            compatible=compatible,
-        )
-        return tuple(map(int, compatible.getvalue().split(".")[:2])) >= (23, 6)
+    return sparse_storage_available(connection)
 
 
 def expected_error(origin, backend):
@@ -223,7 +209,7 @@ def assert_preserved(connection, name, baseline):
 def test_existing_table_sync(database_matrix, vecdb_enabled, origin, backend, pooled):
     connection, pool, _, tables, baseline = database_matrix
     if origin == "registered_vecdb" and not vecdb_enabled:
-        pytest.skip("Package-created origin requires COMPATIBLE >= 23.6")
+        pytest.skip("Database rejects sparse vector storage")
     name = tables[origin]
     client = pool if pooled else connection
     error = expected_error(origin, backend)
@@ -268,7 +254,7 @@ async def test_existing_table_async(
 ):
     connection, _, config, tables, baseline = database_matrix
     if origin == "registered_vecdb" and not vecdb_enabled:
-        pytest.skip("Package-created origin requires COMPATIBLE >= 23.6")
+        pytest.skip("Database rejects sparse vector storage")
     name = tables[origin]
     client = (
         oracledb.create_pool_async(**config, min=1, max=2, increment=1)
@@ -330,7 +316,7 @@ def test_missing_table_sync(database_matrix, vecdb_enabled, backend, pooled):
     client = pool if pooled else connection
     try:
         if backend == "vecdb" and not vecdb_enabled:
-            with pytest.raises(ValueError, match="COMPATIBLE"):
+            with pytest.raises(RuntimeError, match="ORA-00406"):
                 OracleVS(client, MatrixEmbeddings(), name, backend=backend)
         else:
             store = OracleVS.from_texts(
@@ -374,7 +360,7 @@ async def test_missing_table_async(database_matrix, vecdb_enabled, backend, pool
     )
     try:
         if backend == "vecdb" and not vecdb_enabled:
-            with pytest.raises(ValueError, match="COMPATIBLE"):
+            with pytest.raises(RuntimeError, match="ORA-00406"):
                 await OracleVS.acreate(
                     client, MatrixEmbeddings(), name, backend=backend
                 )
@@ -492,7 +478,7 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
     """Exercise SQL paths without claiming public VecDB support here.
 
     These VecDB-shaped fixtures test identifier resolution rather than package
-    APIs. The public backend remains guarded by this database's COMPATIBLE.
+    APIs. The database enforces storage support during public VecDB creation.
     """
     from langchain_oracledb.vectorstores._vecdb import (
         AsyncNativeTransport,
@@ -986,18 +972,18 @@ async def test_native_migration_rejects_sparse_ddl_below_compatible(
     )
 
     if vecdb_enabled:
-        pytest.skip("This rejection requires COMPATIBLE < 23.6")
+        pytest.skip("This database supports sparse vector storage")
     _, _, config, tables, baseline = database_matrix
     name = tables["legacy_vecdb_shape"]
     if asynchronous:
         async with oracledb.connect_async(**config) as connection:
             transport = AsyncNativeTransport(connection, (23, 26, 1))
-            with pytest.raises(ValueError, match="COMPATIBLE >= 23.6"):
+            with pytest.raises(oracledb.DatabaseError, match="ORA-00406"):
                 await transport.amigrate(name)
     else:
         with oracledb.connect(**config) as connection:
             transport = NativeTransport(connection, (23, 26, 1))
-            with pytest.raises(ValueError, match="COMPATIBLE >= 23.6"):
+            with pytest.raises(oracledb.DatabaseError, match="ORA-00406"):
                 transport.migrate(name)
     with oracledb.connect(**config) as connection:
         assert_preserved(connection, name, baseline[name])

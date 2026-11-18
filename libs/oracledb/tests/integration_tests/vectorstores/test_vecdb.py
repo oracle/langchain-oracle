@@ -274,11 +274,13 @@ def test_rest_sdk_reports_unsupported_text_operations(vecdb_store):
             operation()
 
 
-def test_native_auto_falls_back_when_compatible_is_below_sparse_requirement():
+def test_native_auto_falls_back_when_database_rejects_sparse_storage():
     """A new SQL store is usable even when the VecDB package is installed."""
     import oracledb
 
     from langchain_oracledb.vectorstores._vecdb import parse_version
+
+    from ._backend_fixtures import sparse_storage_available
 
     dsn = os.environ.get("VECDB_HOST")
     if not dsn:
@@ -288,21 +290,13 @@ def test_native_auto_falls_back_when_compatible_is_below_sparse_requirement():
     with oracledb.connect(
         user=os.environ["VECDB_USER"], password=os.environ["VECDB_PASS"], dsn=dsn
     ) as connection:
-        with connection.cursor() as cursor:
-            db_version = cursor.var(str, size=128)
-            compatible = cursor.var(str, size=128)
-            cursor.execute(
-                "BEGIN DBMS_UTILITY.DB_VERSION(:version, :compatible); END;",
-                version=db_version,
-                compatible=compatible,
-            )
-        if parse_version(connection.version) < (23, 26, 3) or parse_version(
-            compatible.getvalue()
-        ) >= (23, 6, 0):
-            pytest.skip("This regression requires current VecDB with COMPATIBLE <23.6")
+        if parse_version(connection.version) < (23, 26, 3):
+            pytest.skip("This regression requires current VecDB")
+        if sparse_storage_available(connection):
+            pytest.skip("This regression requires sparse storage rejection")
         table = "LCN_COMP_" + uuid.uuid4().hex[:12].upper()
         try:
-            with pytest.raises(ValueError, match=r"COMPATIBLE >= 23\.6\.0"):
+            with pytest.raises(RuntimeError, match="ORA-00406"):
                 OracleVS(connection, FixedEmbeddings(), table, backend="vecdb")
             with connection.cursor() as cursor:
                 cursor.execute(

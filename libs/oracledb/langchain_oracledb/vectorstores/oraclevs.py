@@ -445,10 +445,12 @@ def _create_table(
     table_name: str,
     embedding_dim: int,
     table_type: TableType = "vector_store",
+    *,
+    new_table_only: bool = False,
 ) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
-    if not _table_exists(connection, table_name):
+    if new_table_only or not _table_exists(connection, table_name):
         with connection.cursor() as cursor:
             ddl_body = ", ".join(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
@@ -466,10 +468,12 @@ async def _acreate_table(
     table_name: str,
     embedding_dim: int,
     table_type: TableType = "vector_store",
+    *,
+    new_table_only: bool = False,
 ) -> None:
     cols_dict = _get_table_dict(embedding_dim)
 
-    if not await _atable_exists(connection, table_name):
+    if new_table_only or not await _atable_exists(connection, table_name):
         with connection.cursor() as cursor:
             ddl_body = ", ".join(
                 f"{col_name} {col_type}" for col_name, col_type in cols_dict.items()
@@ -1203,6 +1207,7 @@ class OracleVS(VectorStore):
             NativeTransport,
             RestTransport,
             VecDBBackend,
+            creation_can_fallback,
             is_sdk_client,
             native_selection,
             table_identifier,
@@ -1244,6 +1249,7 @@ class OracleVS(VectorStore):
             return
 
         with _get_connection(client) as connection:
+            sql_fallback = False
             description: dict[str, Any] = {}
             columns: set[str] = set()
             selected, version = native_selection(
@@ -1279,17 +1285,50 @@ class OracleVS(VectorStore):
                     embedding=embedding_function,
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
-                self._vecdb.prepare(
-                    columns=columns if description else set(),
-                    description=description,
-                )
-                self._vecdb.transport.client = client
-                self.backend = "vecdb"
-            else:
+                try:
+                    self._vecdb.prepare(
+                        columns=columns if description else set(),
+                        description=description,
+                    )
+                except oracledb.DatabaseError as error:
+                    if backend != "auto" or columns or description:
+                        raise
+                    with connection.cursor() as cursor:
+                        if not creation_can_fallback(cursor, table_name, error):
+                            raise
+                    self._vecdb = None
+                    selected = "sql"
+                    sql_fallback = True
+                    logger.info(
+                        "Using SQL backend: VecDB creation rejected "
+                        "sparse vector storage"
+                    )
+                else:
+                    self._vecdb.transport.client = client
+                    self.backend = "vecdb"
+            if selected == "sql":
+                if prepared_index is None and vector_index_params is not None:
+                    prepared_index = _sql_index_ddl(
+                        table_name, distance_strategy, vector_index_params
+                    )
                 embedding_dim = self.get_embedding_dimension()
-                _create_table(
-                    connection, self.table_name, embedding_dim, self._annotation_type()
-                )
+                if sql_fallback:
+                    # Atomic CREATE must reject a table that appeared after the
+                    # absence check, without adopting it or backfilling annotations.
+                    _create_table(
+                        connection,
+                        self.table_name,
+                        embedding_dim,
+                        self._annotation_type(),
+                        new_table_only=True,
+                    )
+                else:
+                    _create_table(
+                        connection,
+                        self.table_name,
+                        embedding_dim,
+                        self._annotation_type(),
+                    )
                 if prepared_index is not None:
                     _ensure_sql_constructor_index(
                         connection, self.table_name, prepared_index
@@ -1358,6 +1397,7 @@ class OracleVS(VectorStore):
         from ._vecdb import (
             AsyncNativeTransport,
             VecDBBackend,
+            acreation_can_fallback,
             anative_selection,
             is_sdk_client,
         )
@@ -1384,6 +1424,7 @@ class OracleVS(VectorStore):
         self.backend = "sql"
 
         async with _aget_connection(client) as connection:
+            sql_fallback = False
             description: dict[str, Any] = {}
             columns: set[str] = set()
             selected, version = await anative_selection(
@@ -1419,18 +1460,49 @@ class OracleVS(VectorStore):
                     embedding=embedding_function,
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
-                await self._vecdb.run_async(
-                    "prepare",
-                    columns=columns if description else set(),
-                    description=description,
-                )
-                self._vecdb.transport.client = client
-                self.backend = "vecdb"
-            else:
+                try:
+                    await self._vecdb.run_async(
+                        "prepare",
+                        columns=columns if description else set(),
+                        description=description,
+                    )
+                except oracledb.DatabaseError as error:
+                    if backend != "auto" or columns or description:
+                        raise
+                    with connection.cursor() as cursor:
+                        if not await acreation_can_fallback(cursor, table_name, error):
+                            raise
+                    self._vecdb = None
+                    selected = "sql"
+                    sql_fallback = True
+                    logger.info(
+                        "Using SQL backend: VecDB creation rejected "
+                        "sparse vector storage"
+                    )
+                else:
+                    self._vecdb.transport.client = client
+                    self.backend = "vecdb"
+            if selected == "sql":
+                if prepared_index is None and vector_index_params is not None:
+                    prepared_index = _sql_index_ddl(
+                        table_name, distance_strategy, vector_index_params
+                    )
                 embedding_dim = await self.aget_embedding_dimension()
-                await _acreate_table(
-                    connection, self.table_name, embedding_dim, self._annotation_type()
-                )
+                if sql_fallback:
+                    await _acreate_table(
+                        connection,
+                        self.table_name,
+                        embedding_dim,
+                        self._annotation_type(),
+                        new_table_only=True,
+                    )
+                else:
+                    await _acreate_table(
+                        connection,
+                        self.table_name,
+                        embedding_dim,
+                        self._annotation_type(),
+                    )
                 if prepared_index is not None:
                     await _aensure_sql_constructor_index(
                         connection, self.table_name, prepared_index

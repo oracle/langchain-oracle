@@ -1408,16 +1408,30 @@ async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, capl
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_migration_rechecks_compatible_before_any_ddl(monkeypatch, asynchronous):
+async def test_migration_preserves_layout_when_sparse_ddl_is_rejected(
+    monkeypatch, asynchronous
+):
     from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    import oracledb
 
     from langchain_oracledb.vectorstores import _vecdb
 
     connection = MagicMock(version="23.26.4", transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
-    cursor.var.return_value.getvalue.return_value = "23.5.0"
+    cursor.fetchall.return_value = [(c,) for c in ("ID", "DENSE_VECTOR", "METADATA")]
+    error = oracledb.DatabaseError(SimpleNamespace(code=406))
+
+    def execute(statement, **binds):
+        assert "DB_VERSION" not in statement
+        if statement.startswith("ALTER TABLE"):
+            raise error
+
+    cursor.execute.side_effect = execute
     if asynchronous:
-        cursor.execute = AsyncMock()
+        cursor.execute = AsyncMock(side_effect=execute)
+        cursor.fetchall = AsyncMock(return_value=cursor.fetchall.return_value)
 
     @contextmanager
     def get(_):
@@ -1432,14 +1446,18 @@ async def test_migration_rechecks_compatible_before_any_ddl(monkeypatch, asynchr
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         None, (23, 26, 1)
     )
-    with pytest.raises(ValueError, match="COMPATIBLE >= 23.6"):
+    with pytest.raises(oracledb.DatabaseError) as caught:
         if asynchronous:
             await transport.amigrate("DOCS")
         else:
             transport.migrate("DOCS")
-    assert [call.args[0] for call in cursor.execute.call_args_list] == [
-        _vecdb.COMPATIBILITY_SQL
+    assert caught.value is error
+    ddl = [
+        call.args[0]
+        for call in cursor.execute.call_args_list
+        if call.args[0].startswith("ALTER TABLE")
     ]
+    assert ddl == ['ALTER TABLE "DOCS" ADD SPARSE_VECTOR VECTOR(*, *, SPARSE)']
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

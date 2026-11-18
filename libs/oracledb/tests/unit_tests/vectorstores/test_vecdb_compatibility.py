@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""Native backend capability selection includes the database COMPATIBLE value."""
+"""Backend selection leaves compatibility enforcement to the database."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,7 +33,7 @@ def connection(version, compatibility, columns=(), supported=True, asynchronous=
         if "all_synonyms" in statement:
             return None
         if statement == VECDB_CAPABILITY_SQL:
-            return int(supported), compatibility if supported else None
+            return (int(supported),)
         if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in statement:
             return (
                 {"owner": "OWNER", "table_name": "DOCS"}
@@ -59,7 +59,12 @@ def connection(version, compatibility, columns=(), supported=True, asynchronous=
 @pytest.mark.parametrize("name", ['"हिन्दी"', "U1.TB16"])
 @pytest.mark.asyncio
 async def test_auto_fallback_accepts_existing_sql_identifiers(asynchronous, name):
-    conn, _ = connection("26.1.0.24.0", "23.5.0.0.0", asynchronous=asynchronous)
+    conn, _ = connection(
+        "26.1.0.24.0",
+        "23.5.0.0.0",
+        columns={"ID", "TEXT", "METADATA", "EMBEDDING"},
+        asynchronous=asynchronous,
+    )
     result = (
         await anative_selection(conn, name, "auto")
         if asynchronous
@@ -72,17 +77,17 @@ async def test_auto_fallback_accepts_existing_sql_identifiers(asynchronous, name
 @pytest.mark.parametrize(
     "version, compatible, expected",
     [
-        ("26.1.0.24.0", "23.5.0.0.0", "sql"),
+        ("26.1.0.24.0", "23.5.0.0.0", "vecdb"),
         ("26.1.0.24.0", "23.6.0.0.0", "vecdb"),
-        ("23.26.3.0.0", "23.5.0.0.0", "sql"),
+        ("23.26.3.0.0", "23.5.0.0.0", "vecdb"),
         ("23.26.3.0.0", "23.6.0.0.0", "vecdb"),
-        ("23.26.2.0.0", "23.3.0.0.0", "sql"),
+        ("23.26.2.0.0", "23.3.0.0.0", "vecdb"),
         ("23.26.2.0.0", "23.4.0.0.0", "vecdb"),
         ("23.26.1.0.0", "23.5.0.0.0", "vecdb"),
     ],
 )
 @pytest.mark.asyncio
-async def test_auto_checks_compatible_before_selecting_new_table_backend(
+async def test_auto_selects_a_vecdb_candidate_without_reading_compatible(
     asynchronous, version, compatible, expected
 ):
     conn, cursor = connection(version, compatible, asynchronous=asynchronous)
@@ -128,11 +133,12 @@ async def test_explicit_vecdb_and_existing_vecdb_tables_never_fall_back_to_sql(
     conn, _ = connection(
         "26.1.0.24.0", "23.5.0.0.0", columns=columns, asynchronous=asynchronous
     )
-    with pytest.raises(ValueError, match=r"COMPATIBLE >= 23\.6\.0.*23\.5"):
-        if asynchronous:
-            await anative_selection(conn, "DOCS", backend)
-        else:
-            native_selection(conn, "DOCS", backend)
+    result = (
+        await anative_selection(conn, "DOCS", backend)
+        if asynchronous
+        else native_selection(conn, "DOCS", backend)
+    )
+    assert result[0] == "vecdb"
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -165,7 +171,7 @@ async def test_sql_tables_and_unavailable_package_do_not_probe_compatible(
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_compatibility_probe_errors_are_not_treated_as_sql_fallback(asynchronous):
+async def test_package_capability_errors_are_not_treated_as_sql_fallback(asynchronous):
     conn, cursor = connection("26.1.0.24.0", "23.6.0.0.0", asynchronous=asynchronous)
 
     original = cursor.execute.side_effect
@@ -185,13 +191,18 @@ async def test_compatibility_probe_errors_are_not_treated_as_sql_fallback(asynch
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_unknown_compatible_value_is_not_silently_accepted(asynchronous):
-    conn, _ = connection("26.1.0.24.0", "unknown", asynchronous=asynchronous)
-    with pytest.raises(ValueError, match="Cannot determine"):
-        if asynchronous:
-            await anative_selection(conn, "DOCS", "auto")
-        else:
-            native_selection(conn, "DOCS", "auto")
+async def test_selection_does_not_depend_on_a_reported_compatible_value(asynchronous):
+    conn, cursor = connection("26.1.0.24.0", "unknown", asynchronous=asynchronous)
+    result = (
+        await anative_selection(conn, "DOCS", "auto")
+        if asynchronous
+        else native_selection(conn, "DOCS", "auto")
+    )
+    assert result[0] == "vecdb"
+    assert not any(
+        "DB_VERSION" in call.args[0] or "COMPATIBLE" in call.args[0]
+        for call in cursor.execute.call_args_list
+    )
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

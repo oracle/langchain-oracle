@@ -207,7 +207,7 @@ async def test_prepare_finds_active_vecdb_table_without_creation(schemas):
         await backend.run_async("prepare")
     else:
         backend.prepare()
-    assert cursor.execute.call_count == 4
+    assert cursor.execute.call_count == 3
     assert not any(" FROM all_" in c.args[0] for c in cursor.execute.call_args_list)
 
 
@@ -295,7 +295,7 @@ async def test_constructor_reuses_selection_columns_during_prepare(
     assert sum("SELECT id, dense_vector," in sql for sql in statements) == (
         1 if "CONTENT_METADATA" in columns else 2
     )
-    assert len(statements) == (4 if "CONTENT_METADATA" in columns else 5)
+    assert len(statements) == (3 if "CONTENT_METADATA" in columns else 4)
     info = store._vecdb.transport._table_info_cache[
         store._vecdb.transport._table_key('"DOCS"')
     ]
@@ -346,4 +346,4 @@ async def test_managed_constructor_reuses_ownership_description(
     statements = [call.args[0] for call in cursor.execute.call_args_list]
     assert sum("DESCRIBE_VECTOR_TABLE(" in sql for sql in statements) == 1
     assert _vecdb.VECDB_RECOGNITION_SQL not in statements
-    assert len(statements) == 4
+    assert len(statements) == 3

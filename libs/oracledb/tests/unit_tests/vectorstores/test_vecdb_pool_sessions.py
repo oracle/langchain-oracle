@@ -111,8 +111,8 @@ class Session:
         if "INDEX_BUILD_STATUS" in statement:
             self.one = ({"Index Status": "Index Creation Completed"},)
             return
-        if "WITH FUNCTION lc_compatible" in statement:
-            self.one = (1, "23.6.0")
+        if "AS search_supported" in statement:
+            self.one = (1,)
             return
         if "all_synonyms" in statement:
             self.one = None

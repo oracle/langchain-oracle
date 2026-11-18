@@ -10,7 +10,11 @@ import oracledb
 import pytest
 
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores._vecdb import native_selection
+from langchain_oracledb.vectorstores._vecdb import (
+    _sparse_compatibility_error,
+    native_selection,
+    parse_version,
+)
 from langchain_oracledb.vectorstores.utils import (
     DistanceStrategy,
     adrop_table_purge,
@@ -88,6 +92,27 @@ def rest_client():
     )
 
 
+_SPARSE_STORAGE = {}
+
+
+def sparse_storage_available(connection):
+    """Probe actual storage support once per test endpoint, including Autonomous."""
+    key = (connection.dsn, connection.username, connection.version)
+    if key not in _SPARSE_STORAGE:
+        name = "LCSP_" + uuid.uuid4().hex[:16].upper()
+        with connection.cursor() as cursor:
+            try:
+                cursor.execute(f"CREATE TABLE {name} (V VECTOR(*, FLOAT32, SPARSE))")
+            except oracledb.DatabaseError as error:
+                if not _sparse_compatibility_error(error):
+                    raise
+                _SPARSE_STORAGE[key] = False
+            else:
+                cursor.execute(f"DROP TABLE {name} PURGE")
+                _SPARSE_STORAGE[key] = True
+    return _SPARSE_STORAGE[key]
+
+
 def check_native_backend(config, backend, table):
     if backend.startswith("vecdb"):
         with oracledb.connect(**config) as connection:
@@ -103,6 +128,9 @@ def check_native_backend(config, backend, table):
                 ):
                     pytest.skip("Native VecDB unavailable: " + str(exc))
                 raise
+            if parse_version(connection.version) >= (23, 26, 3):
+                if not sparse_storage_available(connection):
+                    pytest.skip("Database rejects sparse vector storage")
 
 
 @contextmanager
