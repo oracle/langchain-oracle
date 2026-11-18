@@ -7,8 +7,10 @@ from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_oracledb import OracleVS
 
+from . import test_vecdb_pool_sessions as pool_sessions
 from .test_vecdb_pool_sessions import GUIDE, use_one_session
-from .test_vecdb_pool_sessions import sessions as sessions
+
+sessions = pool_sessions.sessions
 
 
 def catalogs(log):

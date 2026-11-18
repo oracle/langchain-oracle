@@ -102,7 +102,6 @@ class SqlApi:
         _headers,
         _host_index,
     ) -> RequestSerialized:
-
         _host = self.sql_base_url
 
         _collection_formats: Dict[str, str] = {}
