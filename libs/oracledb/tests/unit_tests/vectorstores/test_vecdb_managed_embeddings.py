@@ -80,10 +80,21 @@ def environment(request):
             prefix = "a" if asynchronous else ""
             mock_type = AsyncMock if asynchronous else MagicMock
             selection = "anative_selection" if asynchronous else "native_selection"
+
+            def select(connection, name, backend, *, description, layout):
+                if existing:
+                    description.update(
+                        owner="OWNER",
+                        table_name="DOCS",
+                        embed_params=existing.get("embed_params"),
+                    )
+                    layout.update(CURRENT_COLUMNS)
+                return "vecdb", (23, 26, 3)
+
             stack.enter_context(
                 patch(
                     "langchain_oracledb.vectorstores._vecdb." + selection,
-                    new=mock_type(return_value=("vecdb", (23, 26, 3))),
+                    new=mock_type(side_effect=select),
                 )
             )
             stack.enter_context(
@@ -92,9 +103,9 @@ def environment(request):
                     + prefix
                     + "inspect_columns",
                     new=mock_type(
-                        side_effect=lambda cursor, name: CURRENT_COLUMNS
-                        if existing
-                        else set()
+                        side_effect=lambda cursor, name: (
+                            CURRENT_COLUMNS if existing else set()
+                        )
                     ),
                 )
             )

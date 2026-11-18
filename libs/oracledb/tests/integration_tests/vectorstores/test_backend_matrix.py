@@ -185,7 +185,7 @@ def vecdb_enabled(database_matrix):
 
 def expected_error(origin, backend):
     if origin == "registered_vecdb":
-        return "SQL backend cannot use a VecDB" if backend == "sql" else None
+        return "Incompatible OracleVS table layout" if backend == "sql" else None
     if origin in SQL_ORIGINS:
         return "ordinary OracleVS" if backend == "vecdb" else None
     return "Incompatible"
@@ -470,13 +470,15 @@ async def test_schema_qualified_sql_access_checks_real_layout(
                     0
                 ].page_content == "oracle existing seed"
             else:
-                with pytest.raises(ValueError, match="not registered in VecDB"):
+                with pytest.raises(
+                    ValueError, match="Incompatible OracleVS table layout"
+                ):
                     await open_async(client)
     elif origin in SQL_ORIGINS:
         store = OracleVS(connection, MatrixEmbeddings(), qualified, backend="sql")
         assert store.get_by_ids(["seed"])[0].page_content == "oracle existing seed"
     else:
-        with pytest.raises(ValueError, match="not registered in VecDB"):
+        with pytest.raises(ValueError, match="Incompatible OracleVS table layout"):
             OracleVS(connection, MatrixEmbeddings(), qualified, backend="sql")
     assert_preserved(connection, name, baseline[name])
 
@@ -532,12 +534,14 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
         )
         backend = VecDBBackend(transport, target, DistanceStrategy.COSINE)
         if asynchronous:
-            await backend.run_async("prepare")
+            await backend.run_async(
+                "prepare", columns={"ID", "DENSE_VECTOR", "CONTENT_METADATA"}
+            )
             result = await backend.run_async(
                 "add", ["oracle target"], [[1, 0, 0]], [{}], ["added"], False
             )
         else:
-            backend.prepare()
+            backend.prepare(columns={"ID", "DENSE_VECTOR", "CONTENT_METADATA"})
             result = backend.add(["oracle target"], [[1, 0, 0]], [{}], ["added"], False)
         assert result == ["added"]
         with connection.cursor() as cursor:

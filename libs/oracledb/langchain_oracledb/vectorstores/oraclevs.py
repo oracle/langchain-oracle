@@ -495,8 +495,10 @@ def create_index(
     A VecDB operation returns its provider response; a no-op or SQL returns None.
     Use store.describe_vecdb_index() for readiness. Index maintenance requires
     an idle connection and caller-owned serialization.
-    VecDB rejects auto_index for explicit maintenance and rejects idx_name;
-    physical index names are assigned by VecDB.
+    With no options, missing indexes use LangChain's HNSW defaults and the
+    store's distance metric.
+    VecDB rejects auto_index for explicit maintenance. An idx_name is ignored
+    with a warning because physical index names are assigned by VecDB.
     """
     if vector_store._vecdb is not None:
         return vector_store._vecdb.create_index(params)
@@ -798,8 +800,10 @@ async def acreate_index(
     A VecDB operation returns its provider response; a no-op or SQL returns None.
     Use store.describe_vecdb_index() for readiness. Index maintenance requires
     an idle connection and caller-owned serialization.
-    VecDB rejects auto_index for explicit maintenance and rejects idx_name;
-    physical index names are assigned by VecDB.
+    With no options, missing indexes use LangChain's HNSW defaults and the
+    store's distance metric.
+    VecDB rejects auto_index for explicit maintenance. An idx_name is ignored
+    with a warning because physical index names are assigned by VecDB.
     """
     if vector_store._vecdb is not None:
         return await vector_store._vecdb.run_async("create_index", params)
@@ -1176,9 +1180,11 @@ class OracleVS(VectorStore):
         VecDB applies these options to new tables and ensures a missing vector
         index on existing tables, preserving any existing index.
         Without a nested index request, new VecDB tables use auto_index=False;
-        an explicit empty dictionary leaves index defaults to VecDB.
+        an explicit empty dictionary requests LangChain's HNSW defaults with
+        this store's distance metric.
         VecDB accepts auto_index=False to leave a missing vector index uncreated;
-        explicit index helpers reject auto_index. VecDB does not accept idx_name.
+        explicit index helpers reject auto_index. VecDB ignores idx_name with
+        a warning; use describe_vecdb_index() to discover the physical name.
 
         ``backend="auto"`` preserves existing SQL tables and uses VecDB only for
         compatible layouts and databases. Native VecDB package calls accept
@@ -1197,7 +1203,6 @@ class OracleVS(VectorStore):
             NativeTransport,
             RestTransport,
             VecDBBackend,
-            _inspect_columns,
             is_sdk_client,
             native_selection,
             table_identifier,
@@ -1239,15 +1244,14 @@ class OracleVS(VectorStore):
             return
 
         with _get_connection(client) as connection:
-            with connection.cursor() as cursor:
-                columns = _inspect_columns(cursor, table_name)
             description: dict[str, Any] = {}
+            columns: set[str] = set()
             selected, version = native_selection(
                 connection,
                 table_name,
                 backend,
-                columns=columns,
                 description=description,
+                layout=columns,
             )
             prepared_index = (
                 _sql_index_ddl(table_name, distance_strategy, vector_index_params)
@@ -1275,7 +1279,10 @@ class OracleVS(VectorStore):
                     embedding=embedding_function,
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
-                self._vecdb.prepare(columns=columns, description=description)
+                self._vecdb.prepare(
+                    columns=columns if description else set(),
+                    description=description,
+                )
                 self._vecdb.transport.client = client
                 self.backend = "vecdb"
             else:
@@ -1351,7 +1358,6 @@ class OracleVS(VectorStore):
         from ._vecdb import (
             AsyncNativeTransport,
             VecDBBackend,
-            _ainspect_columns,
             anative_selection,
             is_sdk_client,
         )
@@ -1378,15 +1384,14 @@ class OracleVS(VectorStore):
         self.backend = "sql"
 
         async with _aget_connection(client) as connection:
-            with connection.cursor() as cursor:
-                columns = await _ainspect_columns(cursor, table_name)
             description: dict[str, Any] = {}
+            columns: set[str] = set()
             selected, version = await anative_selection(
                 connection,
                 table_name,
                 backend,
-                columns=columns,
                 description=description,
+                layout=columns,
             )
             prepared_index = (
                 _sql_index_ddl(table_name, distance_strategy, vector_index_params)
@@ -1415,7 +1420,9 @@ class OracleVS(VectorStore):
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
                 await self._vecdb.run_async(
-                    "prepare", columns=columns, description=description
+                    "prepare",
+                    columns=columns if description else set(),
+                    description=description,
                 )
                 self._vecdb.transport.client = client
                 self.backend = "vecdb"

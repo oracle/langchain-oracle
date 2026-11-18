@@ -43,7 +43,9 @@ def synonym(request):
 
     cursor.execute.side_effect = execute
     cursor.fetchone.side_effect = fetchone
-    cursor.fetchall.side_effect = lambda: [(c,) for c in state["direct_columns"]]
+    cursor.fetchall.side_effect = lambda: [
+        (c,) for c in (state["direct_columns"] or state["columns"])
+    ]
     if asynchronous:
         cursor.execute = AsyncMock(side_effect=execute)
         cursor.fetchone = AsyncMock(side_effect=fetchone)

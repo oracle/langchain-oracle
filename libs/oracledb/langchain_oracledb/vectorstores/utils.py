@@ -211,6 +211,7 @@ def drop_table_purge(client: Any, table_name: str, *, backend: str = "auto") -> 
         NativeTransport,
         RestTransport,
         _is_vecdb_table,
+        _sql_layout,
         is_sdk_client,
         parse_version,
     )
@@ -230,11 +231,15 @@ def drop_table_purge(client: Any, table_name: str, *, backend: str = "auto") -> 
         return
     with _get_connection(client) as connection:
         transport = NativeTransport(connection, parse_version(connection.version))
-        columns = transport.columns(table_name)
-        if not columns:
-            return
         with connection.cursor() as cursor:
-            vecdb = backend != "sql" and _is_vecdb_table(cursor, table_name)
+            kind = _sql_layout(cursor, table_name)
+            if kind == "missing":
+                return
+            vecdb = (
+                backend != "sql"
+                and kind != "sql"
+                and _is_vecdb_table(cursor, table_name)
+            )
         if backend == "vecdb" and not vecdb:
             raise ValueError("Cannot drop an ordinary SQL table through VecDB")
         if vecdb:
@@ -253,6 +258,7 @@ async def adrop_table_purge(
     from ._vecdb import (
         AsyncNativeTransport,
         _ais_vecdb_table,
+        _asql_layout,
         is_sdk_client,
         parse_version,
     )
@@ -265,11 +271,15 @@ async def adrop_table_purge(
     table_name = _quote_indentifier(table_name)
     async with _aget_connection(client) as connection:
         transport = AsyncNativeTransport(connection, parse_version(connection.version))
-        columns = await transport.acolumns(table_name)
-        if not columns:
-            return
         with connection.cursor() as cursor:
-            vecdb = backend != "sql" and await _ais_vecdb_table(cursor, table_name)
+            kind = await _asql_layout(cursor, table_name)
+            if kind == "missing":
+                return
+            vecdb = (
+                backend != "sql"
+                and kind != "sql"
+                and await _ais_vecdb_table(cursor, table_name)
+            )
         if backend == "vecdb" and not vecdb:
             raise ValueError("Cannot drop an ordinary SQL table through VecDB")
         if vecdb:
@@ -366,8 +376,8 @@ def drop_index(client: Any, idx_name: str) -> None:
 
     idx_name = _quote_indentifier(idx_name)
     if is_sdk_client(client):
-        statement, binds = _index_query(idx_name)
         with ORDSSQLConnection(client).cursor() as cursor:
+            statement, binds = _index_query(idx_name)
             cursor.execute(statement, **binds)
             if cursor.fetchone():
                 cursor.execute(f"DROP INDEX {idx_name}")

@@ -21,6 +21,163 @@ from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 
+def default_index_params(metric, *, legacy=False, rest=False):
+    vector = {
+        "organization": "INMEMORY GRAPH",
+        "distance_metric": metric,
+        "accuracy": 90,
+        "advanced_params": {"neighbors": 32, "efConstruction": 200},
+    }
+    if rest:
+        vector["auto_index"] = True
+    return (
+        {**vector, "parallel_creation": 8}
+        if legacy
+        else {"vector_index_params": vector, "parallel_creation": 8}
+    )
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("exists", [False, True])
+@pytest.mark.parametrize("options", [None, {}])
+@pytest.mark.parametrize(
+    "strategy,metric",
+    [
+        (DistanceStrategy.EUCLIDEAN_DISTANCE, "EUCLIDEAN"),
+        (DistanceStrategy.COSINE, "COSINE"),
+        (DistanceStrategy.DOT_PRODUCT, "DOT"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_default_index_creation_preserves_langchain_defaults(
+    policy_transport, asynchronous, exists, options, strategy, metric
+):
+    transport = policy_transport
+    status = {"details": {"indexes": [{"index_name": "GENERATED"}] if exists else []}}
+    transport.describe_index.return_value = status
+    transport.adescribe_index.return_value = status
+    transport.vector_index_status.return_value = {
+        "Index Status": "Index Creation Completed"
+        if exists
+        else "Vector Index is not created"
+    }
+    transport.avector_index_status.return_value = (
+        transport.vector_index_status.return_value
+    )
+    if isinstance(transport, RestTransport):
+        transport.call.side_effect = lambda operation, **kw: (
+            {"index_status": "READY" if exists else "Vector index is not created"}
+            if operation == "describe_index"
+            else {"name": "DOCS"}
+        )
+    backend = VecDBBackend(transport, "DOCS", strategy)
+    if asynchronous:
+        await backend.run_async("create_index", options)
+    else:
+        backend.create_index(options)
+    call = (
+        transport.acall
+        if isinstance(transport, AsyncNativeTransport)
+        else transport.call
+    )
+    actions = [
+        c for c in call.call_args_list if c.args[0] in {"create_index", "rebuild_index"}
+    ]
+    if exists:
+        assert actions == []
+    else:
+        assert len(actions) == 1
+        assert actions[0].args == ("create_index",)
+        assert actions[0].kwargs["index_params"] == default_index_params(
+            metric,
+            legacy=getattr(transport, "version", (23, 26, 3)) < (23, 26, 3),
+            rest=isinstance(transport, RestTransport),
+        )
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("operation", ["create_table", "create_index"])
+@pytest.mark.parametrize("name", ["MY_INDEX", None])
+def test_vecdb_index_names_warn_and_preserve_options(policy_transport, operation, name):
+    backend = VecDBBackend(policy_transport, "DOCS", DistanceStrategy.COSINE)
+    options = {"idx_name": name, "idx_type": "IVF", "neighbor_part": 8}
+    original = deepcopy(options)
+    expected = backend.index_params(
+        {"idx_type": "IVF", "neighbor_part": 8}, operation=operation
+    )
+    with pytest.warns(
+        UserWarning, match="idx_name is ignored.*describe_vecdb_index"
+    ) as caught:
+        assert backend.index_params(options, operation=operation) == expected
+    assert len(caught) == 1
+    assert options == original
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_name_only_request_does_not_rebuild_existing_index(
+    policy_transport, asynchronous
+):
+    transport = policy_transport
+    if isinstance(transport, RestTransport):
+        transport.call.return_value = {"index_status": "READY"}
+    backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
+    with pytest.warns(UserWarning, match="idx_name is ignored"):
+        result = (
+            await backend.run_async("create_index", {"idx_name": "MY_INDEX"})
+            if asynchronous
+            else backend.create_index({"idx_name": "MY_INDEX"})
+        )
+        assert result is None
+    assert not any(
+        c.args[0] in {"create_index", "rebuild_index"}
+        for c in [*transport.call.call_args_list, *transport.acall.call_args_list]
+    )
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_semantic_cache_named_vecdb_index_warns_and_only_creates_missing(exists):
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
+    from langchain_oracledb import OracleSemanticCache
+
+    sdk = pytest.importorskip("oracle_vecdb")
+    client = sdk.OracleVecDB(
+        sdk.Configuration(
+            rest_url="https://example.com/ords/test/_/db-api/stable/vecdb/",
+            access_token="test",
+        )
+    )
+    client.describe_vector_table = MagicMock(return_value={"table_name": "DOCS"})
+    client.describe_index = MagicMock(
+        return_value={
+            "index_status": "READY" if exists else "Vector index is not created"
+        }
+    )
+    client.create_index = MagicMock(return_value={"job_id": "create"})
+    client.rebuild_index = MagicMock()
+    with pytest.warns(UserWarning, match="idx_name is ignored") as caught:
+        cache = OracleSemanticCache(
+            client,
+            DeterministicFakeEmbedding(size=3),
+            "DOCS",
+            create_index_if_missing=True,
+            index_name="MY_INDEX",
+        )
+    assert len(caught) == 1
+    assert cache._vector_store.backend == "vecdb"
+    client.rebuild_index.assert_not_called()
+    if exists:
+        client.create_index.assert_not_called()
+        return
+    client.create_index.assert_called_once()
+    request = client.create_index.call_args.kwargs
+    assert "idx_name" not in request["index_params"]
+    vector = request["index_params"]["vector_index_params"]
+    assert vector["organization"] == "INMEMORY GRAPH"
+    assert vector["distance_metric"] == "COSINE"
+
+
 @pytest.fixture(params=["legacy", "current", "rest"])
 def policy_transport(request, asynchronous):
     """Record policy payloads without assuming a server's index lifecycle."""
@@ -35,6 +192,12 @@ def policy_transport(request, asynchronous):
     transport.acall = AsyncMock(return_value={"message": "done"})
     status = {"details": {"indexes": [{"index_name": "GENERATED"}]}}
     transport.describe_index = MagicMock(return_value=status)
+    transport.vector_index_status = MagicMock(
+        return_value={"Index Status": "Index Creation Completed"}
+    )
+    transport.avector_index_status = AsyncMock(
+        return_value={"Index Status": "Index Creation Completed"}
+    )
     transport.adescribe_index = AsyncMock(return_value=status)
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
@@ -90,7 +253,9 @@ async def test_table_creation_preserves_automatic_policy(
     request = creates[0].kwargs
     mapped = request.get("index_params")
     if options == {}:
-        assert "index_params" not in request
+        assert mapped == default_index_params(
+            "COSINE", legacy=getattr(transport, "version", (23, 26, 3)) < (23, 26, 3)
+        )
     elif automatic is None:
         assert "indexing" not in mapped
         assert "auto_index" not in mapped.get("vector_index_params", mapped)
@@ -134,6 +299,14 @@ async def test_existing_table_constructor_only_creates_missing_requested_index(
     status = {"details": {"indexes": [{"index_name": "GENERATED"}] if exists else []}}
     transport.describe_index.return_value = status
     transport.adescribe_index.return_value = status
+    transport.vector_index_status.return_value = {
+        "Index Status": "Index Creation Completed"
+        if exists
+        else "Vector Index is not created"
+    }
+    transport.avector_index_status.return_value = (
+        transport.vector_index_status.return_value
+    )
 
     def rest_call(operation, **kwargs):
         if operation == "describe_index":
@@ -200,6 +373,14 @@ async def test_manual_table_allows_explicit_create_or_rebuild(
     status = {"details": {"indexes": [{"index_name": "GENERATED"}] if exists else []}}
     transport.describe_index.return_value = status
     transport.adescribe_index.return_value = status
+    transport.vector_index_status.return_value = {
+        "Index Status": "Index Creation Completed"
+        if exists
+        else "Vector Index is not created"
+    }
+    transport.avector_index_status.return_value = (
+        transport.vector_index_status.return_value
+    )
 
     def rest_call(operation, **kwargs):
         if operation == "describe_index":
@@ -252,12 +433,10 @@ async def test_manual_table_allows_explicit_create_or_rebuild(
         ({"auto_index": 0}, "auto_index is a table-creation policy"),
         ({"auto_index": 1}, "auto_index is a table-creation policy"),
         ({"auto_index": None}, "auto_index is a table-creation policy"),
-        ({"idx_name": "MY_INDEX"}, "idx_name is unsupported"),
-        ({"idx_name": None}, "idx_name is unsupported"),
     ],
 )
 @pytest.mark.asyncio
-async def test_explicit_helpers_reject_policy_and_names_before_index_actions(
+async def test_explicit_helpers_reject_policy_before_index_actions(
     policy_transport, asynchronous, options, message
 ):
     transport = policy_transport
@@ -285,12 +464,9 @@ async def test_explicit_helpers_reject_policy_and_names_before_index_actions(
         ({"auto_index": 0}, "auto_index must be a boolean"),
         ({"auto_index": 1}, "auto_index must be a boolean"),
         ({"auto_index": None}, "auto_index must be a boolean"),
-        ({"idx_name": "MY_INDEX"}, "idx_name is unsupported"),
     ],
 )
-def test_invalid_table_policy_and_names_fail_before_creation(
-    policy_transport, options, message
-):
+def test_invalid_table_policy_fails_before_creation(policy_transport, options, message):
     original = deepcopy(options)
     with pytest.raises(ValueError, match=message):
         VecDBBackend(
@@ -320,6 +496,20 @@ async def test_native_ensure_or_reconfigure(asynchronous, exists, params):
         "details": {"indexes": [{"index_name": "GENERATED"}] if exists else []},
     }
     transport.describe_index = MagicMock(return_value=status)
+    transport.vector_index_status = MagicMock(
+        return_value={
+            "Index Status": "Index Creation Completed"
+            if exists
+            else "Vector index is not created"
+        }
+    )
+    transport.avector_index_status = AsyncMock(
+        return_value={
+            "Index Status": "Index Creation Completed"
+            if exists
+            else "Vector index is not created"
+        }
+    )
     transport.adescribe_index = AsyncMock(return_value=status)
     transport.call = MagicMock(return_value={"message": "done"})
     transport.acall = AsyncMock(return_value={"message": "done"})
@@ -351,7 +541,7 @@ async def test_native_ensure_or_reconfigure(asynchronous, exists, params):
             sql, _ = SQLNetAdapter((23, 26, 3)).statement(operation, request)
             assert "dbms_vector_database." + operation in sql.lower()
         else:
-            assert "index_params" not in request
+            assert request["index_params"] == default_index_params("COSINE")
     assert params == original
 
 
@@ -377,16 +567,22 @@ async def test_creation_options_only_used_for_new_native_table(asynchronous, kin
     setattr(transport, "acall" if asynchronous else "call", call)
     status = {"details": {"indexes": [{"index_name": "EXISTING"}]}}
     transport.describe_index = MagicMock(return_value=status)
+    transport.vector_index_status = MagicMock(
+        return_value={"Index Status": "Index Creation Completed"}
+    )
+    transport.avector_index_status = AsyncMock(
+        return_value={"Index Status": "Index Creation Completed"}
+    )
     transport.adescribe_index = AsyncMock(return_value=status)
     options = {"idx_type": kind, "accuracy": 85, "parallel": 2}
     backend = VecDBBackend(
         transport, "DOCS", DistanceStrategy.COSINE, vector_index_params=options
     )
-    for _ in range(2):
+    for columns in (set(), CURRENT_COLUMNS):
         if asynchronous:
-            await backend.run_async("prepare")
+            await backend.run_async("prepare", columns=columns)
         else:
-            backend.prepare()
+            backend.prepare(columns=columns)
     call.assert_called_once()
     assert call.call_args.args == ("create_vector_table",)
     mapped = call.call_args.kwargs["index_params"]
@@ -446,7 +642,7 @@ def test_rest_not_created_status_requires_an_existing_table(table_exists):
         assert backend.create_index(None) == {"job_id": "create"}
         transport.client.create_index.assert_called_once_with(
             table_name="DOCS",
-            index_params={"vector_index_params": {"auto_index": True}},
+            index_params=default_index_params("COSINE", rest=True),
         )
     else:
         with pytest.raises(RuntimeError, match="missing table"):
@@ -471,7 +667,7 @@ def test_rest_only_missing_index_with_existing_table_allows_create(status):
         transport.client.describe_vector_table.assert_called_once_with(name="DOCS")
         transport.client.create_index.assert_called_once_with(
             table_name="DOCS",
-            index_params={"vector_index_params": {"auto_index": True}},
+            index_params=default_index_params("COSINE", rest=True),
         )
     else:
         with pytest.raises(RuntimeError, match="provider failure"):

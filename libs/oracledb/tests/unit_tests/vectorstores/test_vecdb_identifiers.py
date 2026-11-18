@@ -40,6 +40,9 @@ def native(request, monkeypatch):
     state = {"columns": set(CURRENT_COLUMNS), "rows": [], "one": None}
 
     def execute(statement, **binds):
+        if "INDEX_BUILD_STATUS" in statement:
+            state["one"] = ({"Index Status": "Vector Index is not created"},)
+            return
         if "SELECT object_name, procedure_name FROM all_procedures" in statement:
             state["rows"] = [
                 ("DBMS_VECTOR_DATABASE", "HANDLE_MVI_INDEX"),
@@ -90,8 +93,14 @@ async def run(native, name, method, *args):
     asynchronous, transport, _, _ = native
     backend = VecDBBackend(transport, name, DistanceStrategy.COSINE)
     if asynchronous:
-        return await backend.run_async(method, *args)
-    return getattr(backend, method)(*args)
+        return await backend.run_async(
+            method,
+            *args,
+            **({"columns": set(native[3]["columns"])} if method == "prepare" else {}),
+        )
+    return getattr(backend, method)(
+        *args, **({"columns": set(native[3]["columns"])} if method == "prepare" else {})
+    )
 
 
 def assert_lookup(cursor, binds):
@@ -115,8 +124,7 @@ async def test_existing_prepare_inspects_exact_object_without_creating(
 ):
     await run(native, name, "prepare")
     cursor = native[2]
-    assert_lookup(cursor, binds)
-    assert len(cursor.execute.call_args_list) == 2
+    cursor.execute.assert_not_called()
 
 
 @pytest.mark.parametrize("name, quoted, binds", NAMES)
@@ -125,7 +133,9 @@ async def test_insert_only_never_splits_a_literal_dot(native, name, quoted, bind
     result = await run(native, name, "add", ["seed"], [[1.0]], [{}], ["id"], False)
     assert result == ["id"]
     cursor = native[2]
-    assert_lookup(cursor, binds)
+    assert not any(
+        "all_tab_columns" in c.args[0] for c in cursor.execute.call_args_list
+    )
     assert cursor.executemany.call_args.args[0].startswith(
         f"INSERT INTO {quoted} (ID, DENSE_VECTOR, CONTENT_METADATA)"
     )
@@ -136,7 +146,7 @@ async def test_insert_only_never_splits_a_literal_dot(native, name, quoted, bind
 async def test_text_search_keeps_sql_identifier(native, name, quoted, binds):
     await run(native, name, "text_search", "oracle", 3)
     cursor = native[2]
-    assert_lookup(cursor, binds)
+    assert not any("all_" in c.args[0] for c in cursor.execute.call_args_list)
     assert f"FROM {quoted} WHERE JSON_TEXTCONTAINS" in cursor.execute.call_args.args[0]
 
 

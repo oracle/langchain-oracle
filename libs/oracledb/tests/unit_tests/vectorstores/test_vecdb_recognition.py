@@ -12,6 +12,8 @@ import pytest
 from langchain_oracledb.vectorstores import _vecdb
 from langchain_oracledb.vectorstores.utils import adrop_table_purge, drop_table_purge
 
+from .._sql_probe import sql_probe
+
 
 @pytest.fixture(params=[False, True], ids=["sync", "async"])
 def database(request):
@@ -33,6 +35,8 @@ def database(request):
 
     def execute(statement, **binds):
         state["statement"] = statement
+        if sql_probe(statement, state["columns"]):
+            return
         if "SELECT SYS.DBMS_VECTOR_DATABASE." in statement:
             if state["error"]:
                 raise state["error"]
@@ -103,8 +107,8 @@ async def test_existing_sql_store_selects_sql_without_vecdb_package(database):
     )
     assert selected[0] == "sql"
     statements = [call.args[0] for call in cursor.execute.call_args_list]
-    assert statements.count(_vecdb.VECDB_TABLE_SQL) == 1
-    assert statements.count(_vecdb.VECDB_RECOGNITION_SQL) == 1
+    assert statements.count(_vecdb.VECDB_TABLE_SQL) == 0
+    assert statements.count(_vecdb.VECDB_RECOGNITION_SQL) == 0
 
 
 @pytest.mark.parametrize(
@@ -131,10 +135,9 @@ async def test_recognition_errors_never_become_nonmembership(database, code):
     with pytest.raises(oracledb.DatabaseError) as caught:
         await recognize(database)
     assert caught.value is error
-    # ORA-00942 additionally checks that this is a direct table, rather than
-    # a SQL synonym the package cannot describe. Compilation errors additionally
-    # check availability but still propagate when the operation is available.
-    assert cursor.execute.call_count == (2 if code in {904, 942, 6550, 6576} else 1)
+    # Compilation errors check availability but still propagate when the
+    # operation is available. Other package errors propagate directly.
+    assert cursor.execute.call_count == (2 if code in {904, 6550, 6576} else 1)
 
 
 @pytest.mark.parametrize(
@@ -155,8 +158,6 @@ async def test_qualified_description_matching_keeps_owner_and_name(
     assert "DESCRIBE_VECTOR_TABLE(" in cursor.execute.call_args.args[0]
     assert cursor.execute.call_args.kwargs == {
         "name": '"OWNER"."DOCS"',
-        "owner": "OWNER",
-        "unqualified_name": '"DOCS"',
     }
 
 
@@ -290,8 +291,6 @@ async def test_targeted_description_preserves_quoted_owner_and_literal_dots(data
     assert await recognize(database, name)
     assert cursor.execute.call_args.kwargs == {
         "name": name,
-        "owner": "Owner.Name",
-        "unqualified_name": '"Table.Name"',
     }
     assert name not in cursor.execute.call_args.args[0]
 
@@ -329,7 +328,7 @@ async def test_legacy_qualified_lookup_returns_only_filtered_membership(database
         "owner": "OTHER",
         "name": "DOCS",
     }
-    cursor.var.assert_called_once_with(int)
+    cursor.var.assert_any_call(int)
     if asynchronous:
         assert cursor.execute.await_count == 2
 
@@ -371,13 +370,54 @@ async def test_case_sensitive_table_description_uses_exact_registry_membership(
 
 
 @pytest.mark.asyncio
-async def test_case_sensitive_package_table_with_sql_columns_is_not_sql(database):
+async def test_sql_layout_does_not_call_case_sensitive_vecdb_discovery(database):
     asynchronous, connection, cursor, state = database
     state["columns"] = {"ID", "TEXT", "METADATA", "EMBEDDING"}
     state["error"] = oracledb.DatabaseError(SimpleNamespace(code=942))
     cursor.var.return_value.getvalue.return_value = 1
-    with pytest.raises(ValueError, match="Incompatible VecDB"):
+    result = (
+        await _vecdb.anative_selection(connection, '"Mixed"', "auto")
+        if asynchronous
+        else _vecdb.native_selection(connection, '"Mixed"', "auto")
+    )
+    assert result[0] == "sql"
+    assert not any(
+        "DBMS_VECTOR_DATABASE" in call.args[0] for call in cursor.execute.call_args_list
+    )
+
+
+@pytest.mark.parametrize("backend", ["auto", "sql"])
+@pytest.mark.asyncio
+async def test_sql_selection_never_invokes_vecdb_in_cross_schema_session(
+    database, backend
+):
+    asynchronous, connection, cursor, state = database
+    state.update(
+        columns={"ID", "TEXT", "METADATA", "EMBEDDING"},
+        error=oracledb.DatabaseError(SimpleNamespace(code=57708)),
+    )
+    result = (
+        await _vecdb.anative_selection(connection, "DOCS", backend)
+        if asynchronous
+        else _vecdb.native_selection(connection, "DOCS", backend)
+    )
+    assert result[0] == "sql"
+    assert cursor.execute.call_args.kwargs == {}
+    assert " FROM all_" not in cursor.execute.call_args.args[0]
+    assert all(
+        "DBMS_VECTOR_DATABASE" not in c.args[0] for c in cursor.execute.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_sql_rejects_managed_layout_without_calling_vecdb(database):
+    asynchronous, connection, cursor, state = database
+    state["error"] = oracledb.DatabaseError(SimpleNamespace(code=57708))
+    with pytest.raises(ValueError, match="Incompatible OracleVS table layout"):
         if asynchronous:
-            await _vecdb.anative_selection(connection, '"Mixed"', "auto")
+            await _vecdb.anative_selection(connection, "DOCS", "sql")
         else:
-            _vecdb.native_selection(connection, '"Mixed"', "auto")
+            _vecdb.native_selection(connection, "DOCS", "sql")
+    assert all(
+        "DBMS_VECTOR_DATABASE" not in c.args[0] for c in cursor.execute.call_args_list
+    )

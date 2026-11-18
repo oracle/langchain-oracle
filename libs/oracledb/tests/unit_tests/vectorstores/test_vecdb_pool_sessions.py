@@ -26,6 +26,8 @@ from langchain_oracledb.vectorstores._vecdb import (
 )
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
+from .._sql_probe import sql_probe
+
 GUIDE = (
     "SIMPLIFIED_JSON dataguide on change "
     "sys.dbms_vector_database.handle_mvi_index "
@@ -101,6 +103,20 @@ class Session:
 
     def execute(self, statement, parameters=None, **binds):
         self.log.append((statement, binds))
+        if sql_probe(statement, self.columns):
+            return
+        if "DESCRIBE_VECTOR_TABLE" in statement:
+            self.one = ({"owner": self.schema, "table_name": "DOCS"}, self.schema)
+            return
+        if "INDEX_BUILD_STATUS" in statement:
+            self.one = ({"Index Status": "Index Creation Completed"},)
+            return
+        if "WITH FUNCTION lc_compatible" in statement:
+            self.one = (1, "23.6.0")
+            return
+        if "all_synonyms" in statement:
+            self.one = None
+            return
         if "SELECT object_name, procedure_name FROM all_procedures" in statement:
             self.rows = [
                 ("DBMS_VECTOR_DATABASE", "HANDLE_MVI_INDEX"),
@@ -452,7 +468,7 @@ async def test_preference_cleanup_finishes_on_pinned_session_after_cancellation(
 
 @pytest.mark.parametrize("operation", ["text_search", "hybrid_search"])
 @pytest.mark.asyncio
-async def test_prepare_discovers_once_and_searches_resolve_unqualified_names(
+async def test_prepare_defers_index_discovery_and_searches_resolve_unqualified_names(
     sessions, operation
 ):
     s = sessions
@@ -461,8 +477,8 @@ async def test_prepare_discovers_once_and_searches_resolve_unqualified_names(
         session.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
         session.connection.current_schema = "STALE_DRIVER_VALUE"
     await invoke(s, "prepare")
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
-    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 0
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 0
     s.a.log.clear()
     s.b.log.clear()
     for expected in ("SCHEMA_B", "SCHEMA_A"):
@@ -475,8 +491,10 @@ async def test_prepare_discovers_once_and_searches_resolve_unqualified_names(
         )
         assert result[0].page_content == expected
     for session in (s.a, s.b):
-        assert len(session.log) == 1
-        sql, binds = session.log[0]
+        assert len(session.log) == (
+            3 if operation == "hybrid_search" and session is s.b else 1
+        )
+        sql, binds = session.log[-1]
         assert "all_tab_columns" not in sql and "all_indexes" not in sql
         assert "CURRENT_SCHEMA" not in sql
         if operation == "hybrid_search":
@@ -497,7 +515,7 @@ async def test_search_refreshes_when_another_session_has_different_layout(sessio
     assert result[0].page_content == "SCHEMA_B"
     assert not s.a.log
     assert len([sql for sql, _ in s.b.log if "JSON_TEXTCONTAINS" in sql]) == 2
-    assert len([sql for sql, _ in s.b.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.b.log if "column_name FROM" in sql]) == 0
 
 
 @pytest.mark.asyncio
@@ -506,6 +524,8 @@ async def test_hybrid_search_refreshes_a_replaced_external_index_once(sessions):
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    # Simulate a physical index learned by a previous explicit metadata operation.
+    s.transport._remember_table('"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"'))
     s.a.index_name = "REPLACEMENT"
     s.a.log.clear()
     result = await invoke(
@@ -586,6 +606,8 @@ async def test_unrelated_search_errors_do_not_trigger_discovery(
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    # Simulate a physical index learned by a previous explicit metadata operation.
+    s.transport._remember_table('"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"'))
     error = oracledb.DatabaseError(
         SimpleNamespace(code=1031 if "ORA-01031" in message else 904, message=message)
     )
@@ -612,6 +634,8 @@ async def test_stale_metadata_column_refreshes_once(
     s.a.columns = {"ID", "DENSE_VECTOR", metadata_column}
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    # Simulate a physical index learned by a previous explicit metadata operation.
+    s.transport._remember_table('"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"'))
     replacement = "CONTENT_METADATA" if metadata_column == "METADATA" else "METADATA"
     s.a.columns = {"ID", "DENSE_VECTOR", replacement}
     error = RuntimeError(f'ORA-00904: "{metadata_column}": invalid identifier')
@@ -630,8 +654,12 @@ async def test_stale_metadata_column_refreshes_once(
         assert caught.value is error
     else:
         assert (await search())[0].page_content == "SCHEMA_A"
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
-    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == (
+        1 if operation == "hybrid_search" else 0
+    )
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == (
+        1 if operation == "hybrid_search" else 0
+    )
     searches = [sql for sql, _ in s.a.log if "lc_oracledb mode=" in sql]
     assert len(searches) == 2
     assert (
@@ -652,6 +680,8 @@ async def test_missing_index_retries_only_once(sessions, message):
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    # Simulate a physical index learned by a previous explicit metadata operation.
+    s.transport._remember_table('"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"'))
     error = RuntimeError(message)
     s.a.search_errors = [error, error]
     s.a.log.clear()
@@ -699,6 +729,8 @@ async def test_vecdb_ignores_qualified_requested_hybrid_index(sessions):
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    # Simulate a physical index learned by a previous explicit metadata operation.
+    s.transport._remember_table('"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"'))
     s.a.log.clear()
     qualified = '"OTHER_SCHEMA"."REQUESTED"'
     result = await invoke(
@@ -735,8 +767,8 @@ async def test_failed_index_replacement_discards_snapshot(sessions):
     s.a.log.clear()
     result = await invoke(s, "text_search", "oracle", 1)
     assert result[0].page_content == "SCHEMA_A"
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
-    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 0
+    assert len([sql for sql, _ in s.a.log if "i.parameters" in sql]) == 0
 
 
 @pytest.mark.parametrize(
@@ -853,6 +885,10 @@ async def test_vecdb_search_uses_physical_index_instead_of_requested_name(
     if discovered_hybrid:
         s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    if discovered_hybrid:
+        s.transport._remember_table(
+            '"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"')
+        )
     s.a.log.clear()
     params = {"text": {"search_text": "oracle"}, "hybrid_index_name": requested}
     if not discovered_hybrid:
@@ -925,7 +961,7 @@ async def test_insert_only_without_initialized_cache_inspects_once(sessions):
     use_one_session(s)
     for id_ in ("one", "two"):
         assert await invoke(s, "add", ["oracle"], [[1.0]], [{}], [id_], False) == [id_]
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 0
     assert len([sql for sql, _ in s.a.log if sql.startswith("INSERT")]) == 2
     assert not any("all_indexes" in sql for sql, _ in s.a.log)
 
@@ -936,6 +972,8 @@ async def test_own_migration_updates_insert_layout_without_rediscovery(sessions)
     use_one_session(s)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     await invoke(s, "prepare")
+    # Simulate a physical index learned by a previous explicit metadata operation.
+    s.transport._remember_table('"DOCS"', _TableInfo(frozenset(s.a.columns), '"GUIDE"'))
     if s.asynchronous:
         await s.transport.amigrate("DOCS")
     else:
@@ -971,7 +1009,7 @@ async def test_insert_refreshes_only_after_external_metadata_column_change(
     assert s.pool.acquire.call_count == acquired + 1
     assert s.a.cursor.executemany.call_count == 2
     assert s.a.connection.commit.call_count == 1
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 0
     assert not any(
         "all_indexes" in sql or sql.startswith("ALTER") for sql, _ in s.a.log
     )
@@ -1058,5 +1096,5 @@ async def test_insert_refresh_does_not_retry_unchanged_layout_or_retry_twice(
         await invoke(s, "add", ["oracle"], [[1.0]], [{}], ["one"], False)
     assert caught.value is error
     assert s.a.cursor.executemany.call_count == (2 if changed else 1)
-    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 1
+    assert len([sql for sql, _ in s.a.log if "column_name FROM" in sql]) == 0
     s.a.connection.commit.assert_not_called()

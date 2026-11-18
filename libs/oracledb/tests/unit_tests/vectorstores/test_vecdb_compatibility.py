@@ -13,6 +13,8 @@ from langchain_oracledb.vectorstores._vecdb import (
     native_selection,
 )
 
+from .._sql_probe import sql_probe
+
 
 def connection(version, compatibility, columns=(), supported=True, asynchronous=False):
     conn = MagicMock(version=version)
@@ -24,8 +26,12 @@ def connection(version, compatibility, columns=(), supported=True, asynchronous=
     def execute(sql, **binds):
         nonlocal statement
         statement = sql
+        if sql_probe(sql, columns):
+            return
 
     def fetchone():
+        if "all_synonyms" in statement:
+            return None
         if statement == VECDB_CAPABILITY_SQL:
             return int(supported), compatibility if supported else None
         if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in statement:
@@ -104,7 +110,6 @@ async def test_auto_checks_compatible_before_selecting_new_table_backend(
         call.args[0].startswith("BEGIN DBMS_UTILITY.DB_VERSION")
         for call in cursor.execute.call_args_list
     )
-    cursor.var.assert_not_called()
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -150,7 +155,6 @@ async def test_sql_tables_and_unavailable_package_do_not_probe_compatible(
         supported=supported,
         asynchronous=asynchronous,
     )
-    cursor.var.side_effect = AssertionError("Unexpected compatibility probe")
     result = (
         await anative_selection(conn, "DOCS", backend)
         if asynchronous
@@ -164,9 +168,12 @@ async def test_sql_tables_and_unavailable_package_do_not_probe_compatible(
 async def test_compatibility_probe_errors_are_not_treated_as_sql_fallback(asynchronous):
     conn, cursor = connection("26.1.0.24.0", "23.6.0.0.0", asynchronous=asynchronous)
 
+    original = cursor.execute.side_effect
+
     def execute(sql, **kwargs):
         if sql == VECDB_CAPABILITY_SQL:
             raise RuntimeError("Permission denied")
+        return original(sql, **kwargs)
 
     cursor.execute.side_effect = execute
     with pytest.raises(RuntimeError, match="Permission denied"):
@@ -198,18 +205,21 @@ async def test_explicit_sql_rejects_package_recognized_vecdb_before_mutation(
     conn, cursor = connection(
         "23.26.4", "23.6.0", columns=columns, asynchronous=asynchronous
     )
-    with pytest.raises(ValueError, match="SQL backend cannot use a VecDB table layout"):
+    with pytest.raises(ValueError, match="Incompatible OracleVS table layout"):
         if asynchronous:
             await anative_selection(conn, "DOCS", "sql")
         else:
             native_selection(conn, "DOCS", "sql")
-    assert cursor.execute.call_count == 2
-    assert "all_tab_columns" in cursor.execute.call_args_list[0].args[0]
+    assert cursor.execute.call_count == 1
     assert (
-        "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
-        in cursor.execute.call_args_list[0].args[0]
+        cursor.execute.call_args_list[0]
+        .args[0]
+        .startswith("SELECT id, text, metadata, embedding FROM ")
     )
-    cursor.var.assert_not_called()
+    assert not any(" FROM all_" in c.args[0] for c in cursor.execute.call_args_list)
+    assert not any(
+        "DBMS_VECTOR_DATABASE" in c.args[0] for c in cursor.execute.call_args_list
+    )
     conn.commit.assert_not_called()
 
 
@@ -219,11 +229,17 @@ async def test_qualified_sql_cannot_bypass_vecdb_layout_guard(asynchronous):
     conn, cursor = connection(
         "23.26.4", "23.6.0", columns=CURRENT_COLUMNS, asynchronous=asynchronous
     )
-    with pytest.raises(ValueError, match="SQL backend"):
+    with pytest.raises(ValueError, match="Incompatible OracleVS table layout"):
         if asynchronous:
             await anative_selection(conn, '"OWNER"."DOCS"', "sql")
         else:
             native_selection(conn, '"OWNER"."DOCS"', "sql")
-    assert "all_tab_columns" in cursor.execute.call_args_list[0].args[0]
-    assert cursor.execute.call_args_list[0].kwargs == {"owner": "OWNER", "name": "DOCS"}
-    assert "DESCRIBE_VECTOR_TABLE(" in cursor.execute.call_args.args[0]
+    assert (
+        cursor.execute.call_args_list[0]
+        .args[0]
+        .startswith("SELECT id, text, metadata, embedding FROM ")
+    )
+    assert cursor.execute.call_args_list[0].kwargs == {}
+    assert not any(
+        "DESCRIBE_VECTOR_TABLE(" in c.args[0] for c in cursor.execute.call_args_list
+    )

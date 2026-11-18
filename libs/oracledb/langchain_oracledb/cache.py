@@ -185,7 +185,10 @@ class OracleSemanticCache(BaseCache):
                 params["idx_name"] = index_name
             if "idx_type" not in params:
                 params["idx_type"] = "HNSW"
-            create_index(client, self._vector_store, params=params)
+            if self._vector_store._vecdb is not None:
+                self._vector_store._vecdb.create_index(params, ensure=True)
+            else:
+                create_index(client, self._vector_store, params=params)
 
     def lookup(self, prompt: str, llm_string: str) -> Optional[RETURN_VAL_TYPE]:
         """Look up the nearest cached response for a prompt and llm configuration."""

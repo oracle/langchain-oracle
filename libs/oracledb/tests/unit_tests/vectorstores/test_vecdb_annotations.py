@@ -50,9 +50,11 @@ async def test_native_creation_and_reopen(
             transport, "DOCS", DistanceStrategy.COSINE, table_type=kind
         )
         if asynchronous:
-            await backend.run_async("prepare")
+            await backend.run_async(
+                "prepare", columns=CURRENT_COLUMNS if existing else set()
+            )
         else:
-            backend.prepare()
+            backend.prepare(columns=CURRENT_COLUMNS if existing else set())
         message = (
             'Table "DOCS" already exists...'
             if existing
@@ -160,9 +162,9 @@ async def test_failed_native_creation_does_not_log_success(asynchronous, caplog)
         backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
         with pytest.raises(RuntimeError, match="creation failed"):
             if asynchronous:
-                await backend.run_async("prepare")
+                await backend.run_async("prepare", columns=set())
             else:
-                backend.prepare()
+                backend.prepare(columns=set())
     assert not [
         record
         for record in caplog.records

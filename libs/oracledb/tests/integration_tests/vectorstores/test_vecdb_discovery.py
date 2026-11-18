@@ -17,7 +17,7 @@ from langchain_oracledb.vectorstores.utils import DistanceStrategy
 @pytest.mark.parametrize("metadata_column", ["METADATA", "CONTENT_METADATA"])
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
 @pytest.mark.asyncio
-async def test_discovery_is_reused_and_external_column_change_refreshes(
+async def test_text_layout_is_cached_and_external_column_change_refreshes(
     metadata_column, asynchronous
 ):
     if not os.environ.get("VECDB_HOST"):
@@ -68,10 +68,10 @@ async def test_discovery_is_reused_and_external_column_change_refreshes(
                 )
             backend = _vecdb.VecDBBackend(transport, table, DistanceStrategy.COSINE)
 
-            async def invoke(method, *args):
+            async def invoke(method, *args, **kwargs):
                 if asynchronous:
-                    return await backend.run_async(method, *args)
-                return getattr(backend, method)(*args)
+                    return await backend.run_async(method, *args, **kwargs)
+                return getattr(backend, method)(*args, **kwargs)
 
             with (
                 patch.object(
@@ -81,14 +81,14 @@ async def test_discovery_is_reused_and_external_column_change_refreshes(
                     _vecdb, "_metadata_index_query", wraps=_vecdb._metadata_index_query
                 ) as indexes,
             ):
-                await invoke("prepare")
-                assert (layout.call_count, indexes.call_count) == (1, 1)
+                await invoke("prepare", columns={"ID", "DENSE_VECTOR", metadata_column})
+                assert (layout.call_count, indexes.call_count) == (0, 0)
                 for _ in range(3):
                     docs = await invoke("text_search", "oracle", 1)
                     assert [doc.page_content for doc in docs] == ["oracle database"]
                 assert docs[0].metadata == {"text": "userlabel"}
                 assert await invoke("text_search", "userlabel", 1) == []
-                assert (layout.call_count, indexes.call_count) == (1, 1)
+                assert (layout.call_count, indexes.call_count) == (0, 0)
                 # External DDL is intentionally outside the transport lifecycle.
                 with connection.cursor() as cursor:
                     cursor.execute(f"DROP INDEX {index}")
@@ -102,9 +102,9 @@ async def test_discovery_is_reused_and_external_column_change_refreshes(
                     )
                 docs = await invoke("text_search", "oracle", 1)
                 assert [doc.page_content for doc in docs] == ["oracle database"]
-                assert (layout.call_count, indexes.call_count) == (2, 2)
+                assert (layout.call_count, indexes.call_count) == (0, 0)
                 await invoke("text_search", "oracle", 1)
-                assert (layout.call_count, indexes.call_count) == (2, 2)
+                assert (layout.call_count, indexes.call_count) == (0, 0)
         finally:
             if async_connection is not None:
                 await async_connection.close()

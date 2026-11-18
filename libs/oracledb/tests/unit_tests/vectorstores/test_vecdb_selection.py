@@ -18,6 +18,8 @@ from langchain_oracledb.vectorstores._vecdb import (
     native_selection,
 )
 
+from .._sql_probe import sql_probe
+
 SQL_COLUMNS = {"ID", "TEXT", "METADATA", "EMBEDDING"}
 
 
@@ -53,6 +55,12 @@ def database(request, monkeypatch):
 
     def execute(statement, **binds):
         state["last"] = statement
+        if statement.startswith("SELECT id, text, metadata, embedding FROM "):
+            state["name"] = _vecdb._identifier_parts(
+                statement.split(" FROM ", 1)[1].split(" WHERE ", 1)[0]
+            )[-1]
+        if sql_probe(statement, state["catalog"] or state["resolved"], state["error"]):
+            return
         if "column_name FROM" in statement:
             state["name"] = binds["name"]
         if statement.startswith("SELECT *"):
@@ -84,13 +92,17 @@ def database(request, monkeypatch):
         raise AssertionError(f"Unexpected fetchone: {state['last']}")
 
     cursor.execute.side_effect = execute
-    cursor.fetchall.side_effect = lambda: [(c,) for c in state["catalog"]]
+    cursor.fetchall.side_effect = lambda: [
+        (c,) for c in (state["catalog"] or state["resolved"] or set())
+    ]
     cursor.fetchone.side_effect = fetchone
     cursor.getbatcherrors.return_value = []
     if asynchronous:
         cursor.execute = AsyncMock(side_effect=execute)
         cursor.fetchall = AsyncMock(
-            side_effect=lambda: [(c,) for c in state["catalog"]]
+            side_effect=lambda: [
+                (c,) for c in (state["catalog"] or state["resolved"] or set())
+            ]
         )
         cursor.fetchone = AsyncMock(side_effect=fetchone)
         cursor.executemany = AsyncMock()
@@ -263,7 +275,10 @@ async def test_resolved_sql_layout_precedes_capability_and_name_checks(database,
     assert await select(database, name, "sql") == "sql"
     with pytest.raises(ValueError, match="ordinary OracleVS"):
         await select(database, name, "vecdb")
-    assert any(c.args[0].startswith("SELECT *") for c in cursor.execute.call_args_list)
+    assert not cursor.callproc.called
+    assert not any(
+        c.args[0].startswith("SELECT *") for c in cursor.execute.call_args_list
+    )
     assert not any(
         "procedure_name = 'SEARCH'" in c.args[0] for c in cursor.execute.call_args_list
     )
@@ -301,7 +316,7 @@ async def test_existing_case_sensitive_vecdb_table_never_falls_back(database):
     assert await select(database, '"Mixed"') == "vecdb"
 
 
-@pytest.mark.parametrize("code", [942, 980, 1775, 1031, 2019, 12514])
+@pytest.mark.parametrize("code", [980, 1775, 1031, 2019, 12514])
 @pytest.mark.asyncio
 async def test_synonym_access_and_resolution_errors_never_become_missing(
     database, code

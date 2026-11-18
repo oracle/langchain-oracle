@@ -4,7 +4,9 @@
 
 import asyncio
 import json
+import time
 import uuid
+from contextlib import nullcontext
 
 import oracledb
 import pytest
@@ -173,16 +175,83 @@ async def test_vecdb_index_creation_and_reconfiguration(
                     client.close()
 
 
-def test_missing_native_vector_index_uses_package_defaults(oracle_backend):
-    if oracle_backend != "vecdb":
-        pytest.skip("Direct native package setup for a deliberately missing index")
+@pytest.mark.parametrize("entrypoint", ["helper", "constructor", "named-cache"])
+@pytest.mark.parametrize(
+    "strategy", [DistanceStrategy.EUCLIDEAN_DISTANCE, DistanceStrategy.DOT_PRODUCT]
+)
+def test_default_vecdb_index_uses_langchain_defaults(
+    oracle_backend, entrypoint, strategy
+):
+    if oracle_backend.startswith("sql"):
+        pytest.skip("VecDB default index contract")
+    from langchain_oracledb import OracleSemanticCache
+
     from ._backend_fixtures import backend_store
 
-    with backend_store("vecdb", ContractEmbeddings()) as store:
-        # An omitted constructor request now creates a manual-policy table
-        # without a vector index; there is no initial index to drop.
-        assert store.describe_vecdb_index()["details"]["indexes"] == []
-        result = create_index(store.client, store)
-        assert isinstance(result, dict)
-        assert store.describe_vecdb_index()["ready"] is True
-        assert create_index(store.client, store) is None
+    with backend_store(
+        oracle_backend, ContractEmbeddings(), distance_strategy=strategy
+    ) as store:
+        store.add_texts(["oracle default index"], ids=["one"])
+        if entrypoint == "helper":
+            assert isinstance(create_index(store.client, store), dict)
+        elif entrypoint == "constructor":
+            OracleVS(
+                store.client,
+                ContractEmbeddings(),
+                store.table_name,
+                distance_strategy=strategy,
+                mutate_on_duplicate=True,
+                params={"vector_index_params": {}},
+            )
+        else:
+            with pytest.warns(UserWarning, match="idx_name is ignored"):
+                OracleSemanticCache(
+                    store.client,
+                    ContractEmbeddings(),
+                    store.table_name,
+                    distance_strategy=strategy,
+                    create_index_if_missing=True,
+                    index_name="REQUESTED_CACHE_INDEX",
+                )
+        status = None
+        for _ in range(30):
+            status = store.describe_vecdb_index()
+            if status["ready"] is True:
+                break
+            # REST index creation can run in the background.
+            time.sleep(1)
+        assert status["ready"] is True, status
+        with (
+            nullcontext(store.client)
+            if oracle_backend == "rest"
+            else oracledb.connect(**native_config(oracle_backend))
+        ) as connection:
+            if oracle_backend == "rest":
+                description = as_dict(
+                    connection.describe_vector_table(name=store._vecdb.name)
+                )
+            else:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE(:name) "
+                        "FROM dual",
+                        name=store._vecdb.name,
+                    )
+                    description = as_dict(cursor.fetchone()[0])
+        options = description["index_params"]
+        if isinstance(options, str):
+            options = json.loads(options)
+        vector = options.get("vector_index_params", options)
+        assert vector["organization"] == "INMEMORY GRAPH"
+        assert vector["distance_metric"] == (
+            "EUCLIDEAN" if strategy == DistanceStrategy.EUCLIDEAN_DISTANCE else "DOT"
+        )
+        assert vector["accuracy"] == 90
+        assert vector["advanced_params"]["neighbors"] == 32
+        assert vector["advanced_params"]["efConstruction"] == 200
+        for options in (None, {}):
+            assert create_index(store.client, store, options) is None
+        with pytest.warns(UserWarning, match="idx_name is ignored"):
+            assert create_index(store.client, store, {"idx_name": "IGNORED"}) is None
+        assert store.describe_vecdb_index() == status
+        assert store.get_by_ids(["one"])[0].page_content == "oracle default index"

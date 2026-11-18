@@ -55,7 +55,12 @@ def native_index_status(found: list) -> dict[str, Any]:
 
 
 def sdk_index_state(response: dict) -> str:
-    state = str(response.get("index_status") or "").upper()
+    state = str(
+        response.get("index_status")
+        or response.get("Index Status")
+        or response.get("index status")
+        or ""
+    ).upper()
     # ORDS can return a sentence containing the quoted owner/index and type,
     # rather than the bare status. Only normalize the observed success grammar.
     found = re.fullmatch(

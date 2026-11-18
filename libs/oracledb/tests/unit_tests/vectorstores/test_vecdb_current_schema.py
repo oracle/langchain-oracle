@@ -20,6 +20,8 @@ from langchain_oracledb.vectorstores._vecdb import (
 )
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
+from .._sql_probe import sql_probe
+
 SQL_COLUMNS = {"ID", "TEXT", "METADATA", "EMBEDDING"}
 OTHER_COLUMNS = {"ID", "PAYLOAD"}
 GUIDE = (
@@ -58,6 +60,15 @@ def schemas(request, monkeypatch):
 
     def execute(statement, **binds):
         state.update(statement=statement, binds=binds)
+        if statement.startswith(
+            ("SELECT id, text, metadata, embedding FROM ", "SELECT id, dense_vector, ")
+        ):
+            parts = _vecdb._identifier_parts(
+                statement.split(" FROM ", 1)[1].split(" WHERE ", 1)[0]
+            )
+            schema = parts[0] if len(parts) == 2 else state["schema"]
+            if sql_probe(statement, state["tables"].get(schema)):
+                return
         if statement.startswith("SELECT *"):
             columns = state["tables"].get(state["schema"], set())
             if not columns:
@@ -163,8 +174,8 @@ async def test_backend_classifies_active_schema_even_when_login_object_has_same_
     else:
         assert await select(schemas) == expected
     query = cursor.execute.call_args_list[0]
-    assert "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')" in query.args[0]
-    assert query.kwargs == {"name": "DOCS"}
+    assert query.args[0].startswith("SELECT id, text, metadata, embedding FROM ")
+    assert query.kwargs == {}
     assert not any(
         c.args[0].startswith("ALTER SESSION") for c in cursor.execute.call_args_list
     )
@@ -174,11 +185,8 @@ async def test_backend_classifies_active_schema_even_when_login_object_has_same_
 async def test_explicit_schema_overrides_current_schema(schemas):
     schemas[3]["tables"] = {"LOGIN": SQL_COLUMNS, "ACTIVE": CURRENT_COLUMNS}
     assert await select(schemas, '"LOGIN"."DOCS"') == "sql"
-    assert schemas[2].execute.call_args_list[0].kwargs == {
-        "owner": "LOGIN",
-        "name": "DOCS",
-    }
-    assert "owner = :owner" in schemas[2].execute.call_args_list[0].args[0]
+    assert '"LOGIN"."DOCS"' in schemas[2].execute.call_args_list[0].args[0]
+    assert schemas[2].execute.call_args_list[0].kwargs == {}
 
 
 @pytest.mark.asyncio
@@ -199,9 +207,8 @@ async def test_prepare_finds_active_vecdb_table_without_creation(schemas):
         await backend.run_async("prepare")
     else:
         backend.prepare()
-    assert cursor.execute.call_count == 2
-    assert "all_tab_columns" in cursor.execute.call_args_list[0].args[0]
-    assert "all_indexes" in cursor.execute.call_args_list[1].args[0]
+    assert cursor.execute.call_count == 4
+    assert not any(" FROM all_" in c.args[0] for c in cursor.execute.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -284,13 +291,21 @@ async def test_constructor_reuses_selection_columns_during_prepare(
     )
     assert store.backend == "vecdb"
     statements = [call.args[0] for call in cursor.execute.call_args_list]
-    assert sum("column_name FROM" in sql for sql in statements) == 1
-    assert sum("i.parameters" in sql for sql in statements) == 1
-    assert len(statements) == 4  # Columns, ownership description, compatibility, index.
+    assert not any(" FROM all_" in sql for sql in statements)
+    assert sum("SELECT id, dense_vector," in sql for sql in statements) == (
+        1 if "CONTENT_METADATA" in columns else 2
+    )
+    assert len(statements) == (4 if "CONTENT_METADATA" in columns else 5)
     info = store._vecdb.transport._table_info_cache[
         store._vecdb.transport._table_key('"DOCS"')
     ]
-    assert info.columns == frozenset(columns)
+    assert info.columns == frozenset(
+        {
+            "ID",
+            "DENSE_VECTOR",
+            "CONTENT_METADATA" if "CONTENT_METADATA" in columns else "METADATA",
+        }
+    )
 
 
 @pytest.mark.parametrize("stored_model", ["MODEL", "OTHER", None])
@@ -331,4 +346,4 @@ async def test_managed_constructor_reuses_ownership_description(
     statements = [call.args[0] for call in cursor.execute.call_args_list]
     assert sum("DESCRIBE_VECTOR_TABLE(" in sql for sql in statements) == 1
     assert _vecdb.VECDB_RECOGNITION_SQL not in statements
-    assert len(statements) == (4 if stored_model == "MODEL" else 3)
+    assert len(statements) == 4

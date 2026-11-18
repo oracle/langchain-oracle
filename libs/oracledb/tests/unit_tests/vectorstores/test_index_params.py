@@ -249,7 +249,7 @@ async def test_constructor_preserves_nested_index_contract(
             expected = (
                 {"vector_index_params": {"auto_index": False}}
                 if index_request is None
-                else store._vecdb.index_params(index_request)
+                else store._vecdb.index_params(index_request, operation="create_table")
             )
             assert store._vecdb._creation_index_params == expected
             if asynchronous:

@@ -134,6 +134,9 @@ async def test_insert_failure_preserves_primary_error(
     )(None, (23, 26, 4))
     transport.columns = MagicMock(return_value=_vecdb.CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=_vecdb.CURRENT_COLUMNS)
+    transport._remember_table(
+        "DOCS", _vecdb._TableInfo(frozenset(_vecdb.CURRENT_COLUMNS), None)
+    )
     records = [
         {
             "id": "one",

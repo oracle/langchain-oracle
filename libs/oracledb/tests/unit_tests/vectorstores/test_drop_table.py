@@ -20,6 +20,21 @@ from langchain_oracledb.vectorstores.utils import (
 )
 
 
+def probe(asynchronous, columns):
+    kind = (
+        "sql"
+        if {"ID", "TEXT", "METADATA", "EMBEDDING"} <= set(columns)
+        else "other"
+        if columns
+        else "missing"
+    )
+    return patch(
+        "langchain_oracledb.vectorstores._vecdb."
+        + ("_asql_layout" if asynchronous else "_sql_layout"),
+        return_value=kind,
+    )
+
+
 @pytest.fixture(params=[False, True], ids=["sync", "async"])
 def native(request):
     asynchronous = request.param
@@ -76,9 +91,7 @@ async def test_vecdb_drop_uses_package_on_same_checkout(native, metadata, name):
     transport = AsyncNativeTransport if asynchronous else NativeTransport
     cursor.registration_name = name.strip('"')
     with (
-        patch.object(
-            transport, "acolumns" if asynchronous else "columns", return_value=columns
-        ),
+        probe(asynchronous, columns),
         patch.object(
             transport,
             "acall" if asynchronous else "call",
@@ -106,10 +119,7 @@ async def test_vecdb_drop_uses_package_on_same_checkout(native, metadata, name):
 async def test_sql_and_missing_tables(native, columns, backend, expected):
     asynchronous, _, cursor = native
     cursor.vecdb_registered = False
-    transport = AsyncNativeTransport if asynchronous else NativeTransport
-    with patch.object(
-        transport, "acolumns" if asynchronous else "columns", return_value=columns
-    ):
+    with probe(asynchronous, columns):
         await drop(native, backend=backend)
     if expected:
         assert cursor.execute.call_args.args == ('DROP TABLE "DOCS" PURGE',)
@@ -122,11 +132,7 @@ async def test_package_error_never_becomes_raw_drop(native):
     asynchronous, _, cursor = native
     transport = AsyncNativeTransport if asynchronous else NativeTransport
     with (
-        patch.object(
-            transport,
-            "acolumns" if asynchronous else "columns",
-            return_value={"ID", "DENSE_VECTOR", "METADATA"},
-        ),
+        probe(asynchronous, {"ID", "DENSE_VECTOR", "METADATA"}),
         patch.object(
             transport,
             "acall" if asynchronous else "call",
@@ -145,13 +151,8 @@ async def test_unsupported_package_name_never_becomes_raw_drop(native, name):
     parts = _identifier_parts(name)
     cursor.registration_name = parts[-1]
     cursor.registration_owner = parts[0] if len(parts) == 2 else "OWNER"
-    transport = AsyncNativeTransport if asynchronous else NativeTransport
     with (
-        patch.object(
-            transport,
-            "acolumns" if asynchronous else "columns",
-            return_value={"ID", "DENSE_VECTOR", "METADATA"},
-        ),
+        probe(asynchronous, {"ID", "DENSE_VECTOR", "METADATA"}),
         pytest.raises(ValueError, match="cannot preserve"),
     ):
         await drop(native, name)
@@ -162,13 +163,8 @@ async def test_unsupported_package_name_never_becomes_raw_drop(native, name):
 async def test_pending_work_is_not_committed_by_vecdb_drop(native):
     asynchronous, conn, cursor = native
     conn.transaction_in_progress = True
-    transport = AsyncNativeTransport if asynchronous else NativeTransport
     with (
-        patch.object(
-            transport,
-            "acolumns" if asynchronous else "columns",
-            return_value={"ID", "DENSE_VECTOR", "METADATA"},
-        ),
+        probe(asynchronous, {"ID", "DENSE_VECTOR", "METADATA"}),
         pytest.raises(RuntimeError, match="no pending work"),
     ):
         await drop(native)
@@ -181,13 +177,8 @@ async def test_pending_work_is_not_committed_by_vecdb_drop(native):
 async def test_invalid_backend_or_layout_rejected(native, backend):
     asynchronous, _, cursor = native
     cursor.vecdb_registered = False
-    transport = AsyncNativeTransport if asynchronous else NativeTransport
     with (
-        patch.object(
-            transport,
-            "acolumns" if asynchronous else "columns",
-            return_value={"PAYLOAD"},
-        ),
+        probe(asynchronous, {"PAYLOAD"}),
         pytest.raises(ValueError),
     ):
         await drop(native, backend=backend)
@@ -231,11 +222,7 @@ async def test_pool_drop_retains_one_checkout(native):
     pool.acquire.return_value.__aenter__.return_value = conn
     transport = AsyncNativeTransport if asynchronous else NativeTransport
     with (
-        patch.object(
-            transport,
-            "acolumns" if asynchronous else "columns",
-            return_value={"ID", "DENSE_VECTOR", "METADATA"},
-        ),
+        probe(asynchronous, {"ID", "DENSE_VECTOR", "METADATA"}),
         patch.object(
             transport,
             "acall" if asynchronous else "call",
@@ -249,3 +236,20 @@ async def test_pool_drop_retains_one_checkout(native):
             drop_table_purge(pool, "DOCS")
     pool.acquire.assert_called_once_with()
     assert call.call_args.args[0].client is conn
+
+
+@pytest.mark.asyncio
+async def test_auto_sql_cleanup_does_not_depend_on_vecdb_in_cross_schema_session(
+    native,
+):
+    asynchronous, _, cursor = native
+    error = oracledb.DatabaseError(SimpleNamespace(code=57708))
+
+    def execute(statement, **binds):
+        if "DBMS_VECTOR_DATABASE" in statement:
+            raise error
+
+    cursor.execute.side_effect = execute
+    with probe(asynchronous, {"ID", "TEXT", "METADATA", "EMBEDDING"}):
+        await drop(native)
+    cursor.execute.assert_called_once_with('DROP TABLE "DOCS" PURGE')

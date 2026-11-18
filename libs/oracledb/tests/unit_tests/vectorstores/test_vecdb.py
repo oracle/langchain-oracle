@@ -36,6 +36,8 @@ from langchain_oracledb.vectorstores._vecdb import (
 from langchain_oracledb.vectorstores._vecdb_adapter import LOGICAL_ID_KEY, storage_id
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
+from .._sql_probe import sql_probe
+
 
 class Embedding(Embeddings):
     def embed_documents(self, texts):
@@ -161,8 +163,12 @@ def selection_connection(version, columns, supported=True, compatible="23.6.0.0.
     def execute(sql, **binds):
         nonlocal statement
         statement = sql
+        if sql_probe(sql, columns):
+            return
 
     def fetchone():
+        if "all_synonyms" in statement:
+            return None
         if "WITH FUNCTION lc_compatible" in statement:
             return int(supported), compatible if supported else None
         if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in statement:
@@ -201,7 +207,7 @@ def test_auto_preserves_existing_sql_even_on_current_database():
         "23.26.3", {"ID", "EMBEDDING", "TEXT", "METADATA"}
     )
     assert native_selection(conn, "DOCS", "auto")[0] == "sql"
-    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_count == 1
     with pytest.raises(ValueError) as error:
         native_selection(conn, "DOCS", "vecdb")
     assert str(error.value) == (
@@ -220,11 +226,13 @@ def test_auto_missing_package_uses_sql_but_explicit_vecdb_fails():
 def test_explicit_sql_does_not_probe_capabilities():
     conn, cursor = selection_connection("23.26.3", [])
     assert native_selection(conn, "DOCS", "sql")[0] == "sql"
-    assert [c.args[0] for c in cursor.execute.call_args_list] == [
-        "SELECT column_name FROM all_tab_columns "
-        "WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AND table_name = :name",
-        'SELECT * FROM "DOCS" WHERE 1 = 0',
-    ]
+    assert (
+        cursor.execute.call_args_list[0].args[0]
+        == 'SELECT id, text, metadata, embedding FROM "DOCS" WHERE ROWNUM < 1'
+    )
+    assert not any(
+        "DBMS_VECTOR_DATABASE" in c.args[0] for c in cursor.execute.call_args_list
+    )
 
 
 def test_current_table_rejected_on_legacy_database():
@@ -1008,6 +1016,10 @@ def test_native_pool_initialization_does_not_acquire_a_second_connection():
 
     def execute(statement, **binds):
         nonlocal created
+        if "all_synonyms" in statement:
+            cursor.fetchone.return_value = None
+        if sql_probe(statement, CURRENT_COLUMNS if created else set()):
+            return
         if statement == _vecdb.VECDB_CAPABILITY_SQL:
             cursor.fetchone.return_value = (1, "23.6.0.0.0")
         if "create_vector_table" in statement.lower():
@@ -1365,6 +1377,9 @@ async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, capl
     )
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
+    transport._remember_table(
+        "DOCS", _vecdb._TableInfo(frozenset(_vecdb.CURRENT_COLUMNS), None)
+    )
     records = [
         {"id": key, "dense_vector": [1.0], "metadata": {"__orcl_internal_content": key}}
         for key in ["valid", "duplicate", "other"]
@@ -1512,6 +1527,12 @@ async def test_public_native_index_creation_is_noop(store, asynchronous, params)
     )
     transport.adescribe_index = AsyncMock(
         return_value={"ready": True, "details": {"indexes": [{"index_name": "AUTO"}]}}
+    )
+    transport.vector_index_status = MagicMock(
+        return_value={"Index Status": "Index Creation Completed"}
+    )
+    transport.avector_index_status = AsyncMock(
+        return_value={"Index Status": "Index Creation Completed"}
     )
     store._vecdb.transport = transport
     if asynchronous:

@@ -164,6 +164,13 @@ Constructors preserve existing indexes. Use `create_index()` or
 `acreate_index()` to create a missing index or explicitly change its settings.
 VecDB stores also provide `describe_vecdb_index()` to check readiness.
 
+Creating a missing index without options uses LangChain's HNSW defaults and the
+store's distance strategy. An empty constructor `vector_index_params={}` uses
+the same defaults; omitting that constructor option leaves vector indexing off.
+For VecDB, `idx_name` is accepted with a warning and ignored because VecDB assigns
+the physical name. Use `describe_vecdb_index()` to discover it. SQL continues to
+honor `idx_name`.
+
 ### Hybrid retrieval
 
 Combine keyword and semantic search using a database embedding model and a
@@ -195,7 +202,11 @@ documents = retriever.invoke("database backups")
 
 Choose `"keyword"`, `"semantic"`, or `"hybrid"` with `search_mode`, and set
 `return_scores=True` to include scores in document metadata. VecDB discovers the
-physical hybrid index automatically.
+physical hybrid index on first use and caches it for subsequent searches.
+Native vector queries and ordinary SQL operations do not discover metadata
+indexes. Catalog checks are reserved for index discovery and maintenance, physical index
+status, layout migration, and compatibility fallbacks; new-table backend
+selection also checks package capabilities before choosing a creation path.
 
 Hybrid search, index creation and dropping, and vectorizer preference management
 also support REST when the database user has access to ORDS REST-enabled SQL and

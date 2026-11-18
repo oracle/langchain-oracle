@@ -257,11 +257,8 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
     assert metadata_index(connection, store) == (actual_name, parameters)
 
 
-def test_rest_sdk_reports_unsupported_sql_operations(vecdb_store):
-    from langchain_oracledb.retrievers.hybrid_search import (
-        OracleHybridSearchRetriever,
-        create_hybrid_index,
-    )
+def test_rest_sdk_reports_unsupported_text_operations(vecdb_store):
+    """Standalone text operations remain unsupported; hybrid has SQL coverage."""
     from langchain_oracledb.retrievers.text_search import (
         OracleTextSearchRetriever,
         create_text_index,
@@ -270,11 +267,7 @@ def test_rest_sdk_reports_unsupported_sql_operations(vecdb_store):
     store = vecdb_store
     operations = [
         lambda: create_text_index(store.client, "TEXT_IDX", vector_store=store),
-        lambda: create_hybrid_index(store.client, "HYBRID_IDX", vector_store=store),
         lambda: OracleTextSearchRetriever(vector_store=store).invoke("oracle"),
-        lambda: OracleHybridSearchRetriever(
-            vector_store=store, idx_name="HYBRID_IDX"
-        ).invoke("oracle"),
     ]
     for operation in operations:
         with pytest.raises(ValueError, match="oracle-vecdb REST SDK does not support"):
