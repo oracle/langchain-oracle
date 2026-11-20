@@ -1031,7 +1031,11 @@ class GenericProvider(Provider):
             else:
                 return self.oci_tool_choice_none()
         elif isinstance(tool_choice, dict):
-            # For Meta, we use ToolChoiceAuto for tool selection
+            # OpenAI-style {"type": "function", "function": {"name": ...}}
+            function = tool_choice.get("function")
+            name = function.get("name") if isinstance(function, dict) else None
+            if tool_choice.get("type") == "function" and name:
+                return self.oci_tool_choice_function(name=name)
             return self.oci_tool_choice_auto()
         raise ValueError(
             f"Unrecognized tool_choice type. Expected str, bool or dict. "
