@@ -1327,6 +1327,44 @@ def test_v2_api_guard_for_non_cohere_providers(monkeypatch: MonkeyPatch) -> None
 
 
 @pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "model_id",
+    ["meta.llama-3.3-70b-instruct", "openai.gpt-4.1", "xai.grok-4"],
+)
+@pytest.mark.parametrize(
+    "tool_choice",
+    ["get_time", {"type": "function", "function": {"name": "get_time"}}],
+)
+def test_tool_choice_by_name_is_sent_as_function_choice(
+    model_id: str, tool_choice: Union[str, dict]
+) -> None:
+    """A tool name given as str or as an OpenAI-style dict forces that tool."""
+    from oci.generative_ai_inference import models
+
+    llm = ChatOCIGenAI(model_id=model_id, client=MagicMock())
+
+    def get_weather(city: str) -> str:
+        """Get weather for a city."""
+        return city
+
+    def get_time(city: str) -> str:
+        """Get the local time in a city."""
+        return city
+
+    bound = llm.bind_tools([get_weather, get_time], tool_choice=tool_choice)
+    request = llm._prepare_request(
+        [HumanMessage(content="hi")],
+        stop=None,
+        stream=False,
+        **cast(Any, bound).kwargs,
+    )
+
+    sent = request.chat_request.tool_choice
+    assert isinstance(sent, models.ToolChoiceFunction)
+    assert sent.name == "get_time"
+
+
+@pytest.mark.requires("oci")
 def test_tool_choice_none_after_tool_results() -> None:
     """Test tool_choice='none' when max_sequential_tool_calls is exceeded.
 
