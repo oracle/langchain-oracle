@@ -12,18 +12,18 @@ from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_oracledb import OracleVS
 from langchain_oracledb.embeddings import OracleEmbeddings
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
-    AsyncNativeTransport,
-    NativeTransport,
-    VecDBBackend,
-)
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
 from langchain_oracledb.vectorstores._vecdb_adapter import (
     LOGICAL_ID_KEY,
     TEXT_KEY,
     SQLNetAdapter,
     storage_id,
 )
+from langchain_oracledb.vectorstores._vecdb_native import (
+    AsyncNativeTransport,
+    NativeTransport,
+)
+from langchain_oracledb.vectorstores._vecdb_schema import CURRENT_COLUMNS
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 EMBED_PARAMS = {"model": "MODEL", "embed_metadata_jsonpath": TEXT_KEY}
@@ -93,13 +93,13 @@ def environment(request):
 
             stack.enter_context(
                 patch(
-                    "langchain_oracledb.vectorstores._vecdb." + selection,
+                    "langchain_oracledb.vectorstores._vecdb_schema." + selection,
                     new=mock_type(side_effect=select),
                 )
             )
             stack.enter_context(
                 patch(
-                    "langchain_oracledb.vectorstores._vecdb._"
+                    "langchain_oracledb.vectorstores._vecdb_schema._"
                     + prefix
                     + "inspect_columns",
                     new=mock_type(

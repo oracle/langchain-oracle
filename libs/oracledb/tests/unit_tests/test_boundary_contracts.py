@@ -272,14 +272,14 @@ def test_text_search_limit_must_be_positive_integer(value):
 
 @pytest.mark.parametrize("columns", [set(), {"ID", "TEXT", "EMBEDDING", "METADATA"}])
 def test_migration_requires_vecdb_layout(columns):
-    from langchain_oracledb.vectorstores._vecdb import _migration_actions
+    from langchain_oracledb.vectorstores._vecdb_schema import _migration_actions
 
     with pytest.raises(ValueError, match="recognized VecDB layouts"):
         _migration_actions(columns, '"DOCS"')
 
 
 def test_vecdb_layout_requires_metadata_column():
-    from langchain_oracledb.vectorstores._vecdb import BASE_COLUMNS, _layout
+    from langchain_oracledb.vectorstores._vecdb_schema import BASE_COLUMNS, _layout
 
     with pytest.raises(ValueError, match="no recognized metadata column"):
         _layout(set(BASE_COLUMNS))

@@ -11,11 +11,11 @@ import pytest
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores._vecdb import (
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    parse_version,
 )
+from langchain_oracledb.vectorstores._vecdb_schema import parse_version
 from langchain_oracledb.vectorstores.oraclevs import _aget_connection, _get_connection
 from langchain_oracledb.vectorstores.utils import adrop_table_purge, drop_table_purge
 

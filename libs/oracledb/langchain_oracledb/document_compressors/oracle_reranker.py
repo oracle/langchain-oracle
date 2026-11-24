@@ -15,7 +15,7 @@ from langchain_core.documents import BaseDocumentCompressor, Document
 from pydantic import ConfigDict, Field, model_validator
 
 from .._telemetry import tag_sql
-from ..vectorstores._vecdb import RestTransport, is_sdk_client
+from ..vectorstores._vecdb_adapter import RestTransport, is_sdk_client
 from ..vectorstores.utils import _get_connection
 
 

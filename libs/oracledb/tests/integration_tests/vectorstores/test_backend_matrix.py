@@ -21,6 +21,8 @@ import oracledb
 import pytest
 from langchain_core.embeddings import Embeddings
 
+import langchain_oracledb.vectorstores._vecdb_native as _vecdb_native
+import langchain_oracledb.vectorstores.utils as _db_utils
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores._vecdb_adapter import storage_id
 from langchain_oracledb.vectorstores.oraclevs import INTERNAL_ID_KEY
@@ -480,10 +482,10 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
     These VecDB-shaped fixtures test identifier resolution rather than package
     APIs. The database enforces storage support during public VecDB creation.
     """
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
-        VecDBBackend,
     )
 
     connection, _, config, _, _ = database_matrix
@@ -720,10 +722,12 @@ async def test_broken_synonym_never_creates_a_table(
 async def test_current_schema_does_not_inspect_login_users_table(
     database_matrix, asynchronous, origin
 ):
-    from langchain_oracledb.vectorstores._vecdb import (
-        VECDB_CAPABILITY_SQL,
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
+    )
+    from langchain_oracledb.vectorstores._vecdb_schema import (
+        VECDB_CAPABILITY_SQL,
         anative_selection,
         native_selection,
     )
@@ -796,9 +800,11 @@ async def test_current_schema_does_not_inspect_login_users_table(
 async def test_current_schema_index_lookup_does_not_find_login_users_index(
     database_matrix, asynchronous
 ):
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
+    )
+    from langchain_oracledb.vectorstores._vecdb_schema import (
         _index_query,
         _metadata_index_query,
     )
@@ -887,7 +893,7 @@ async def test_current_schema_index_lookup_does_not_find_login_users_index(
 async def test_native_vecdb_batch_commits_successful_rows(
     database_matrix, asynchronous, pending, autocommit
 ):
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
     )
@@ -969,7 +975,7 @@ async def test_native_vecdb_batch_commits_successful_rows(
 async def test_native_migration_rejects_sparse_ddl_below_compatible(
     database_matrix, asynchronous, vecdb_enabled
 ):
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
     )
@@ -1006,7 +1012,7 @@ async def test_native_pool_operation_keeps_checkout_schema(
     """
     from contextlib import asynccontextmanager, contextmanager
 
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
     )
@@ -1121,7 +1127,8 @@ async def test_native_function_signatures_compile_without_execution(
     database_matrix, asynchronous, operation
 ):
     """Qualify emitted signatures without running package mutations."""
-    from langchain_oracledb.vectorstores._vecdb import NativeTransport, parse_version
+    from langchain_oracledb.vectorstores._vecdb_native import NativeTransport
+    from langchain_oracledb.vectorstores._vecdb_schema import parse_version
 
     connection, _, config, _, _ = database_matrix
     with connection.cursor() as cursor:
@@ -1193,8 +1200,6 @@ async def test_native_insert_real_driver_failure_outcomes(
     """
     import asyncio
     from contextlib import asynccontextmanager, contextmanager
-
-    from langchain_oracledb.vectorstores import _vecdb
 
     _, _, config, tables, baseline = database_matrix
     name = tables["current_vecdb_shape"]
@@ -1293,10 +1298,12 @@ async def test_native_insert_real_driver_failure_outcomes(
     async def aget(_):
         yield proxy
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (
-        _vecdb.AsyncNativeTransport if asynchronous else _vecdb.NativeTransport
+        _vecdb_native.AsyncNativeTransport
+        if asynchronous
+        else _vecdb_native.NativeTransport
     )(None, (23, 26, 4))
     try:
         expected = (
@@ -1350,10 +1357,10 @@ async def test_native_insert_real_driver_failure_outcomes(
 async def test_vecdb_index_readiness_snapshot_tracks_real_metadata_index(
     database_matrix, asynchronous
 ):
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
-        VecDBBackend,
     )
 
     connection, _, config, tables, baseline = database_matrix
@@ -1404,11 +1411,11 @@ async def test_native_metadata_replacement_recovers_real_index_and_ingestion(
     database_matrix, asynchronous
 ):
     """Real DROP/failed CREATE/restore, followed by insert and metadata text query."""
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
-        _metadata_index_query,
     )
+    from langchain_oracledb.vectorstores._vecdb_schema import _metadata_index_query
 
     connection, _, config, tables, baseline = database_matrix
     name = tables["current_vecdb_shape"]
@@ -1496,7 +1503,7 @@ async def test_native_metadata_replacement_recovers_real_index_and_ingestion(
 async def test_native_invalid_signature_fails_before_package_execution(
     database_matrix, asynchronous
 ):
-    from langchain_oracledb.vectorstores._vecdb import (
+    from langchain_oracledb.vectorstores._vecdb_native import (
         AsyncNativeTransport,
         NativeTransport,
     )

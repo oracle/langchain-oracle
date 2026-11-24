@@ -10,8 +10,9 @@ import oracledb
 import pytest
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores import _vecdb, oraclevs
+from langchain_oracledb.vectorstores import oraclevs
 
 from . import test_vecdb_pool_sessions as pool_sessions
 
@@ -39,7 +40,7 @@ def creation(sessions, monkeypatch):
     original = s.a.execute
 
     def execute(statement, parameters=None, **binds):
-        if statement == _vecdb.VECDB_CAPABILITY_SQL:
+        if statement == _vecdb_schema.VECDB_CAPABILITY_SQL:
             s.a.log.append((statement, binds))
             s.a.one = (1,)
             return
@@ -145,7 +146,7 @@ async def test_existing_vecdb_and_explicit_requests_never_fall_back(creation, ba
     s = creation
     error = database_error()
     if backend == "auto":
-        s.a.columns = set(_vecdb.CURRENT_COLUMNS)
+        s.a.columns = set(_vecdb_schema.CURRENT_COLUMNS)
         s.index_error = error
         params = {"vector_index_params": {}}
     else:
@@ -190,7 +191,7 @@ async def test_other_failures_never_trigger_fallback(creation, error):
 @pytest.mark.parametrize(
     "columns",
     [
-        _vecdb.CURRENT_COLUMNS,
+        _vecdb_schema.CURRENT_COLUMNS,
         {"ID", "TEXT", "METADATA", "EMBEDDING"},
         {"UNRELATED"},
     ],

@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from langchain_oracledb.vectorstores._vecdb import (
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_adapter import search_request
+from langchain_oracledb.vectorstores._vecdb_native import (
     NativeTransport,
-    VecDBBackend,
     _filter_query,
     _filter_response,
 )
-from langchain_oracledb.vectorstores._vecdb_adapter import search_request
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 

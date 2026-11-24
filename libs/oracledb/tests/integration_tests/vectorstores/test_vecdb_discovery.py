@@ -10,6 +10,8 @@ from unittest.mock import patch
 import oracledb
 import pytest
 
+import langchain_oracledb.vectorstores._vecdb_native as _vecdb_native
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 from langchain_oracledb.vectorstores import _vecdb
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
@@ -59,12 +61,13 @@ async def test_text_layout_is_cached_and_external_column_change_refreshes(
                 )
             if asynchronous:
                 async_connection = await oracledb.connect_async(**config)
-                transport = _vecdb.AsyncNativeTransport(
-                    async_connection, _vecdb.parse_version(async_connection.version)
+                transport = _vecdb_native.AsyncNativeTransport(
+                    async_connection,
+                    _vecdb_schema.parse_version(async_connection.version),
                 )
             else:
-                transport = _vecdb.NativeTransport(
-                    connection, _vecdb.parse_version(connection.version)
+                transport = _vecdb_native.NativeTransport(
+                    connection, _vecdb_schema.parse_version(connection.version)
                 )
             backend = _vecdb.VecDBBackend(transport, table, DistanceStrategy.COSINE)
 
@@ -75,10 +78,12 @@ async def test_text_layout_is_cached_and_external_column_change_refreshes(
 
             with (
                 patch.object(
-                    _vecdb, "_layout_query", wraps=_vecdb._layout_query
+                    _vecdb_schema, "_layout_query", wraps=_vecdb_schema._layout_query
                 ) as layout,
                 patch.object(
-                    _vecdb, "_metadata_index_query", wraps=_vecdb._metadata_index_query
+                    _vecdb_schema,
+                    "_metadata_index_query",
+                    wraps=_vecdb_schema._metadata_index_query,
                 ) as indexes,
             ):
                 await invoke("prepare", columns={"ID", "DENSE_VECTOR", metadata_column})

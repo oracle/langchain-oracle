@@ -47,7 +47,10 @@ def load_onnx_model(
             model_params = dict(model_params or {})
             model_params.setdefault("metadata", url_metadata)
 
-        from .vectorstores._vecdb import RestTransport, is_sdk_client
+        from .vectorstores._vecdb_adapter import (
+            RestTransport,
+            is_sdk_client,
+        )
 
         if is_sdk_client(conn):
             if url is None:

@@ -10,12 +10,12 @@ import pytest
 
 from langchain_oracledb._annotations import table_annotations
 from langchain_oracledb.cache import _SemanticCacheVectorStore
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    VecDBBackend,
 )
+from langchain_oracledb.vectorstores._vecdb_schema import CURRENT_COLUMNS
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 

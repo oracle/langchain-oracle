@@ -1,11 +1,13 @@
 # Copyright (c) 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""Normalize OracleVS and VecDB vector-index option names without mutation."""
+"""Shared validation and normalization of OracleVS vector-index options."""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Optional
+
+from .utils import _quote_indentifier
 
 _ORGANIZATIONS = {
     "HNSW": "HNSW",
@@ -108,3 +110,37 @@ def constructor_index_params(
             'use params={"vector_index_params": {...}} for vector index options'
         )
     return normalize_index_params(params.get("vector_index_params"))
+
+
+def _validate_int_param(
+    config: dict[str, Any],
+    key: str,
+    min_value: int,
+    max_value: Optional[int] = None,
+) -> None:
+    if key not in config:
+        return
+
+    value = config[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer.")
+    if value < min_value:
+        raise ValueError(f"{key} must be at least {min_value}.")
+    if max_value is not None and value > max_value:
+        raise ValueError(f"{key} must be at most {max_value}.")
+
+
+def _validate_index_type(config: dict[str, Any], expected_type: str) -> None:
+    if "idx_type" not in config:
+        return
+
+    idx_type = config["idx_type"]
+    if not isinstance(idx_type, str) or idx_type.upper() != expected_type:
+        raise ValueError(f"idx_type must be {expected_type}.")
+    config["idx_type"] = expected_type
+
+
+def _validate_vector_index_common(config: dict[str, Any]) -> None:
+    config["idx_name"] = _quote_indentifier(config["idx_name"])
+    _validate_int_param(config, "accuracy", 1, 100)
+    _validate_int_param(config, "parallel", 1)

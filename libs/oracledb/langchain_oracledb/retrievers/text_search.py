@@ -62,6 +62,8 @@ if TYPE_CHECKING:
         ConnectionPool,
     )
 
+from ..vectorstores.utils import _generate_accum_query as _generate_accum_query
+
 logger = logging.getLogger(__name__)
 
 _SIMPLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
@@ -251,24 +253,6 @@ async def acreate_text_index(
                 logger.info(f"Index {idx_name} created successfully...")
         else:
             logger.info(f"Index {idx_name} already exists...")
-
-
-def _generate_accum_query(query: str, fuzzy: Optional[bool] = False) -> str:
-    """Tokenize query on non-word boundaries and join with Oracle Text ACCUM.
-
-    Behavior:
-    - Splits on non-word characters, discarding empty tokens.
-    - When fuzzy is False: each token is quoted: "token".
-    - When fuzzy is True: wraps each token as FUZZY("token").
-    - Joins tokens with ' ACCUM '.
-
-    Examples:
-    'refund policy' -> '"refund" ACCUM "policy"'
-    fuzzy=True -> 'fuzzy("refund") ACCUM fuzzy("policy")'
-    """
-    words = re.split(r"\W+", query)
-    words = [f'"{word}"' if not fuzzy else f'fuzzy("{word}")' for word in words if word]
-    return " ACCUM ".join(words)
 
 
 class OracleTextSearchRetriever(BaseRetriever):

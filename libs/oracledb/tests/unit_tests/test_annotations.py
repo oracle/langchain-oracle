@@ -168,18 +168,18 @@ async def test_store_subclass_selects_annotation_type_during_creation(
     with (
         patch.object(OracleVS, "_initialize", autospec=True, side_effect=initialize),
         patch(
-            "langchain_oracledb.vectorstores._vecdb.native_selection",
+            "langchain_oracledb.vectorstores._vecdb_schema.native_selection",
             return_value=("sql", (23, 4, 0)),
         ),
         patch(
-            "langchain_oracledb.vectorstores._vecdb.anative_selection",
+            "langchain_oracledb.vectorstores._vecdb_schema.anative_selection",
             new=AsyncMock(return_value=("sql", (23, 4, 0))),
         ),
     ):
         if asynchronous:
             with (
                 patch(
-                    "langchain_oracledb.vectorstores._vecdb._ainspect_columns",
+                    "langchain_oracledb.vectorstores._vecdb_schema._ainspect_columns",
                     new=AsyncMock(return_value=set()),
                 ),
                 patch.object(

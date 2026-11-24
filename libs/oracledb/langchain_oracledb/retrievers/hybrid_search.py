@@ -110,7 +110,7 @@ def _validate_parameters(
 
 
 def _preference_connection(client: Any) -> Any:
-    from ..vectorstores._vecdb import is_sdk_client
+    from ..vectorstores._vecdb_adapter import is_sdk_client
 
     if is_sdk_client(client):
         raise ValueError(
@@ -349,7 +349,7 @@ def drop_preference(connection, preference_name):
 
 async def adrop_preference(connection, preference_name):
     """Async variant of drop_preference."""
-    from ..vectorstores._vecdb import is_sdk_client
+    from ..vectorstores._vecdb_adapter import is_sdk_client
 
     if is_sdk_client(connection):
         raise ValueError(
@@ -433,7 +433,7 @@ def _get_hybrid_index_ddl(
         )
 
     if metadata_parameters is not None:
-        from langchain_oracledb.vectorstores._vecdb import (
+        from ..vectorstores._vecdb_schema import (
             DATAGUIDE_CALLBACK,
             table_identifier,
         )
@@ -506,7 +506,7 @@ def _get_hybrid_index_ddl(
 
     column = "text"
     if vectorizer_preference.vs._vecdb is not None:
-        from langchain_oracledb.vectorstores._vecdb import CURRENT_VERSION
+        from ..vectorstores._vecdb_adapter import CURRENT_VERSION
 
         transport = vectorizer_preference.vs._vecdb.native_transport(
             "hybrid search and indexing"
@@ -520,7 +520,7 @@ def _get_hybrid_index_ddl(
             raise ValueError("Unsupported VecDB metadata column")
         column = metadata_column
 
-    from langchain_oracledb.vectorstores._vecdb_adapter import hybrid_index_ddl
+    from ..vectorstores._vecdb_adapter import hybrid_index_ddl
 
     return (
         hybrid_index_ddl(
@@ -597,7 +597,7 @@ def create_hybrid_index(
         vectorizer_preference.vs if vectorizer_preference else None
     )
     if target is not None and target._vecdb is not None:
-        from langchain_oracledb.vectorstores._vecdb import _is_native_pool
+        from ..vectorstores._vecdb_native import _is_native_pool
 
         transport = target._vecdb.native_transport("hybrid search and indexing")
         if _is_native_pool(transport.client):
@@ -689,7 +689,7 @@ async def acreate_hybrid_index(
         vectorizer_preference.vs if vectorizer_preference else None
     )
     if target is not None and target._vecdb is not None:
-        from langchain_oracledb.vectorstores._vecdb import (
+        from ..vectorstores._vecdb_native import (
             AsyncNativeTransport,
             _is_native_pool,
         )
@@ -768,7 +768,9 @@ async def acreate_hybrid_index(
     finally:
         if drop:
             if vectorizer_preference.vs._vecdb is not None:
-                from langchain_oracledb.vectorstores._vecdb import _complete_cleanup
+                from ..vectorstores._vecdb_native import (
+                    _complete_cleanup,
+                )
 
                 await _complete_cleanup(vectorizer_preference.adrop_preference())
             else:
@@ -845,7 +847,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
     # apply function to field
     @field_validator("params")
     def validate_params(cls, search_params):
-        from langchain_oracledb.vectorstores._vecdb_adapter import (
+        from ..vectorstores._vecdb_adapter import (
             validate_retriever_options,
         )
 
@@ -868,7 +870,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
             dict: Parameters suitable for json(:search_params)
                 in DBMS_HYBRID_VECTOR.SEARCH.
         """
-        from langchain_oracledb.vectorstores._vecdb_adapter import (
+        from ..vectorstores._vecdb_adapter import (
             validate_retriever_options,
         )
 
@@ -896,7 +898,7 @@ class OracleHybridSearchRetriever(BaseRetriever):
         return search_params
 
     def _get_vecdb_search_params(self, query: str, **kwargs: Any) -> dict:
-        from langchain_oracledb.vectorstores._vecdb_adapter import (
+        from ..vectorstores._vecdb_adapter import (
             retriever_hybrid_options,
         )
 

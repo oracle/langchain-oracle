@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from langchain_oracledb.vectorstores import _vecdb
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 from langchain_oracledb.vectorstores.utils import adrop_table_purge, drop_table_purge
 
 from .._sql_probe import sql_probe
@@ -28,7 +28,7 @@ def database(request):
         "available": True,
         "payload": None,
         "schema": "OWNER",
-        "columns": set(_vecdb.CURRENT_COLUMNS),
+        "columns": set(_vecdb_schema.CURRENT_COLUMNS),
         "statement": "",
         "error": None,
     }
@@ -44,9 +44,9 @@ def database(request):
                 raise oracledb.DatabaseError(SimpleNamespace(code=904))
 
     def fetchone():
-        if state["statement"] == _vecdb.VECDB_CAPABILITY_SQL:
+        if state["statement"] == _vecdb_schema.VECDB_CAPABILITY_SQL:
             return 1, "23.6.0"
-        if state["statement"] == _vecdb.VECDB_RECOGNITION_SQL:
+        if state["statement"] == _vecdb_schema.VECDB_RECOGNITION_SQL:
             return (int(state["available"]),)
         if "SELECT SYS.DBMS_VECTOR_DATABASE." in state["statement"]:
             return state["payload"], state["schema"]
@@ -65,9 +65,9 @@ def database(request):
 async def recognize(database, name="DOCS"):
     asynchronous, _, cursor, _ = database
     return (
-        await _vecdb._ais_vecdb_table(cursor, name)
+        await _vecdb_schema._ais_vecdb_table(cursor, name)
         if asynchronous
-        else _vecdb._is_vecdb_table(cursor, name)
+        else _vecdb_schema._is_vecdb_table(cursor, name)
     )
 
 
@@ -79,7 +79,7 @@ async def test_targeted_description_identifies_package_tables(registered, databa
         json.dumps({"owner": "OWNER", "table_name": "DOCS"}) if registered else None
     )
     assert await recognize(database) is registered
-    assert cursor.execute.call_args.args == (_vecdb.VECDB_TABLE_SQL,)
+    assert cursor.execute.call_args.args == (_vecdb_schema.VECDB_TABLE_SQL,)
     assert cursor.execute.call_args.kwargs == {"name": '"DOCS"'}
     assert cursor.execute.call_count == 1
 
@@ -92,8 +92,8 @@ async def test_absent_package_compile_error_uses_availability_fallback(database,
     state["error"] = oracledb.DatabaseError(SimpleNamespace(code=code))
     assert not await recognize(database)
     assert cursor.execute.call_count == 2
-    assert cursor.execute.call_args_list[0].args[0] == _vecdb.VECDB_TABLE_SQL
-    assert cursor.execute.call_args.args[0] == _vecdb.VECDB_RECOGNITION_SQL
+    assert cursor.execute.call_args_list[0].args[0] == _vecdb_schema.VECDB_TABLE_SQL
+    assert cursor.execute.call_args.args[0] == _vecdb_schema.VECDB_RECOGNITION_SQL
 
 
 @pytest.mark.asyncio
@@ -101,14 +101,14 @@ async def test_existing_sql_store_selects_sql_without_vecdb_package(database):
     asynchronous, connection, cursor, state = database
     state.update(available=False, columns={"ID", "EMBEDDING", "METADATA", "TEXT"})
     selected = (
-        await _vecdb.anative_selection(connection, "DOCS", "auto")
+        await _vecdb_schema.anative_selection(connection, "DOCS", "auto")
         if asynchronous
-        else _vecdb.native_selection(connection, "DOCS", "auto")
+        else _vecdb_schema.native_selection(connection, "DOCS", "auto")
     )
     assert selected[0] == "sql"
     statements = [call.args[0] for call in cursor.execute.call_args_list]
-    assert statements.count(_vecdb.VECDB_TABLE_SQL) == 0
-    assert statements.count(_vecdb.VECDB_RECOGNITION_SQL) == 0
+    assert statements.count(_vecdb_schema.VECDB_TABLE_SQL) == 0
+    assert statements.count(_vecdb_schema.VECDB_RECOGNITION_SQL) == 0
 
 
 @pytest.mark.parametrize(
@@ -201,8 +201,8 @@ async def test_malformed_identity_does_not_authorize_sql_fallback(database, payl
     [
         {"ID", "DENSE_VECTOR"},
         {"ID", "DENSE_VECTOR", "METADATA"},
-        set(_vecdb.CURRENT_COLUMNS),
-        set(_vecdb.CURRENT_COLUMNS) | {"METADATA"},
+        set(_vecdb_schema.CURRENT_COLUMNS),
+        set(_vecdb_schema.CURRENT_COLUMNS) | {"METADATA"},
     ],
 )
 @pytest.mark.parametrize("available", [False, True])
@@ -244,17 +244,17 @@ async def test_backend_selection_distinguishes_same_columns_by_registration(
     if registered:
         cursor.var.side_effect = lambda *a, **kw: MagicMock(getvalue=lambda: "23.6.0")
         selected = (
-            await _vecdb.anative_selection(connection, "DOCS", "auto")
+            await _vecdb_schema.anative_selection(connection, "DOCS", "auto")
             if asynchronous
-            else _vecdb.native_selection(connection, "DOCS", "auto")
+            else _vecdb_schema.native_selection(connection, "DOCS", "auto")
         )
         assert selected[0] == "vecdb"
     else:
         with pytest.raises(ValueError, match="not registered"):
             if asynchronous:
-                await _vecdb.anative_selection(connection, "DOCS", "auto")
+                await _vecdb_schema.anative_selection(connection, "DOCS", "auto")
             else:
-                _vecdb.native_selection(connection, "DOCS", "auto")
+                _vecdb_schema.native_selection(connection, "DOCS", "auto")
     assert not any(
         c.args[0].startswith(("ALTER", "CREATE", "DROP"))
         for c in cursor.execute.call_args_list
@@ -322,7 +322,9 @@ async def test_legacy_qualified_lookup_returns_only_filtered_membership(database
             await recognize(database, '"OTHER"."DOCS"')
     else:
         assert await recognize(database, '"OTHER"."DOCS"') is bool(flag)
-    assert cursor.execute.call_args.args == (_vecdb.VECDB_QUALIFIED_MEMBERSHIP_SQL,)
+    assert cursor.execute.call_args.args == (
+        _vecdb_schema.VECDB_QUALIFIED_MEMBERSHIP_SQL,
+    )
     assert cursor.execute.call_args.kwargs == {
         "membership": output,
         "owner": "OTHER",
@@ -361,7 +363,9 @@ async def test_case_sensitive_table_description_uses_exact_registry_membership(
             await recognize(database, '"Mixed.Name"')
     else:
         assert await recognize(database, '"Mixed.Name"') is registered
-    assert cursor.execute.call_args.args == (_vecdb.VECDB_QUALIFIED_MEMBERSHIP_SQL,)
+    assert cursor.execute.call_args.args == (
+        _vecdb_schema.VECDB_QUALIFIED_MEMBERSHIP_SQL,
+    )
     assert cursor.execute.call_args.kwargs == {
         "membership": output,
         "owner": None,
@@ -376,9 +380,9 @@ async def test_sql_layout_does_not_call_case_sensitive_vecdb_discovery(database)
     state["error"] = oracledb.DatabaseError(SimpleNamespace(code=942))
     cursor.var.return_value.getvalue.return_value = 1
     result = (
-        await _vecdb.anative_selection(connection, '"Mixed"', "auto")
+        await _vecdb_schema.anative_selection(connection, '"Mixed"', "auto")
         if asynchronous
-        else _vecdb.native_selection(connection, '"Mixed"', "auto")
+        else _vecdb_schema.native_selection(connection, '"Mixed"', "auto")
     )
     assert result[0] == "sql"
     assert not any(
@@ -397,9 +401,9 @@ async def test_sql_selection_never_invokes_vecdb_in_cross_schema_session(
         error=oracledb.DatabaseError(SimpleNamespace(code=57708)),
     )
     result = (
-        await _vecdb.anative_selection(connection, "DOCS", backend)
+        await _vecdb_schema.anative_selection(connection, "DOCS", backend)
         if asynchronous
-        else _vecdb.native_selection(connection, "DOCS", backend)
+        else _vecdb_schema.native_selection(connection, "DOCS", backend)
     )
     assert result[0] == "sql"
     assert cursor.execute.call_args.kwargs == {}
@@ -415,9 +419,9 @@ async def test_explicit_sql_rejects_managed_layout_without_calling_vecdb(databas
     state["error"] = oracledb.DatabaseError(SimpleNamespace(code=57708))
     with pytest.raises(ValueError, match="Incompatible OracleVS table layout"):
         if asynchronous:
-            await _vecdb.anative_selection(connection, "DOCS", "sql")
+            await _vecdb_schema.anative_selection(connection, "DOCS", "sql")
         else:
-            _vecdb.native_selection(connection, "DOCS", "sql")
+            _vecdb_schema.native_selection(connection, "DOCS", "sql")
     assert all(
         "DBMS_VECTOR_DATABASE" not in c.args[0] for c in cursor.execute.call_args_list
     )

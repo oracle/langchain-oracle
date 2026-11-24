@@ -12,7 +12,6 @@ from __future__ import annotations
 import array
 import hashlib
 import inspect
-import json
 import logging
 import re
 import uuid
@@ -56,8 +55,26 @@ from .._annotations import (
 )
 from .._telemetry import tag_sql
 from ..embeddings import OracleEmbeddings
-from ._index_params import constructor_index_params, normalize_index_params
-from .utils import (
+from ._filters import (  # noqa: F401 - retain existing helper import paths
+    COMPARISON_MAP,
+    LOGICAL_MAP,
+    NOT_OPERS,
+    _comparison_operand,
+    _generate_condition,
+    _generate_where_clause,
+    _get_comparison_string,
+    _passing_clause,
+    _validate_metadata_key,
+)
+from ._index_params import (  # noqa: F401 - retain existing helper import paths
+    _validate_index_type,
+    _validate_int_param,
+    _validate_vector_index_common,
+    constructor_index_params,
+    normalize_index_params,
+)
+from .utils import (  # noqa: F401 - retain existing helper import paths
+    INTERNAL_ID_KEY,
     DistanceStrategy,
     _aclear_session_proxy,
     _aget_connection,
@@ -66,6 +83,7 @@ from .utils import (
     _atable_exists,
     _clear_session_proxy,
     _get_connection,
+    _get_distance_function,
     _get_index_name,
     _handle_exceptions,
     _index_exists,
@@ -78,356 +96,8 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-INTERNAL_ID_KEY = "__orcl_internal_doc_id"
 
 _SIMPLE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
-
-
-LOGICAL_MAP = {
-    "$and": (" AND ", "({0})"),
-    "$or": (" OR ", "({0})"),
-    "$nor": (" OR ", "( NOT ({0}) )"),
-}
-
-COMPARISON_MAP = {
-    "$exists": "",
-    "$eq": "@ == {0}",
-    "$ne": "@ != {0}",
-    "$gt": "@ > {0}",
-    "$lt": "@ < {0}",
-    "$gte": "@ >= {0}",
-    "$lte": "@ <= {0}",
-    "$between": "",
-    "$startsWith": "@  starts with {0}",
-    "$hasSubstring": "@  has substring {0}",
-    "$instr": "@  has substring {0}",
-    "$regex": "@  like_regex {0}",
-    "$like": "@  like {0}",
-    "$in": "",
-    "$nin": "",
-    "$all": "",
-    "$not": "",
-}
-
-# operations that may need negation
-NOT_OPERS = ["$nin", "$not", "$exists"]
-
-
-def _comparison_operand(value: Any, bind_variables: List[str]) -> tuple[str, str, str]:
-    if isinstance(value, bool):
-        # SQL BOOLEAN passing values can retain a preceding True in cached
-        # statements. These two fixed JSON literals avoid that problem while
-        # preserving the implicit boolean conversion of the SQL contract.
-        return "@.boolean()", json.dumps(value), ""
-    index = len(bind_variables)
-    bind_variables.append(value)
-    return "@", f"$val{index}", f':value{index} as "val{index}"'
-
-
-def _passing_clause(passings: str) -> str:
-    return " PASSING " + passings if passings else ""
-
-
-def _get_comparison_string(
-    oper: str, value: Any, bind_variables: List[str]
-) -> tuple[str, str]:
-    if oper not in COMPARISON_MAP:
-        raise ValueError(f"Invalid operator: {oper}")
-
-    # usual two sided operator case
-    if COMPARISON_MAP[oper] != "":
-        item, operand, passing = _comparison_operand(value, bind_variables)
-        return COMPARISON_MAP[oper].replace("@", item).format(operand), passing
-
-    # between - needs two bindings
-    elif oper == "$between":
-        if not isinstance(value, List) or len(value) != 2:
-            raise ValueError(
-                f"Invalid value for $between: {value}. "
-                "It must be a list containing exactly 2 elements."
-            )
-
-        min_val, max_val = value
-        if min_val is None and max_val is None:
-            raise ValueError("At least one bound in $between must be non-null.")
-
-        conditions = []
-        passings = []
-        if min_val is not None:
-            item, operand, passing = _comparison_operand(min_val, bind_variables)
-            conditions.append(f"{item} >= {operand}")
-            if passing:
-                passings.append(passing)
-
-        if max_val is not None:
-            item, operand, passing = _comparison_operand(max_val, bind_variables)
-            conditions.append(f"{item} <= {operand}")
-            if passing:
-                passings.append(passing)
-
-        passing_bind = ",".join(passings)
-
-        return " && ".join(conditions), passing_bind
-
-    # in/nin/all needs N bindings
-    elif oper in ["$in", "$nin", "$all"]:
-        if not isinstance(value, List):
-            raise ValueError(
-                f"Invalid value for $in: {value}. It must be a non-empty list."
-            )
-
-        value_binds = []
-        passings = []
-        comparisons = []
-        for val in value:
-            item, operand, passing = _comparison_operand(val, bind_variables)
-            value_binds.append(operand)
-            comparisons.append(f"{item} == {operand}")
-            if passing:
-                passings.append(passing)
-
-        passing_bind = ",".join(passings)
-        condition = ""
-
-        if any(isinstance(val, bool) for val in value) and (
-            oper == "$all" or all(isinstance(val, bool) for val in value)
-        ):
-            separator = " && " if oper == "$all" else " || "
-            condition = "(" + separator.join(comparisons) + ")"
-        elif oper == "$all":
-            condition = "@ == " + " && @ == ".join(value_binds)
-
-        else:
-            value_bind = ",".join(value_binds)
-            condition = f"@ in ({value_bind})"
-
-        return condition, passing_bind
-
-    else:
-        raise ValueError(f"Invalid operator: {oper}. ")
-
-
-def _validate_metadata_key(metadata_key: str) -> None:
-    # Allow letters, digits, underscore, dot, brackets, comma, *, space (for 'to')
-    pattern = re.compile(r"[a-zA-Z0-9_\.\[\],\s\*]*")
-
-    if not pattern.fullmatch(metadata_key):
-        raise ValueError(
-            f"Invalid metadata key '{metadata_key}'. "
-            "Only letters, numbers, underscores, nesting via '.', "
-            "and array wildcards '[*]' are allowed."
-        )
-
-
-def _validate_int_param(
-    config: dict[str, Any],
-    key: str,
-    min_value: int,
-    max_value: Optional[int] = None,
-) -> None:
-    if key not in config:
-        return
-
-    value = config[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{key} must be an integer.")
-    if value < min_value:
-        raise ValueError(f"{key} must be at least {min_value}.")
-    if max_value is not None and value > max_value:
-        raise ValueError(f"{key} must be at most {max_value}.")
-
-
-def _validate_index_type(config: dict[str, Any], expected_type: str) -> None:
-    if "idx_type" not in config:
-        return
-
-    idx_type = config["idx_type"]
-    if not isinstance(idx_type, str) or idx_type.upper() != expected_type:
-        raise ValueError(f"idx_type must be {expected_type}.")
-    config["idx_type"] = expected_type
-
-
-def _validate_vector_index_common(config: dict[str, Any]) -> None:
-    config["idx_name"] = _quote_indentifier(config["idx_name"])
-    _validate_int_param(config, "accuracy", 1, 100)
-    _validate_int_param(config, "parallel", 1)
-
-
-def _generate_condition(
-    metadata_key: str, value: Any, bind_variables: List[str]
-) -> str:
-    # single check inside a JSON_EXISTS
-    SINGLE_MASK = (
-        "JSON_EXISTS(metadata, '$.{key}?(@ {oper} $val)' "
-        'PASSING {value_bind} AS "val")'
-    )
-    # combined checks with multiple operators and passing values
-    MULTIPLE_MASK = "JSON_EXISTS(metadata, '$.{key}?({filters})'{passes})"
-
-    _validate_metadata_key(metadata_key)
-
-    if not isinstance(value, (dict, list, tuple)):
-        # scalar-equality Clause
-        if isinstance(value, bool):
-            condition, _ = _get_comparison_string("$eq", value, bind_variables)
-            return MULTIPLE_MASK.format(key=metadata_key, filters=condition, passes="")
-        bind = f":value{len(bind_variables)}"
-        bind_variables.append(value)
-        return SINGLE_MASK.format(key=metadata_key, oper="==", value_bind=bind)
-
-    elif isinstance(value, dict):
-        # all values are filters
-        result: str
-        passings: str
-
-        # comparison operator keys
-        if all(value_key.startswith("$") for value_key in value.keys()):
-            not_dict = {}
-
-            passing_values = []
-            comparison_values = []
-
-            for k, v in value.items():
-                # if need to negate, cannot combine in single JSON_EXISTS
-                if (
-                    k in NOT_OPERS
-                    or (k == "$eq" and isinstance(v, (list, dict)))
-                    or (k == "$ne" and isinstance(v, (list, dict)))
-                ):
-                    not_dict[k] = v
-                    continue
-
-                result, passings = _get_comparison_string(k, v, bind_variables)
-
-                comparison_values.append(result)
-                passing_values.append(passings)
-
-            # combine all operators in a single JSON_EXISTS
-            all_conditions = []
-            if len(comparison_values) != 0:
-                all_conditions.append(
-                    MULTIPLE_MASK.format(
-                        key=metadata_key,
-                        filters=" && ".join(comparison_values),
-                        passes=_passing_clause(
-                            " , ".join(p for p in passing_values if p)
-                        ),
-                    )
-                )
-
-            # handle negated filters one by one, one JSON_EXISTS for each
-            for k, v in not_dict.items():
-                if k == "$not":
-                    condition = _generate_condition(metadata_key, v, bind_variables)
-                    all_conditions.append(f"NOT ({condition})")
-
-                elif k == "$exists":
-                    if not isinstance(v, bool):
-                        raise ValueError(
-                            f"Invalid value for $exists: {value}. "
-                            "It must be a boolean (true or false)."
-                        )
-
-                    if v:
-                        all_conditions.append(
-                            f"JSON_EXISTS(metadata, '$.{metadata_key}')"
-                        )
-                    else:
-                        all_conditions.append(
-                            f"NOT (JSON_EXISTS(metadata, '$.{metadata_key}'))"
-                        )
-
-                elif k == "$nin":  # for now only $nin
-                    result, passings = _get_comparison_string(k, v, bind_variables)
-
-                    all_conditions.append(
-                        " NOT "
-                        + MULTIPLE_MASK.format(
-                            key=metadata_key,
-                            filters=result,
-                            passes=_passing_clause(passings),
-                        )
-                    )
-
-                elif k == "$eq":
-                    bind_l = len(bind_variables)
-                    bind_variables.append(json.dumps(v))
-
-                    all_conditions.append(
-                        f"JSON_EQUAL("
-                        f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
-                        f"    JSON(:value{bind_l})"
-                        ")"
-                    )
-
-                elif k == "$ne":
-                    bind_l = len(bind_variables)
-                    bind_variables.append(json.dumps(v))
-
-                    all_conditions.append(
-                        f"NOT (JSON_EQUAL("
-                        f"    JSON_QUERY(metadata, '$.{metadata_key}' ),"
-                        f"    JSON(:value{bind_l})"
-                        "))"
-                    )
-
-            res = " AND ".join(all_conditions)
-
-            if len(all_conditions) > 1:
-                return "(" + res + ")"
-
-            return res
-
-        else:
-            from ._filters import render_field
-
-            def combine(operator: Optional[str], clauses: list[str]) -> str:
-                result = " AND ".join(clauses)
-                return "(" + result + ")" if len(clauses) > 1 else result
-
-            return render_field(
-                metadata_key,
-                value,
-                lambda key, operand: _generate_condition(key, operand, bind_variables),
-                combine,
-            )
-
-    else:
-        raise ValueError("Filter format is invalid.")
-
-
-def _generate_where_clause(filter: dict, bind_variables: List[str]) -> str:
-    from ._filters import render_filter
-
-    def combine(operator: Optional[str], clauses: list[str]) -> str:
-        if operator is not None:
-            separator, template = LOGICAL_MAP[operator]
-            return template.format(separator.join(clauses))
-        result = " AND ".join(clauses)
-        return "(" + result + ")" if len(clauses) > 1 else result
-
-    return render_filter(
-        filter,
-        lambda key, value: _generate_condition(key, value, bind_variables),
-        combine,
-    )
-
-
-def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
-    # dictionary to map distance strategies to their corresponding function
-    # names
-    distance_strategy2function = {
-        DistanceStrategy.EUCLIDEAN_DISTANCE: "EUCLIDEAN",
-        DistanceStrategy.DOT_PRODUCT: "DOT",
-        DistanceStrategy.COSINE: "COSINE",
-    }
-
-    # attempt to return the corresponding distance function
-    if distance_strategy in distance_strategy2function:
-        return distance_strategy2function[distance_strategy]
-
-    # if it's an unsupported distance strategy, raise an error
-    raise ValueError(f"Unsupported distance strategy: {distance_strategy}")
 
 
 def _get_table_dict(embedding_dim: int) -> Dict:
@@ -1203,12 +873,14 @@ class OracleVS(VectorStore):
         REST SDK clients require ``mutate_on_duplicate=True``; otherwise
         construction raises ValueError before preparing the table.
         """
-        from ._vecdb import (
-            NativeTransport,
+        from ._vecdb import VecDBBackend
+        from ._vecdb_adapter import (
             RestTransport,
-            VecDBBackend,
-            creation_can_fallback,
             is_sdk_client,
+        )
+        from ._vecdb_native import NativeTransport
+        from ._vecdb_schema import (
+            creation_can_fallback,
             native_selection,
             table_identifier,
         )
@@ -1394,12 +1066,12 @@ class OracleVS(VectorStore):
         Inspect the returned store's ``backend`` to see the selected backend.
         """
 
-        from ._vecdb import (
-            AsyncNativeTransport,
-            VecDBBackend,
+        from ._vecdb import VecDBBackend
+        from ._vecdb_adapter import is_sdk_client
+        from ._vecdb_native import AsyncNativeTransport
+        from ._vecdb_schema import (
             acreation_can_fallback,
             anative_selection,
-            is_sdk_client,
         )
 
         if backend not in {"auto", "sql", "vecdb"}:

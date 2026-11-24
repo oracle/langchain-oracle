@@ -278,7 +278,7 @@ def test_native_auto_falls_back_when_database_rejects_sparse_storage():
     """A new SQL store is usable even when the VecDB package is installed."""
     import oracledb
 
-    from langchain_oracledb.vectorstores._vecdb import parse_version
+    from langchain_oracledb.vectorstores._vecdb_schema import parse_version
 
     from ._backend_fixtures import sparse_storage_available
 

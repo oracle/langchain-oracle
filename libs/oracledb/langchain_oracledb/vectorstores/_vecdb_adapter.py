@@ -23,6 +23,7 @@ from .._vecdb_sdk.parameter_validation import validate_operation_arguments
 from .._vecdb_sdk.services.ords.hybrid_search import HybridSearch
 from .._vecdb_sdk.services.sqlnet.query_mapper import SQLNetQueryMapper
 from ._vecdb_filters import translate_filter
+from .utils import INTERNAL_ID_KEY, _generate_accum_query
 
 # Internal document body field; user metadata remains flat.
 TEXT_KEY = "__orcl_internal_content"
@@ -121,8 +122,6 @@ def _metadata_numbers(value: Any) -> Any:
 
 
 def document(row: dict[str, Any]) -> Document:
-    from .oraclevs import INTERNAL_ID_KEY
-
     metadata = _metadata_numbers(dict(row.get("metadata") or {}))
     text = metadata.pop(TEXT_KEY, None)
     if not isinstance(text, str) or not isinstance(row.get("id"), str):
@@ -471,8 +470,6 @@ def retriever_hybrid_options(
     The copied request builder owns the final SEARCH shape and return defaults.
     This mapping is shared by sync and async retrieval and never embeds text.
     """
-    from ..retrievers.text_search import _generate_accum_query
-
     options = deepcopy(params)
     options.update(deepcopy(overrides))
     validate_retriever_options(options)
@@ -503,3 +500,47 @@ def retriever_hybrid_options(
             "search_fusion", "VECTOR_ONLY" if mode == "semantic" else "TEXT_ONLY"
         )
     return options
+
+
+class RestTransport:
+    """Public REST SDK calls for supported vector-store operations."""
+
+    def __init__(self, client: Any):
+        config = client.config
+        # Public configuration flags describe transport; SDK class identity does not.
+        if getattr(config, "has_sqlnet_connection", False) is True:
+            raise ValueError(
+                "OracleVS does not support SQLNet-configured oracle-vecdb SDK "
+                "clients. Pass an oracledb connection or pool for native VecDB."
+            )
+        if not (
+            getattr(config, "has_rest_connection", False) is True
+            or getattr(config, "has_rest_url", False) is True
+        ):
+            raise ValueError(
+                "OracleVS requires an ORDS-configured oracle-vecdb SDK client"
+            )
+        self.client = client
+
+    def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
+        raise ValueError("oracle-vecdb REST SDK does not support hybrid search")
+
+    def call(self, operation: str, **params: Any) -> dict:
+        method = "query" if operation == "search" else operation
+        if operation == "upsert_vectors":
+            params["vectors"] = _rest_json(params["vectors"])
+        return as_dict(getattr(self.client, method)(**params))
+
+    def migrate(self, name: str) -> None:
+        raise RuntimeError("oracle-vecdb REST SDK does not support schema migration")
+
+    def text_search(self, name: str, query: str, k: int, scores: bool = False) -> list:
+        raise ValueError("oracle-vecdb REST SDK does not support metadata text search")
+
+
+def is_sdk_client(client: Any) -> bool:
+    # Avoid importing the optional SDK for a native/SQL store.
+    return any(
+        cls.__module__.startswith("oracle_vecdb.") and cls.__name__ == "OracleVecDB"
+        for cls in type(client).__mro__
+    )

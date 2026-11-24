@@ -9,8 +9,9 @@ from unittest.mock import MagicMock
 import oracledb
 import pytest
 
+import langchain_oracledb.vectorstores._vecdb_native as _vecdb_native
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores import _vecdb
 from langchain_oracledb.vectorstores.utils import (
     _aget_connection,
     _get_connection,
@@ -52,10 +53,10 @@ async def registered(native, table):
     if asynchronous:
         async with _aget_connection(client) as connection:
             with connection.cursor() as cursor:
-                return await _vecdb._ais_vecdb_table(cursor, table)
+                return await _vecdb_schema._ais_vecdb_table(cursor, table)
     with _get_connection(client) as connection:
         with connection.cursor() as cursor:
-            return _vecdb._is_vecdb_table(cursor, table)
+            return _vecdb_schema._is_vecdb_table(cursor, table)
 
 
 async def drop(native, table):
@@ -120,7 +121,9 @@ async def test_package_table_is_recognized_reopened_and_dropped(native):
     asynchronous, setup, client = native
     table = "LCOWN_" + uuid.uuid4().hex[:12].upper()
     check_native_backend(native_config("vecdb"), "vecdb", table)
-    transport = _vecdb.NativeTransport(setup, _vecdb.parse_version(setup.version))
+    transport = _vecdb_native.NativeTransport(
+        setup, _vecdb_schema.parse_version(setup.version)
+    )
     transport.call(
         "create_vector_table",
         name=table,
@@ -186,7 +189,7 @@ async def test_cross_schema_description_compatibility_returns_no_registry(native
     # caller's CURRENT_SCHEMA unchanged, as required by older VecDB packages.
     with setup.cursor() as cursor:
         observed = MagicMock(wraps=cursor)
-        assert not _vecdb._is_vecdb_table(observed, '"SYS"."DUAL"')
+        assert not _vecdb_schema._is_vecdb_table(observed, '"SYS"."DUAL"')
         assert any(
             "DESCRIBE_VECTOR_TABLE(" in call.args[0]
             for call in observed.execute.call_args_list
@@ -224,7 +227,7 @@ def test_server_filter_returns_only_valid_membership(registry, expected):
     # Execute the production filter against controlled JSON to validate its
     # Oracle JSON semantics, including malformed responses that must not
     # authorize SQL fallback. No package state is modified.
-    statement = _vecdb.VECDB_QUALIFIED_MEMBERSHIP_SQL.replace(
+    statement = _vecdb_schema.VECDB_QUALIFIED_MEMBERSHIP_SQL.replace(
         "SYS.DBMS_VECTOR_DATABASE.LIST_VECTOR_TABLES()", ":registry"
     )
     with (

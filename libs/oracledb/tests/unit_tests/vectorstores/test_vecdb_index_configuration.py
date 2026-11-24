@@ -9,14 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_adapter import RestTransport, SQLNetAdapter
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    RestTransport,
-    VecDBBackend,
 )
-from langchain_oracledb.vectorstores._vecdb_adapter import SQLNetAdapter
+from langchain_oracledb.vectorstores._vecdb_schema import CURRENT_COLUMNS
 from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 

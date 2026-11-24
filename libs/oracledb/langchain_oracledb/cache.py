@@ -22,7 +22,8 @@ from langchain_oracledb._annotations import (
     backfill_table_annotation,
     create_table_with_annotations,
 )
-from langchain_oracledb.vectorstores._vecdb import NativeTransport, parse_version
+from langchain_oracledb.vectorstores._vecdb_native import NativeTransport
+from langchain_oracledb.vectorstores._vecdb_schema import parse_version
 from langchain_oracledb.vectorstores.oraclevs import OracleVS, create_index
 from langchain_oracledb.vectorstores.utils import (
     DistanceStrategy,

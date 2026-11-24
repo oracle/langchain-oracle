@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from langchain_oracledb.vectorstores import _vecdb
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+import langchain_oracledb.vectorstores.utils as _db_utils
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    VecDBBackend,
 )
+from langchain_oracledb.vectorstores._vecdb_schema import CURRENT_COLUMNS
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 NAMES = [
@@ -81,8 +81,8 @@ def native(request, monkeypatch):
     async def aget(_):
         yield conn
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         conn, (23, 26, 4)
     )

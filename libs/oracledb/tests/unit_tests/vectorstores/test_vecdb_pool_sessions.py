@@ -17,13 +17,12 @@ from langchain_oracledb.retrievers.hybrid_search import (
     acreate_hybrid_index,
     create_hybrid_index,
 )
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    VecDBBackend,
-    _TableInfo,
 )
+from langchain_oracledb.vectorstores._vecdb_schema import CURRENT_COLUMNS, _TableInfo
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 from .._sql_probe import sql_probe

@@ -10,9 +10,11 @@ import oracledb
 import pytest
 from langchain_core.embeddings import Embeddings
 
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores import _vecdb, oraclevs
-from langchain_oracledb.vectorstores._vecdb import (
+from langchain_oracledb.vectorstores import oraclevs
+from langchain_oracledb.vectorstores import utils as _db_utils
+from langchain_oracledb.vectorstores._vecdb_schema import (
     CURRENT_COLUMNS,
     anative_selection,
     native_selection,
@@ -56,7 +58,7 @@ def database(request, monkeypatch):
     def execute(statement, **binds):
         state["last"] = statement
         if statement.startswith("SELECT id, text, metadata, embedding FROM "):
-            state["name"] = _vecdb._identifier_parts(
+            state["name"] = _vecdb_schema._identifier_parts(
                 statement.split(" FROM ", 1)[1].split(" WHERE ", 1)[0]
             )[-1]
         if sql_probe(statement, state["catalog"] or state["resolved"], state["error"]):
@@ -76,7 +78,7 @@ def database(request, monkeypatch):
             state["exists"] = True
 
     def fetchone():
-        if state["last"] == _vecdb.VECDB_CAPABILITY_SQL:
+        if state["last"] == _vecdb_schema.VECDB_CAPABILITY_SQL:
             return 1, "23.6.0.0.0"
         if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in state["last"]:
             return (
@@ -116,7 +118,7 @@ def database(request, monkeypatch):
     async def aacquire(_):
         yield conn
 
-    for module in (_vecdb, oraclevs):
+    for module in (_db_utils, oraclevs):
         monkeypatch.setattr(module, "_get_connection", acquire)
         monkeypatch.setattr(module, "_aget_connection", aacquire)
     return asynchronous, conn, cursor, state
@@ -153,7 +155,7 @@ async def test_missing_representable_name_still_selects_vecdb(database, name):
         "all_procedures" in c.args[0] for c in database[2].execute.call_args_list
     )
     assert any(
-        c.args[0] == _vecdb.VECDB_CAPABILITY_SQL
+        c.args[0] == _vecdb_schema.VECDB_CAPABILITY_SQL
         for c in database[2].execute.call_args_list
     )
 
@@ -222,7 +224,7 @@ async def test_native_quoted_name_version_boundary(
         with pytest.raises(ValueError, match="unquoted uppercase.*23.27.2"):
             await select(database, name, "vecdb")
         assert not any(
-            c.args[0] == _vecdb.VECDB_CAPABILITY_SQL
+            c.args[0] == _vecdb_schema.VECDB_CAPABILITY_SQL
             for c in database[2].execute.call_args_list
         )
 

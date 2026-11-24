@@ -11,7 +11,7 @@ import oracledb
 import pytest
 
 from langchain_oracledb import OracleVS
-from langchain_oracledb.vectorstores._vecdb import (
+from langchain_oracledb.vectorstores._vecdb_schema import (
     _sparse_compatibility_error,
     native_selection,
     parse_version,

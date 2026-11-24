@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import langchain_oracledb.vectorstores._vecdb_native as _vecdb_native
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
+import langchain_oracledb.vectorstores.utils as _db_utils
 from langchain_oracledb.vectorstores import _vecdb
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
@@ -34,7 +37,9 @@ def test_emitted_function_contract(version, operation):
                 }
             ],
         }
-    sql, binds = _vecdb.NativeTransport(None, version)._statement(operation, params)
+    sql, binds = _vecdb_native.NativeTransport(None, version)._statement(
+        operation, params
+    )
     if operation == "upsert_vectors":
         arguments = "table_name => :table_name, vectors => JSON(:vectors)"
         assert binds == {
@@ -127,15 +132,17 @@ async def test_insert_failure_preserves_primary_error(
     async def aget(_):
         yield connection
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (
-        _vecdb.AsyncNativeTransport if asynchronous else _vecdb.NativeTransport
+        _vecdb_native.AsyncNativeTransport
+        if asynchronous
+        else _vecdb_native.NativeTransport
     )(None, (23, 26, 4))
-    transport.columns = MagicMock(return_value=_vecdb.CURRENT_COLUMNS)
-    transport.acolumns = AsyncMock(return_value=_vecdb.CURRENT_COLUMNS)
+    transport.columns = MagicMock(return_value=_vecdb_schema.CURRENT_COLUMNS)
+    transport.acolumns = AsyncMock(return_value=_vecdb_schema.CURRENT_COLUMNS)
     transport._remember_table(
-        "DOCS", _vecdb._TableInfo(frozenset(_vecdb.CURRENT_COLUMNS), None)
+        "DOCS", _vecdb_schema._TableInfo(frozenset(_vecdb_schema.CURRENT_COLUMNS), None)
     )
     records = [
         {

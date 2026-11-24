@@ -7,7 +7,7 @@ import re
 from copy import deepcopy
 from typing import Any, Optional
 
-from ._filters import render_field, render_filter
+from ._filters import _generate_where_clause, render_field, render_filter
 
 
 class SQLFilterRequired(ValueError):
@@ -33,8 +33,6 @@ def translate_filter(filter_: Any) -> Any:
     methods restore SQL's coercion and existential inequality. Negation belongs
     outside the complete positive predicate, including its existence test.
     """
-    from .oraclevs import _generate_where_clause
-
     if filter_ is None:
         return None
     _generate_where_clause(filter_, [])

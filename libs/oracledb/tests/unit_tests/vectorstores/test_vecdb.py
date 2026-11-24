@@ -15,17 +15,22 @@ import pytest
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
+import langchain_oracledb.vectorstores.utils as _db_utils
 from langchain_oracledb import OracleVS
 from langchain_oracledb._annotations import table_annotations
 from langchain_oracledb.retrievers.hybrid_search import (
     OracleHybridSearchRetriever,
 )
 from langchain_oracledb.retrievers.text_search import OracleTextSearchRetriever
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_adapter import LOGICAL_ID_KEY, storage_id
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    VecDBBackend,
+)
+from langchain_oracledb.vectorstores._vecdb_schema import (
+    CURRENT_COLUMNS,
     _layout,
     _migration_actions,
     layout_error,
@@ -33,7 +38,6 @@ from langchain_oracledb.vectorstores._vecdb import (
     parse_version,
     table_identifier,
 )
-from langchain_oracledb.vectorstores._vecdb_adapter import LOGICAL_ID_KEY, storage_id
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 from .._sql_probe import sql_probe
@@ -560,7 +564,7 @@ def test_pending_transaction_prevents_migration():
     def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(RuntimeError, match="pending work"):
             NativeTransport(object(), (23, 26, 3)).migrate("DOCS")
 
@@ -699,15 +703,13 @@ async def test_native_text_limit_is_bound_instead_of_interpolated(asynchronous):
         cursor.execute = AsyncMock()
         cursor.fetchall = AsyncMock(return_value=[])
         cursor.fetchone = AsyncMock(return_value=None)
-        with patch(
-            "langchain_oracledb.vectorstores._vecdb._aget_connection"
-        ) as acquire:
+        with patch("langchain_oracledb.vectorstores.utils._aget_connection") as acquire:
             acquire.return_value.__aenter__.return_value = connection
             await transport.atext_search("DOCS", "oracle", limit)
     else:
         transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
         cursor.fetchall.return_value = []
-        with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as acquire:
+        with patch("langchain_oracledb.vectorstores.utils._get_connection") as acquire:
             acquire.return_value.__enter__.return_value = connection
             transport.text_search("DOCS", "oracle", limit)
     sql = cursor.execute.call_args.args[0]
@@ -800,7 +802,7 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         docs = transport.hybrid_search("DOCS", params, True)
     assert docs[0].id == "a"
     assert docs[0].page_content == "hello"
@@ -861,7 +863,7 @@ def test_native_text_index_replaces_guide_preserving_settings():
     def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         transport.create_text_index("DOCS", "REQUESTED_NAME")
     statements = [call.args[0] for call in cursor.execute.call_args_list]
     assert statements[1] == 'DROP INDEX "VEC_METADATA_IDX"'
@@ -884,7 +886,7 @@ def test_native_text_index_reuses_already_enabled_index():
     def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         transport.create_text_index("DOCS", "REQUESTED_NAME")
     assert cursor.execute.call_count == 1
 
@@ -906,7 +908,7 @@ def test_native_insert_only_skips_duplicate_rows():
     def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         assert transport.insert("DOCS", records) == ["b"]
     assert "INSERT INTO" in cursor.executemany.call_args.args[0]
     assert "CONTENT_METADATA" in cursor.executemany.call_args.args[0]
@@ -930,8 +932,6 @@ async def test_native_async_crud_uses_async_driver_not_thread_wrapping():
 def test_migration_applies_missing_actions_without_table_drop():
     import re
 
-    from langchain_oracledb.vectorstores import _vecdb
-
     columns = {"ID", "DENSE_VECTOR", "CONTENT_METADATA", "CONTENT"}
     connection = MagicMock(transaction_in_progress=False, version="23.26.3")
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -948,7 +948,7 @@ def test_migration_applies_missing_actions_without_table_drop():
     def get(_):
         yield connection
 
-    with patch.object(_vecdb, "_get_connection", get):
+    with patch.object(_db_utils, "_get_connection", get):
         NativeTransport(None, (23, 26, 3)).migrate("DOCS")
     assert columns == CURRENT_COLUMNS
     actions = [
@@ -992,7 +992,7 @@ def test_layout_error_checks_actual_missing_column_not_request_context():
 
 
 def test_native_pool_initialization_does_not_acquire_a_second_connection():
-    from langchain_oracledb.vectorstores import _vecdb, oraclevs
+    from langchain_oracledb.vectorstores import oraclevs
 
     pool = object()
     connection = MagicMock(version="23.26.3", thin=True)
@@ -1007,7 +1007,7 @@ def test_native_pool_initialization_does_not_acquire_a_second_connection():
             cursor.fetchone.return_value = None
         if sql_probe(statement, CURRENT_COLUMNS if created else set()):
             return
-        if statement == _vecdb.VECDB_CAPABILITY_SQL:
+        if statement == _vecdb_schema.VECDB_CAPABILITY_SQL:
             cursor.fetchone.return_value = (1, "23.6.0.0.0")
         if "create_vector_table" in statement.lower():
             created = True
@@ -1042,7 +1042,7 @@ def test_native_pool_initialization_does_not_acquire_a_second_connection():
 
     with (
         patch.object(oraclevs, "_get_connection", get),
-        patch.object(_vecdb, "_get_connection", get),
+        patch.object(_db_utils, "_get_connection", get),
     ):
         store = OracleVS(pool, Embedding(), "DOCS")
     assert store.backend == "vecdb"
@@ -1050,7 +1050,6 @@ def test_native_pool_initialization_does_not_acquire_a_second_connection():
 
 
 def test_migration_refreshes_version_after_pool_database_upgrade():
-    from langchain_oracledb.vectorstores import _vecdb
 
     connection = MagicMock(version="23.26.4", transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -1062,7 +1061,7 @@ def test_migration_refreshes_version_after_pool_database_upgrade():
         yield connection
 
     transport = NativeTransport(None, (23, 26, 1))
-    with patch.object(_vecdb, "_get_connection", get):
+    with patch.object(_db_utils, "_get_connection", get):
         transport.migrate("DOCS")
     assert transport.version == (23, 26, 4)
 
@@ -1089,7 +1088,7 @@ async def test_async_native_hybrid_transport_returns_database_scores():
 
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     params = {"hybrid_index_name": "HVI", "vector": {"search_vector": [1.0, 0.0]}}
-    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._aget_connection", get):
         docs = await backend.ahybrid_search(params, False)
     assert docs == [Document(id="a", page_content="hello", metadata={"tenant": "one"})]
     request = json.loads(cursor.execute.call_args.kwargs["search_params"])
@@ -1142,7 +1141,7 @@ def test_rest_unsupported_operations_fail_without_native_fallback(store, operati
         ),
         "preference": lambda: OracleVectorizerPreference.create_preference(store),
     }
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as connect:
+    with patch("langchain_oracledb.vectorstores.utils._get_connection") as connect:
         with pytest.raises(
             ValueError, match="oracle-vecdb REST SDK does not support"
         ) as error:
@@ -1181,7 +1180,7 @@ async def test_async_rest_unsupported_operations_fail_without_native_fallback(
         ),
         "preference": lambda: OracleVectorizerPreference.acreate_preference(store),
     }
-    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection") as connect:
+    with patch("langchain_oracledb.vectorstores.utils._aget_connection") as connect:
         with pytest.raises(
             ValueError, match="oracle-vecdb REST SDK does not support"
         ) as error:
@@ -1336,8 +1335,6 @@ async def test_native_facade_submits_projected_search_request(store, asynchronou
 async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, caplog):
     from contextlib import asynccontextmanager
 
-    from langchain_oracledb.vectorstores import _vecdb
-
     connection = MagicMock(
         transaction_in_progress=failure == "pending", autocommit=failure == "autocommit"
     )
@@ -1361,15 +1358,15 @@ async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, capl
     async def aget(_):
         yield connection
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         None, (23, 26, 4)
     )
     transport.columns = MagicMock(return_value=CURRENT_COLUMNS)
     transport.acolumns = AsyncMock(return_value=CURRENT_COLUMNS)
     transport._remember_table(
-        "DOCS", _vecdb._TableInfo(frozenset(_vecdb.CURRENT_COLUMNS), None)
+        "DOCS", _vecdb_schema._TableInfo(frozenset(_vecdb_schema.CURRENT_COLUMNS), None)
     )
     records = [
         {"id": key, "dense_vector": [1.0], "metadata": {"__orcl_internal_content": key}}
@@ -1391,6 +1388,10 @@ async def test_vecdb_insert_matches_sql(monkeypatch, asynchronous, failure, capl
         )
         connection.commit.assert_called_once()
         assert "duplicate ID" in caplog.text
+        assert all(
+            record.name == "langchain_oracledb.vectorstores._vecdb"
+            for record in caplog.records
+        )
         if failure == "fatal":
             assert "wrong dimension" in caplog.text
     cursor.executemany.assert_called_once()
@@ -1406,8 +1407,6 @@ async def test_migration_preserves_layout_when_sparse_ddl_is_rejected(
     from types import SimpleNamespace
 
     import oracledb
-
-    from langchain_oracledb.vectorstores import _vecdb
 
     connection = MagicMock(version="23.26.4", transaction_in_progress=False)
     cursor = connection.cursor.return_value.__enter__.return_value
@@ -1432,8 +1431,8 @@ async def test_migration_preserves_layout_when_sparse_ddl_is_rejected(
     async def aget(_):
         yield connection
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         None, (23, 26, 1)
     )

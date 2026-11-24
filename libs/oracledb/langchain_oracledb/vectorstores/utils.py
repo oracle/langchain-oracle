@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+INTERNAL_ID_KEY = "__orcl_internal_doc_id"
+
 
 class DistanceStrategy(str, Enum):
     """Enumerator of the distance strategies for calculating distances
@@ -207,12 +209,14 @@ def drop_table_purge(client: Any, table_name: str, *, backend: str = "auto") -> 
     Column names alone never establish VecDB ownership.
     Package failures propagate without falling back to SQL DDL.
     """
-    from ._vecdb import (
-        NativeTransport,
+    from ._vecdb_adapter import (
         RestTransport,
+        is_sdk_client,
+    )
+    from ._vecdb_native import NativeTransport
+    from ._vecdb_schema import (
         _is_vecdb_table,
         _sql_layout,
-        is_sdk_client,
         parse_version,
     )
 
@@ -255,11 +259,11 @@ async def adrop_table_purge(
     client: Any, table_name: str, *, backend: str = "auto"
 ) -> None:
     """Async drop_table_purge with the same backend and failure contracts."""
-    from ._vecdb import (
-        AsyncNativeTransport,
+    from ._vecdb_adapter import is_sdk_client
+    from ._vecdb_native import AsyncNativeTransport
+    from ._vecdb_schema import (
         _ais_vecdb_table,
         _asql_layout,
-        is_sdk_client,
         parse_version,
     )
 
@@ -371,7 +375,7 @@ def drop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
-    from ._vecdb import is_sdk_client
+    from ._vecdb_adapter import is_sdk_client
 
     if is_sdk_client(client):
         raise ValueError("oracle-vecdb REST SDK does not support SQL index dropping")
@@ -398,7 +402,7 @@ async def adrop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
-    from ._vecdb import is_sdk_client
+    from ._vecdb_adapter import is_sdk_client
 
     if is_sdk_client(client):
         raise ValueError("oracle-vecdb REST SDK does not support SQL index dropping")
@@ -419,3 +423,38 @@ def output_type_string_handler(cursor: Any, metadata: Any) -> Any:
         return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
     if metadata.type_code is oracledb.DB_TYPE_NCLOB:
         return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
+
+
+def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
+    # dictionary to map distance strategies to their corresponding function
+    # names
+    distance_strategy2function = {
+        DistanceStrategy.EUCLIDEAN_DISTANCE: "EUCLIDEAN",
+        DistanceStrategy.DOT_PRODUCT: "DOT",
+        DistanceStrategy.COSINE: "COSINE",
+    }
+
+    # attempt to return the corresponding distance function
+    if distance_strategy in distance_strategy2function:
+        return distance_strategy2function[distance_strategy]
+
+    # if it's an unsupported distance strategy, raise an error
+    raise ValueError(f"Unsupported distance strategy: {distance_strategy}")
+
+
+def _generate_accum_query(query: str, fuzzy: Optional[bool] = False) -> str:
+    """Tokenize query on non-word boundaries and join with Oracle Text ACCUM.
+
+    Behavior:
+    - Splits on non-word characters, discarding empty tokens.
+    - When fuzzy is False: each token is quoted: "token".
+    - When fuzzy is True: wraps each token as FUZZY("token").
+    - Joins tokens with ' ACCUM '.
+
+    Examples:
+    'refund policy' -> '"refund" ACCUM "policy"'
+    fuzzy=True -> 'fuzzy("refund") ACCUM fuzzy("policy")'
+    """
+    words = re.split(r"\W+", query)
+    words = [f'"{word}"' if not fuzzy else f'fuzzy("{word}")' for word in words if word]
+    return " ACCUM ".join(words)

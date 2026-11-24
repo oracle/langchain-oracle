@@ -13,7 +13,8 @@ from langchain_core.embeddings import DeterministicFakeEmbedding
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores import oraclevs
 from langchain_oracledb.vectorstores._index_params import normalize_index_params
-from langchain_oracledb.vectorstores._vecdb import NativeTransport, VecDBBackend
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_native import NativeTransport
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
 
@@ -206,11 +207,17 @@ async def test_constructor_preserves_nested_index_contract(
     )
     prefix = "langchain_oracledb.vectorstores."
     with (
-        patch(prefix + "_vecdb._inspect_columns", return_value=set()),
-        patch(prefix + "_vecdb._ainspect_columns", new=AsyncMock(return_value=set())),
-        patch(prefix + "_vecdb.native_selection", return_value=(backend, (23, 26, 3))),
+        patch(prefix + "_vecdb_schema._inspect_columns", return_value=set()),
         patch(
-            prefix + "_vecdb.anative_selection",
+            prefix + "_vecdb_schema._ainspect_columns",
+            new=AsyncMock(return_value=set()),
+        ),
+        patch(
+            prefix + "_vecdb_schema.native_selection",
+            return_value=(backend, (23, 26, 3)),
+        ),
+        patch(
+            prefix + "_vecdb_schema.anative_selection",
             new=AsyncMock(return_value=(backend, (23, 26, 3))),
         ),
         patch.object(VecDBBackend, "prepare") as prepare,
@@ -320,19 +327,19 @@ async def test_sql_invalid_options_fail_before_table_creation(
     )
     with (
         patch(
-            "langchain_oracledb.vectorstores._vecdb._inspect_columns",
+            "langchain_oracledb.vectorstores._vecdb_schema._inspect_columns",
             return_value=set(),
         ),
         patch(
-            "langchain_oracledb.vectorstores._vecdb._ainspect_columns",
+            "langchain_oracledb.vectorstores._vecdb_schema._ainspect_columns",
             new=AsyncMock(return_value=set()),
         ),
         patch(
-            "langchain_oracledb.vectorstores._vecdb.native_selection",
+            "langchain_oracledb.vectorstores._vecdb_schema.native_selection",
             return_value=("sql", (23, 26, 3)),
         ),
         patch(
-            "langchain_oracledb.vectorstores._vecdb.anative_selection",
+            "langchain_oracledb.vectorstores._vecdb_schema.anative_selection",
             new=AsyncMock(return_value=("sql", (23, 26, 3))),
         ),
         patch.object(oraclevs, "_create_table") as create,

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from langchain_oracledb.vectorstores import _vecdb
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 
 
 @pytest.fixture(params=[False, True], ids=["sync", "async"])
@@ -35,7 +35,7 @@ def synonym(request):
             cursor.description = [(column,) for column in state["columns"]]
 
     def fetchone():
-        if state["statement"] == _vecdb.VECDB_RECOGNITION_SQL:
+        if state["statement"] == _vecdb_schema.VECDB_RECOGNITION_SQL:
             return (1,)
         if "all_synonyms" in state["statement"]:
             return (1,) if state["synonym"] else None
@@ -61,9 +61,9 @@ async def test_readable_sql_synonym_retains_sql_backend(synonym, name, backend):
 
     async def select():
         return (
-            await _vecdb.anative_selection(connection, name, backend)
+            await _vecdb_schema.anative_selection(connection, name, backend)
             if asynchronous
-            else _vecdb.native_selection(connection, name, backend)
+            else _vecdb_schema.native_selection(connection, name, backend)
         )
 
     if backend == "vecdb":
@@ -84,14 +84,14 @@ async def test_description_942_requires_a_readable_sql_synonym(synonym, case):
     elif case == "not-a-synonym":
         state["synonym"] = False
     elif case == "vecdb-layout":
-        state["columns"] = set(_vecdb.CURRENT_COLUMNS)
+        state["columns"] = set(_vecdb_schema.CURRENT_COLUMNS)
     else:
         state["read_error"] = oracledb.DatabaseError(SimpleNamespace(code=980))
     with pytest.raises(oracledb.DatabaseError):
         if asynchronous:
-            await _vecdb._ais_vecdb_table(cursor, "ALIAS")
+            await _vecdb_schema._ais_vecdb_table(cursor, "ALIAS")
         else:
-            _vecdb._is_vecdb_table(cursor, "ALIAS")
+            _vecdb_schema._is_vecdb_table(cursor, "ALIAS")
 
 
 @pytest.mark.asyncio
@@ -100,7 +100,7 @@ async def test_synonym_does_not_hide_permission_errors(synonym):
     state["code"] = 1031
     with pytest.raises(oracledb.DatabaseError):
         if asynchronous:
-            await _vecdb._ais_vecdb_table(cursor, "ALIAS")
+            await _vecdb_schema._ais_vecdb_table(cursor, "ALIAS")
         else:
-            _vecdb._is_vecdb_table(cursor, "ALIAS")
+            _vecdb_schema._is_vecdb_table(cursor, "ALIAS")
     assert not any("all_synonyms" in c.args[0] for c in cursor.execute.call_args_list)

@@ -9,12 +9,16 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from langchain_oracledb.vectorstores import _vecdb
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+import langchain_oracledb.vectorstores._vecdb_adapter as _vecdb_adapter
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
+import langchain_oracledb.vectorstores.utils as _db_utils
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    VecDBBackend,
+)
+from langchain_oracledb.vectorstores._vecdb_schema import (
+    CURRENT_COLUMNS,
     anative_selection,
     native_selection,
 )
@@ -63,7 +67,7 @@ def schemas(request, monkeypatch):
         if statement.startswith(
             ("SELECT id, text, metadata, embedding FROM ", "SELECT id, dense_vector, ")
         ):
-            parts = _vecdb._identifier_parts(
+            parts = _vecdb_schema._identifier_parts(
                 statement.split(" FROM ", 1)[1].split(" WHERE ", 1)[0]
             )
             schema = parts[0] if len(parts) == 2 else state["schema"]
@@ -98,10 +102,10 @@ def schemas(request, monkeypatch):
         raise AssertionError(state["statement"])
 
     def fetchone():
-        if state["statement"] == _vecdb.VECDB_CAPABILITY_SQL:
+        if state["statement"] == _vecdb_schema.VECDB_CAPABILITY_SQL:
             return 1, "23.6.0.0.0"
         if "SYS.DBMS_VECTOR_DATABASE.DESCRIBE_VECTOR_TABLE" in state["statement"]:
-            parts = _vecdb._identifier_parts(state["binds"]["name"])
+            parts = _vecdb_schema._identifier_parts(state["binds"]["name"])
             schema = parts[0] if len(parts) == 2 else state["schema"]
             return (
                 {
@@ -140,8 +144,8 @@ def schemas(request, monkeypatch):
     async def aget(_):
         yield conn
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (AsyncNativeTransport if asynchronous else NativeTransport)(
         conn, (26, 1, 0)
     )
@@ -281,8 +285,8 @@ async def test_constructor_reuses_selection_columns_during_prepare(
 
     asynchronous, connection, cursor, state, _ = schemas
     state["tables"]["ACTIVE"] = set(columns)
-    monkeypatch.setattr(oraclevs, "_get_connection", _vecdb._get_connection)
-    monkeypatch.setattr(oraclevs, "_aget_connection", _vecdb._aget_connection)
+    monkeypatch.setattr(oraclevs, "_get_connection", _db_utils._get_connection)
+    monkeypatch.setattr(oraclevs, "_aget_connection", _db_utils._aget_connection)
     embedding = DeterministicFakeEmbedding(size=3)
     store = (
         await OracleVS.acreate(connection, embedding, "DOCS")
@@ -321,11 +325,11 @@ async def test_managed_constructor_reuses_ownership_description(
     state["description_extra"] = {
         "embed_params": {
             "model": stored_model,
-            "embed_metadata_jsonpath": _vecdb.TEXT_KEY,
+            "embed_metadata_jsonpath": _vecdb_adapter.TEXT_KEY,
         }
     }
-    monkeypatch.setattr(oraclevs, "_get_connection", _vecdb._get_connection)
-    monkeypatch.setattr(oraclevs, "_aget_connection", _vecdb._aget_connection)
+    monkeypatch.setattr(oraclevs, "_get_connection", _db_utils._get_connection)
+    monkeypatch.setattr(oraclevs, "_aget_connection", _db_utils._aget_connection)
     embedding = OracleEmbeddings(
         conn=connection, params={"provider": "database", "model": "MODEL"}
     )
@@ -345,5 +349,5 @@ async def test_managed_constructor_reuses_ownership_description(
             await construct()
     statements = [call.args[0] for call in cursor.execute.call_args_list]
     assert sum("DESCRIBE_VECTOR_TABLE(" in sql for sql in statements) == 1
-    assert _vecdb.VECDB_RECOGNITION_SQL not in statements
+    assert _vecdb_schema.VECDB_RECOGNITION_SQL not in statements
     assert len(statements) == 3

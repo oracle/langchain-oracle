@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from langchain_oracledb.vectorstores import _vecdb
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
 
 from ._backend_fixtures import native_config
 
@@ -35,14 +35,17 @@ async def test_selection_uses_one_combined_capability_query(asynchronous):
             proxy = SimpleNamespace(version=connection.version, cursor=lambda: observed)
             name = "LCCOMP_" + uuid.uuid4().hex[:12].upper()
             result = (
-                await _vecdb.anative_selection(proxy, name, "auto")
+                await _vecdb_schema.anative_selection(proxy, name, "auto")
                 if asynchronous
-                else _vecdb.native_selection(proxy, name, "auto")
+                else _vecdb_schema.native_selection(proxy, name, "auto")
             )
             assert result[0] == "vecdb"
             calls = observed.execute.call_args_list
             assert (
-                sum(call.args[0] == _vecdb.VECDB_CAPABILITY_SQL for call in calls) == 1
+                sum(
+                    call.args[0] == _vecdb_schema.VECDB_CAPABILITY_SQL for call in calls
+                )
+                == 1
             )
             assert not any("DB_VERSION" in call.args[0] for call in calls)
             observed.var.assert_not_called()

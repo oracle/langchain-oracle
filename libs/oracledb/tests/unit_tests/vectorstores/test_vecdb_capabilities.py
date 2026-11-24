@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
+import langchain_oracledb.vectorstores._vecdb_adapter as _vecdb_adapter
+import langchain_oracledb.vectorstores._vecdb_native as _vecdb_native
+import langchain_oracledb.vectorstores.utils as _db_utils
 from langchain_oracledb import OracleVS
 from langchain_oracledb.vectorstores import _vecdb
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
@@ -34,10 +37,12 @@ def native(request, monkeypatch):
     async def aget(_):
         yield connection
 
-    monkeypatch.setattr(_vecdb, "_get_connection", get)
-    monkeypatch.setattr(_vecdb, "_aget_connection", aget)
+    monkeypatch.setattr(_db_utils, "_get_connection", get)
+    monkeypatch.setattr(_db_utils, "_aget_connection", aget)
     transport = (
-        _vecdb.AsyncNativeTransport if asynchronous else _vecdb.NativeTransport
+        _vecdb_native.AsyncNativeTransport
+        if asynchronous
+        else _vecdb_native.NativeTransport
     )(connection, (23, 26, 4))
     return asynchronous, connection, cursor, transport
 
@@ -153,8 +158,8 @@ async def test_get_by_ids_executes_one_statement_per_batch(native):
     assert [
         json.loads(call.kwargs["ids_json"]) for call in cursor.execute.call_args_list
     ] == [
-        [_vecdb.storage_id(id_) for id_ in ids[:100]],
-        [_vecdb.storage_id(id_) for id_ in ids[100:]],
+        [_vecdb_adapter.storage_id(id_) for id_ in ids[:100]],
+        [_vecdb_adapter.storage_id(id_) for id_ in ids[100:]],
     ]
     assert all("IF FALSE" not in call.args[0] for call in cursor.execute.call_args_list)
     if asynchronous:
@@ -259,7 +264,7 @@ async def test_sdk_index_status_preserves_provider_details(asynchronous, status,
     )
     store = OracleVS.__new__(OracleVS)
     store._vecdb = _vecdb.VecDBBackend(
-        _vecdb.RestTransport(client), "DOCS", DistanceStrategy.COSINE
+        _vecdb_adapter.RestTransport(client), "DOCS", DistanceStrategy.COSINE
     )
     result = (
         await store.adescribe_vecdb_index()
@@ -283,7 +288,7 @@ async def test_completed_job_does_not_certify_index_readiness(asynchronous, stat
     )
     store = OracleVS.__new__(OracleVS)
     store._vecdb = _vecdb.VecDBBackend(
-        _vecdb.RestTransport(client), "DOCS", DistanceStrategy.COSINE
+        _vecdb_adapter.RestTransport(client), "DOCS", DistanceStrategy.COSINE
     )
     result = (
         await store.adescribe_vecdb_index(job_name="job")
@@ -395,7 +400,7 @@ async def test_native_vector_execution_markers(
         params.update(ids=["private-id"], limit=1, offset=0)
     else:
         params["vectors"] = [{"id": "one", "vector": [0.12, 0.34], "metadata": {}}]
-    plain, expected_binds = _vecdb.SQLNetAdapter(version).statement(
+    plain, expected_binds = _vecdb_adapter.SQLNetAdapter(version).statement(
         operation, {**params, "table_name": '"DOCS"'}
     )
     if asynchronous:

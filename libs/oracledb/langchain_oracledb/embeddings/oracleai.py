@@ -24,8 +24,7 @@ from langchain_core.embeddings import Embeddings
 from pydantic import BaseModel, ConfigDict
 
 from .._telemetry import tag_sql
-from ..vectorstores._vecdb import RestTransport, is_sdk_client
-from ..vectorstores._vecdb_adapter import as_dict
+from ..vectorstores._vecdb_adapter import RestTransport, as_dict, is_sdk_client
 
 logger = logging.getLogger(__name__)
 

@@ -14,11 +14,13 @@ from langchain_oracledb.retrievers.hybrid_search import (
     acreate_hybrid_index,
     create_hybrid_index,
 )
-from langchain_oracledb.vectorstores._vecdb import (
-    CURRENT_COLUMNS,
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    VecDBBackend,
+)
+from langchain_oracledb.vectorstores._vecdb_schema import (
+    CURRENT_COLUMNS,
     _metadata_index_plan,
 )
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
@@ -139,7 +141,7 @@ def test_sync_override_is_rejected_before_replacement():
 )
 def test_invalid_hybrid_options_fail_before_drop(options):
     transport, connection, cursor, get = sync_transport()
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(ValueError):
             create_hybrid_index(
                 connection,
@@ -168,7 +170,7 @@ def sync_transport(parameters=GUIDE):
 
 def test_public_hybrid_helper_upgrades_same_name_text_index():
     transport, connection, cursor, get = sync_transport(TEXT)
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         create_hybrid_index(
             connection, "OLD", vectorizer_preference=preference(transport)
         )
@@ -189,7 +191,7 @@ def test_failed_replacement_restores_original_and_raises_original_error(partial_
             raise original_error
 
     cursor.execute.side_effect = execute
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(RuntimeError) as caught:
             transport.create_metadata_index(
                 "DOCS", "NEW", hybrid=True, build=lambda *_: "CREATE HYBRID INVALID"
@@ -209,7 +211,7 @@ def test_recovery_failure_explicitly_requires_manual_recovery():
             raise RuntimeError("database creation failed")
 
     cursor.execute.side_effect = execute
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(RuntimeError, match="manual recovery"):
             transport.create_text_index("DOCS", "NEW")
 
@@ -217,7 +219,7 @@ def test_recovery_failure_explicitly_requires_manual_recovery():
 def test_pending_transaction_is_not_implicitly_committed():
     transport, connection, cursor, get = sync_transport()
     connection.transaction_in_progress = True
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(RuntimeError, match="pending work"):
             transport.create_text_index("DOCS", "NEW")
     assert len(cursor.execute.call_args_list) == 1
@@ -227,7 +229,7 @@ def test_requested_name_collision_is_checked_without_dropping():
     transport, _, cursor, get = sync_transport()
     cursor.fetchall.return_value = []
     cursor.fetchone.return_value = ("OTHER_TABLE",)
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(ValueError, match="incompatible"):
             transport.create_text_index("DOCS", "TAKEN")
     assert not any("DROP" in c.args[0] for c in cursor.execute.call_args_list)
@@ -254,7 +256,7 @@ async def test_async_native_replacement_and_recovery(failure):
     async def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._aget_connection", get):
         if failure:
             with pytest.raises(RuntimeError, match="failed creation"):
                 await acreate_hybrid_index(
@@ -282,7 +284,7 @@ def test_inherited_on_commit_schedule_is_rejected_before_drop():
     transport, connection, cursor, get = sync_transport(
         GUIDE.replace(SCHEDULE, "SYNC (ON COMMIT)")
     )
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(ValueError, match="cannot inherit SYNC"):
             create_hybrid_index(
                 connection, "REQUESTED", vectorizer_preference=preference(transport)
@@ -311,7 +313,7 @@ def test_sync_interruption_recovers_only_when_original_index_disappeared(stage):
 
     cursor.execute.side_effect = execute
     cursor.fetchone.side_effect = lambda: ("OLD",) if present else None
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         with pytest.raises(KeyboardInterrupt) as caught:
             transport.create_metadata_index(
                 "DOCS", "NEW", hybrid=True, build=lambda *_: "CREATE HYBRID INVALID"
@@ -364,7 +366,7 @@ async def test_repeated_cancellation_finishes_recovery_before_cursor_release(sta
     async def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._aget_connection", get):
         task = asyncio.create_task(
             transport.acreate_metadata_index(
                 "DOCS", "NEW", hybrid=True, build=lambda *_: "CREATE HYBRID INVALID"
@@ -432,7 +434,7 @@ async def test_caller_serialization_builds_once_and_second_call_observes_hybrid(
                 build=lambda *_: 'CREATE HYBRID VECTOR INDEX "OLD"',
             )
 
-    with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._aget_connection", get):
         await asyncio.gather(maintain(), maintain())
     assert (
         sum(c.args[0].startswith("DROP INDEX") for c in cursor.execute.call_args_list)

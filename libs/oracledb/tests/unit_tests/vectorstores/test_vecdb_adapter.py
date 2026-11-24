@@ -12,11 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
-from langchain_oracledb.vectorstores._vecdb import (
-    AsyncNativeTransport,
-    NativeTransport,
-    VecDBBackend,
-)
+from langchain_oracledb.vectorstores._vecdb import VecDBBackend
 from langchain_oracledb.vectorstores._vecdb_adapter import (
     LOGICAL_ID_KEY,
     SQLNetAdapter,
@@ -25,6 +21,10 @@ from langchain_oracledb.vectorstores._vecdb_adapter import (
     document,
     hybrid_search_request,
     rows,
+)
+from langchain_oracledb.vectorstores._vecdb_native import (
+    AsyncNativeTransport,
+    NativeTransport,
 )
 from langchain_oracledb.vectorstores.utils import DistanceStrategy
 
@@ -71,12 +71,12 @@ async def test_sync_async_driver_gets_same_copied_query_contract(asynchronous):
     if asynchronous:
         cursor.execute = AsyncMock()
         transport = AsyncNativeTransport(object(), (23, 26, 3))
-        with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", aget):
+        with patch("langchain_oracledb.vectorstores.utils._aget_connection", aget):
             assert await transport.acall("search", **args) == {"items": []}
         assert cursor.execute.await_count == 1
     else:
         transport = NativeTransport(object(), (23, 26, 3))
-        with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+        with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
             assert transport.call("search", **args) == {"items": []}
     cursor.execute.assert_called_once()
     sql = cursor.execute.call_args.args[0]
@@ -137,7 +137,7 @@ def test_index_template_captures_real_package_result():
 def test_native_request_validation_precedes_connection_acquisition(
     operation, params, message
 ):
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as get:
+    with patch("langchain_oracledb.vectorstores.utils._get_connection") as get:
         with pytest.raises(ValueError, match=message):
             NativeTransport(object(), (23, 26, 3)).call(operation, **params)
     get.assert_not_called()
@@ -208,7 +208,7 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
 
 @pytest.mark.parametrize("vector", [[], [True], [float("nan")], [float("inf")], ["1"]])
 def test_hybrid_rejects_invalid_vectors_without_native_access(vector):
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as get:
+    with patch("langchain_oracledb.vectorstores.utils._get_connection") as get:
         with pytest.raises(ValueError):
             NativeTransport(object(), (23, 26, 3)).hybrid_search(
                 "DOCS", {"vector": {"search_vector": vector}}, False
@@ -254,7 +254,7 @@ def test_response_adapter_accepts_pydantic_shape():
 
 @pytest.mark.parametrize("params", [{"vector": None}, {"text": []}, {"return": None}])
 def test_malformed_hybrid_sections_fail_before_native_access(params):
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as get:
+    with patch("langchain_oracledb.vectorstores.utils._get_connection") as get:
         with pytest.raises(TypeError, match="dictionary"):
             NativeTransport(object(), (23, 26, 3)).hybrid_search("DOCS", params, False)
     get.assert_not_called()
@@ -369,7 +369,7 @@ def test_retrieved_numeric_metadata_can_be_modified_and_upserted(version):
     def get(_):
         yield connection
 
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection", get):
+    with patch("langchain_oracledb.vectorstores.utils._get_connection", get):
         doc = backend.get(["a"])[0]
         assert isinstance(doc.metadata["count"], Decimal)
         doc.metadata["count"] += 1
@@ -400,7 +400,7 @@ def test_upsert_rejects_nonfinite_decimal_metadata_before_native_access(value):
     backend = VecDBBackend(
         NativeTransport(object(), (23, 26, 3)), "DOCS", DistanceStrategy.COSINE
     )
-    with patch("langchain_oracledb.vectorstores._vecdb._get_connection") as get:
+    with patch("langchain_oracledb.vectorstores.utils._get_connection") as get:
         with pytest.raises(ValueError, match="not JSON compliant"):
             backend.add(["text"], [[1.0]], [{"count": Decimal(value)}], ["a"], True)
     get.assert_not_called()

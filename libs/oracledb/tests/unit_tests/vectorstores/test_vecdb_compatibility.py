@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from langchain_oracledb.vectorstores._vecdb import (
+from langchain_oracledb.vectorstores._vecdb_schema import (
     CURRENT_COLUMNS,
     VECDB_CAPABILITY_SQL,
     anative_selection,

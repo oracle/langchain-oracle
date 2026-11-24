@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import oracledb
 import pytest
 
-from langchain_oracledb.vectorstores._vecdb import (
+from langchain_oracledb.vectorstores._vecdb_native import (
     AsyncNativeTransport,
     NativeTransport,
-    _identifier_parts,
 )
+from langchain_oracledb.vectorstores._vecdb_schema import _identifier_parts
 from langchain_oracledb.vectorstores.utils import (
     _quote_indentifier,
     adrop_table_purge,
@@ -29,7 +29,7 @@ def probe(asynchronous, columns):
         else "missing"
     )
     return patch(
-        "langchain_oracledb.vectorstores._vecdb."
+        "langchain_oracledb.vectorstores._vecdb_schema."
         + ("_asql_layout" if asynchronous else "_sql_layout"),
         return_value=kind,
     )
