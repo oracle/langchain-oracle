@@ -85,6 +85,16 @@ describe("OracleChatMessageHistory", () => {
     expect(Buffer.byteLength(name, "utf8")).toBe(128);
   });
 
+  test("matches Python index name generation for non-ASCII identifiers", async () => {
+    expect(await generatedIndexName("historial_sesión", "session_id")).toBe(
+      "idx_historial_sesión_session_id_133c17c2"
+    );
+
+    expect(await generatedIndexName("chat_😀", "session_id")).toBe(
+      "idx_chat_😀_session_id_3394cc4f"
+    );
+  });
+
   test("truncates index names without splitting UTF-8 characters", async () => {
     const name = await generatedIndexName("é".repeat(60), "session_id");
     expect(name.slice(0, -9)).toBe(`idx_${"é".repeat(57)}`);

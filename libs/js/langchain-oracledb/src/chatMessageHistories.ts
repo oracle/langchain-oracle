@@ -52,10 +52,14 @@ function defaultIndexName(tableName: string, sessionIdKey: string): string {
     `idx_${unqualifiedIdentifier(tableName)}_` +
     unqualifiedIdentifier(sessionIdKey);
 
-  const value = `[${JSON.stringify(tableName)}, ${JSON.stringify(
-    sessionIdKey
-  )}]`;
+  // Match Python json.dumps(..., ensure_ascii=True) for cross language hashes.
+  const pyJson = (s: string) =>
+    JSON.stringify(s).replace(
+      /[\u007f-\uffff]/g,
+      (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`
+    );
 
+  const value = `[${pyJson(tableName)}, ${pyJson(sessionIdKey)}]`;
   const digest = createHash("sha1").update(value).digest("hex").slice(0, 8);
 
   const prefix = new TextDecoder("utf-8").decode(
