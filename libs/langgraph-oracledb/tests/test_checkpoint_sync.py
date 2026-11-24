@@ -786,6 +786,43 @@ def test_get_tuple_parent_config_root_namespace_normalized(saver_name: str) -> N
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
+def test_pending_writes_are_ordered_by_task_path(saver_name: str) -> None:
+    """Pending writes come back in `(task_path, task_id, idx)` order.
+
+    The task ids are chosen to sort in the opposite order to the task paths, so
+    ordering by `task_id` alone returns them reversed.
+    """
+    with _sync_saver(saver_name) as saver:
+        stored = saver.put(
+            generate_config(str(uuid4())),
+            generate_checkpoint(),
+            generate_metadata(),
+            {},
+        )
+        saver.put_writes(
+            stored, [("ch", "second"), ("ch", "third")], "a-task", "~path, 2"
+        )
+        saver.put_writes(stored, [("ch", "first")], "z-task", "~path, 1")
+        # Writes stored without a task path sort ahead of every pathed write.
+        saver.put_writes(stored, [("ch", "no-path")], "m-task")
+
+        expected = [
+            ("m-task", "ch", "no-path"),
+            ("z-task", "ch", "first"),
+            ("a-task", "ch", "second"),
+            ("a-task", "ch", "third"),
+        ]
+
+        loaded = saver.get_tuple(stored)
+        assert loaded is not None
+        assert loaded.pending_writes == expected
+
+        listed = list(saver.list(stored))
+        assert len(listed) == 1
+        assert listed[0].pending_writes == expected
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
 def test_get_tuple_pending_writes(saver_name: str) -> None:
     with _sync_saver(saver_name) as saver:
         stored = saver.put(

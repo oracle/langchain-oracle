@@ -8,6 +8,7 @@ import {
   encodeCheckpointNamespace,
   encodeTaskPath,
   getOracleCheckpointTables,
+  getOracleSQLStatements,
   getPendingSendsParams,
   validateTableSuffix,
 } from "../sql.js";
@@ -91,6 +92,14 @@ describe("Oracle SQL helpers", () => {
     expect(encodeTaskPath("")).toBe(" ");
     expect(() => encodeTaskPath(" ")).toThrow(
       "task_path cannot be a single space"
+    );
+  });
+
+  test("orders pending writes by task path, task id and index", () => {
+    // `writesSortKey` order: the order live execution applies a super-step's
+    // tasks, and the one `getTuple`/`list` must return `pendingWrites` in.
+    expect(getOracleSQLStatements().SELECT_CHECKPOINT_WRITES_SQL).toMatch(
+      /ORDER BY cw\.task_path, cw\.task_id, cw\.idx$/
     );
   });
 

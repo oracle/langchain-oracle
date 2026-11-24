@@ -863,6 +863,47 @@ describeIfOracle("Oracle checkpoint Python parity", () => {
     });
   });
 
+  test("returns pending writes in task path, task id, index order", async () => {
+    await withSaver(async (saver, trackThread) => {
+      const id = trackThread(threadId("writes-task-path-order"));
+      const saved = await saver.put(
+        { configurable: { thread_id: id } },
+        checkpoint(),
+        metadata(),
+        {}
+      );
+      // Task ids sort in the opposite order to the task paths, so ordering by
+      // task id alone returns these reversed.
+      await saver.putWrites(
+        saved,
+        [
+          ["ch", "second"],
+          ["ch", "third"],
+        ],
+        "a-task",
+        "~path, 2"
+      );
+      await saver.putWrites(saved, [["ch", "first"]], "z-task", "~path, 1");
+      // Writes stored without a task path sort ahead of every pathed write.
+      await saver.putWrites(saved, [["ch", "no-path"]], "m-task");
+
+      const expected = [
+        ["m-task", "ch", "no-path"],
+        ["z-task", "ch", "first"],
+        ["a-task", "ch", "second"],
+        ["a-task", "ch", "third"],
+      ];
+
+      const loaded = await saver.getTuple(saved);
+      expect(loaded?.pendingWrites).toEqual(expected);
+
+      const listed = [];
+      for await (const tuple of saver.list(saved)) listed.push(tuple);
+      expect(listed).toHaveLength(1);
+      expect(listed[0].pendingWrites).toEqual(expected);
+    });
+  });
+
   test("does not carry pending writes onto the next checkpoint", async () => {
     await withSaver(async (saver, trackThread) => {
       const id = trackThread(threadId("writes-next-checkpoint"));
