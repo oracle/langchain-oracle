@@ -41,12 +41,44 @@ def _resolve_timeout(
     return (_DEFAULT_CONNECT_TIMEOUT, _DEFAULT_READ_TIMEOUT)
 
 
+def _resolve_retry_strategy(max_retries: Optional[int] = None) -> Any:
+    """Build the OCI SDK retry strategy for a ``max_retries`` setting.
+
+    ``None`` keeps the SDK default (up to 8 attempts). ``0`` disables retries.
+    Any other value allows that many retries after the first attempt, with the
+    same retryable errors and time limit as the SDK default.
+    """
+    import oci
+
+    if max_retries is None:
+        return oci.retry.DEFAULT_RETRY_STRATEGY
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int):
+        raise ValueError("max_retries must be an integer")
+    if max_retries < 0:
+        raise ValueError("max_retries must be greater than or equal to 0")
+    if max_retries == 0:
+        return oci.retry.NoneRetryStrategy()
+    return (
+        oci.retry.RetryStrategyBuilder()
+        .add_max_attempts(max_attempts=max_retries + 1)
+        .add_total_elapsed_time(total_elapsed_time_seconds=600)
+        .add_service_error_check(
+            service_error_retry_config=(
+                oci.retry.retry_checkers.RETRYABLE_STATUSES_AND_CODES
+            ),
+            service_error_retry_on_any_5xx=True,
+        )
+        .get_retry_strategy()
+    )
+
+
 def create_oci_client_kwargs(
     auth_type: str,
     service_endpoint: Optional[str] = None,
     auth_file_location: str = "~/.oci/config",
     auth_profile: str = "DEFAULT",
     timeout: Optional[Union[int, float, Tuple[int, int]]] = None,
+    max_retries: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Create OCI client kwargs based on authentication type.
 
@@ -62,6 +94,8 @@ def create_oci_client_kwargs(
         timeout: Request timeout. Can be an int/float (read timeout in seconds),
                  or a tuple of (connect_timeout, read_timeout). Defaults to
                  (10, 240). Override globally via OCI_REQUEST_TIMEOUT env var.
+        max_retries: Maximum number of retries after the first attempt. ``None``
+                 keeps the OCI SDK default retry strategy; ``0`` disables retries.
 
     Returns:
         Dict with 'config' and/or 'signer' keys ready for OCI client initialization.
@@ -82,7 +116,7 @@ def create_oci_client_kwargs(
         "config": {},
         "signer": None,
         "service_endpoint": service_endpoint,
-        "retry_strategy": oci.retry.DEFAULT_RETRY_STRATEGY,
+        "retry_strategy": _resolve_retry_strategy(max_retries),
         "timeout": _resolve_timeout(timeout),
     }
 
