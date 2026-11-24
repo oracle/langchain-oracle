@@ -60,6 +60,7 @@ from langchain_oci.chat_models.providers import (
     OpenAIProvider,
     Provider,
 )
+from langchain_oci.common.auth import _resolve_timeout
 from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
@@ -826,7 +827,10 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             headers=headers,
             auth=signer,
             stream=stream,
-            timeout=240,
+            # Unset keeps the previous single 240s value for this REST path.
+            timeout=(
+                _resolve_timeout(self.timeout) if self.timeout is not None else 240
+            ),
         )
         res.raise_for_status()
 

@@ -7,7 +7,17 @@ import json
 import warnings
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
@@ -112,6 +122,17 @@ class OCIGenAIBase(BaseModel, ABC):
     is_stream: bool = False
     """Whether to stream back partial progress"""
 
+    timeout: Optional[Union[int, float, Tuple[int, int]]] = None
+    """Request timeout in seconds: a read timeout, or a
+    ``(connect_timeout, read_timeout)`` tuple. Defaults to ``(10, 240)``, or to
+    the ``OCI_REQUEST_TIMEOUT`` environment variable when it is set.
+    Ignored when ``client`` is passed."""
+
+    max_retries: Optional[int] = None
+    """Maximum number of retries after the first attempt. ``None`` keeps the
+    OCI SDK default retry strategy (up to 8 attempts); ``0`` disables retries.
+    Ignored when ``client`` is passed."""
+
     max_sequential_tool_calls: int = 8
     """Maximum tool calls before forcing final answer.
     Prevents infinite loops while allowing multi-step orchestration."""
@@ -141,6 +162,8 @@ class OCIGenAIBase(BaseModel, ABC):
                 service_endpoint=values["service_endpoint"],
                 auth_file_location=values["auth_file_location"],
                 auth_profile=values["auth_profile"],
+                timeout=values.get("timeout"),
+                max_retries=values.get("max_retries"),
             )
 
             values["client"] = oci.generative_ai_inference.GenerativeAiInferenceClient(
