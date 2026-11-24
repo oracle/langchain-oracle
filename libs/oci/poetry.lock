@@ -2436,47 +2436,21 @@ tiktoken = ">=0.7.0,<1.0.0"
 
 [[package]]
 name = "langchain-openai"
-version = "1.7.4"
+version = "1.1.0"
 description = "An integration package connecting OpenAI and LangChain"
 optional = false
 python-versions = "<4.0.0,>=3.10.0"
 groups = ["main", "test"]
-markers = "python_version >= \"3.10\" and python_version < \"3.13\""
+markers = "python_version >= \"3.10\""
 files = [
-    {file = "langchain_openai-1.7.4-py3-none-any.whl", hash = "sha256:aaee93369765bac7ebf640aab62f8ae16df403ed982737ae51f88f6a24a151ab"},
-    {file = "langchain_openai-1.7.4.tar.gz", hash = "sha256:8fd90e41588526d990f32262447adf8e130d7ce28ed66cefa315e64cc9dd12ce"},
+    {file = "langchain_openai-1.1.0-py3-none-any.whl", hash = "sha256:243bb345d0260ea1326c2b6ac2237ec29f082ab457c59e9306bac349df4577e8"},
+    {file = "langchain_openai-1.1.0.tar.gz", hash = "sha256:9a33280c2e8315d013d64e6b15e583be347beb0d0f281755c335ae504ad0c184"},
 ]
 
 [package.dependencies]
-certifi = ">=2024.6.2"
-langchain-core = ">=1.7.5,<2.0.0"
-openai = ">=2.45.0"
-tiktoken = ">=0.7.0"
-
-[package.extras]
-azure-identity = ["aiohttp (>=3.11.0)", "azure-identity (>=1.25.0)"]
-
-[[package]]
-name = "langchain-openai"
-version = "1.8.5"
-description = "An integration package connecting OpenAI and LangChain"
-optional = false
-python-versions = "<4.0.0,>=3.11.0"
-groups = ["main", "test"]
-markers = "python_version >= \"3.13\""
-files = [
-    {file = "langchain_openai-1.8.5-py3-none-any.whl", hash = "sha256:e5bc9d1da58231496caf2e09c42c5ed21ddc8bb4e2427300c8e8a7b1a8372bf1"},
-    {file = "langchain_openai-1.8.5.tar.gz", hash = "sha256:53f2612f61290edc115712a887e384dac9984783689d2e2b4ca7fbc75c1e0e64"},
-]
-
-[package.dependencies]
-certifi = ">=2024.6.2"
-langchain-core = ">=1.8.4,<2.0.0"
-openai = ">=2.45.0"
-tiktoken = ">=0.7.0"
-
-[package.extras]
-azure-identity = ["aiohttp (>=3.11.0)", "azure-identity (>=1.25.0)"]
+langchain-core = ">=1.1.0,<2.0.0"
+openai = ">=1.109.1,<3.0.0"
+tiktoken = ">=0.7.0,<1.0.0"
 
 [[package]]
 name = "langchain-oracledb"
@@ -3831,7 +3805,6 @@ description = "The official Python library for the openai API"
 optional = false
 python-versions = ">=3.9"
 groups = ["main", "test"]
-markers = "python_version == \"3.9\""
 files = [
     {file = "openai-2.8.1-py3-none-any.whl", hash = "sha256:c6c3b5a04994734386e8dad3c00a393f56d3b68a27cd2e8acae91a59e4122463"},
     {file = "openai-2.8.1.tar.gz", hash = "sha256:cb1b79eef6e809f6da326a7ef6038719e35aa944c42d081807bfa1be8060f15f"},
@@ -3850,37 +3823,6 @@ typing-extensions = ">=4.11,<5"
 [package.extras]
 aiohttp = ["aiohttp", "httpx-aiohttp (>=0.1.9)"]
 datalib = ["numpy (>=1)", "pandas (>=1.2.3)", "pandas-stubs (>=1.1.0.11)"]
-realtime = ["websockets (>=13,<16)"]
-voice-helpers = ["numpy (>=2.0.2)", "sounddevice (>=0.5.1)"]
-
-[[package]]
-name = "openai"
-version = "2.54.0"
-description = "The official Python library for the openai API"
-optional = false
-python-versions = ">=3.10"
-groups = ["main", "test"]
-markers = "python_version >= \"3.10\""
-files = [
-    {file = "openai-2.54.0-py3-none-any.whl", hash = "sha256:89089789197ccdb87f173a03145ed1598d00795220c93e96cf712b1cbf5e5f2b"},
-    {file = "openai-2.54.0.tar.gz", hash = "sha256:e3e6f8bc1ba30ddf381ace1a14340eed381cb984a1a59bd0f34b5be3b5d49cfa"},
-]
-
-[package.dependencies]
-anyio = ">=3.5.0,<5"
-distro = ">=1.7.0,<2"
-httpx = ">=0.23.0,<1"
-jiter = ">=0.10.0,<1"
-pydantic = ">=1.9.0,<3"
-sniffio = "*"
-tqdm = ">4"
-typing-extensions = ">=4.14,<5"
-
-[package.extras]
-aiohttp = ["aiohttp (>=3.14.1)", "httpx-aiohttp (>=0.1.9)"]
-bedrock = ["botocore (>=1.40.0,<2)"]
-datalib = ["numpy (>=1)", "pandas (>=1.2.3)", "pandas-stubs (>=1.1.0.11)"]
-httpx2 = ["anyio (>=4.10.0,<5)", "httpx (>=0.25.1,<1)", "httpx2 (>=2.7.0,<3)"]
 realtime = ["websockets (>=13,<16)"]
 voice-helpers = ["numpy (>=2.0.2)", "sounddevice (>=0.5.1)"]
 
