@@ -44,6 +44,11 @@ from langgraph.store.base import (
 )
 from typing_extensions import TypedDict
 
+try:
+    from langgraph.store.base import validate_op_namespace
+except ImportError:  # langgraph-checkpoint releases that predate the helper
+    validate_op_namespace = None  # type: ignore[assignment]
+
 from langgraph_oracledb.checkpoint.oracle import _internal as _or_internal
 
 from ...checkpoint.oracle.sync import _validate_conn_string
@@ -235,6 +240,77 @@ def _namespace_to_text(namespace: tuple[str, ...]) -> str:
     return ".".join(namespace)
 
 
+def _escape_like_literal(text: str) -> str:
+    """Escape LIKE metacharacters so `text` is matched literally.
+
+    Namespace labels may contain `_` and `%`, which would otherwise act as
+    wildcards: `("user_1",)` would match `("userX1",)`. Backslash is escaped
+    first so it cannot escape the following character. Requires an explicit
+    `ESCAPE '\\'` clause on the pattern.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _namespace_prefix_condition(
+    namespace_prefix: tuple[str, ...], column: str, bind: str
+) -> tuple[str, dict[str, str]]:
+    """Build the SQL scoping a query to a namespace and its descendants.
+
+    Matches the namespace exactly or requires the `.` separator before any
+    remainder, so a prefix of `("foo",)` does not also match `("foobar",)`.
+    Only the LIKE arm is escaped: equality does not interpret metacharacters.
+    """
+    path = _namespace_to_text(namespace_prefix)
+    condition = f"({column} = :{bind}_exact OR {column} LIKE :{bind}_like ESCAPE '\\')"
+    return condition, {
+        f"{bind}_exact": path,
+        f"{bind}_like": f"{_escape_like_literal(path)}.%",
+    }
+
+
+def _namespace_suffix_condition(
+    namespace_suffix: tuple[str, ...], column: str, bind: str
+) -> tuple[str, dict[str, str]]:
+    """Build the SQL matching namespaces that end with the given labels.
+
+    Matches the namespace exactly or requires the `.` separator before the
+    suffix, so a suffix of `("bar",)` does not also match `("foobar",)`.
+    """
+    path = _namespace_to_text(namespace_suffix)
+    condition = f"({column} = :{bind}_exact OR {column} LIKE :{bind}_like ESCAPE '\\')"
+    return condition, {
+        f"{bind}_exact": path,
+        f"{bind}_like": f"%.{_escape_like_literal(path)}",
+    }
+
+
+def _namespace_wildcard_condition(
+    path: tuple[str, ...], match_type: str, column: str, bind: str
+) -> tuple[str, dict[str, str]]:
+    """Build the SQL for a match condition that contains `*` labels.
+
+    `LIKE` cannot express "any characters except the separator", so the labels
+    are compared segment by segment instead. `*` matches exactly one label,
+    which is how `InMemoryStore` compares namespaces.
+    """
+    segments = f"REGEXP_COUNT({column}, '[^.]+')"
+    clauses = [f"{segments} >= {len(path)}"]
+    params: dict[str, str] = {}
+    for position, label in enumerate(path):
+        if label == "*":
+            continue
+        if match_type == "suffix":
+            # Counted from the end; GREATEST keeps the occurrence valid for
+            # namespaces that are too short, which the count clause rejects.
+            occurrence = f"GREATEST(1, {segments} - {len(path) - 1 - position})"
+        else:
+            occurrence = str(position + 1)
+        name = f"{bind}_{position}"
+        clauses.append(f"REGEXP_SUBSTR({column}, '[^.]+', 1, {occurrence}) = :{name}")
+        params[name] = label
+    return "(" + " AND ".join(clauses) + ")", params
+
+
 def _decode_ns_bytes(namespace: str | bytes | list) -> tuple[str, ...]:
     if isinstance(namespace, list):
         return tuple(namespace)
@@ -286,6 +362,10 @@ def _group_ops(ops: Iterable[Op]) -> tuple[dict[type, list[tuple[int, Op]]], int
     grouped_ops: dict[type, list[tuple[int, Op]]] = defaultdict(list)
     tot = 0
     for idx, op in enumerate(ops):
+        # Ops passed straight to batch()/abatch() skip the BaseStore label
+        # checks, so a label such as "foo.bar" could address ("foo", "bar").
+        if validate_op_namespace is not None:
+            validate_op_namespace(op)
         grouped_ops[type(op)].append((idx, op))
         tot += 1
     return grouped_ops, tot
@@ -773,10 +853,11 @@ class BaseOracleStore(Generic[C]):
                         filter_counter += 1
 
             ns_condition = "1=1"
-            ns_param: Sequence[str] | None = None
+            ns_params: dict[str, str] = {}
             if op.namespace_prefix:
-                ns_condition = "st.prefix LIKE :ns_prefix"
-                ns_param = (f"{_namespace_to_text(op.namespace_prefix)}%",)
+                ns_condition, ns_params = _namespace_prefix_condition(
+                    op.namespace_prefix, "st.prefix", "ns_prefix"
+                )
 
             extra_filters = (
                 " AND " + " AND ".join(filter_clauses) if filter_clauses else ""
@@ -832,8 +913,7 @@ class BaseOracleStore(Generic[C]):
                     "offset": op.offset,
                     "limit": op.limit,
                 }
-                if ns_param:
-                    search_results_params["ns_prefix"] = ns_param[0]
+                search_results_params.update(ns_params)
                 # Add filter params with their exact names
                 search_results_params.update(filter_param_dict)
 
@@ -851,8 +931,7 @@ class BaseOracleStore(Generic[C]):
                     "offset": op.offset,
                     "limit": op.limit,
                 }
-                if ns_param:
-                    search_results_params["ns_prefix"] = ns_param[0]
+                search_results_params.update(ns_params)
                 # Add filter params with their exact names
                 search_results_params.update(filter_param_dict)
 
@@ -914,17 +993,29 @@ class BaseOracleStore(Generic[C]):
             if op.match_conditions:
                 for condition in op.match_conditions:
                     param_count += 1
-                    if condition.match_type == "prefix":
-                        where_clauses.append(f"prefix LIKE :match_param{param_count}")
-                        prefix_text = _namespace_to_text(condition.path)
-                        # Handle wildcards by replacing * with %
-                        prefix_text = prefix_text.replace("*", "%")
-                        params[f"match_param{param_count}"] = f"{prefix_text}%"
-                    elif condition.match_type == "suffix":
-                        where_clauses.append(f"prefix LIKE :match_param{param_count}")
-                        suffix_text = _namespace_to_text(condition.path)
-                        suffix_text = suffix_text.replace("*", "%")
-                        params[f"match_param{param_count}"] = f"%{suffix_text}"
+                    bind = f"match_param{param_count}"
+                    if (
+                        condition.match_type == "prefix"
+                        or condition.match_type == "suffix"
+                    ):
+                        if not condition.path:
+                            continue
+                        # Match whole labels only: ("foo",) must not match
+                        # ("foobar",), and "_" / "%" in a label are literal.
+                        if "*" in condition.path:
+                            clause, clause_params = _namespace_wildcard_condition(
+                                condition.path, condition.match_type, "prefix", bind
+                            )
+                        elif condition.match_type == "prefix":
+                            clause, clause_params = _namespace_prefix_condition(
+                                condition.path, "prefix", bind
+                            )
+                        else:
+                            clause, clause_params = _namespace_suffix_condition(
+                                condition.path, "prefix", bind
+                            )
+                        where_clauses.append(clause)
+                        params.update(clause_params)
                     else:
                         logger.warning(  # type: ignore[unreachable]  # defensive: match_type is a Literal
                             f"Unknown match_type in list_namespaces: {condition.match_type}"

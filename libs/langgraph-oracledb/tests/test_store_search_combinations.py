@@ -12,7 +12,10 @@ from langgraph.store.base import SearchOp
 
 from langgraph_oracledb.store.oracle import OracleStore
 from langgraph_oracledb.store.oracle.aio import AsyncOracleStore
-from langgraph_oracledb.store.oracle.base import _namespace_to_text
+from langgraph_oracledb.store.oracle.base import (
+    _escape_like_literal,
+    _namespace_to_text,
+)
 from tests.conftest import (
     DEFAULT_CONNECTION_INFO,
     create_connection_string,
@@ -313,7 +316,9 @@ def _assert_store_search_query_shape(store, params) -> None:
     query_sql, query_params = queries[0]
     assert query_params["limit"] == params["limit"]
     assert query_params["offset"] == params["offset"]
-    assert query_params["ns_prefix"] == f"{_namespace_to_text(params['namespace'])}%"
+    path = _namespace_to_text(params["namespace"])
+    assert query_params["ns_prefix_exact"] == path
+    assert query_params["ns_prefix_like"] == f"{_escape_like_literal(path)}.%"
 
     filter_params = [key for key in query_params if key.startswith("filter_")]
     assert len(filter_params) == _expected_filter_param_count(params.get("filter"))

@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
+from uuid import uuid4
 
 import oracledb
 import pytest
@@ -21,8 +22,15 @@ from langgraph.store.base import (
     SearchOp,
 )
 
+from langgraph.store.memory import InMemoryStore
+
 from langgraph_oracledb.store.oracle import AsyncOracleStore
 from langgraph_oracledb.store.oracle import aio as oracle_store_aio
+from tests._store_namespace_utils import (
+    namespace_matching_fixture,
+    namespace_matching_list_queries,
+    namespace_matching_search_prefixes,
+)
 from tests.conftest import (
     DEFAULT_CONNECTION_INFO,
     ORACLE_DISTANCE_TYPES,
@@ -358,6 +366,47 @@ async def test_batch_search_ops(store: AsyncOracleStore) -> None:
     assert len(results) == 2
     assert len(results[0]) == 1  # Filtered results
     assert len(results[1]) == 2  # All results
+
+
+async def test_namespace_matching_is_label_bounded(store: AsyncOracleStore) -> None:
+    """Prefix, suffix and wildcard matching compare whole labels.
+
+    `InMemoryStore` is the reference: every query must return what it does.
+    """
+    root = f"nsmatch{uuid4().hex}"
+    namespaces = namespace_matching_fixture(root)
+    reference = InMemoryStore()
+    for namespace in namespaces:
+        await store.aput(namespace, "item", {"ns": list(namespace)})
+        reference.put(namespace, "item", {"ns": list(namespace)})
+
+    try:
+        for prefix in namespace_matching_search_prefixes(root):
+            found = {item.namespace for item in await store.asearch(prefix, limit=100)}
+            expected = {item.namespace for item in reference.search(prefix, limit=100)}
+            assert found == expected, prefix
+
+        # A label is not a prefix of a longer label, and "_" is literal.
+        assert {
+            item.namespace for item in await store.asearch((root, "user_1"), limit=100)
+        } == {(root, "user_1"), (root, "user_1", "prefs")}
+
+        for kwargs in namespace_matching_list_queries(root):
+            found = set(await store.alist_namespaces(limit=100, **kwargs))
+            expected = set(reference.list_namespaces(limit=100, **kwargs))
+            assert found == expected, kwargs
+
+        # "*" stands for exactly one label.
+        assert set(
+            await store.alist_namespaces(prefix=(root, "users", "*", "bob"), limit=100)
+        ) == {
+            (root, "users", "a", "bob"),
+            (root, "users", "b", "bob"),
+            (root, "users", "a_b", "bob"),
+        }
+    finally:
+        for namespace in namespaces:
+            await store.adelete(namespace, "item")
 
 
 async def test_batch_list_namespaces_ops(store: AsyncOracleStore) -> None:

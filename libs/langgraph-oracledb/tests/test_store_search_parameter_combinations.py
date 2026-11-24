@@ -8,7 +8,10 @@ import pytest
 from langgraph.store.base import SearchOp
 
 from langgraph_oracledb.store.oracle import OracleStore
-from langgraph_oracledb.store.oracle.base import _namespace_to_text
+from langgraph_oracledb.store.oracle.base import (
+    _escape_like_literal,
+    _namespace_to_text,
+)
 
 
 @contextmanager
@@ -152,12 +155,12 @@ def _assert_prepared_search_query(store: OracleStore, params: dict) -> None:
     assert query_params["limit"] == params["limit"]
     assert query_params["offset"] == params["offset"]
     if params["namespace_prefix"]:
-        assert (
-            query_params["ns_prefix"]
-            == f"{_namespace_to_text(params['namespace_prefix'])}%"
-        )
+        path = _namespace_to_text(params["namespace_prefix"])
+        assert query_params["ns_prefix_exact"] == path
+        assert query_params["ns_prefix_like"] == f"{_escape_like_literal(path)}.%"
     else:
-        assert "ns_prefix" not in query_params
+        assert "ns_prefix_exact" not in query_params
+        assert "ns_prefix_like" not in query_params
 
     filter_dict = params.get("filter")
     filter_params = [key for key in query_params if key.startswith("filter_")]

@@ -5,21 +5,29 @@ import datetime
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 import oracledb
 import pytest
 from langchain_core.embeddings import Embeddings
 from langgraph.store.base import (
     GetOp,
+    InvalidNamespaceError,
     Item,
     ListNamespacesOp,
     MatchCondition,
     PutOp,
     SearchOp,
 )
+from langgraph.store.memory import InMemoryStore
 
 from langgraph_oracledb.store.oracle import OracleStore
 from langgraph_oracledb.store.oracle import base as oracle_store_base
+from tests._store_namespace_utils import (
+    namespace_matching_fixture,
+    namespace_matching_list_queries,
+    namespace_matching_search_prefixes,
+)
 from tests.conftest import (
     DEFAULT_CONNECTION_INFO,
     ORACLE_INDEX_TYPES,
@@ -232,6 +240,70 @@ def test_search_ttl_refresh_unexpected_errors_raise(monkeypatch):
 
     with pytest.raises(FakeDatabaseError):
         store._batch_search_ops(prepared_statements, search_ops, [None], cursor)
+
+
+def test_namespace_prefix_condition_is_label_bounded_and_escaped() -> None:
+    clause, params = oracle_store_base._namespace_prefix_condition(
+        ("user_1", "50%"), "st.prefix", "ns_prefix"
+    )
+
+    assert clause == (
+        "(st.prefix = :ns_prefix_exact OR st.prefix LIKE :ns_prefix_like ESCAPE '\\')"
+    )
+    # Equality is not escaped; the LIKE arm is, and it requires the separator.
+    assert params == {
+        "ns_prefix_exact": "user_1.50%",
+        "ns_prefix_like": "user\\_1.50\\%.%",
+    }
+
+
+def test_namespace_suffix_condition_is_label_bounded_and_escaped() -> None:
+    clause, params = oracle_store_base._namespace_suffix_condition(
+        ("a\\b", "c_d"), "prefix", "match_param1"
+    )
+
+    assert clause == (
+        "(prefix = :match_param1_exact OR prefix LIKE :match_param1_like ESCAPE '\\')"
+    )
+    assert params == {
+        "match_param1_exact": "a\\b.c_d",
+        "match_param1_like": "%.a\\\\b.c\\_d",
+    }
+
+
+def test_namespace_wildcard_condition_compares_whole_labels() -> None:
+    clause, params = oracle_store_base._namespace_wildcard_condition(
+        ("users", "*", "bob"), "prefix", "prefix", "m1"
+    )
+    assert clause == (
+        "(REGEXP_COUNT(prefix, '[^.]+') >= 3"
+        " AND REGEXP_SUBSTR(prefix, '[^.]+', 1, 1) = :m1_0"
+        " AND REGEXP_SUBSTR(prefix, '[^.]+', 1, 3) = :m1_2)"
+    )
+    assert params == {"m1_0": "users", "m1_2": "bob"}
+
+    clause, params = oracle_store_base._namespace_wildcard_condition(
+        ("*", "bob"), "suffix", "prefix", "m2"
+    )
+    assert clause == (
+        "(REGEXP_COUNT(prefix, '[^.]+') >= 2"
+        " AND REGEXP_SUBSTR(prefix, '[^.]+', 1,"
+        " GREATEST(1, REGEXP_COUNT(prefix, '[^.]+') - 0)) = :m2_1)"
+    )
+    assert params == {"m2_1": "bob"}
+
+
+@pytest.mark.skipif(
+    oracle_store_base.validate_op_namespace is None,
+    reason="langgraph-checkpoint predates validate_op_namespace",
+)
+def test_group_ops_rejects_namespace_labels_containing_the_separator() -> None:
+    with pytest.raises(InvalidNamespaceError):
+        oracle_store_base._group_ops([GetOp(namespace=("foo.bar",), key="k")])
+    with pytest.raises(InvalidNamespaceError):
+        oracle_store_base._group_ops(
+            [SearchOp(namespace_prefix=("foo.bar",), filter=None, limit=1, offset=0)]
+        )
 
 
 class TestStoreSearchSync:
@@ -474,6 +546,48 @@ class TestStoreSearchSync:
         # Cleanup
         for namespace in test_namespaces:
             store.delete(namespace, "dummy")
+
+    def test_namespace_matching_is_label_bounded(self, store) -> None:
+        """Prefix, suffix and wildcard matching compare whole labels.
+
+        `InMemoryStore` is the reference: every query must return what it does.
+        """
+        root = f"nsmatch{uuid4().hex}"
+        namespaces = namespace_matching_fixture(root)
+        reference = InMemoryStore()
+        for namespace in namespaces:
+            store.put(namespace, "item", {"ns": list(namespace)})
+            reference.put(namespace, "item", {"ns": list(namespace)})
+
+        try:
+            for prefix in namespace_matching_search_prefixes(root):
+                found = {item.namespace for item in store.search(prefix, limit=100)}
+                expected = {
+                    item.namespace for item in reference.search(prefix, limit=100)
+                }
+                assert found == expected, prefix
+
+            # A label is not a prefix of a longer label, and "_" is literal.
+            assert {
+                item.namespace for item in store.search((root, "user_1"), limit=100)
+            } == {(root, "user_1"), (root, "user_1", "prefs")}
+
+            for kwargs in namespace_matching_list_queries(root):
+                found = set(store.list_namespaces(limit=100, **kwargs))
+                expected = set(reference.list_namespaces(limit=100, **kwargs))
+                assert found == expected, kwargs
+
+            # "*" stands for exactly one label.
+            assert set(
+                store.list_namespaces(prefix=(root, "users", "*", "bob"), limit=100)
+            ) == {
+                (root, "users", "a", "bob"),
+                (root, "users", "b", "bob"),
+                (root, "users", "a_b", "bob"),
+            }
+        finally:
+            for namespace in namespaces:
+                store.delete(namespace, "item")
 
     def test_search(self, store) -> None:
         # Create test data
