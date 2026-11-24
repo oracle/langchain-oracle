@@ -5,6 +5,7 @@ import datetime
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 import oracledb
 import pytest
@@ -232,6 +233,60 @@ def test_search_ttl_refresh_unexpected_errors_raise(monkeypatch):
 
     with pytest.raises(FakeDatabaseError):
         store._batch_search_ops(prepared_statements, search_ops, [None], cursor)
+
+
+def _unconnected_store(ttl: dict | None) -> OracleStore:
+    """A store that can build queries without a database connection."""
+    store = OracleStore.__new__(OracleStore)
+    store.ttl_config = ttl  # type: ignore[assignment]
+    store.index_config = None
+    store.table_names = {"store": "store_ttl_test"}
+    return store
+
+
+def _prepared_read_sql(store: OracleStore) -> dict[str, str]:
+    get_queries = store._get_batch_GET_ops_queries(
+        [(0, GetOp(namespace=("ns",), key="k", refresh_ttl=True))]
+    )
+    search_queries, _ = store._prepare_batch_search_queries(
+        [(0, SearchOp(namespace_prefix=("ns",), filter=None, limit=5, offset=0))]
+    )
+    list_queries = store._get_batch_list_namespaces_queries(
+        [
+            (
+                0,
+                ListNamespacesOp(
+                    match_conditions=None, max_depth=None, limit=5, offset=0
+                ),
+            )
+        ]
+    )
+    return {
+        "refresh": get_queries[0][0],
+        "get": get_queries[1][0],
+        "search": search_queries[0][0],
+        "list": list_queries[0][0],
+    }
+
+
+def test_omit_expired_filters_every_read_query() -> None:
+    sql = _prepared_read_sql(_unconnected_store({"omit_expired": True}))
+
+    unaliased = "(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
+    assert unaliased in sql["get"]
+    # The refresh must skip expired rows too, or a read would revive them.
+    assert unaliased in sql["refresh"]
+    assert unaliased in sql["list"]
+    assert (
+        "(st.expires_at IS NULL OR st.expires_at > CURRENT_TIMESTAMP)" in sql["search"]
+    )
+
+
+@pytest.mark.parametrize("ttl", [None, {}, {"omit_expired": False}])
+def test_expired_rows_are_not_filtered_unless_requested(ttl: dict | None) -> None:
+    sql = _prepared_read_sql(_unconnected_store(ttl))
+
+    assert all("expires_at >" not in query for query in sql.values())
 
 
 class TestStoreSearchSync:
@@ -810,6 +865,47 @@ class TestStoreSearchSync:
         # Now has been more than TTL_SECONDS
         res = store.search(ns, query="bar", refresh_ttl=False)
         assert len(res) == 0
+
+    def test_omit_expired_hides_unswept_items(self) -> None:
+        """With `omit_expired`, an expired item is hidden before any sweep."""
+        conn_string = _get_conn_string()
+        ns = ("ttl", "omit")
+
+        def open_store(suffix: str, omit_expired: bool):
+            return OracleStore.from_conn_string(
+                conn_string,
+                ttl={"omit_expired": omit_expired, "refresh_on_read": True},
+                table_suffix=suffix,
+            )
+
+        # The sweeper is never started, so expired rows stay in the table.
+        for omit_expired in (True, False):
+            suffix = f"ttl_{uuid4().hex[:8]}"
+            with open_store(suffix, omit_expired) as ttl_store:
+                ttl_store.setup()
+                try:
+                    ttl_store.put(ns, "short", {"v": 1}, ttl=1 / 60)
+                    ttl_store.put(ns, "long", {"v": 2}, ttl=10)
+                    ttl_store.put(ns + ("gone",), "short", {"v": 3}, ttl=1 / 60)
+                    time.sleep(2.5)
+
+                    short = ttl_store.get(ns, "short")
+                    keys = {item.key for item in ttl_store.search(ns)}
+                    namespaces = set(ttl_store.list_namespaces(prefix=ns))
+
+                    assert ttl_store.get(ns, "long") is not None
+                    if omit_expired:
+                        assert short is None
+                        assert keys == {"long"}
+                        assert namespaces == {ns}
+                        # Reading with a TTL refresh did not revive the item.
+                        assert ttl_store.get(ns, "short", refresh_ttl=True) is None
+                    else:
+                        assert short is not None
+                        assert keys == {"short", "long"}
+                        assert namespaces == {ns, ns + ("gone",)}
+                finally:
+                    ttl_store.teardown()
 
     def test_non_ascii(
         self,
