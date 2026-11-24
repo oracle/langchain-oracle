@@ -269,7 +269,7 @@ function quoteIdentifierList(values: string[], name: string): string {
     .join(",");
 }
 
-/** Build the CREATE HYBRID VECTOR INDEX DDL stateme */
+/** Build the CREATE HYBRID VECTOR INDEX DDL statement */
 function hybridIndexDDL(
   store: OracleVS,
   name: string,
@@ -292,8 +292,8 @@ function hybridIndexDDL(
     ) {
       throwError(
         ErrorCode.VALIDATION_INVALID_INPUT,
-        "Vectorization parameters must be given with OracleVectorizerPreference" +
-          "do not include any of {model, embedder_spec, vector_idxtype, vectorizer}" +
+        "Vectorization parameters must be given with OracleVectorizerPreference. " +
+          "Do not include any of {model, embedder_spec, vector_idxtype, vectorizer} " +
           "under params.parameters."
       );
     }
@@ -398,7 +398,6 @@ export async function createHybridIndex(
     const ownsPreference = Boolean(options.vectorStore);
     await withConnection(client, async (connection) => {
       if (await indexExist(connection, indexName, tableName)) {
-        console.log(`Index ${idxName} already exists`);
         return;
       }
 
