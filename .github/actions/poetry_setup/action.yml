@@ -41,6 +41,15 @@ runs:
       # interpreter even when matrix.python-version is older.
       run: echo "POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON=true" >> "$GITHUB_ENV"
 
+    - name: Detect the system Python version
+      id: system-python
+      shell: bash
+      # The cached pipx venv keeps poetry under lib/pythonX.Y/site-packages,
+      # so it only works with the system Python minor version it was built
+      # with. Runner image upgrades change that version (ubuntu-24.04 ships
+      # 3.12, ubuntu-26.04 ships 3.14), so it has to be part of the cache key.
+      run: echo "version=$(/usr/bin/python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')" >> "$GITHUB_OUTPUT"
+
     - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       id: cache-bin-poetry
       name: Cache Poetry binary - Python ${{ inputs.python-version }}
@@ -49,10 +58,10 @@ runs:
       with:
         path: |
           /opt/pipx/venvs/poetry
-        # Poetry now runs under the system python3, not the matrix Python,
-        # so the cache no longer depends on inputs.python-version. The -v2
-        # suffix busts the previous (matrix-Python-bound) cache.
-        key: bin-poetry-${{ runner.os }}-${{ runner.arch }}-${{ inputs.poetry-version }}-v2
+        # Poetry runs under the system python3, not the matrix Python, so
+        # the cache depends on the system Python version rather than on
+        # inputs.python-version.
+        key: bin-poetry-${{ runner.os }}-${{ runner.arch }}-${{ inputs.poetry-version }}-syspy${{ steps.system-python.outputs.version }}-v3
 
     - name: Refresh shell hashtable and fixup softlinks
       if: steps.cache-bin-poetry.outputs.cache-hit == 'true'
