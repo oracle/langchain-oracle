@@ -20,6 +20,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 
 from langchain_oci.chat_models.providers.generic import normalize_logprobs
 from langchain_oci.common.async_support import OCIAsyncClient, OCIAsyncRequestError
+from langchain_oci.common.errors import raise_translated
 from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
@@ -140,7 +141,7 @@ class ChatOCIGenAIAsyncMixin:
                         e.body, request_data["chat_request_dict"]
                     )
                 ):
-                    raise
+                    raise_translated(e)
 
         if response_data is None:
             raise RuntimeError("No response received from OCI GenAI")
@@ -248,7 +249,7 @@ class ChatOCIGenAIAsyncMixin:
                             e.body, request_data["chat_request_dict"]
                         )
                     ):
-                        raise
+                        raise_translated(e)
                     continue
                 yield first
                 async for event in stream:
