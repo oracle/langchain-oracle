@@ -14,7 +14,7 @@ import oracledb from "oracledb";
 export class OracleEmbeddings extends Embeddings {
   protected conn: oracledb.Connection;
 
-  protected pref: Record<string, unknown>;
+  readonly pref: Record<string, unknown>;
 
   protected proxy: string;
 
