@@ -19,7 +19,10 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest now resolves to ubuntu-26.04, where
+    # actions/setup-python has no Python 3.9 build. Move back to
+    # ubuntu-latest once 3.9 leaves the test matrix.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version:
