@@ -202,11 +202,10 @@ class OracleSaver(BaseOracleSaver):
                 v["checkpoint"] = self._coerce_decimals(v["checkpoint"])
                 v["metadata"] = self._coerce_decimals(v["metadata"])
 
-            where_channels, args_channels = self._search_where_channels_pending_writes(
-                config, use_checkpoint_id=False
-            )
-            cur.execute(self.SELECT_CHANNEL_VALUES_SQL + where_channels, args_channels)
-            res = cur.fetchall()
+            res = []
+            for blob_query, blob_args in self._channel_values_queries(values):
+                cur.execute(blob_query, blob_args)
+                res.extend(cur.fetchall())
             channel_values = self._get_channel_values(res, values)
 
             where_writes, args_writes = self._search_where_channels_pending_writes(
@@ -318,14 +317,10 @@ class OracleSaver(BaseOracleSaver):
             value["checkpoint"] = self._coerce_decimals(value["checkpoint"])
             value["metadata"] = self._coerce_decimals(value["metadata"])
 
-            where_channel_values = (
-                "WHERE thread_id = :thread_id AND checkpoint_ns = :checkpoint_ns"
-            )
-            cur.execute(
-                self.SELECT_CHANNEL_VALUES_SQL + where_channel_values,
-                {"thread_id": thread_id, "checkpoint_ns": checkpoint_ns},
-            )
-            res = cur.fetchall()
+            res = []
+            for blob_query, blob_args in self._channel_values_queries([value]):
+                cur.execute(blob_query, blob_args)
+                res.extend(cur.fetchall())
             channel_values = self._get_channel_values(res, [value])
 
             where_pending_values = "WHERE thread_id = :thread_id AND checkpoint_ns = :checkpoint_ns AND checkpoint_id = :checkpoint_id"
