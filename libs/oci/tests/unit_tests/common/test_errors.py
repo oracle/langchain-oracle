@@ -2,7 +2,7 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Unit tests for translating OCI errors into the standard model exceptions."""
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import langchain_core.exceptions as core_exceptions
@@ -52,7 +52,12 @@ def _service_error(status: int, message: str = "boom", **kwargs: Any) -> Service
     )
 
 
-def _standard(name: str) -> Optional[type]:
+def _standard(name: str) -> Any:
+    """Look up a standard exception by name.
+
+    Looked up dynamically because older supported langchain-core releases do
+    not define these classes (this module is skipped there).
+    """
     return getattr(core_exceptions, name, None)
 
 
@@ -94,8 +99,8 @@ class TestStatusMapping:
 
         translated = translate_oci_error(original)
 
-        assert isinstance(translated, _standard(expected))  # type: ignore[arg-type]
-        assert isinstance(translated, core_exceptions.ModelError)
+        assert isinstance(translated, _standard(expected))
+        assert isinstance(translated, _standard("ModelError"))
         # Still the SDK error, so existing handlers keep working.
         assert isinstance(translated, ServiceError)
 
@@ -106,7 +111,7 @@ class TestStatusMapping:
 
         translated = translate_oci_error(original)
 
-        assert isinstance(translated, _standard(expected))  # type: ignore[arg-type]
+        assert isinstance(translated, _standard(expected))
         assert isinstance(translated, OCIAsyncRequestError)
         assert isinstance(translated, RuntimeError)
 
@@ -151,7 +156,7 @@ class TestTranslatedErrors:
     ) -> None:
         translated = translate_oci_error(_service_error(status))
 
-        assert translated.is_retryable is retryable  # type: ignore[attr-defined]
+        assert getattr(translated, "is_retryable") is retryable
 
     def test_class_names_identify_the_condition(self) -> None:
         sync_error = translate_oci_error(_service_error(429))
@@ -193,7 +198,7 @@ class TestRaiseTranslated:
     def test_raises_the_translated_error_chained_to_the_original(self) -> None:
         original = _service_error(429)
 
-        with pytest.raises(core_exceptions.ModelRateLimitError) as exc_info:
+        with pytest.raises(_standard("ModelRateLimitError")) as exc_info:
             try:
                 raise original
             except ServiceError as e:
@@ -223,7 +228,7 @@ class TestChatModel:
     def test_invoke_raises_the_standard_error(self) -> None:
         llm = self._llm(_service_error(400, OPENAI_OVERFLOW))
 
-        with pytest.raises(core_exceptions.ContextOverflowError) as exc_info:
+        with pytest.raises(_standard("ContextOverflowError")) as exc_info:
             llm.invoke("hello")
 
         assert isinstance(exc_info.value, ServiceError)
@@ -232,7 +237,7 @@ class TestChatModel:
     def test_stream_raises_the_standard_error(self) -> None:
         llm = self._llm(_service_error(429, "Too many requests"))
 
-        with pytest.raises(core_exceptions.ModelRateLimitError):
+        with pytest.raises(_standard("ModelRateLimitError")):
             list(llm.stream("hello"))
 
     def test_existing_service_error_handlers_still_catch_it(self) -> None:
@@ -241,4 +246,4 @@ class TestChatModel:
         with pytest.raises(ServiceError) as exc_info:
             llm.invoke("hello")
 
-        assert isinstance(exc_info.value, core_exceptions.ModelNotFoundError)
+        assert isinstance(exc_info.value, _standard("ModelNotFoundError"))

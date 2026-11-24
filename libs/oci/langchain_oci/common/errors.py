@@ -107,9 +107,8 @@ def translate_oci_error(error: BaseException) -> BaseException:
     standard counterpart, or when the installed ``langchain-core`` does not
     define the standard exceptions.
     """
-    if _standard_error("ModelError") is None:
-        return error
-    if isinstance(error, _core_exceptions.ModelError):
+    model_error = _standard_error("ModelError")
+    if model_error is None or isinstance(error, model_error):
         return error
 
     if isinstance(error, ServiceError):
