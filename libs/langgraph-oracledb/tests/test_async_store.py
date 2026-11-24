@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
+from uuid import uuid4
 
 import oracledb
 import pytest
@@ -27,6 +28,7 @@ from tests.conftest import (
     DEFAULT_CONNECTION_INFO,
     ORACLE_DISTANCE_TYPES,
     ORACLE_INDEX_TYPES,
+    create_connection_string,
 )
 from tests.conftest_store import (
     TTL_MINUTES,
@@ -652,6 +654,44 @@ async def test_search_sorting(
         assert len(set(r.key for r in results)) == 10
         assert results[0].key == "M"
         assert results[0].score > results[1].score
+
+
+async def test_omit_expired_hides_unswept_items() -> None:
+    """With `omit_expired`, an expired item is hidden before any sweep."""
+    conn_string = create_connection_string(DEFAULT_CONNECTION_INFO)
+    ns = ("ttl", "omit")
+
+    # The sweeper is never started, so expired rows stay in the table.
+    for omit_expired in (True, False):
+        async with AsyncOracleStore.from_conn_string(
+            conn_string,
+            ttl={"omit_expired": omit_expired, "refresh_on_read": True},
+            table_suffix=f"ttl_{uuid4().hex[:8]}",
+        ) as ttl_store:
+            await ttl_store.setup()
+            try:
+                await ttl_store.aput(ns, "short", {"v": 1}, ttl=1 / 60)
+                await ttl_store.aput(ns, "long", {"v": 2}, ttl=10)
+                await ttl_store.aput(ns + ("gone",), "short", {"v": 3}, ttl=1 / 60)
+                await asyncio.sleep(2.5)
+
+                short = await ttl_store.aget(ns, "short")
+                keys = {item.key for item in await ttl_store.asearch(ns)}
+                namespaces = set(await ttl_store.alist_namespaces(prefix=ns))
+
+                assert await ttl_store.aget(ns, "long") is not None
+                if omit_expired:
+                    assert short is None
+                    assert keys == {"long"}
+                    assert namespaces == {ns}
+                    # Reading with a TTL refresh did not revive the item.
+                    assert await ttl_store.aget(ns, "short", refresh_ttl=True) is None
+                else:
+                    assert short is not None
+                    assert keys == {"short", "long"}
+                    assert namespaces == {ns, ns + ("gone",)}
+            finally:
+                await ttl_store.ateardown()
 
 
 async def test_store_ttl(store):

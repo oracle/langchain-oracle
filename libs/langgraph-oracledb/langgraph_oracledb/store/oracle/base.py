@@ -548,11 +548,28 @@ class BaseOracleStore(Generic[C]):
                 f"to prevent JSON path injection vulnerabilities."
             )
 
+    @property
+    def _omit_expired(self) -> bool:
+        """Whether expired-but-unswept rows should be filtered from reads."""
+        ttl_config = getattr(self, "ttl_config", None)
+        return bool(ttl_config and ttl_config.get("omit_expired"))
+
+    def _expiry_condition(self, alias: str = "") -> str:
+        """SQL keeping only rows that have not expired, or "" when not enabled."""
+        if not self._omit_expired:
+            return ""
+        column = f"{alias}.expires_at" if alias else "expires_at"
+        return f"({column} IS NULL OR {column} > CURRENT_TIMESTAMP)"
+
     def _get_batch_GET_ops_queries(
         self,
         get_ops: Sequence[tuple[int, GetOp]],
     ) -> list[tuple[str, tuple, tuple[str, ...], list]]:
         """Prepare GET queries for batch operations."""
+        # Also applied to the TTL refresh, so reading an expired item does not
+        # bring it back to life.
+        expiry_condition = self._expiry_condition()
+        expiry_clause = f" AND {expiry_condition}" if expiry_condition else ""
         namespace_groups = defaultdict(list)
         refresh_ttls = defaultdict(list)
         for idx, op in get_ops:
@@ -579,7 +596,7 @@ class BaseOracleStore(Generic[C]):
                 query_update = f"""
                     UPDATE {self.table_names["store"]} 
                     SET expires_at = CURRENT_TIMESTAMP + NUMTODSINTERVAL(ttl_minutes, 'MINUTE')
-                    WHERE prefix = :namespace {f" AND key IN ({placeholders})" if len(placeholders) > 0 else ""} AND ttl_minutes IS NOT NULL
+                    WHERE prefix = :namespace {f" AND key IN ({placeholders})" if len(placeholders) > 0 else ""} AND ttl_minutes IS NOT NULL{expiry_clause}
                 """
 
                 results.append((query_update, params, namespace, items))
@@ -594,7 +611,7 @@ class BaseOracleStore(Generic[C]):
             query_select = f"""
                 SELECT key, value, created_at, updated_at
                 FROM {self.table_names["store"]} 
-                WHERE prefix = :namespace {f"AND key IN ({placeholders})" if len(placeholders) > 0 else ""}
+                WHERE prefix = :namespace {f"AND key IN ({placeholders})" if len(placeholders) > 0 else ""}{expiry_clause}
             """
 
             results.append((query_select, params, namespace, items))
@@ -749,6 +766,8 @@ class BaseOracleStore(Generic[C]):
 
         for idx, (_, op) in enumerate(search_ops):
             filter_clauses = []
+            if expiry_condition := self._expiry_condition("st"):
+                filter_clauses.append(expiry_condition)
             filter_param_dict = {}
             if op.filter:
                 filter_counter = 0
@@ -907,6 +926,8 @@ class BaseOracleStore(Generic[C]):
 
         for _, op in list_ops:
             where_clauses = []
+            if expiry_condition := self._expiry_condition():
+                where_clauses.append(expiry_condition)
             params: dict[str, Any] = {}
             param_count = 0
 
