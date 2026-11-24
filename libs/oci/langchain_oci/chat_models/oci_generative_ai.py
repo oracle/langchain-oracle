@@ -60,6 +60,7 @@ from langchain_oci.chat_models.providers import (
     OpenAIProvider,
     Provider,
 )
+from langchain_oci.common.errors import raise_translated
 from langchain_oci.common.param_compat import (
     PARAM_RETRY_ATTEMPTS,
     adjust_request_for_param_error,
@@ -731,7 +732,7 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                     or attempt == PARAM_RETRY_ATTEMPTS - 1
                     or not adjust_request_for_param_error(e, request.chat_request)
                 ):
-                    raise
+                    raise_translated(e)
         raise RuntimeError("unreachable")  # pragma: no cover
 
     def _get_oci_signer(self) -> Any:
