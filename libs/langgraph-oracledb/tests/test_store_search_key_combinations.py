@@ -10,7 +10,10 @@ import pytest
 from langgraph.store.base import SearchOp
 
 from langgraph_oracledb.store.oracle import OracleStore
-from langgraph_oracledb.store.oracle.base import _namespace_to_text
+from langgraph_oracledb.store.oracle.base import (
+    _escape_like_literal,
+    _namespace_to_text,
+)
 from tests.conftest import (
     DEFAULT_CONNECTION_INFO,
     create_connection_string,
@@ -220,9 +223,9 @@ def _assert_store_search_query_shape(store, params) -> None:
     assert "OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY" in query_sql
     assert query_params["limit"] == limit
     assert query_params["offset"] == offset
-    assert (
-        query_params["ns_prefix"] == f"{_namespace_to_text(search_namespace_prefix)}%"
-    )
+    path = _namespace_to_text(search_namespace_prefix)
+    assert query_params["ns_prefix_exact"] == path
+    assert query_params["ns_prefix_like"] == f"{_escape_like_literal(path)}.%"
 
     filter_params = [key for key in query_params if key.startswith("filter_")]
     assert len(filter_params) == _expected_filter_param_count(filter_dict)
