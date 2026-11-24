@@ -5,6 +5,10 @@ test_oraclevs.py
 
 Test Oracle AI Vector Search functionality integration
 with OracleVS.
+
+Tests asserting physical SQL index names explicitly select the SQL backend.
+Package-managed VecDB indexes are covered by test_vecdb_managed_indexes.py.
+Portable behavior uses the same backend fixtures for native SQL, VecDB, and REST.
 """
 
 # import required modules
@@ -13,7 +17,6 @@ import logging
 import os
 import sys
 import threading
-from typing import Union
 
 import numpy as np
 import oracledb
@@ -40,17 +43,56 @@ from langchain_oracledb.vectorstores.oraclevs import (
     drop_table_purge,
 )
 
+from ._backend_fixtures import async_backend_store, backend_store, native_config
+from .test_backend_contract import ContractEmbeddings
+
 username = os.environ.get("VECDB_USER")
 password = os.environ.get("VECDB_PASS")
 dsn = os.environ.get("VECDB_HOST")
 
-try:
-    oracledb.connect(user=username, password=password, dsn=dsn)
-except Exception as e:
-    pytest.skip(
-        allow_module_level=True,
-        reason=f"Database connection failed: {e}, skipping tests.",
+
+@pytest.fixture(scope="module")
+def _legacy_native_available():
+    config = native_config()
+    with oracledb.connect(**config):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _legacy_native_only(request):
+    if (
+        "oracle_backend" in request.fixturenames
+        or request.node.originalname == "test_quote_identifier"
+    ):
+        return
+    if request.config.getoption("--oracle-backends").split(",") == ["rest"]:
+        pytest.skip(
+            "Requires a native connection: SQL DDL, pools, or in-database embeddings"
+        )
+    request.getfixturevalue("_legacy_native_available")
+
+
+@pytest.fixture(scope="module")
+def legacy_embeddings():
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+
+
+@pytest.fixture(scope="module")
+def search_embeddings():
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
+
+
+SEARCH_INDEX_CASES = [
+    pytest.param(strategy, kind, id=f"{strategy.name.lower()}-{kind.lower()}")
+    for kind in ("HNSW", "IVF")
+    for strategy in (
+        DistanceStrategy.EUCLIDEAN_DISTANCE,
+        DistanceStrategy.DOT_PRODUCT,
+        DistanceStrategy.COSINE,
+    )
+]
 
 
 ############################
@@ -436,7 +478,9 @@ def test_create_hnsw_index_test() -> None:
     model1 = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
-    vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs)
 
     # 2. Creating same index again
@@ -451,7 +495,9 @@ def test_create_hnsw_index_test() -> None:
     #    idx_name - hnsw_idx2
     #    idx_type - HNSW
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"})
     drop_index_if_exists(connection, "hnsw_idx2")
     drop_table_purge(connection, "TB2")
@@ -460,7 +506,9 @@ def test_create_hnsw_index_test() -> None:
     #    idx_name - "हिन्दी"
     #    idx_type - HNSW
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"})
     drop_index_if_exists(connection, '"हिन्दी"')
     drop_table_purge(connection, "TB3")
@@ -468,21 +516,31 @@ def test_create_hnsw_index_test() -> None:
     # 5. idx_name passed empty
     # Expectation:ORA-01741: illegal zero-length identifier
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB4",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(connection, vs, params={"idx_name": '""', "idx_type": "HNSW"})
         drop_index_if_exists(connection, '""')
     drop_table_purge(connection, "TB4")
 
     # 6. idx_type left empty
     # Expectation: rejected by _validate_index_type (added in #215)
-    vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     with pytest.raises(ValueError, match="idx_type must be HNSW"):
         create_index(connection, vs, params={"idx_name": "Hello", "idx_type": ""})
     drop_table_purge(connection, "TB5")
 
     # 7. efconstruction passed as parameter but not neighbours
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -494,7 +552,9 @@ def test_create_hnsw_index_test() -> None:
     # 8. efconstruction passed as parameter as well as neighbours
     # (for this idx_type parameter is also necessary)
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -519,7 +579,9 @@ def test_create_hnsw_index_test() -> None:
     #     0<parallel<=255
     # Expectation:Index created
     drop_table_purge(connection, "TB9")
-    vs = OracleVS(connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -535,7 +597,13 @@ def test_create_hnsw_index_test() -> None:
     drop_table_purge(connection, "TB9")
     # index not created:
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB10",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -550,7 +618,13 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # index not created:
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB11",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -565,7 +639,13 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # index not created
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB12",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -580,7 +660,13 @@ def test_create_hnsw_index_test() -> None:
         drop_index_if_exists(connection, "idx11")
     # index not created
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB13",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -597,7 +683,13 @@ def test_create_hnsw_index_test() -> None:
     # With negative or out-of-bound values for all 4 of them, we get the same errors.
     # Expectation:Index not created
     with pytest.raises(ValueError):
-        vs = OracleVS(connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB14",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(
             connection,
             vs,
@@ -619,7 +711,9 @@ def test_create_hnsw_index_test() -> None:
 
     # 10. Table_name as <schema_name.table_name>
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -639,7 +733,11 @@ def test_create_hnsw_index_test() -> None:
     # Expectation:U1 not present
     with pytest.raises(RuntimeError):
         vs = OracleVS(
-            connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "U1.TB16",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         create_index(
             connection,
@@ -659,14 +757,22 @@ def test_create_hnsw_index_test() -> None:
     # 12. Index_name size >129
     # Expectation:Index not created
     with pytest.raises(RuntimeError):
-        vs = OracleVS(connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs = OracleVS(
+            connection,
+            model1,
+            "TB17",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
         create_index(connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"})
         drop_index_if_exists(connection, "x" * 129)
     drop_table_purge(connection, "TB17")
 
     # 13. Index_name size 128
     # Expectation:Index created
-    vs = OracleVS(connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": "x" * 128, "idx_type": "HNSW"})
     drop_index_if_exists(connection, "x" * 128)
     drop_table_purge(connection, "TB18")
@@ -688,7 +794,7 @@ async def test_create_hnsw_index_test_async() -> None:
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
     vs = await OracleVS.acreate(
-        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs)
 
@@ -705,7 +811,7 @@ async def test_create_hnsw_index_test_async() -> None:
     #    idx_type - HNSW
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": "hnsw_idx2", "idx_type": "HNSW"}
@@ -718,7 +824,7 @@ async def test_create_hnsw_index_test_async() -> None:
     #    idx_type - HNSW
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": '"हिन्दी"', "idx_type": "HNSW"}
@@ -730,7 +836,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:ORA-01741: illegal zero-length identifier
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB4",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection, vs, params={"idx_name": '""', "idx_type": "HNSW"}
@@ -740,7 +850,7 @@ async def test_create_hnsw_index_test_async() -> None:
 
     # 6. idx_type left empty
     vs = await OracleVS.acreate(
-        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     with pytest.raises(ValueError, match="idx_type must be HNSW"):
         await acreate_index(
@@ -751,7 +861,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # 7. efconstruction passed as parameter but not neighbours
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -765,7 +875,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # (for this idx_type parameter is also necessary)
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -792,7 +902,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:Index created
     await adrop_table_purge(connection, "TB9")
     vs = await OracleVS.acreate(
-        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB9", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -810,7 +920,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created:
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB10",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -828,7 +942,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created:
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB11", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB11",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -845,7 +963,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB12", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB12",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -862,7 +984,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # index not created
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB13",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -881,7 +1007,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:Index not created
     with pytest.raises(ValueError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB14", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB14",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -905,7 +1035,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # 10. Table_name as <schema_name.table_name>
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB15", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -926,7 +1056,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:U1 not present
     with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
-            connection, model1, "U1.TB16", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "U1.TB16",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection,
@@ -947,7 +1081,11 @@ async def test_create_hnsw_index_test_async() -> None:
     # Expectation:Index not created
     with pytest.raises(RuntimeError):
         vs = await OracleVS.acreate(
-            connection, model1, "TB17", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model1,
+            "TB17",
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
         await acreate_index(
             connection, vs, params={"idx_name": "x" * 129, "idx_type": "HNSW"}
@@ -958,7 +1096,7 @@ async def test_create_hnsw_index_test_async() -> None:
     # 13. Index_name size 128
     # Expectation:Index created
     vs = await OracleVS.acreate(
-        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB18", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": "x" * 128, "idx_type": "HNSW"}
@@ -982,7 +1120,9 @@ def test_index_exists_test() -> None:
     )
     # 1. Existing Index:(all capital letters)
     # Expectation:true
-    vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"})
     assert not _index_exists(connection, _quote_indentifier("IDX11"))
 
@@ -1048,7 +1188,7 @@ async def test_index_exists_test_async() -> None:
     # 1. Existing Index:(all capital letters)
     # Expectation:true
     vs = await OracleVS.acreate(
-        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, params={"idx_name": "idx11", "idx_type": "HNSW"}
@@ -1327,6 +1467,10 @@ async def test_add_texts_test_async() -> None:
 
     # 6. Add 2 different record concurrently
     # Expectation:Successful
+    await OracleVS.acreate(
+        connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+
     async def add(val: str) -> None:
         model = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2"
@@ -1357,86 +1501,178 @@ async def test_add_texts_test_async() -> None:
         await adrop_table_purge(connection, "TB14")
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "metadata-only",
+        "no-metadata",
+        "ids",
+        "multiline-ids",
+        "quoted-ids",
+        "metadata-with-ids",
+    ],
+)
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_add_texts_portable(
+    oracle_backend, legacy_embeddings, asynchronous, case
+):
+    texts = ["Rohan", "Shailendra"]
+    metadata = None
+    ids = None
+    if case == "metadata-only":
+        metadata = [
+            {"id": "100", "link": "Document Example Test 1"},
+            {"id": "101", "link": "Document Example Test 2"},
+        ]
+    elif case == "ids":
+        ids = ["114", "124"]
+    elif case == "multiline-ids":
+        ids = ["Good afternoon\n    my friends", "India"]
+    elif case == "quoted-ids":
+        ids = ['"Good afternoon"', '"India"']
+    elif case == "metadata-with-ids":
+        texts = ["Sri Ram 6", "Krishna 6"]
+        ids = ["1", "2"]
+        metadata = [
+            {"id": "102", "link": "Document Example", "stream": "Science"},
+            {"id": "104", "link": "Document Example 45"},
+        ]
+    expected_metadata = (
+        [dict(value) for value in metadata] if metadata is not None else None
+    )
+
+    async def check(store):
+        kwargs = dict(
+            client=store.client,
+            table_name=store.table_name,
+            backend=store.backend,
+            mutate_on_duplicate=True,
+            distance_strategy=store.distance_strategy,
+            ids=ids,
+        )
+        factory = (
+            await OracleVS.afrom_texts(texts, legacy_embeddings, metadata, **kwargs)
+            if asynchronous
+            else OracleVS.from_texts(texts, legacy_embeddings, metadata, **kwargs)
+        )
+        assert factory.backend == store.backend
+        if ids is not None:
+            documents = (
+                await factory.aget_by_ids(ids)
+                if asynchronous
+                else factory.get_by_ids(ids)
+            )
+        else:
+            documents = (
+                await factory.asimilarity_search(texts[0], k=2)
+                if asynchronous
+                else factory.similarity_search(texts[0], k=2)
+            )
+        assert len(documents) == len(texts)
+        by_text = {doc.page_content: doc for doc in documents}
+        assert set(by_text) == set(texts)
+        if ids is not None:
+            assert {doc.id for doc in documents} == set(ids)
+        if expected_metadata is not None:
+            for text, expected in zip(texts, expected_metadata):
+                for key, value in expected.items():
+                    assert by_text[text].metadata[key] == value
+        target_id = by_text[texts[0]].id
+        assert target_id is not None
+        updated_text = "Updated " + texts[0]
+        returned = (
+            await factory.aadd_texts(
+                [updated_text], [{"updated": True}], ids=[target_id]
+            )
+            if asynchronous
+            else factory.add_texts([updated_text], [{"updated": True}], ids=[target_id])
+        )
+        assert returned == [target_id]
+        updated = (
+            await factory.aget_by_ids([target_id])
+            if asynchronous
+            else factory.get_by_ids([target_id])
+        )
+        assert len(updated) == 1
+        assert updated[0].page_content == updated_text
+        assert updated[0].metadata["updated"] is True
+
+    if asynchronous:
+        async with async_backend_store(oracle_backend, legacy_embeddings) as store:
+            await check(store)
+    else:
+        with backend_store(oracle_backend, legacy_embeddings) as store:
+            await check(store)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_add_texts_large_batch_portable(oracle_backend, asynchronous):
+    # Keep the original 9,999-row workload; avoid coupling storage volume to
+    # transformer inference time by using the shared deterministic embedder.
+    texts = [f"Sri Ram{i}" for i in range(1, 10000)]
+    ids = [f"Hello{i}" for i in range(1, 10000)]
+
+    async def check(store):
+        returned = (
+            await store.aadd_texts(texts, ids=ids)
+            if asynchronous
+            else store.add_texts(texts, ids=ids)
+        )
+        assert returned == ids
+        documents = (
+            await store.aget_by_ids(ids) if asynchronous else store.get_by_ids(ids)
+        )
+        assert len(documents) == len(texts)
+        assert {doc.id: doc.page_content for doc in documents} == dict(zip(ids, texts))
+
+    if asynchronous:
+        async with async_backend_store(oracle_backend, ContractEmbeddings()) as store:
+            await check(store)
+    else:
+        with backend_store(oracle_backend, ContractEmbeddings()) as store:
+            await check(store)
+
+
 ##################################
 ####### embed_documents(text) ####
 ##################################
-def test_embed_documents_test() -> None:
-    try:
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-    # 1. String Example-'Sri Ram'
-    # Expectation:Vector Printed
-    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = OracleVS(connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
-
-    # 4. List
-    # Expectation:Vector Printed
-    vs_obj._embed_documents(["hello", "yash"])
-    drop_table_purge(connection, "TB7")
+def test_embed_documents_test(oracle_backend, legacy_embeddings) -> None:
+    with backend_store(oracle_backend, legacy_embeddings) as store:
+        vectors = store._embed_documents(["hello", "yash"])
+        assert len(vectors) == 2
+        assert len(vectors[0]) > 0
+        assert len(vectors[0]) == len(vectors[1])
 
 
 @pytest.mark.asyncio
-async def test_embed_documents_test_async() -> None:
-    try:
-        connection = await oracledb.connect_async(
-            user=username, password=password, dsn=dsn
-        )
-    except Exception:
-        sys.exit(1)
-    # 1. String Example-'Sri Ram'
-    # Expectation:Vector Printed
-    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = await OracleVS.acreate(
-        connection, model, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-
-    # 4. List
-    # Expectation:Vector Printed
-    await vs_obj._aembed_documents(["hello", "yash"])
-    await adrop_table_purge(connection, "TB7")
+async def test_embed_documents_test_async(oracle_backend, legacy_embeddings) -> None:
+    async with async_backend_store(oracle_backend, legacy_embeddings) as store:
+        vectors = await store._aembed_documents(["hello", "yash"])
+        assert len(vectors) == 2
+        assert len(vectors[0]) > 0
+        assert len(vectors[0]) == len(vectors[1])
 
 
 ##################################
 ####### embed_query(text) ########
 ##################################
-def test_embed_query_test() -> None:
-    try:
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-    # 1. String
-    # Expectation:Vector printed
-    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = OracleVS(connection, model, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_obj._embed_query("Sri Ram")
-    drop_table_purge(connection, "TB8")
-
-    # 3. Empty string
-    # Expectation:[]
-    vs_obj._embed_query("")
+def test_embed_query_test(oracle_backend, legacy_embeddings) -> None:
+    with backend_store(oracle_backend, legacy_embeddings) as store:
+        vector = store._embed_query("Sri Ram")
+        empty_query_vector = store._embed_query("")
+        assert len(vector) > 0
+        assert len(empty_query_vector) == len(vector)
 
 
 @pytest.mark.asyncio
-async def test_embed_query_test_async() -> None:
-    try:
-        connection = await oracledb.connect_async(
-            user=username, password=password, dsn=dsn
-        )
-    except Exception:
-        sys.exit(1)
-    # 1. String
-    # Expectation:Vector printed
-    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-    vs_obj = await OracleVS.acreate(
-        connection, model, "TB8", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-    await vs_obj._aembed_query("Sri Ram")
-    await adrop_table_purge(connection, "TB8")
-
-    # 3. Empty string
-    # Expectation:[]
-    await vs_obj._aembed_query("")
+async def test_embed_query_test_async(oracle_backend, legacy_embeddings) -> None:
+    async with async_backend_store(oracle_backend, legacy_embeddings) as store:
+        vector = await store._aembed_query("Sri Ram")
+        empty_query_vector = await store._aembed_query("")
+        assert len(vector) > 0
+        assert len(empty_query_vector) == len(vector)
 
 
 ##################################
@@ -1452,28 +1688,36 @@ def test_create_index_test() -> None:
     model1 = HuggingFaceEmbeddings(
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
-    vs = OracleVS(connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs)
     drop_index_if_exists(connection, "HNSW")
     drop_table_purge(connection, "TB1")
 
     # 2. ivf index
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     drop_index_if_exists(connection, "IVF")
     drop_table_purge(connection, "TB2")
 
     # 3. ivf index with neighbour_part passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10})
     drop_index_if_exists(connection, "IVF")
     drop_table_purge(connection, "TB3")
 
     # 4. ivf index with neighbour_part and accuracy passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90}
     )
@@ -1482,7 +1726,9 @@ def test_create_index_test() -> None:
 
     # 5. ivf index with neighbour_part and parallel passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90}
     )
@@ -1491,7 +1737,9 @@ def test_create_index_test() -> None:
 
     # 6. ivf index and then perform dml(insert)
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     texts = ["Sri Ram", "Krishna"]
     vs.add_texts(texts)
@@ -1502,7 +1750,9 @@ def test_create_index_test() -> None:
 
     # 7. ivf index with neighbour_part,parallel and accuracy passed as parameter
     # Expectation:Successful
-    vs = OracleVS(connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE)
+    vs = OracleVS(
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+    )
     create_index(
         connection,
         vs,
@@ -1526,7 +1776,7 @@ async def test_create_index_test_async() -> None:
         model_name="sentence-transformers/paraphrase-mpnet-base-v2"
     )
     vs = await OracleVS.acreate(
-        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs)
     await adrop_index_if_exists(connection, "HNSW")
@@ -1535,7 +1785,7 @@ async def test_create_index_test_async() -> None:
     # 2. ivf index
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     await adrop_index_if_exists(connection, "IVF")
@@ -1544,7 +1794,7 @@ async def test_create_index_test_async() -> None:
     # 3. ivf index with neighbour_part passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB3", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs, {"idx_type": "IVF", "neighbor_part": 10})
     await adrop_index_if_exists(connection, "IVF")
@@ -1553,7 +1803,7 @@ async def test_create_index_test_async() -> None:
     # 4. ivf index with neighbour_part and accuracy passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB4", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "accuracy": 90}
@@ -1564,7 +1814,7 @@ async def test_create_index_test_async() -> None:
     # 5. ivf index with neighbour_part and parallel passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB5", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection, vs, {"idx_type": "IVF", "neighbor_part": 10, "parallel": 90}
@@ -1575,7 +1825,7 @@ async def test_create_index_test_async() -> None:
     # 6. ivf index and then perform dml(insert)
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB6", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(connection, vs, {"idx_type": "IVF", "idx_name": "IVF"})
     texts = ["Sri Ram", "Krishna"]
@@ -1588,7 +1838,7 @@ async def test_create_index_test_async() -> None:
     # 7. ivf index with neighbour_part,parallel and accuracy passed as parameter
     # Expectation:Successful
     vs = await OracleVS.acreate(
-        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE
+        connection, model1, "TB7", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
     )
     await acreate_index(
         connection,
@@ -1602,176 +1852,91 @@ async def test_create_index_test_async() -> None:
 ##################################
 ####### perform_search ###########
 ##################################
-def test_perform_search_test() -> None:
-    try:
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-    model1 = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
-    )
-    vs_1 = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_2 = OracleVS(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
-    vs_3 = OracleVS(connection, model1, "TB12", DistanceStrategy.COSINE)
-    vs_4 = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_5 = OracleVS(connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT)
-    vs_6 = OracleVS(connection, model1, "TB15", DistanceStrategy.COSINE)
-
-    # vector store lists:
-    vs_list = [vs_1, vs_2, vs_3, vs_4, vs_5, vs_6]
-
-    for i, vs in enumerate(vs_list, start=1):
-        # insert data
+@pytest.mark.parametrize("distance_strategy,index_type", SEARCH_INDEX_CASES)
+def test_perform_search_test(
+    oracle_backend, search_embeddings, distance_strategy, index_type
+) -> None:
+    with backend_store(
+        oracle_backend, search_embeddings, distance_strategy=distance_strategy
+    ) as store:
         texts = ["Yash", "Varanasi", "Yashaswi", "Mumbai", "BengaluruYash"]
-        metadatas = [
-            {"id": "hello"},
-            {"id": "105"},
-            {"id": "106"},
-            {"id": "yash"},
-            {"id": "108"},
-        ]
-
-        vs.add_texts(texts, metadatas)
-
-        # create index
-        if i == 1 or i == 2 or i == 3:
-            create_index(connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"})
-        else:
-            create_index(connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"})
-
-        # perform search
-        query = "YashB"
-
-        db_filter: dict = {
-            "$or": [  # dict
-                {"id": "106"},
-                {"id": "108"},
-                {"id": "yash"},
-            ]
-        }
-
-        # similarity_searh without filter
-        vs.similarity_search(query, 2)
-
-        # similarity_searh with filter
-        vs.similarity_search(query, 2, filter=db_filter)
-
-        # Similarity search with relevance score
-        res = vs.similarity_search_with_score(query, 2)
-        assert all(isinstance(_r[1], float) for _r in res)
-        assert res[0][1] <= res[1][1]
-
-        # Similarity search with relevance score with filter
-        vs.similarity_search_with_score(query, 2, filter=db_filter)
-
-        # Max marginal relevance search
-        vs.max_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
-
-        # Max marginal relevance search with filter
-        vs.max_marginal_relevance_search(
-            query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter
+        metadatas = [{"id": value} for value in ["hello", "105", "106", "yash", "108"]]
+        assert len(store.add_texts(texts, metadatas)) == len(texts)
+        create_index(
+            store.client,
+            store,
+            {"idx_type": index_type, "idx_name": "IDX_" + store.table_name.strip('"')},
         )
+        query = "YashB"
+        filter_ = {"$or": [{"id": "106"}, {"id": "108"}, {"id": "yash"}]}
+        assert len(store.similarity_search(query, 2)) == 2
+        hits = store.similarity_search(query, 2, filter=filter_)
+        assert 0 < len(hits) <= 2
+        assert {doc.metadata["id"] for doc in hits} <= {"106", "108", "yash"}
+        scored = store.similarity_search_with_score(query, 2)
+        assert len(scored) == 2
+        assert all(isinstance(score, float) for _, score in scored)
+        assert scored[0][1] <= scored[1][1]
+        scored = store.similarity_search_with_score(query, 2, filter=filter_)
+        assert 0 < len(scored) <= 2
+        assert {doc.metadata["id"] for doc, _ in scored} <= {"106", "108", "yash"}
+        assert (
+            len(
+                store.max_marginal_relevance_search(
+                    query, 2, fetch_k=20, lambda_mult=0.5
+                )
+            )
+            == 2
+        )
+        hits = store.max_marginal_relevance_search(
+            query, 2, fetch_k=20, lambda_mult=0.5, filter=filter_
+        )
+        assert 0 < len(hits) <= 2
+        assert {doc.metadata["id"] for doc in hits} <= {"106", "108", "yash"}
 
-    drop_table_purge(connection, "TB10")
-    drop_table_purge(connection, "TB11")
-    drop_table_purge(connection, "TB12")
-    drop_table_purge(connection, "TB13")
-    drop_table_purge(connection, "TB14")
-    drop_table_purge(connection, "TB15")
 
-
+@pytest.mark.parametrize("distance_strategy,index_type", SEARCH_INDEX_CASES)
 @pytest.mark.asyncio
-async def test_perform_search_test_async() -> None:
-    try:
-        connection = await oracledb.connect_async(
-            user=username, password=password, dsn=dsn
-        )
-    except Exception:
-        sys.exit(1)
-    model1 = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
-    )
-
-    vs_1 = await OracleVS.acreate(
-        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-    vs_2 = await OracleVS.acreate(
-        connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT
-    )
-    vs_3 = await OracleVS.acreate(connection, model1, "TB12", DistanceStrategy.COSINE)
-    vs_4 = await OracleVS.acreate(
-        connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-    vs_5 = await OracleVS.acreate(
-        connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT
-    )
-    vs_6 = await OracleVS.acreate(connection, model1, "TB15", DistanceStrategy.COSINE)
-
-    # vector store lists:
-    vs_list = [vs_1, vs_2, vs_3, vs_4, vs_5, vs_6]
-
-    for i, vs in enumerate(vs_list, start=1):
-        # insert data
+async def test_perform_search_test_async(
+    oracle_backend, search_embeddings, distance_strategy, index_type
+) -> None:
+    async with async_backend_store(
+        oracle_backend, search_embeddings, distance_strategy=distance_strategy
+    ) as store:
         texts = ["Yash", "Varanasi", "Yashaswi", "Mumbai", "BengaluruYash"]
-        metadatas = [
-            {"id": "hello"},
-            {"id": "105"},
-            {"id": "106"},
-            {"id": "yash"},
-            {"id": "108"},
-        ]
-
-        await vs.aadd_texts(texts, metadatas)
-
-        # create index
-        if i == 1 or i == 2 or i == 3:
-            await acreate_index(
-                connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"}
-            )
-        else:
-            await acreate_index(
-                connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"}
-            )
-
-        # perform search
-        query = "YashB"
-
-        db_filter: dict = {
-            "$or": [  # dict
-                {"id": "106"},
-                {"id": "108"},
-                {"id": "yash"},
-            ]
-        }
-
-        # similarity_searh without filter
-        await vs.asimilarity_search(query, 2)
-
-        # similarity_searh with filter
-        await vs.asimilarity_search(query, 2, filter=db_filter)
-
-        # Similarity search with relevance score
-        res = await vs.asimilarity_search_with_score(query, 2)
-        assert all(isinstance(_r[1], float) for _r in res)
-        assert res[0][1] <= res[1][1]
-
-        # Similarity search with relevance score with filter
-        await vs.asimilarity_search_with_score(query, 2, filter=db_filter)
-
-        # Max marginal relevance search
-        await vs.amax_marginal_relevance_search(query, 2, fetch_k=20, lambda_mult=0.5)
-
-        # Max marginal relevance search with filter
-        await vs.amax_marginal_relevance_search(
-            query, 2, fetch_k=20, lambda_mult=0.5, filter=db_filter
+        metadatas = [{"id": value} for value in ["hello", "105", "106", "yash", "108"]]
+        assert len(await store.aadd_texts(texts, metadatas)) == len(texts)
+        await acreate_index(
+            store.client,
+            store,
+            {"idx_type": index_type, "idx_name": "IDX_" + store.table_name.strip('"')},
         )
-
-    await adrop_table_purge(connection, "TB10")
-    await adrop_table_purge(connection, "TB11")
-    await adrop_table_purge(connection, "TB12")
-    await adrop_table_purge(connection, "TB13")
-    await adrop_table_purge(connection, "TB14")
-    await adrop_table_purge(connection, "TB15")
+        query = "YashB"
+        filter_ = {"$or": [{"id": "106"}, {"id": "108"}, {"id": "yash"}]}
+        assert len(await store.asimilarity_search(query, 2)) == 2
+        hits = await store.asimilarity_search(query, 2, filter=filter_)
+        assert 0 < len(hits) <= 2
+        assert {doc.metadata["id"] for doc in hits} <= {"106", "108", "yash"}
+        scored = await store.asimilarity_search_with_score(query, 2)
+        assert len(scored) == 2
+        assert all(isinstance(score, float) for _, score in scored)
+        assert scored[0][1] <= scored[1][1]
+        scored = await store.asimilarity_search_with_score(query, 2, filter=filter_)
+        assert 0 < len(scored) <= 2
+        assert {doc.metadata["id"] for doc, _ in scored} <= {"106", "108", "yash"}
+        assert (
+            len(
+                await store.amax_marginal_relevance_search(
+                    query, 2, fetch_k=20, lambda_mult=0.5
+                )
+            )
+            == 2
+        )
+        hits = await store.amax_marginal_relevance_search(
+            query, 2, fetch_k=20, lambda_mult=0.5, filter=filter_
+        )
+        assert 0 < len(hits) <= 2
+        assert {doc.metadata["id"] for doc in hits} <= {"106", "108", "yash"}
 
 
 ##################################
@@ -1790,270 +1955,113 @@ FILTERED_FUNCTIONS = [
 ]
 
 
-def test_db_filter_test() -> None:
-    try:
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-    model1 = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
-    )
-    drop_table_purge(connection, "TB10")
-    drop_table_purge(connection, "TB11")
-    drop_table_purge(connection, "TB12")
-    drop_table_purge(connection, "TB13")
-    drop_table_purge(connection, "TB14")
-    drop_table_purge(connection, "TB15")
-
-    vs_1 = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_2 = OracleVS(connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT)
-    vs_3 = OracleVS(connection, model1, "TB12", DistanceStrategy.COSINE)
-    vs_4 = OracleVS(connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE)
-    vs_5 = OracleVS(connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT)
-    vs_6 = OracleVS(connection, model1, "TB15", DistanceStrategy.COSINE)
-
-    # vector store lists:
-    vs_list = [vs_1, vs_2, vs_3, vs_4, vs_5, vs_6]
-
-    for i, vs in enumerate(vs_list):
-        # insert data
+@pytest.mark.parametrize("distance_strategy,index_type", SEARCH_INDEX_CASES)
+def test_db_filter_test(
+    oracle_backend, search_embeddings, distance_strategy, index_type
+) -> None:
+    with backend_store(
+        oracle_backend, search_embeddings, distance_strategy=distance_strategy
+    ) as store:
         texts = ["Strawberry", "Banana", "Blueberry", "Grape", "Watermelon"]
         metadatas = [
-            {"id": "st", "order": 1},
-            {"id": "ba", "order": 2},
-            {"id": "bl", "order": 3},
-            {"id": "gr", "order": 4},
-            {"id": "wa", "order": 5},
+            {"id": value, "order": order}
+            for order, value in enumerate(["st", "ba", "bl", "gr", "wa"], start=1)
         ]
-
-        vs.add_texts(texts, metadatas)
-
-        # create index
-        if i == 1 or i == 2 or i == 3:
-            create_index(connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"})
-        else:
-            create_index(connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"})
-
-        # perform search
-        query = "Strawberry"
-
-        db_filter: dict = {"id": {"$eq": "bl"}}  # dict
-
-        # nested db filter
-        db_filter_nested: dict = {
-            "$or": [
-                {"id": "ba"},  # dict
-                {
-                    "$and": [  # dict
-                        {"order": {"$lte": 4}},
-                        {"id": "st"},
-                    ]
-                },
-            ]
-        }
-
-        for filtered_function in FILTERED_FUNCTIONS:
-            method = getattr(vs, filtered_function)
-
-            query_emb: Union[list[float], str] = query
-            if "_by_vector" in filtered_function:
-                query_emb = vs.embedding_function.embed_query(query)  # type: ignore[union-attr]
-
-            # search without filter
-            result = method(query_emb, k=1)
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "st"
-
-            # search with filter
-            result = method(query_emb, k=5, filter=db_filter)
-            assert len(result) == 1
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "bl"
-
-            # search with db_filter
-            result = method(query_emb, k=5, db_filter=db_filter)
-            assert len(result) == 1
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "bl"
-
-            # search with nested filter
-            result = method(query_emb, k=5, filter=db_filter_nested)
-            assert len(result) == 2
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "st"
-
-        exception_occurred = False
-        try:
-            db_filter_exc: dict = {
-                "_xor": [  # Incorrect operation _xor
-                    {"order": {"$lte": 4}},
-                    {"id": "st"},
-                ]
-            }
-            result = vs.similarity_search(query, 1, filter=db_filter_exc)
-        except ValueError:
-            exception_occurred = True
-
-        assert exception_occurred
-
-        exception_occurred = False
-        try:
-            db_filter_exc = {
-                "$or": [
-                    {"order": {"$xeq": 4}},  # Incorrect operation XEQ
-                    {"id": "st"},
-                ]
-            }
-            result = vs.similarity_search(query, 1, filter=db_filter_exc)
-        except ValueError:
-            exception_occurred = True
-
-        assert exception_occurred
-
-    drop_table_purge(connection, "TB10")
-    drop_table_purge(connection, "TB11")
-    drop_table_purge(connection, "TB12")
-    drop_table_purge(connection, "TB13")
-    drop_table_purge(connection, "TB14")
-    drop_table_purge(connection, "TB15")
-
-
-@pytest.mark.asyncio
-async def test_db_filter_test_async() -> None:
-    try:
-        connection = await oracledb.connect_async(
-            user=username, password=password, dsn=dsn
+        assert len(store.add_texts(texts, metadatas)) == len(texts)
+        create_index(
+            store.client,
+            store,
+            {"idx_type": index_type, "idx_name": "IDX_" + store.table_name.strip('"')},
         )
-    except Exception:
-        sys.exit(1)
-    model1 = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/paraphrase-mpnet-base-v2"
-    )
+        query = "Strawberry"
+        filter_ = {"id": {"$eq": "bl"}}
+        nested = {
+            "$or": [{"id": "ba"}, {"$and": [{"order": {"$lte": 4}}, {"id": "st"}]}]
+        }
+        for filtered_function in FILTERED_FUNCTIONS:
+            method = getattr(store, filtered_function)
+            query_value = (
+                search_embeddings.embed_query(query)
+                if "_by_vector" in filtered_function
+                else query
+            )
+            result = method(query_value, k=1)
+            assert len(result) == 1
+            document = result[0][0] if isinstance(result[0], tuple) else result[0]
+            assert document.metadata["id"] == "st"
+            for keyword in ("filter", "db_filter"):
+                result = method(query_value, k=5, **{keyword: filter_})
+                assert len(result) == 1
+                document = result[0][0] if isinstance(result[0], tuple) else result[0]
+                assert document.metadata["id"] == "bl"
+            result = method(query_value, k=5, filter=nested)
+            assert len(result) == 2
+            documents = [
+                item[0] if isinstance(item, tuple) else item for item in result
+            ]
+            assert {doc.metadata["id"] for doc in documents} == {"ba", "st"}
+            assert documents[0].metadata["id"] == "st"
+        for invalid in (
+            {"_xor": [{"order": {"$lte": 4}}, {"id": "st"}]},
+            {"$or": [{"order": {"$xeq": 4}}, {"id": "st"}]},
+        ):
+            with pytest.raises(ValueError):
+                store.similarity_search(query, 1, filter=invalid)
 
-    vs_1 = await OracleVS.acreate(
-        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-    vs_2 = await OracleVS.acreate(
-        connection, model1, "TB11", DistanceStrategy.DOT_PRODUCT
-    )
-    vs_3 = await OracleVS.acreate(connection, model1, "TB12", DistanceStrategy.COSINE)
-    vs_4 = await OracleVS.acreate(
-        connection, model1, "TB13", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-    vs_5 = await OracleVS.acreate(
-        connection, model1, "TB14", DistanceStrategy.DOT_PRODUCT
-    )
-    vs_6 = await OracleVS.acreate(connection, model1, "TB15", DistanceStrategy.COSINE)
 
-    # vector store lists:
-    vs_list = [vs_1, vs_2, vs_3, vs_4, vs_5, vs_6]
-
-    for i, vs in enumerate(vs_list):
-        # insert data
+@pytest.mark.parametrize("distance_strategy,index_type", SEARCH_INDEX_CASES)
+@pytest.mark.asyncio
+async def test_db_filter_test_async(
+    oracle_backend, search_embeddings, distance_strategy, index_type
+) -> None:
+    async with async_backend_store(
+        oracle_backend, search_embeddings, distance_strategy=distance_strategy
+    ) as store:
         texts = ["Strawberry", "Banana", "Blueberry", "Grape", "Watermelon"]
         metadatas = [
-            {"id": "st", "order": 1},
-            {"id": "ba", "order": 2},
-            {"id": "bl", "order": 3},
-            {"id": "gr", "order": 4},
-            {"id": "wa", "order": 5},
+            {"id": value, "order": order}
+            for order, value in enumerate(["st", "ba", "bl", "gr", "wa"], start=1)
         ]
-
-        await vs.aadd_texts(texts, metadatas)
-
-        # create index
-        if i == 1 or i == 2 or i == 3:
-            await acreate_index(
-                connection, vs, {"idx_type": "HNSW", "idx_name": f"IDX1{i}"}
-            )
-        else:
-            await acreate_index(
-                connection, vs, {"idx_type": "IVF", "idx_name": f"IDX1{i}"}
-            )
-
-        # perform search
+        assert len(await store.aadd_texts(texts, metadatas)) == len(texts)
+        await acreate_index(
+            store.client,
+            store,
+            {"idx_type": index_type, "idx_name": "IDX_" + store.table_name.strip('"')},
+        )
         query = "Strawberry"
-
-        db_filter: dict = {"id": {"$eq": "bl"}}  # dict
-
-        # nested db filter
-        db_filter_nested: dict = {
-            "$or": [
-                {"id": "ba"},  # dict
-                {
-                    "$and": [  # dict
-                        {"order": {"$lte": 4}},
-                        {"id": "st"},
-                    ]
-                },
-            ]
+        filter_ = {"id": {"$eq": "bl"}}
+        nested = {
+            "$or": [{"id": "ba"}, {"$and": [{"order": {"$lte": 4}}, {"id": "st"}]}]
         }
-
         for filtered_function in FILTERED_FUNCTIONS:
-            method = getattr(vs, "a" + filtered_function)
-
-            query_emb: Union[list[float], str] = query
-            if "_by_vector" in filtered_function:
-                query_emb = vs.embedding_function.embed_query(query)  # type: ignore[union-attr]
-
-            # search without filter
-            result = await method(query_emb, k=1)
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "st"
-
-            # search with filter
-            result = await method(query_emb, k=5, filter=db_filter)
+            method = getattr(store, "a" + filtered_function)
+            query_value = (
+                search_embeddings.embed_query(query)
+                if "_by_vector" in filtered_function
+                else query
+            )
+            result = await method(query_value, k=1)
             assert len(result) == 1
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "bl"
-
-            # search with db_filter
-            result = await method(query_emb, k=5, db_filter=db_filter)
-            assert len(result) == 1
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "bl"
-
-            # search with nested filter
-            result = await method(query_emb, k=5, filter=db_filter_nested)
+            document = result[0][0] if isinstance(result[0], tuple) else result[0]
+            assert document.metadata["id"] == "st"
+            for keyword in ("filter", "db_filter"):
+                result = await method(query_value, k=5, **{keyword: filter_})
+                assert len(result) == 1
+                document = result[0][0] if isinstance(result[0], tuple) else result[0]
+                assert document.metadata["id"] == "bl"
+            result = await method(query_value, k=5, filter=nested)
             assert len(result) == 2
-            result = result[0] if not isinstance(result[0], tuple) else result[0][0]
-            assert result.metadata["id"] == "st"
-
-        exception_occurred = False
-        try:
-            db_filter_exc: dict = {
-                "_xor": [  # Incorrect operation _xor
-                    {"order": {"$lte": 4}},
-                    {"id": "st"},
-                ]
-            }
-            result = await vs.asimilarity_search(query, 1, filter=db_filter_exc)
-        except ValueError:
-            exception_occurred = True
-
-        assert exception_occurred
-
-        exception_occurred = False
-        try:
-            db_filter_exc = {
-                "$or": [
-                    {"order": {"$xeq": 4}},  # Incorrect operation XEQ
-                    {"id": "st"},
-                ]
-            }
-
-            result = await vs.asimilarity_search(query, 1, filter=db_filter_exc)
-        except ValueError:
-            exception_occurred = True
-
-        assert exception_occurred
-
-    await adrop_table_purge(connection, "TB10")
-    await adrop_table_purge(connection, "TB11")
-    await adrop_table_purge(connection, "TB12")
-    await adrop_table_purge(connection, "TB13")
-    await adrop_table_purge(connection, "TB14")
-    await adrop_table_purge(connection, "TB15")
+            documents = [
+                item[0] if isinstance(item, tuple) else item for item in result
+            ]
+            assert {doc.metadata["id"] for doc in documents} == {"ba", "st"}
+            assert documents[0].metadata["id"] == "st"
+        for invalid in (
+            {"_xor": [{"order": {"$lte": 4}}, {"id": "st"}]},
+            {"$or": [{"order": {"$xeq": 4}}, {"id": "st"}]},
+        ):
+            with pytest.raises(ValueError):
+                await store.asimilarity_search(query, 1, filter=invalid)
 
 
 ##################################
@@ -2120,6 +2128,11 @@ async def test_add_texts_pool_test_async() -> None:
 
     # 1. Add different records concurrently
     # Expectation:Successful
+    model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
+    await OracleVS.acreate(
+        connection, model, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
+    )
+
     async def add(order: int) -> None:
         model = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2"
@@ -2137,7 +2150,7 @@ async def test_add_texts_pool_test_async() -> None:
         task = asyncio.create_task(add(i))
         tasks.append(task)
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*tasks)
 
     assert connection.busy == 0
 
@@ -2297,23 +2310,33 @@ def test_index_table_case(caplog: pytest.LogCaptureFixture) -> None:
     model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 
     with caplog.at_level(logging.INFO):
-        vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        vs_obj = OracleVS(
+            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+        )
 
     assert 'Table "TB1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        OracleVS(connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE)
+        OracleVS(
+            connection,
+            model,
+            '"TB1"',
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
+        )
 
     assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
-        OracleVS(connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE)
+        OracleVS(
+            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
+        )
 
     assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = OracleVS(
-            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "TB2" created successfully...' in caplog.records[-1].message
@@ -2385,28 +2408,32 @@ async def test_index_table_case_async(caplog: pytest.LogCaptureFixture) -> None:
 
     with caplog.at_level(logging.INFO):
         vs_obj = await OracleVS.acreate(
-            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "TB1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         await OracleVS.acreate(
-            connection, model, '"TB1"', DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection,
+            model,
+            '"TB1"',
+            DistanceStrategy.EUCLIDEAN_DISTANCE,
+            backend="sql",
         )
 
     assert 'Table "TB1" already exists...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         await OracleVS.acreate(
-            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "Tb1", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "Tb1" created successfully...' in caplog.records[-1].message
 
     with caplog.at_level(logging.INFO):
         vs_obj2 = await OracleVS.acreate(
-            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE
+            connection, model, "TB2", DistanceStrategy.EUCLIDEAN_DISTANCE, backend="sql"
         )
 
     assert 'Table "TB2" created successfully...' in caplog.records[-1].message
@@ -2589,454 +2616,37 @@ def test_quote_identifier() -> None:
 ##################################
 
 
-def test_filters() -> None:
-    try:
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-
-    def model1(_) -> list[float]:
-        return [0.1, 0.2, 0.3]
-
-    # model1 = lambda x: [0.1, 0.2, 0.3]
-
-    drop_table_purge(connection, "TB10")
-
-    vs = OracleVS(connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE)
-
-    texts = ["Strawberry", "Banana", "Blueberry"]
-    metadatas = [
-        {
-            "id": "1",
-            "name": "Jason",
-            "age": 45,
-            "address": [
-                {
-                    "street": "25 A street",
-                    "city": "Mono Vista",
-                    "zip": 94088,
-                    "state": "CA",
-                }
-            ],
-            "drinks": "tea",
-        },
-        {
-            "id": "2",
-            "name": "Mary",
-            "age": 50,
-            "address": [
-                {
-                    "street": "15 C street",
-                    "city": "Mono Vista",
-                    "zip": 97090,
-                    "state": "OR",
-                },
-                {
-                    "street": "30 ABC avenue",
-                    "city": "Markstown",
-                    "zip": 90001,
-                    "state": "CA",
-                },
-            ],
-        },
-        {"id": "3", "name": "Mark", "age": 65, "drinks": ["soda", "tea"]},
-    ]
-
-    vs.add_texts(texts, metadatas)
-
-    filter_res: list[tuple[dict, list[str]]] = [
-        ({"drinks": {"$exists": True}}, ["1", "3"]),
-        ({"address.zip": 94088}, ["1"]),
-        ({"name": {"$eq": "Jason"}}, ["1"]),
-        ({"drinks": {"$ne": "tea"}}, ["3"]),  # exits and not equal
-        ({"drinks": {"$eq": ["soda", "tea"]}}, ["3"]),
-        ({"drinks": {"$ne": ["soda", "tea"]}}, ["1"]),
-        (
-            {
-                "address[0]": {
-                    "$eq": {
-                        "street": "25 A street",
-                        "city": "Mono Vista",
-                        "zip": 94088,
-                        "state": "CA",
-                    }
-                }
-            },
-            ["1"],
-        ),
-        (
-            {
-                "address[0]": {
-                    "$ne": {
-                        "street": "25 A street",
-                        "city": "Mono Vista",
-                        "zip": 94088,
-                        "state": "CA",
-                    }
-                }
-            },
-            ["2"],
-        ),
-        (
-            {"$or": [{"drinks": {"$exists": False}}, {"drinks": {"$ne": "tea"}}]},
-            ["2", "3"],
-        ),
-        (
-            {
-                "$or": [
-                    {"drinks": {"$exists": False}},
-                    {"drinks": {"$ne": ["soda", "tea"]}},
-                ]
-            },
-            ["1", "2"],
-        ),
-        ({"age": {"$gt": 45, "$lt": 55}}, ["2"]),
-        ({"age": {"$gt": 45}}, ["2", "3"]),
-        ({"age": {"$lt": 55}}, ["1", "2"]),
-        ({"age": {"$gte": 65}}, ["3"]),
-        ({"age": {"$lte": 50}}, ["1", "2"]),
-        ({"age": {"$between": [49, 51]}}, ["2"]),
-        ({"name": {"$startsWith": "Mar"}}, ["2", "3"]),
-        ({"name": {"$hasSubstring": "ar"}}, ["2", "3"]),
-        ({"name": {"$instr": "ar"}}, ["2", "3"]),
-        ({"name": {"$regex": ".*ar.*"}}, ["2", "3"]),
-        ({"name": {"$like": "%ar%"}}, ["2", "3"]),
-        ({"name": {"$in": ["Mark", "Mary"]}}, ["2", "3"]),
-        ({"name": {"$nin": ["Mark", "Mary"]}}, ["1"]),
-        ({"drinks": {"$all": ["tea", "soda"]}}, ["3"]),
-        ({"drinks": {"$all": ["tea"]}}, ["1", "3"]),
-        ({"drinks": {"$not": {"$all": ["tea", "soda"]}}}, ["1", "2"]),
-        ({"address[*].zip": {"$in": [94088, 1]}}, ["1"]),
-        ({"address[1].zip": 90001}, ["2"]),
-        ({"drinks[0,1]": "soda"}, ["3"]),
-        ({"drinks[1 to 2]": "soda"}, []),
-        ({"drinks": "tea"}, ["1", "3"]),
-        ({"drinks[*]": "tea"}, ["1", "3"]),
-        ({"name": "Jason"}, ["1"]),
-        ({"address.zip": {"$not": {"$eq": "90001"}}}, ["1", "3"]),
-        ({"age": {"$not": {"$gt": 46, "$lt": 65}}}, ["1", "3"]),
-        ({"$and": [{"name": {"$startsWith": "Ja"}}, {"drinks": "tea"}]}, ["1"]),
-        ({"name": {"$startsWith": "Ja"}, "drinks": "tea"}, ["1"]),
-        ({"$or": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["2", "3"]),
-        ({"$nor": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["1"]),
-        (
-            {
-                "$and": [
-                    {"age": {"$gte": 60}},
-                    {"$or": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                ]
-            },
-            ["3"],
-        ),
-        (
-            {
-                "$or": [
-                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
-                ]
-            },
-            ["1", "3"],
-        ),
-        (
-            {
-                "age": 65,
-                "$or": [
-                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
-                ],
-            },
-            ["3"],
-        ),
-        (
-            {
-                "age": 65,
-                "name": {"$regex": "*rk"},
-                "$or": [
-                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
-                ],
-            },
-            ["3"],
-        ),
-    ]
-
-    for _f, _r in filter_res:
-        # search with filter
-        result = vs.similarity_search("Hello", k=3, filter=_f)
-        ids = [res.metadata["id"] for res in result]
-
-        assert set(ids) == set(_r)
-
-    with pytest.raises(ValueError, match="Invalid metadata key"):
-        _f = {"ss')--": "HELLOE"}
-        result = vs.similarity_search("Hello", k=3, filter=_f)
-
-    with pytest.raises(ValueError, match="Invalid operator"):
-        _f = {"drinks": {"$neq": ["soda", "tea"]}}
-        result = vs.similarity_search("Hello", k=3, filter=_f)
-
-    drop_table_purge(connection, "TB10")
-
-
-async def test_filters_async() -> None:
-    try:
-        connection = await oracledb.connect_async(
-            user=username, password=password, dsn=dsn
-        )
-    except Exception:
-        sys.exit(1)
-
-    def model1(_) -> list[float]:
-        return [0.1, 0.2, 0.3]
-
-    # model1 = lambda x: [0.1, 0.2, 0.3]
-
-    await adrop_table_purge(connection, "TB10")
-
-    vs = await OracleVS.acreate(
-        connection, model1, "TB10", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-
-    texts = ["Strawberry", "Banana", "Blueberry"]
-    metadatas = [
-        {
-            "id": "1",
-            "name": "Jason",
-            "age": 45,
-            "address": [
-                {
-                    "street": "25 A street",
-                    "city": "Mono Vista",
-                    "zip": 94088,
-                    "state": "CA",
-                }
-            ],
-            "drinks": "tea",
-        },
-        {
-            "id": "2",
-            "name": "Mary",
-            "age": 50,
-            "address": [
-                {
-                    "street": "15 C street",
-                    "city": "Mono Vista",
-                    "zip": 97090,
-                    "state": "OR",
-                },
-                {
-                    "street": "30 ABC avenue",
-                    "city": "Markstown",
-                    "zip": 90001,
-                    "state": "CA",
-                },
-            ],
-        },
-        {"id": "3", "name": "Mark", "age": 65, "drinks": ["soda", "tea"]},
-    ]
-
-    await vs.aadd_texts(texts, metadatas)
-
-    filter_res: list[tuple[dict, list[str]]] = [
-        ({"drinks": {"$exists": True}}, ["1", "3"]),
-        ({"address.zip": 94088}, ["1"]),
-        ({"name": {"$eq": "Jason"}}, ["1"]),
-        ({"drinks": {"$ne": "tea"}}, ["3"]),  # exits and not equal
-        ({"drinks": {"$eq": ["soda", "tea"]}}, ["3"]),
-        ({"drinks": {"$ne": ["soda", "tea"]}}, ["1"]),
-        (
-            {
-                "address[0]": {
-                    "$eq": {
-                        "street": "25 A street",
-                        "city": "Mono Vista",
-                        "zip": 94088,
-                        "state": "CA",
-                    }
-                }
-            },
-            ["1"],
-        ),
-        (
-            {
-                "address[0]": {
-                    "$ne": {
-                        "street": "25 A street",
-                        "city": "Mono Vista",
-                        "zip": 94088,
-                        "state": "CA",
-                    }
-                }
-            },
-            ["2"],
-        ),
-        (
-            {"$or": [{"drinks": {"$exists": False}}, {"drinks": {"$ne": "tea"}}]},
-            ["2", "3"],
-        ),
-        (
-            {
-                "$or": [
-                    {"drinks": {"$exists": False}},
-                    {"drinks": {"$ne": ["soda", "tea"]}},
-                ]
-            },
-            ["1", "2"],
-        ),
-        ({"age": {"$gt": 45, "$lt": 55}}, ["2"]),
-        ({"age": {"$gt": 45}}, ["2", "3"]),
-        ({"age": {"$lt": 55}}, ["1", "2"]),
-        ({"age": {"$gte": 65}}, ["3"]),
-        ({"age": {"$lte": 50}}, ["1", "2"]),
-        ({"age": {"$between": [49, 51]}}, ["2"]),
-        ({"name": {"$startsWith": "Mar"}}, ["2", "3"]),
-        ({"name": {"$hasSubstring": "ar"}}, ["2", "3"]),
-        ({"name": {"$instr": "ar"}}, ["2", "3"]),
-        ({"name": {"$regex": ".*ar.*"}}, ["2", "3"]),
-        ({"name": {"$like": "%ar%"}}, ["2", "3"]),
-        ({"name": {"$in": ["Mark", "Mary"]}}, ["2", "3"]),
-        ({"name": {"$nin": ["Mark", "Mary"]}}, ["1"]),
-        ({"drinks": {"$all": ["tea", "soda"]}}, ["3"]),
-        ({"drinks": {"$all": ["tea"]}}, ["1", "3"]),
-        ({"drinks": {"$not": {"$all": ["tea", "soda"]}}}, ["1", "2"]),
-        ({"address[*].zip": {"$in": [94088, 1]}}, ["1"]),
-        ({"address[1].zip": 90001}, ["2"]),
-        ({"drinks[0,1]": "soda"}, ["3"]),
-        ({"drinks[1 to 2]": "soda"}, []),
-        ({"drinks": "tea"}, ["1", "3"]),
-        ({"drinks[*]": "tea"}, ["1", "3"]),
-        ({"name": "Jason"}, ["1"]),
-        ({"address.zip": {"$not": {"$eq": "90001"}}}, ["1", "3"]),
-        ({"age": {"$not": {"$gt": 46, "$lt": 65}}}, ["1", "3"]),
-        ({"$and": [{"name": {"$startsWith": "Ja"}}, {"drinks": "tea"}]}, ["1"]),
-        ({"name": {"$startsWith": "Ja"}, "drinks": "tea"}, ["1"]),
-        ({"$or": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["2", "3"]),
-        ({"$nor": [{"drinks": "soda"}, {"address.zip": {"$lt": 94000}}]}, ["1"]),
-        (
-            {
-                "$and": [
-                    {"age": {"$gte": 60}},
-                    {"$or": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                ]
-            },
-            ["3"],
-        ),
-        (
-            {
-                "$or": [
-                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
-                ]
-            },
-            ["1", "3"],
-        ),
-        (
-            {
-                "age": 65,
-                "$or": [
-                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
-                ],
-            },
-            ["3"],
-        ),
-        (
-            {
-                "age": 65,
-                "name": {"$regex": "*rk"},
-                "$or": [
-                    {"$and": [{"name": "Jason"}, {"drinks": {"$in": ["tea", "soda"]}}]},
-                    {"$nor": [{"age": {"$lt": 65}}, {"name": "Jason"}]},
-                ],
-            },
-            ["3"],
-        ),
-    ]
-
-    for _f, _r in filter_res:
-        # search with filter
-        result = await vs.asimilarity_search("Hello", k=3, filter=_f)
-        ids = [res.metadata["id"] for res in result]
-
-        assert set(ids) == set(_r)
-
-    with pytest.raises(ValueError, match="Invalid metadata key"):
-        _f = {"ss')--": "HELLOE"}
-        result = await vs.asimilarity_search("Hello", k=3, filter=_f)
-
-    with pytest.raises(ValueError, match="Invalid operator"):
-        _f = {"drinks": {"$neq": ["soda", "tea"]}}
-        result = await vs.asimilarity_search("Hello", k=3, filter=_f)
-
-    await adrop_table_purge(connection, "TB10")
-
-
 ##################################
 ####### test_reserved  ######
 ##################################
 
 
-def test_reserved() -> None:
-    try:
-        connection = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-
-    drop_table_purge(connection, "TB1")
-
-    embedder_params = {"provider": "database", "model": "allminilm"}
-    proxy = ""
-
-    # instance
-    model = OracleEmbeddings(conn=connection, params=embedder_params, proxy=proxy)
-
-    vs_obj = OracleVS(connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE)
-
-    texts = ["Database Document", "Code Document"]
-    metadata = [
-        {"id": "100", "link": "Document Example Test 1", INTERNAL_ID_KEY: "my_temp_id"},
-        {"id": "101", "link": "Document Example Test 2"},
-    ]
-
-    with pytest.raises(ValueError, match="reserved"):
-        vs_obj.add_texts(texts, metadata, ids=["1", "2"])
-
-    drop_table_purge(connection, "TB1")
-
-    connection.close()
+def test_reserved(oracle_backend, legacy_embeddings) -> None:
+    with backend_store(oracle_backend, legacy_embeddings) as store:
+        texts = ["Database Document", "Code Document"]
+        metadata = [
+            {
+                "id": "100",
+                "link": "Document Example Test 1",
+                INTERNAL_ID_KEY: "my_temp_id",
+            },
+            {"id": "101", "link": "Document Example Test 2"},
+        ]
+        with pytest.raises(ValueError, match="reserved"):
+            store.add_texts(texts, metadata, ids=["1", "2"])
 
 
 @pytest.mark.asyncio
-async def test_reserved_async() -> None:
-    try:
-        connection = await oracledb.connect_async(
-            user=username, password=password, dsn=dsn
-        )
-
-        connection_sync = oracledb.connect(user=username, password=password, dsn=dsn)
-    except Exception:
-        sys.exit(1)
-
-    await adrop_table_purge(connection, "TB1")
-
-    embedder_params = {"provider": "database", "model": "allminilm"}
-    proxy = ""
-
-    # instance
-    model = OracleEmbeddings(conn=connection_sync, params=embedder_params, proxy=proxy)
-
-    vs_obj = await OracleVS.acreate(
-        connection, model, "TB1", DistanceStrategy.EUCLIDEAN_DISTANCE
-    )
-
-    texts = ["Database Document", "Code Document"]
-    metadata = [
-        {"id": "100", "link": "Document Example Test 1", INTERNAL_ID_KEY: "my_temp_id"},
-        {"id": "101", "link": "Document Example Test 2"},
-    ]
-
-    with pytest.raises(ValueError, match="reserved"):
-        await vs_obj.aadd_texts(texts, metadata, ids=["1", "2"])
-
-    await adrop_table_purge(connection, "TB1")
-    await connection.close()
+async def test_reserved_async(oracle_backend, legacy_embeddings) -> None:
+    async with async_backend_store(oracle_backend, legacy_embeddings) as store:
+        texts = ["Database Document", "Code Document"]
+        metadata = [
+            {
+                "id": "100",
+                "link": "Document Example Test 1",
+                INTERNAL_ID_KEY: "my_temp_id",
+            },
+            {"id": "101", "link": "Document Example Test 2"},
+        ]
+        with pytest.raises(ValueError, match="reserved"):
+            await store.aadd_texts(texts, metadata, ids=["1", "2"])

@@ -66,6 +66,7 @@ def test_unknown_operation_cannot_inject_sql_comments():
 @pytest.mark.asyncio
 async def test_sql_hybrid_tags_search_but_not_rowid_fetch(mode, asynchronous):
     store = MagicMock(spec=OracleVS)
+    store._vecdb = None
     store.client = object()
     store.table_name = '"DOCS"'
     store.embedding_function = DeterministicFakeEmbedding(size=3)
@@ -78,7 +79,7 @@ async def test_sql_hybrid_tags_search_but_not_rowid_fetch(mode, asynchronous):
     hits = json.dumps(
         [{"rowid": "rid", "score": 1, "text_score": 1, "vector_score": 1}]
     )
-    results = [[(hits,)], [("document", {})]]
+    results = [[(hits,)], [(1, "document", {})]]
     if asynchronous:
         cursor.execute = AsyncMock()
         cursor.fetchall = AsyncMock(side_effect=results)
@@ -97,6 +98,7 @@ async def test_sql_hybrid_tags_search_but_not_rowid_fetch(mode, asynchronous):
     search, fetch = cursor.execute.call_args_list
     assert SQL_COMMENTS[mode].replace(" */", " backend=sql */") in search.args[0]
     assert "lc_oracledb" not in fetch.args[0]
+    assert "JSON_TABLE" in fetch.args[0]
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -187,10 +189,12 @@ def test_driver_without_program_property_remains_supported():
 
 
 def test_program_is_checked_when_the_statement_is_generated(monkeypatch):
-    monkeypatch.setattr(oracledb.defaults, "program", "devrel-developerhub-langchain")
+    monkeypatch.setattr(
+        oracledb.defaults, "program", "devrel-developerhub-langchain", raising=False
+    )
     sql, _ = _get_similarity_search_query('"DOCS"', DistanceStrategy.COSINE, 3)
     assert "backend=sql source=devrel-developerhub-langchain */" in sql
-    monkeypatch.setattr(oracledb.defaults, "program", "other-program")
+    monkeypatch.setattr(oracledb.defaults, "program", "other-program", raising=False)
     sql, _ = _get_similarity_search_query('"DOCS"', DistanceStrategy.COSINE, 3)
     assert "backend=sql */" in sql
     assert "source=" not in sql

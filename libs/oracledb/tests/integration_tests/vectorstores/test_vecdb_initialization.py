@@ -1,0 +1,56 @@
+# Copyright (c) 2026 Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""Native selection checks SEARCH capability without reading COMPATIBLE."""
+
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import oracledb
+import pytest
+
+import langchain_oracledb.vectorstores._vecdb_schema as _vecdb_schema
+
+from ._backend_fixtures import native_config
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_selection_uses_one_combined_capability_query(asynchronous):
+    config = native_config("vecdb")
+    connection = (
+        await oracledb.connect_async(**config)
+        if asynchronous
+        else oracledb.connect(**config)
+    )
+    try:
+        with connection.cursor() as cursor:
+            observed = MagicMock(wraps=cursor)
+            observed.__enter__.return_value = observed
+            observed.__exit__.return_value = False
+            if asynchronous:
+                observed.execute = AsyncMock(wraps=cursor.execute)
+                observed.fetchone = AsyncMock(wraps=cursor.fetchone)
+                observed.fetchall = AsyncMock(wraps=cursor.fetchall)
+            proxy = SimpleNamespace(version=connection.version, cursor=lambda: observed)
+            name = "LCCOMP_" + uuid.uuid4().hex[:12].upper()
+            result = (
+                await _vecdb_schema.anative_selection(proxy, name, "auto")
+                if asynchronous
+                else _vecdb_schema.native_selection(proxy, name, "auto")
+            )
+            assert result[0] == "vecdb"
+            calls = observed.execute.call_args_list
+            assert (
+                sum(
+                    call.args[0] == _vecdb_schema.VECDB_CAPABILITY_SQL for call in calls
+                )
+                == 1
+            )
+            assert not any("DB_VERSION" in call.args[0] for call in calls)
+            observed.var.assert_not_called()
+    finally:
+        if asynchronous:
+            await connection.close()
+        else:
+            connection.close()

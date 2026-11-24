@@ -428,6 +428,7 @@ class OracleTextSplitter(TextSplitter):
         """Split incoming text and return chunks."""
 
         splits = []
+        cursor = None
 
         try:
             # returns strings or bytes instead of a locator
@@ -436,10 +437,17 @@ class OracleTextSplitter(TextSplitter):
             cursor = self.conn.cursor()
 
             cursor.setinputsizes(content=oracledb.CLOB)
+            # Use a locator beyond the SQL string limit: binding a large Python
+            # string directly can still take the VARCHAR2 conversion path.
+            content = (
+                self.conn.createlob(oracledb.DB_TYPE_CLOB, text)
+                if len(text.encode("utf-8")) > 32767
+                else text
+            )
             cursor.execute(
                 "select t.column_value from "
                 + "dbms_vector_chain.utl_to_chunks(:content, json(:params)) t",
-                content=text,
+                content=content,
                 params=self._json.dumps(self.params),
             )
 
@@ -456,3 +464,9 @@ class OracleTextSplitter(TextSplitter):
             logger.info(f"An exception occurred :: {ex}")
             traceback.print_exc()
             raise
+        finally:
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception:
+                    logger.exception("Failed to close Oracle text splitter cursor")

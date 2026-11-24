@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import re
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from oracledb import AsyncConnection, Connection
 
 logger = logging.getLogger(__name__)
+
+INTERNAL_ID_KEY = "__orcl_internal_doc_id"
 
 
 class DistanceStrategy(str, Enum):
@@ -198,49 +201,97 @@ async def _atable_exists(connection: AsyncConnection, table_name: str) -> bool:
 
 
 @_handle_exceptions
-def drop_table_purge(client: Any, table_name: str) -> None:
-    """Drop a table and purge it from the database.
+def drop_table_purge(client: Any, table_name: str, *, backend: str = "auto") -> None:
+    """Drop a table using its owning backend; missing tables are a no-op.
 
-    Args:
-        client: oracledb connection object.
-        table_name: The name of the table to drop.
-
-    Raises:
-        RuntimeError: If an error occurs while dropping the table.
+    Package-recognized VecDB tables use DBMS_VECTOR_DATABASE.DROP_VECTOR_TABLE; REST
+    clients use the public SDK drop API. Ordinary tables use DROP TABLE PURGE.
+    Column names alone never establish VecDB ownership.
+    Package failures propagate without falling back to SQL DDL.
     """
+    from ._vecdb_adapter import (
+        RestTransport,
+        is_sdk_client,
+    )
+    from ._vecdb_native import NativeTransport
+    from ._vecdb_schema import (
+        _is_vecdb_table,
+        _sql_layout,
+        parse_version,
+    )
+
+    if backend not in {"auto", "sql", "vecdb"}:
+        raise ValueError("backend must be 'auto', 'sql', or 'vecdb'")
+    table_name = _quote_indentifier(table_name)
+    if is_sdk_client(client):
+        if backend == "sql":
+            raise ValueError("REST VecDB clients cannot drop ordinary SQL tables")
+        rest = RestTransport(client)
+        try:
+            rest.call("drop_vector_table", name=table_name.replace('"', ""))
+        except Exception as exc:
+            if getattr(exc, "status", None) != 404:
+                raise
+        return
     with _get_connection(client) as connection:
-        table_name = _quote_indentifier(table_name)
-        if _table_exists(connection, table_name):
-            with connection.cursor() as cursor:
-                ddl = f"DROP TABLE {table_name} PURGE"
-                cursor.execute(ddl)
-            logger.info(f"Table {table_name} dropped successfully...")
+        transport = NativeTransport(connection, parse_version(connection.version))
+        with connection.cursor() as cursor:
+            kind = _sql_layout(cursor, table_name)
+            if kind == "missing":
+                return
+            vecdb = (
+                backend != "sql"
+                and kind != "sql"
+                and _is_vecdb_table(cursor, table_name)
+            )
+        if backend == "vecdb" and not vecdb:
+            raise ValueError("Cannot drop an ordinary SQL table through VecDB")
+        if vecdb:
+            transport.call("drop_vector_table", name=table_name)
         else:
-            logger.info(f"Table {table_name} not found...")
-    return
+            with connection.cursor() as cursor:
+                cursor.execute(f"DROP TABLE {table_name} PURGE")
+        logger.info("Table %s dropped successfully", table_name)
 
 
 @_ahandle_exceptions
-async def adrop_table_purge(client: Any, table_name: str) -> None:
-    """Drop a table and purge it from the database.
+async def adrop_table_purge(
+    client: Any, table_name: str, *, backend: str = "auto"
+) -> None:
+    """Async drop_table_purge with the same backend and failure contracts."""
+    from ._vecdb_adapter import is_sdk_client
+    from ._vecdb_native import AsyncNativeTransport
+    from ._vecdb_schema import (
+        _ais_vecdb_table,
+        _asql_layout,
+        parse_version,
+    )
 
-    Args:
-        client: oracledb connection object.
-        table_name: The name of the table to drop.
-
-    Raises:
-        RuntimeError: If an error occurs while dropping the table.
-    """
+    if backend not in {"auto", "sql", "vecdb"}:
+        raise ValueError("backend must be 'auto', 'sql', or 'vecdb'")
+    if is_sdk_client(client):
+        await asyncio.to_thread(drop_table_purge, client, table_name, backend=backend)
+        return
     table_name = _quote_indentifier(table_name)
-
     async with _aget_connection(client) as connection:
-        if await _atable_exists(connection, table_name):
-            with connection.cursor() as cursor:
-                ddl = f"DROP TABLE {table_name} PURGE"
-                await cursor.execute(ddl)
-            logger.info(f"Table {table_name} dropped successfully...")
+        transport = AsyncNativeTransport(connection, parse_version(connection.version))
+        with connection.cursor() as cursor:
+            kind = await _asql_layout(cursor, table_name)
+            if kind == "missing":
+                return
+            vecdb = (
+                backend != "sql"
+                and kind != "sql"
+                and await _ais_vecdb_table(cursor, table_name)
+            )
+        if backend == "vecdb" and not vecdb:
+            raise ValueError("Cannot drop an ordinary SQL table through VecDB")
+        if vecdb:
+            await transport.acall("drop_vector_table", name=table_name)
         else:
-            logger.info(f"Table {table_name} not found...")
+            with connection.cursor() as cursor:
+                await cursor.execute(f"DROP TABLE {table_name} PURGE")
+        logger.info("Table %s dropped successfully", table_name)
 
 
 @_handle_exceptions
@@ -324,6 +375,10 @@ def drop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
+    from ._vecdb_adapter import is_sdk_client
+
+    if is_sdk_client(client):
+        raise ValueError("oracle-vecdb REST SDK does not support SQL index dropping")
     idx_name = _quote_indentifier(idx_name)
     with _get_connection(client) as connection:
         if _index_exists(connection, idx_name):
@@ -347,6 +402,10 @@ async def adrop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
+    from ._vecdb_adapter import is_sdk_client
+
+    if is_sdk_client(client):
+        raise ValueError("oracle-vecdb REST SDK does not support SQL index dropping")
     idx_name = _quote_indentifier(idx_name)
 
     async with _aget_connection(client) as connection:
@@ -364,3 +423,38 @@ def output_type_string_handler(cursor: Any, metadata: Any) -> Any:
         return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
     if metadata.type_code is oracledb.DB_TYPE_NCLOB:
         return cursor.var(oracledb.DB_TYPE_LONG_NVARCHAR, arraysize=cursor.arraysize)
+
+
+def _get_distance_function(distance_strategy: DistanceStrategy) -> str:
+    # dictionary to map distance strategies to their corresponding function
+    # names
+    distance_strategy2function = {
+        DistanceStrategy.EUCLIDEAN_DISTANCE: "EUCLIDEAN",
+        DistanceStrategy.DOT_PRODUCT: "DOT",
+        DistanceStrategy.COSINE: "COSINE",
+    }
+
+    # attempt to return the corresponding distance function
+    if distance_strategy in distance_strategy2function:
+        return distance_strategy2function[distance_strategy]
+
+    # if it's an unsupported distance strategy, raise an error
+    raise ValueError(f"Unsupported distance strategy: {distance_strategy}")
+
+
+def _generate_accum_query(query: str, fuzzy: Optional[bool] = False) -> str:
+    """Tokenize query on non-word boundaries and join with Oracle Text ACCUM.
+
+    Behavior:
+    - Splits on non-word characters, discarding empty tokens.
+    - When fuzzy is False: each token is quoted: "token".
+    - When fuzzy is True: wraps each token as FUZZY("token").
+    - Joins tokens with ' ACCUM '.
+
+    Examples:
+    'refund policy' -> '"refund" ACCUM "policy"'
+    fuzzy=True -> 'fuzzy("refund") ACCUM fuzzy("policy")'
+    """
+    words = re.split(r"\W+", query)
+    words = [f'"{word}"' if not fuzzy else f'fuzzy("{word}")' for word in words if word]
+    return " ACCUM ".join(words)

@@ -5,6 +5,7 @@ import logging
 
 from langchain_oracledb.cache import OracleCache, OracleSemanticCache
 from langchain_oracledb.chat_message_histories import OracleChatMessageHistory
+from langchain_oracledb.document_compressors import OracleReranker
 from langchain_oracledb.document_loaders.oracleadb_loader import (
     OracleAutonomousDatabaseLoader,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "OracleTextSplitter",
     "OracleAutonomousDatabaseLoader",
     "OracleEmbeddings",
+    "OracleReranker",
     "OracleSummary",
     "OracleVS",
     "OracleVectorizerPreference",

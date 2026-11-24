@@ -16,6 +16,12 @@ Tables created by LangChain are annotated with `LANGCHAIN_ORACLE` when the datab
 python -m pip install -U langchain-oracledb
 ```
 
+For REST access through Oracle VecDB, install the optional SDK extra (Python 3.10–3.15):
+
+```bash
+pip install -U "langchain-oracledb[vecdb]"
+```
+
 ## Documentation
 
 - [Oracle AI Vector Search: Vector Store](https://python.langchain.com/docs/integrations/vectorstores/oracle/)
@@ -104,6 +110,139 @@ create_index(
 vector_store.similarity_search("How does a database stores LOBs?", 1)
 
 ```
+
+#### VecDB and REST access
+
+`OracleVS` supports SQL and VecDB backends. The default `backend="auto"` preserves
+an existing store's backend and selects VecDB for new stores when supported.
+Set `backend="sql"` or `backend="vecdb"` to choose explicitly, and check
+`vector_store.backend` for the selected backend.
+
+Native VecDB requires Oracle Database 23.26.1+ with a compatible database
+configuration. Use uppercase, unqualified table names for the widest
+compatibility. VecDB tables must be created and populated through `OracleVS`.
+
+The database validates feature availability during creation and migration; the
+connector does not infer it from `COMPATIBLE` or cloud deployment type. If a new
+`backend="auto"` store fails VecDB creation because sparse vector storage is
+unavailable, it uses SQL only after confirming the failed attempt left no table.
+Explicit `backend="vecdb"` requests and existing VecDB stores propagate the
+database error. Other creation errors do not trigger SQL fallback.
+
+Connect through REST with the optional VecDB SDK:
+
+```python
+from oracle_vecdb import Configuration
+
+rest_store = OracleVS.from_vecdb_config(
+    config=Configuration(
+        rest_url=os.environ["ORACLE_VECDB_REST_URL"],
+        username=os.environ["ORACLE_VECDB_USERNAME"],
+        password=os.environ["ORACLE_VECDB_PASSWORD"],
+    ),
+    table_name="REST_DOCUMENTS",
+    embedding=embedding_model,
+    mutate_on_duplicate=True,
+)
+rest_store.add_texts(["Oracle vector search"], ids=["doc-1"])
+documents = rest_store.similarity_search("vector search", k=4)
+```
+
+You can also pass an existing REST-configured `OracleVecDB` client to `OracleVS`.
+REST writes require `mutate_on_duplicate=True` and support a subset of metadata
+filters. With `OracleEmbeddings` and a database model, new VecDB stores can use
+managed embeddings when `mutate_on_duplicate=True`.
+
+#### Vector index configuration
+
+Request vector-index creation through the constructor's nested
+`vector_index_params` option:
+
+```python
+indexed_store = OracleVS(
+    conn,
+    embedding_model,
+    "INDEXED_DOCUMENTS",
+    params={"vector_index_params": {"idx_type": "HNSW"}},
+)
+```
+
+Constructors preserve existing indexes. Use `create_index()` or
+`acreate_index()` to create a missing index or explicitly change its settings.
+VecDB stores also provide `describe_vecdb_index()` to check readiness.
+
+Creating a missing index without options uses LangChain's HNSW defaults and the
+store's distance strategy. An empty constructor `vector_index_params={}` uses
+the same defaults; omitting that constructor option leaves vector indexing off.
+For VecDB, `idx_name` is accepted with a warning and ignored because VecDB assigns
+the physical name. Use `describe_vecdb_index()` to discover it. SQL continues to
+honor `idx_name`.
+
+### Hybrid retrieval
+
+Combine keyword and semantic search using a database embedding model and a
+hybrid index. The model must already be loaded into the database:
+
+```python
+from langchain_oracledb import OracleEmbeddings, OracleHybridSearchRetriever
+from langchain_oracledb.retrievers.hybrid_search import create_hybrid_index
+
+hybrid_store = OracleVS(
+    conn,
+    OracleEmbeddings(
+        conn=conn,
+        params={"provider": "database", "model": "MY_EMBEDDING_MODEL"},
+    ),
+    "HYBRID_DOCUMENTS",
+    mutate_on_duplicate=True,
+)
+hybrid_store.add_texts(texts)
+create_hybrid_index(conn, "DOCUMENTS_HYBRID", vector_store=hybrid_store)
+retriever = OracleHybridSearchRetriever(
+    vector_store=hybrid_store,
+    idx_name="DOCUMENTS_HYBRID",
+    search_mode="hybrid",
+    k=4,
+)
+documents = retriever.invoke("database backups")
+```
+
+Choose `"keyword"`, `"semantic"`, or `"hybrid"` with `search_mode`, and set
+`return_scores=True` to include scores in document metadata. VecDB discovers the
+physical hybrid index on first use and caches it for subsequent searches.
+SQL hybrid retrieval uses one search call and one batched document fetch,
+preserving result order and scores.
+Native vector queries and ordinary SQL operations do not discover metadata
+indexes. Catalog checks are reserved for index discovery and maintenance, physical index
+status, layout migration, and compatibility fallbacks; new-table backend
+selection also checks package capabilities before choosing a creation path.
+
+Hybrid and text search, metadata index creation and dropping, and vectorizer
+preferences require a native connection or pool. These operations are rejected
+for REST clients. REST vector index operations remain available through VecDB.
+
+### Rerank retrieved documents
+
+`OracleReranker` reranks documents from any retriever. This example uses a
+reranking model already loaded into the database:
+
+```python
+from langchain_oracledb import OracleReranker
+
+reranker = OracleReranker(
+    conn=conn,
+    params={"provider": "database", "model": "MY_RERANKING_MODEL"},
+    top_n=3,
+)
+query = "How do I restore a database backup?"
+reranked = reranker.compress_documents(retriever.invoke(query), query)
+```
+
+REST clients also support reranking with database models. Use
+`OracleReranker.load_onnx_model()` to load a model from a URL, or from a database
+directory with a native connection. For a retrieval pipeline, use the reranker as
+the `base_compressor` in LangChain's `ContextualCompressionRetriever` (available
+in `langchain-classic`).
 
 ### Document Loaders
 
@@ -248,6 +387,19 @@ embed = embedder.embed_query("Hello World!")
 print(f"Embedding generated by OracleEmbeddings: {embed}")
 ```
 
+An existing REST-configured `OracleVecDB` client can also generate embeddings:
+
+```python
+rest_embedder = OracleEmbeddings(
+    conn=rest_store.client,
+    params={"provider": "database", "model": "MY_EMBEDDING_MODEL"},
+)
+vectors = rest_embedder.embed_documents(["Database backups", "Vector search"])
+```
+
+REST embeddings use database models; native connections also support the external
+providers shown above.
+
 ### Utilities
 
 #### OracleSummary
@@ -298,3 +450,10 @@ summary = summ.get_summary(
 
 print(f"Summary generated by OracleSummary: {summary}")
 ```
+
+### Async support
+
+Use methods such as `OracleVS.acreate()`, `aadd_texts()`, `asimilarity_search()`,
+and retriever `ainvoke()` for async applications. Native vector stores support
+`python-oracledb` async connections and pools; REST clients also support async
+store and retriever methods.
