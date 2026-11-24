@@ -87,6 +87,30 @@ SELECT_CHANNEL_VALUES_SQL = """
     FROM checkpoint_blobs
 """
 
+# Fetches only the blobs a set of checkpoints references. The bind is a JSON
+# array of {"t": thread_id, "n": checkpoint_ns, "c": channel, "v": version}
+# objects; the join runs on the checkpoint_blobs primary key.
+SELECT_CHANNEL_VALUES_BY_VERSION_SQL = """
+    SELECT bl.thread_id, bl.checkpoint_ns, bl.channel, bl.version, bl.type, bl.blob
+    FROM JSON_TABLE(
+        :channel_versions_json,
+        '$[*]' COLUMNS (
+            thread_id VARCHAR2(2000) PATH '$.t',
+            checkpoint_ns VARCHAR2(2000) PATH '$.n',
+            channel VARCHAR2(2000) PATH '$.c',
+            version VARCHAR2(2000) PATH '$.v'
+        )
+    ) cv
+    INNER JOIN checkpoint_blobs bl
+        ON bl.thread_id = cv.thread_id
+        AND bl.checkpoint_ns = cv.checkpoint_ns
+        AND bl.channel = cv.channel
+        AND bl.version = cv.version
+"""
+
+# Keeps each JSON bind below the 32767-byte VARCHAR2 bind limit.
+_CHANNEL_VERSIONS_BIND_MAX_BYTES = 30000
+
 SELECT_PENDING_WRITES_SQL = """
     SELECT thread_id, checkpoint_ns, checkpoint_id, task_id, channel, type, blob 
     FROM checkpoint_writes 
@@ -237,6 +261,7 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
     SELECT_SQL = SELECT_SQL
     SELECT_PENDING_SENDS_SQL = SELECT_PENDING_SENDS_SQL
     SELECT_CHANNEL_VALUES_SQL = SELECT_CHANNEL_VALUES_SQL
+    SELECT_CHANNEL_VALUES_BY_VERSION_SQL = SELECT_CHANNEL_VALUES_BY_VERSION_SQL
     SELECT_PENDING_WRITES_SQL = SELECT_PENDING_WRITES_SQL
     MIGRATIONS = MIGRATIONS
     UPSERT_CHECKPOINT_BLOBS_SQL = UPSERT_CHECKPOINT_BLOBS_SQL
@@ -507,6 +532,56 @@ class BaseOracleSaver(BaseCheckpointSaver[str]):
         return (
             "WHERE " + " AND ".join(wheres) if wheres else "",
             param_values,
+        )
+
+    def _channel_values_queries(
+        self, all_values: Sequence[dict[str, Any]]
+    ) -> list[tuple[str, dict[str, str]]]:
+        """Build the queries loading the blobs the given checkpoints reference.
+
+        Selecting every blob of a thread and matching versions afterwards
+        transfers the whole history of each channel. Only the
+        `(channel, version)` pairs in each checkpoint's `channel_versions`
+        are needed, so those are sent as a JSON bind and joined on the
+        `checkpoint_blobs` primary key.
+
+        Versions are compared as text, exactly as `_get_channel_values` does,
+        so checkpoints written with numeric versions keep loading. The pairs
+        are split over several queries when one bind would get too large;
+        an empty list means there is nothing to fetch.
+        """
+        seen: set[tuple[str, str, str, str]] = set()
+        entries: list[str] = []
+        for v in all_values:
+            checkpoint = v.get("checkpoint") or {}
+            for channel, version in (checkpoint.get("channel_versions") or {}).items():
+                key = (v["thread_id"], v["checkpoint_ns"], channel, str(version))
+                if key in seen:
+                    continue
+                seen.add(key)
+                entries.append(
+                    json.dumps({"t": key[0], "n": key[1], "c": key[2], "v": key[3]})
+                )
+
+        queries: list[tuple[str, dict[str, str]]] = []
+        batch: list[str] = []
+        batch_bytes = 2  # the enclosing brackets
+        for entry in entries:
+            # json.dumps escapes non-ASCII, so len() is the size in bytes.
+            entry_bytes = len(entry) + 1
+            if batch and batch_bytes + entry_bytes > _CHANNEL_VERSIONS_BIND_MAX_BYTES:
+                queries.append(self._channel_values_query(batch))
+                batch, batch_bytes = [], 2
+            batch.append(entry)
+            batch_bytes += entry_bytes
+        if batch:
+            queries.append(self._channel_values_query(batch))
+        return queries
+
+    def _channel_values_query(self, entries: list[str]) -> tuple[str, dict[str, str]]:
+        return (
+            self.SELECT_CHANNEL_VALUES_BY_VERSION_SQL,
+            {"channel_versions_json": "[" + ",".join(entries) + "]"},
         )
 
     def _get_channel_values(self, all_channel_values, all_values):

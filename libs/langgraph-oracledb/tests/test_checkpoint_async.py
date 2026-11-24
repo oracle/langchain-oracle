@@ -12,6 +12,7 @@ from langgraph.checkpoint.base import (
 )
 from langgraph.checkpoint.serde.types import ERROR, INTERRUPT, TASKS
 
+from langgraph_oracledb.checkpoint.oracle import base as oracle_base
 from tests._checkpoint_test_utils import (
     generate_checkpoint,
     generate_config,
@@ -794,6 +795,97 @@ async def test_get_tuple_parent_config_root_namespace_normalized(
         assert loaded is not None
         assert loaded.parent_config is not None
         assert loaded.parent_config["configurable"]["checkpoint_ns"] == ""
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+async def test_get_tuple_fetches_only_referenced_blob_versions(
+    monkeypatch, saver_name: str
+) -> None:
+    """Loading a checkpoint reads its own blob versions, not the thread history."""
+    async with _async_saver(saver_name) as saver:
+        thread_id = str(uuid4())
+        config = generate_config(thread_id)
+        stored = []
+        for step in range(1, 7):
+            values = {"history": b"h" * step, "inline": step}
+            # "stable" is written once and referenced by every later checkpoint.
+            versions = {"history": str(step), "inline": str(step), "stable": "1"}
+            new_versions = {"history": str(step), "inline": str(step)}
+            if step == 1:
+                new_versions["stable"] = "1"
+            values["stable"] = b"stable"
+            checkpoint = generate_checkpoint(
+                channel_values=values, channel_versions=versions
+            )
+            config = await saver.aput(
+                config, checkpoint, generate_metadata(step=step), new_versions
+            )
+            stored.append(config)
+
+        fetched: list[int] = []
+        original = saver._get_channel_values
+
+        def counting(rows, values):
+            fetched.append(len(rows))
+            return original(rows, values)
+
+        monkeypatch.setattr(saver, "_get_channel_values", counting)
+
+        latest = await saver.aget_tuple(generate_config(thread_id))
+        assert latest is not None
+        assert latest.checkpoint["channel_values"] == {
+            "history": b"h" * 6,
+            "inline": 6,
+            "stable": b"stable",
+        }
+        # Two blob channels, however long the thread is.
+        assert fetched == [2]
+
+        third = await saver.aget_tuple(stored[2])
+        assert third is not None
+        assert third.checkpoint["channel_values"]["history"] == b"h" * 3
+        assert third.checkpoint["channel_values"]["stable"] == b"stable"
+        assert fetched == [2, 2]
+
+        listed = [t async for t in saver.alist(generate_config(thread_id), limit=3)]
+        assert [t.checkpoint["channel_values"]["history"] for t in listed] == [
+            b"h" * 6,
+            b"h" * 5,
+            b"h" * 4,
+        ]
+        assert all(
+            t.checkpoint["channel_values"]["stable"] == b"stable" for t in listed
+        )
+        # Three "history" versions plus the shared "stable" blob.
+        assert fetched[-1] == 4
+
+
+@pytest.mark.parametrize("saver_name", ["base", "pool"])
+async def test_channel_values_load_when_the_request_is_split(
+    monkeypatch, saver_name: str
+) -> None:
+    monkeypatch.setattr(oracle_base, "_CHANNEL_VERSIONS_BIND_MAX_BYTES", 200)
+    async with _async_saver(saver_name) as saver:
+        values = {f"channel_{i}": f"value-{i}".encode() for i in range(20)}
+        versions = {key: "1" for key in values}
+        checkpoint = generate_checkpoint(
+            channel_values=values, channel_versions=versions
+        )
+        stored = await saver.aput(
+            generate_config(), checkpoint, generate_metadata(), versions
+        )
+
+        assert (
+            len(
+                saver._channel_values_queries(
+                    [{"thread_id": "t", "checkpoint_ns": " ", "checkpoint": checkpoint}]
+                )
+            )
+            > 1
+        )
+        loaded = await saver.aget_tuple(stored)
+        assert loaded is not None
+        assert loaded.checkpoint["channel_values"] == values
 
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])

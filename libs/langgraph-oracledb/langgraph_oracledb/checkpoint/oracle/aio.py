@@ -173,13 +173,10 @@ class AsyncOracleSaver(BaseOracleSaver):
                 v["checkpoint"] = self._coerce_decimals(v["checkpoint"])
                 v["metadata"] = self._coerce_decimals(v["metadata"])
 
-            where_channels, args_channels = self._search_where_channels_pending_writes(
-                config, use_checkpoint_id=False
-            )
-            await cur.execute(
-                self.SELECT_CHANNEL_VALUES_SQL + where_channels, args_channels
-            )
-            res = await cur.fetchall()
+            res = []
+            for blob_query, blob_args in self._channel_values_queries(values):
+                await cur.execute(blob_query, blob_args)
+                res.extend(await cur.fetchall())
             channel_values = self._get_channel_values(res, values)
 
             where_writes, args_writes = self._search_where_channels_pending_writes(
@@ -288,14 +285,10 @@ class AsyncOracleSaver(BaseOracleSaver):
             value["checkpoint"] = self._coerce_decimals(value["checkpoint"])
             value["metadata"] = self._coerce_decimals(value["metadata"])
 
-            where_channel_values = (
-                "WHERE thread_id = :thread_id AND checkpoint_ns = :checkpoint_ns"
-            )
-            await cur.execute(
-                self.SELECT_CHANNEL_VALUES_SQL + where_channel_values,
-                {"thread_id": thread_id, "checkpoint_ns": checkpoint_ns},
-            )
-            res = await cur.fetchall()
+            res = []
+            for blob_query, blob_args in self._channel_values_queries([value]):
+                await cur.execute(blob_query, blob_args)
+                res.extend(await cur.fetchall())
             channel_values = self._get_channel_values(res, [value])
             assert len(channel_values) == 1
 
