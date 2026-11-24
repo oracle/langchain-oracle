@@ -371,17 +371,11 @@ def drop_index(client: Any, idx_name: str) -> None:
     Raises:
         RuntimeError: If an error occurs while dropping the index.
     """
-    from ._vecdb import _index_query, is_sdk_client
-    from ._vecdb_rest_sql import ORDSSQLConnection
+    from ._vecdb import is_sdk_client
 
-    idx_name = _quote_indentifier(idx_name)
     if is_sdk_client(client):
-        with ORDSSQLConnection(client).cursor() as cursor:
-            statement, binds = _index_query(idx_name)
-            cursor.execute(statement, **binds)
-            if cursor.fetchone():
-                cursor.execute(f"DROP INDEX {idx_name}")
-        return
+        raise ValueError("oracle-vecdb REST SDK does not support SQL index dropping")
+    idx_name = _quote_indentifier(idx_name)
     with _get_connection(client) as connection:
         if _index_exists(connection, idx_name):
             with connection.cursor() as cursor:
@@ -407,8 +401,7 @@ async def adrop_index(client: Any, idx_name: str) -> None:
     from ._vecdb import is_sdk_client
 
     if is_sdk_client(client):
-        await asyncio.to_thread(drop_index, client, idx_name)
-        return
+        raise ValueError("oracle-vecdb REST SDK does not support SQL index dropping")
     idx_name = _quote_indentifier(idx_name)
 
     async with _aget_connection(client) as connection:

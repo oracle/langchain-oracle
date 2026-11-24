@@ -9,12 +9,9 @@ from langchain_oracledb._vecdb_sdk.services.ords.hybrid_search import HybridSear
 from langchain_oracledb._vecdb_sdk.services.sqlnet.query_mapper import SQLNetQueryMapper
 
 
-class CatalogHybrid(HybridSearch):
+class ConfiguredHybrid(HybridSearch):
     def _describe_table_embed_params(self, table_name):
         return {"model": "EMBED_MODEL", "embed_metadata_jsonpath": "$.body.text"}
-
-    def _hybrid_index_rows_for_table(self, table_name):
-        return [{"idx_name": "docs_hvi"}]
 
 
 def request(**changes):
@@ -23,18 +20,30 @@ def request(**changes):
         query_kind="text",
         query_value="oracle",
         top_k=3,
-        filters=None,
-        advanced_options=None,
         hybrid_options={},
     )
     args.update(changes)
-    return CatalogHybrid()._hybrid_search_request(**args)
+    if isinstance(args["hybrid_options"], dict):
+        args["hybrid_options"] = {
+            "hybrid_index_name": "DOCS_HVI",
+            **args["hybrid_options"],
+        }
+    return ConfiguredHybrid()._hybrid_search_request(**args)
 
 
-def test_hybrid_catalog_discovery_and_request_do_not_mutate_caller_options():
-    options = {"contains": "oracle", "vector": {"aggregator_params": ["AVGN", 4, 20]}}
+def test_hybrid_request_preserves_options_without_mutating_input():
+    options = {
+        "contains": "oracle",
+        "vector": {"aggregator_params": ["AVGN", 4, 20]},
+        "filter_by": {
+            "op": "=",
+            "type": "string",
+            "path": "CONTENT_METADATA.tenant",
+            "args": ["a"],
+        },
+    }
     original = deepcopy(options)
-    result = request(hybrid_options=options, filters={"tenant": "a"})
+    result = request(hybrid_options=options)
     assert options == original
     assert result["hybrid_index_name"] == "DOCS_HVI"
     assert result["text"] == {"inpath": ["$.body.text"], "contains": "oracle"}
@@ -48,18 +57,11 @@ def test_hybrid_catalog_discovery_and_request_do_not_mutate_caller_options():
     assert result["return"]["topN"] == 3
 
 
-def test_hybrid_cached_configuration_and_vector_source():
-    service = CatalogHybrid()
-    embed = {"model": "MODEL", "embed_metadata_jsonpath": "text"}
-    service._hybrid_index_configs["DOCS"] = {
-        "embed_params": embed,
-        "hybrid_index_name": "cached_hvi",
-    }
-    result = service._hybrid_search_request("docs", "vector", [1, 0], 2, None, None, {})
-    assert result["hybrid_index_name"] == "CACHED_HVI"
+def test_hybrid_vector_source_uses_configured_metadata_path():
+    result = request(query_kind="vector", query_value=[1, 0], top_k=2)
+    assert result["hybrid_index_name"] == "DOCS_HVI"
     assert result["vector"] == {"search_vector": "[1, 0]"}
-    assert result["text"] == {"inpath": ["$.text"]}
-    assert embed == {"model": "MODEL", "embed_metadata_jsonpath": "text"}
+    assert result["text"] == {"inpath": ["$.body.text"]}
 
 
 @pytest.mark.parametrize(
@@ -73,12 +75,11 @@ def test_hybrid_cached_configuration_and_vector_source():
         ({"vector": []}, "text and vector"),
         ({"text": {"inpath": []}}, "JSON paths"),
         ({"contains": "a", "text": {"search_text": "b"}}, "Conflicting text"),
-        ({"filter_by": {}}, "not both"),
     ],
 )
 def test_hybrid_request_rejects_ambiguous_or_unmappable_inputs(options, message):
     with pytest.raises((TypeError, ValueError), match=message):
-        request(hybrid_options=options, filters={"tenant": "a"})
+        request(hybrid_options=options)
 
 
 @pytest.mark.parametrize(
@@ -94,25 +95,17 @@ def test_vector_query_has_exactly_one_source(options):
         request(query_kind="vector", query_value=[1, 0], hybrid_options=options)
 
 
-def test_top_level_search_text_is_preserved_and_advanced_options_are_separate():
+def test_top_level_search_text_is_preserved():
     result = request(hybrid_options={"search_text": "chosen"})
     assert result["search_text"] == "chosen"
     assert "search_text" not in result["text"]
-    with pytest.raises(ValueError, match="hybrid_options"):
-        request(advanced_options={"accuracy": 90})
 
 
-def test_index_discovery_requires_an_unambiguous_index(monkeypatch):
-    service = CatalogHybrid()
-    monkeypatch.setattr(service, "_hybrid_index_rows_for_table", lambda _: [])
-    with pytest.raises(ValueError, match="exactly one HVI"):
-        service._hybrid_search_request("DOCS", "text", "oracle", 1, None, None, {})
-    for method in [
-        HybridSearch()._describe_table_embed_params,
-        HybridSearch()._hybrid_index_rows_for_table,
-    ]:
-        with pytest.raises(NotImplementedError, match="adapter must supply"):
-            method("DOCS")
+def test_hybrid_request_requires_an_explicit_index():
+    with pytest.raises(ValueError, match="hybrid_index_name must be a non-empty"):
+        ConfiguredHybrid()._hybrid_search_request("DOCS", "text", "oracle", 1, {})
+    with pytest.raises(NotImplementedError, match="adapter must supply"):
+        HybridSearch()._describe_table_embed_params("DOCS")
 
 
 @pytest.mark.parametrize(
@@ -161,98 +154,6 @@ def test_text_inpath_must_contain_json_paths(value):
 def test_top_k_is_a_positive_integer(value):
     with pytest.raises(ValueError):
         HybridSearch._positive_integer(value, "top_k")
-
-
-@pytest.mark.parametrize(
-    "filter_,expected",
-    [
-        (
-            {"age": {"$between": [18, 65]}},
-            {
-                "op": "BETWEEN",
-                "type": "number",
-                "path": "CONTENT_METADATA.age",
-                "args": [18, 65],
-            },
-        ),
-        (
-            {"tenant": {"$in": ["a", "b"]}},
-            {
-                "op": "IN",
-                "type": "string",
-                "path": "CONTENT_METADATA.tenant",
-                "args": ["a", "b"],
-            },
-        ),
-        (
-            {"flag": True},
-            {
-                "op": "=",
-                "type": "string",
-                "path": "CONTENT_METADATA.flag",
-                "args": [True],
-            },
-        ),
-        (
-            {"field": {"$exists": True}},
-            {"op": "EXISTS", "path": "CONTENT_METADATA.field", "args": []},
-        ),
-        (
-            {"field": {"$exists": False}},
-            {
-                "op": "NOT",
-                "args": [
-                    {"op": "EXISTS", "path": "CONTENT_METADATA.field", "args": []}
-                ],
-            },
-        ),
-    ],
-)
-def test_hybrid_filter_operators_have_stable_json_contracts(filter_, expected):
-    assert HybridSearch._hybrid_filter(filter_) == expected
-
-
-def test_nested_hybrid_filters_preserve_logic_and_numeric_bounds():
-    result = HybridSearch._hybrid_filter(
-        {"$or": [{"age": {"$gte": 18, "$lt": 65}}, {"$not": {"address.city": "NYC"}}]}
-    )
-    assert result["op"] == "OR"
-    bounds, negation = result["args"]
-    assert bounds["op"] == "AND"
-    assert [entry["op"] for entry in bounds["args"]] == [">=", "<"]
-    assert negation == {
-        "op": "NOT",
-        "args": [
-            {
-                "op": "=",
-                "type": "string",
-                "path": "CONTENT_METADATA.address.city",
-                "args": ["NYC"],
-            }
-        ],
-    }
-    assert HybridSearch._hybrid_filter({"a": 1, "b": "x"})["op"] == "AND"
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        {},
-        {"$unknown": []},
-        {"$and": []},
-        {"$or": {}},
-        {"bad-key": 1},
-        {"a": {}},
-        {"a": {"$unknown": 1}},
-        {"a": {"$exists": 1}},
-        {"a": {"$between": [1]}},
-        {"a": {"$in": []}},
-    ],
-)
-def test_malformed_filters_fail_before_transport_execution(value):
-    with pytest.raises(ValueError):
-        HybridSearch._hybrid_filter(value)
 
 
 @pytest.mark.parametrize(
@@ -344,15 +245,6 @@ def test_operation_validation_rejects_wrong_public_parameter_types(
         validation.validate_operation_arguments(operation, params)
 
 
-def test_mapper_reports_unknown_operations_and_formats_only_explicit_templates(
-    monkeypatch,
-):
+def test_mapper_reports_unknown_operations():
     with pytest.raises(KeyError, match="No SQLNet query"):
         SQLNetQueryMapper.get_query("missing")
-    monkeypatch.setitem(
-        SQLNetQueryMapper._QUERIES, "format_fixture", "SELECT {expression}\n FROM dual"
-    )
-    assert (
-        SQLNetQueryMapper.get_query("format_fixture", expression="1")
-        == "SELECT 1 FROM dual"
-    )

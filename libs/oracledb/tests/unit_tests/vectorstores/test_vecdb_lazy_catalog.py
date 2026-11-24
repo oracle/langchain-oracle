@@ -71,10 +71,14 @@ async def test_requested_vector_index_uses_provider_status_without_catalog(sessi
     assert catalogs(s.a.log) == []
 
 
+@pytest.mark.parametrize("metadata_column", ["METADATA", "CONTENT_METADATA"])
 @pytest.mark.asyncio
-async def test_hybrid_discovery_is_lazy_and_reused_by_subsequent_queries(sessions):
+async def test_hybrid_discovery_is_lazy_and_reused_by_subsequent_queries(
+    sessions, metadata_column
+):
     s = sessions
     use_one_session(s)
+    s.a.columns = {"ID", "DENSE_VECTOR", metadata_column}
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
     store = await open_store(s)
     assert catalogs(s.a.log) == []
@@ -86,7 +90,7 @@ async def test_hybrid_discovery_is_lazy_and_reused_by_subsequent_queries(session
     else:
         docs = transport.hybrid_search(store.table_name, request, False)
     assert docs[0].page_content == "SCHEMA_A"
-    assert len(catalogs(s.a.log)) == 2
+    assert len(catalogs(s.a.log)) == 1
     for _ in range(2):
         s.a.log.clear()
         if s.asynchronous:
@@ -95,6 +99,42 @@ async def test_hybrid_discovery_is_lazy_and_reused_by_subsequent_queries(session
             transport.hybrid_search(store.table_name, request, False)
         assert len(s.a.log) == 1
         assert catalogs(s.a.log) == []
+
+
+@pytest.mark.parametrize("metadata_column", ["METADATA", "CONTENT_METADATA"])
+@pytest.mark.asyncio
+async def test_first_hybrid_search_refreshes_a_renamed_metadata_column(
+    sessions, metadata_column
+):
+    s = sessions
+    use_one_session(s)
+    s.a.columns = {"ID", "DENSE_VECTOR", metadata_column}
+    store = await open_store(s)
+    replacement = "CONTENT_METADATA" if metadata_column == "METADATA" else "METADATA"
+    s.a.columns = {"ID", "DENSE_VECTOR", replacement}
+    s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE
+    original = s.a.execute
+
+    def execute(statement, parameters=None, **binds):
+        original(statement, parameters, **binds)
+        if "i.parameters" in statement and binds["metadata_column"] not in s.a.columns:
+            s.a.one = None
+
+    s.a.execute = execute
+    if not s.asynchronous:
+        s.a.cursor.execute.side_effect = execute
+    s.a.log.clear()
+    transport = store._vecdb.transport
+    request = {"text": {"search_text": "oracle"}}
+    docs = (
+        await transport.ahybrid_search(store.table_name, request, False)
+        if s.asynchronous
+        else transport.hybrid_search(store.table_name, request, False)
+    )
+    assert docs[0].page_content == "SCHEMA_A"
+    assert not any("all_tab_columns" in sql for sql, _ in s.a.log)
+    assert f"t.{replacement}" in s.a.log[-1][0]
+    assert len(catalogs(s.a.log)) == 2
 
 
 @pytest.mark.parametrize("missing_api", [True, False, 1418])
@@ -126,7 +166,7 @@ async def test_vector_index_catalog_fallback_only_when_api_cannot_prove_existenc
     s.a.cursor.execute.side_effect = execute
     s.a.log.clear()
     if s.asynchronous:
-        await store._vecdb.run_async("create_index", None)
+        await store._vecdb.acreate_index(None)
     else:
         store._vecdb.create_index(None)
     assert len(catalogs(s.a.log)) == 1
@@ -161,7 +201,7 @@ async def test_unrelated_index_status_error_does_not_trigger_catalog_fallback(se
     s.a.log.clear()
     with pytest.raises(oracledb.DatabaseError) as caught:
         if s.asynchronous:
-            await store._vecdb.run_async("create_index", None)
+            await store._vecdb.acreate_index(None)
         else:
             store._vecdb.create_index(None)
     assert caught.value is error

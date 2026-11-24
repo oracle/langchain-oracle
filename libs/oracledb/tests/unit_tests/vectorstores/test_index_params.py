@@ -214,7 +214,7 @@ async def test_constructor_preserves_nested_index_contract(
             new=AsyncMock(return_value=(backend, (23, 26, 3))),
         ),
         patch.object(VecDBBackend, "prepare") as prepare,
-        patch.object(VecDBBackend, "run_async", new_callable=AsyncMock) as arun,
+        patch.object(VecDBBackend, "aprepare", new_callable=AsyncMock) as arun,
         patch.object(OracleVS, "add_texts") as add,
         patch.object(OracleVS, "aadd_texts", new_callable=AsyncMock) as aadd,
         patch.object(OracleVS, "_initialize"),
@@ -253,7 +253,7 @@ async def test_constructor_preserves_nested_index_contract(
             )
             assert store._vecdb._creation_index_params == expected
             if asynchronous:
-                arun.assert_awaited_once_with("prepare", columns=set(), description={})
+                arun.assert_awaited_once_with(columns=set(), description={})
                 prepare.assert_not_called()
             else:
                 prepare.assert_called_once_with(columns=set(), description={})

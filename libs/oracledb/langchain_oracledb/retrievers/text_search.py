@@ -242,7 +242,7 @@ async def acreate_text_index(
         idx_name, vector_store, table_name, column_name
     )
     if vector_store is not None and vector_store._vecdb is not None:
-        return await vector_store._vecdb.run_async("create_text_index", idx_name)
+        return await vector_store._vecdb.acreate_text_index(idx_name)
 
     async with _aget_connection(client) as connection:
         if not await _aindex_exists(connection, idx_name, resolved_table):
@@ -538,8 +538,8 @@ class OracleTextSearchRetriever(BaseRetriever):
             if not expression:
                 return []
             limit = _positive_int(kwargs.get("k", self.k or 4), "k")
-            docs = await self.vector_store._vecdb.run_async(
-                "text_search", expression, limit, self.return_scores
+            docs = await self.vector_store._vecdb.atext_search(
+                expression, limit, self.return_scores
             )
             return docs
         if not self.operator_search:

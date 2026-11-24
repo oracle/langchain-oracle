@@ -177,6 +177,12 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
         "vector": {"search_vector": [1.0, 0.0], "aggregator_params": ["AVGN", 5, 50]},
         "text": {"json_textcontains": ["$.__orcl_internal_content", '"oracle"']},
         "search_fusion": "UNION",
+        "filter_by": {
+            "op": "=",
+            "type": "string",
+            "path": "CONTENT_METADATA.tenant",
+            "args": ["a"],
+        },
         "return": {"topN": 7},
     }
     original = deepcopy(params)
@@ -188,9 +194,15 @@ def test_hybrid_uses_branch_request_shape_and_preserves_extended_options():
         "$.__orcl_internal_content",
         '"oracle"',
     ]
+    assert result["filter_by"] == original["filter_by"]
     assert result["return"]["topN"] == 7
     assert result["return"]["format"] == "JSON"
-    assert "rowid" in result["return"]["values"]
+    assert result["return"]["values"] == [
+        "rowid",
+        "score",
+        "vector_score",
+        "text_score",
+    ]
     assert params == original
 
 

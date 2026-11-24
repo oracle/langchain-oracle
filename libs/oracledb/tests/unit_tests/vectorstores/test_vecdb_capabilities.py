@@ -147,7 +147,7 @@ async def test_get_by_ids_executes_one_statement_per_batch(native):
     cursor.var.return_value.getvalue.return_value = '{"vectors": []}'
     backend = _vecdb.VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     ids = [str(i) for i in range(101)]
-    result = await backend.run_async("get", ids) if asynchronous else backend.get(ids)
+    result = await backend.aget(ids) if asynchronous else backend.get(ids)
     assert result == []
     assert cursor.execute.call_count == 2
     assert [
@@ -386,7 +386,7 @@ async def test_native_vector_execution_markers(
     native, operation, version, program, monkeypatch
 ):
     asynchronous, _, cursor, transport = native
-    monkeypatch.setattr(oracledb.defaults, "program", program)
+    monkeypatch.setattr(oracledb.defaults, "program", program, raising=False)
     transport.version = version
     params = {"table_name": "DOCS"}
     if operation in {"search", "query"}:

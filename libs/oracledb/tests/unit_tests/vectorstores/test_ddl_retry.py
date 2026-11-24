@@ -12,13 +12,25 @@ from tests.integration_tests.vectorstores._backend_fixtures import aretry_ddl, r
 FIXTURES = "tests.integration_tests.vectorstores._backend_fixtures"
 
 
+class SDKError(Exception):
+    def __init__(self, code):
+        self.error_message = f"An unexpected error occurred: ORA-{code:05d}: DDL error"
+        super().__init__(self.error_message)
+
+
+@pytest.mark.parametrize("transport", ["native", "sdk"])
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("code", [54, 29868])
 @pytest.mark.parametrize("outcome", ["success", "exhausted", "unrelated"])
 @pytest.mark.asyncio
-async def test_ddl_retry_is_specific_and_bounded(asynchronous, code, outcome):
-    error = oracledb.DatabaseError(
-        SimpleNamespace(code=942 if outcome == "unrelated" else code)
+async def test_ddl_retry_is_specific_and_bounded(
+    transport, asynchronous, code, outcome
+):
+    error_code = 942 if outcome == "unrelated" else code
+    error = (
+        SDKError(error_code)
+        if transport == "sdk"
+        else oracledb.DatabaseError(SimpleNamespace(code=error_code))
     )
     wrapped = RuntimeError("public helper wrapper")
     wrapped.__cause__ = error

@@ -70,7 +70,7 @@ async def test_text_layout_is_cached_and_external_column_change_refreshes(
 
             async def invoke(method, *args, **kwargs):
                 if asynchronous:
-                    return await backend.run_async(method, *args, **kwargs)
+                    return await getattr(backend, "a" + method)(*args, **kwargs)
                 return getattr(backend, method)(*args, **kwargs)
 
             with (

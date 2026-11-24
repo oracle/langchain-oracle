@@ -2,11 +2,13 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Live SQL-backend regression checks independent of VecDB auto-selection."""
 
+import json
 import os
 import uuid
 
 import oracledb
 import pytest
+from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_oracledb import OracleVS
 from langchain_oracledb.embeddings import OracleEmbeddings
@@ -16,7 +18,10 @@ from langchain_oracledb.retrievers.hybrid_search import (
     create_hybrid_index,
 )
 from langchain_oracledb.vectorstores.oraclevs import acreate_index, create_index
-from langchain_oracledb.vectorstores.utils import DistanceStrategy
+from langchain_oracledb.vectorstores.utils import (
+    DistanceStrategy,
+    output_type_string_handler,
+)
 
 
 @pytest.fixture
@@ -146,3 +151,73 @@ async def test_explicit_sql_async_vector_index_and_hybrid_modes(sql_database):
                 assert [doc.id for doc in docs] == ["one"]
         await store.adelete(["two"])
         assert await store.aget_by_ids(["two"]) == []
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_sql_hybrid_document_batch_preserves_hit_identity(
+    sql_database, asynchronous
+):
+    connection, config, _, table = sql_database
+    store = OracleVS(
+        connection,
+        DeterministicFakeEmbedding(size=3),
+        table,
+        backend="sql",
+        mutate_on_duplicate=True,
+    )
+    long_text = "long document " * 4000
+    texts = ["first", "deleted", long_text]
+    store.add_texts(
+        texts, [{"tenant": "one"} for _ in texts], ids=["one", "gone", "long"]
+    )
+    with connection.cursor() as cursor:
+        cursor.outputtypehandler = output_type_string_handler
+        cursor.execute(f"SELECT ROWIDTOCHAR(ROWID), text FROM {store.table_name}")
+        physical = {str(text): rowid for rowid, text in cursor.fetchall()}
+    store.delete(["gone"])
+    # Include a deleted hit, duplicate hits, a CLOB document, and over 32 KB of
+    # bound rowids. This exercises the real JSON_TABLE join without IN-list limits.
+    rowids = [
+        physical[long_text],
+        physical["deleted"],
+        physical["first"],
+        physical[long_text],
+    ]
+    rowids.extend([physical["first"]] * 2001)
+    assert len(json.dumps(rowids)) > 32767
+    hits = [
+        {"rowid": rowid, "score": i + 1, "text_score": i + 2, "vector_score": i + 3}
+        for i, rowid in enumerate(rowids)
+    ]
+    retriever = OracleHybridSearchRetriever(
+        vector_store=store, idx_name=table + "_H", return_scores=True
+    )
+    if asynchronous:
+        async with await oracledb.connect_async(**config) as client:
+            async with client.cursor() as cursor:
+                cursor.outputtypehandler = output_type_string_handler
+                cursor.setinputsizes(rowids=oracledb.DB_TYPE_JSON)
+                await cursor.execute(retriever._get_documents_query(), rowids=rowids)
+                rows = await cursor.fetchall()
+    else:
+        with connection.cursor() as cursor:
+            cursor.outputtypehandler = output_type_string_handler
+            cursor.setinputsizes(rowids=oracledb.DB_TYPE_JSON)
+            cursor.execute(retriever._get_documents_query(), rowids=rowids)
+            rows = cursor.fetchall()
+    docs = retriever._get_result_documents(rows, hits)
+    positions = [i for i in range(len(hits)) if i != 1]
+    assert [doc.id for doc in docs] == ["long", "one", "long"] + ["one"] * 2001
+    assert [doc.page_content for doc in docs] == [long_text, "first", long_text] + [
+        "first"
+    ] * 2001
+    assert [doc.metadata["score"] for doc in docs] == [
+        hits[i]["score"] for i in positions
+    ]
+    assert [doc.metadata["text_score"] for doc in docs] == [
+        hits[i]["text_score"] for i in positions
+    ]
+    assert [doc.metadata["vector_score"] for doc in docs] == [
+        hits[i]["vector_score"] for i in positions
+    ]

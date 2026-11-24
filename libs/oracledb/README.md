@@ -210,15 +210,16 @@ documents = retriever.invoke("database backups")
 Choose `"keyword"`, `"semantic"`, or `"hybrid"` with `search_mode`, and set
 `return_scores=True` to include scores in document metadata. VecDB discovers the
 physical hybrid index on first use and caches it for subsequent searches.
+SQL hybrid retrieval uses one search call and one batched document fetch,
+preserving result order and scores.
 Native vector queries and ordinary SQL operations do not discover metadata
 indexes. Catalog checks are reserved for index discovery and maintenance, physical index
 status, layout migration, and compatibility fallbacks; new-table backend
 selection also checks package capabilities before choosing a creation path.
 
-Hybrid search, index creation and dropping, and vectorizer preference management
-also support REST when the database user has access to ORDS REST-enabled SQL and
-the required database privileges. For standalone Oracle Text retrieval, use
-`OracleTextSearchRetriever` with a text index and a native connection.
+Hybrid and text search, metadata index creation and dropping, and vectorizer
+preferences require a native connection or pool. These operations are rejected
+for REST clients. REST vector index operations remain available through VecDB.
 
 ### Rerank retrieved documents
 

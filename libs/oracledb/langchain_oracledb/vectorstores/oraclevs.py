@@ -810,7 +810,7 @@ async def acreate_index(
     with a warning because physical index names are assigned by VecDB.
     """
     if vector_store._vecdb is not None:
-        return await vector_store._vecdb.run_async("create_index", params)
+        return await vector_store._vecdb.acreate_index(params)
     options = _sql_index_params(params, vector_store.distance_strategy)
     async with _aget_connection(client) as connection:
         create = (
@@ -1461,8 +1461,7 @@ class OracleVS(VectorStore):
                     mutate_on_duplicate=mutate_on_duplicate,
                 )
                 try:
-                    await self._vecdb.run_async(
-                        "prepare",
+                    await self._vecdb.aprepare(
                         columns=columns if description else set(),
                         description=description,
                     )
@@ -1575,7 +1574,7 @@ class OracleVS(VectorStore):
         """Async variant of describe_vecdb_index with the same readiness contract."""
         if self._vecdb is None:
             raise ValueError("Index status requires a VecDB backend")
-        return await self._vecdb.run_async("describe_index", kind, job_name)
+        return await self._vecdb.adescribe_index(kind, job_name)
 
     @property
     def embeddings(self) -> Optional[Embeddings]:
@@ -2063,8 +2062,8 @@ class OracleVS(VectorStore):
             vectors: Optional[List[List[float]]] = None
             if not self._vecdb.managed_embeddings:
                 vectors = await self._aembed_documents(texts) if texts else []
-            return await self._vecdb.run_async(
-                "add", texts, vectors, metadatas, original_ids, self.mutate_on_duplicate
+            return await self._vecdb.aadd(
+                texts, vectors, metadatas, original_ids, self.mutate_on_duplicate
             )
 
         for i, _id in enumerate(original_ids):
@@ -2359,7 +2358,7 @@ class OracleVS(VectorStore):
             filter = db_filter
 
         if self._vecdb is not None:
-            return await self._vecdb.run_async("search", embedding, k, filter, **kwargs)
+            return await self._vecdb.asearch(embedding, k, filter, **kwargs)
         embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
@@ -2455,9 +2454,7 @@ class OracleVS(VectorStore):
             filter = db_filter
 
         if self._vecdb is not None:
-            return await self._vecdb.run_async(
-                "search", embedding, k, filter, True, **kwargs
-            )
+            return await self._vecdb.asearch(embedding, k, filter, True, **kwargs)
         embedding_arr: Any = array.array("f", embedding)
 
         query, bind_variables = _get_similarity_search_query(
@@ -2785,7 +2782,7 @@ class OracleVS(VectorStore):
           **kwargs
         """
         if self._vecdb is not None:
-            return await self._vecdb.run_async("get", list(ids))
+            return await self._vecdb.aget(list(ids))
 
         ddl, bind_vars = _get_by_ids_select(self.table_name, ids)
 
@@ -2833,7 +2830,7 @@ class OracleVS(VectorStore):
             raise ValueError("No ids provided to delete.")
 
         if self._vecdb is not None:
-            return await self._vecdb.run_async("delete", ids)
+            return await self._vecdb.adelete(ids)
 
         ddl, bind_vars = _get_delete_ddl(self.table_name, ids)
 

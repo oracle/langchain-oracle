@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
@@ -23,10 +24,16 @@ from langchain_oracledb.vectorstores.utils import (
 
 
 def _ddl_error_code(error):
-    # Public helpers wrap database errors; inspect causes rather than messages.
+    # Inspect chained diagnostics without parsing rendered request parameters.
     while error is not None:
         if isinstance(error, oracledb.DatabaseError) and error.args:
             return getattr(error.args[0], "code", None)
+        # The REST SDK keeps server diagnostics in its structured error message.
+        message = getattr(error, "error_message", None)
+        if isinstance(message, str):
+            match = re.search(r"\bORA-(\d{5}):", message)
+            if match:
+                return int(match.group(1))
         error = error.__cause__
     return None
 

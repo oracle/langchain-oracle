@@ -238,7 +238,7 @@ def sessions(request):
 
 async def invoke(s, method, *args):
     if s.asynchronous:
-        return await s.backend.run_async(method, *args)
+        return await getattr(s.backend, "a" + method)(*args)
     return getattr(s.backend, method)(*args)
 
 
@@ -294,9 +294,11 @@ async def test_query_layout_migration_and_retry_keep_the_failed_queries_session(
 
 
 @pytest.mark.asyncio
-async def test_get_batches_do_not_switch_schema_between_batches(sessions):
+@pytest.mark.parametrize("async_api", [False, True])
+async def test_get_batches_do_not_switch_schema_between_batches(sessions, async_api):
     s = sessions
-    result = await invoke(s, "get", [str(i) for i in range(101)])
+    ids = [str(i) for i in range(101)]
+    result = await s.backend.aget(ids) if async_api else await invoke(s, "get", ids)
     assert [doc.page_content for doc in result] == ["SCHEMA_A", "SCHEMA_A"]
     assert_one_session(s)
 
@@ -492,7 +494,7 @@ async def test_prepare_defers_index_discovery_and_searches_resolve_unqualified_n
         assert result[0].page_content == expected
     for session in (s.a, s.b):
         assert len(session.log) == (
-            3 if operation == "hybrid_search" and session is s.b else 1
+            2 if operation == "hybrid_search" and session is s.b else 1
         )
         sql, binds = session.log[-1]
         assert "all_tab_columns" not in sql and "all_indexes" not in sql
@@ -787,7 +789,7 @@ async def test_native_metadata_search_execution_markers(
     sessions, operation, mode, current_layout, program, monkeypatch
 ):
     s = sessions
-    monkeypatch.setattr(oracledb.defaults, "program", program)
+    monkeypatch.setattr(oracledb.defaults, "program", program, raising=False)
     if current_layout:
         s.a.columns = set(CURRENT_COLUMNS)
     s.a.parameters = "SIMPLIFIED_JSON_HYBRID " + GUIDE

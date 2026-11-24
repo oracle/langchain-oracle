@@ -72,7 +72,7 @@ async def test_default_index_creation_preserves_langchain_defaults(
         )
     backend = VecDBBackend(transport, "DOCS", strategy)
     if asynchronous:
-        await backend.run_async("create_index", options)
+        await backend.acreate_index(options)
     else:
         backend.create_index(options)
     call = (
@@ -124,7 +124,7 @@ async def test_name_only_request_does_not_rebuild_existing_index(
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     with pytest.warns(UserWarning, match="idx_name is ignored"):
         result = (
-            await backend.run_async("create_index", {"idx_name": "MY_INDEX"})
+            await backend.acreate_index({"idx_name": "MY_INDEX"})
             if asynchronous
             else backend.create_index({"idx_name": "MY_INDEX"})
         )
@@ -240,7 +240,7 @@ async def test_table_creation_preserves_automatic_policy(
         ]
     for columns in (set(), CURRENT_COLUMNS):
         if asynchronous:
-            await backend.run_async("prepare", columns=columns)
+            await backend.aprepare(columns=columns)
         else:
             backend.prepare(columns=columns)
     call = (
@@ -322,7 +322,7 @@ async def test_existing_table_constructor_only_creates_missing_requested_index(
         transport, "DOCS", DistanceStrategy.COSINE, vector_index_params=options
     )
     if asynchronous:
-        await backend.run_async("prepare", columns=CURRENT_COLUMNS)
+        await backend.aprepare(columns=CURRENT_COLUMNS)
     else:
         backend.prepare(columns=CURRENT_COLUMNS)
     call = (
@@ -516,7 +516,7 @@ async def test_native_ensure_or_reconfigure(asynchronous, exists, params):
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     original = deepcopy(params)
     result = (
-        await backend.run_async("create_index", params)
+        await backend.acreate_index(params)
         if asynchronous
         else backend.create_index(params)
     )
@@ -580,7 +580,7 @@ async def test_creation_options_only_used_for_new_native_table(asynchronous, kin
     )
     for columns in (set(), CURRENT_COLUMNS):
         if asynchronous:
-            await backend.run_async("prepare", columns=columns)
+            await backend.aprepare(columns=columns)
         else:
             backend.prepare(columns=columns)
     call.assert_called_once()

@@ -18,7 +18,7 @@ from langchain_oracledb.vectorstores.utils import (
     drop_table_purge,
 )
 
-from ._backend_fixtures import native_config
+from ._backend_fixtures import check_native_backend, native_config
 from .test_vecdb import FixedEmbeddings
 
 
@@ -119,11 +119,7 @@ async def test_existing_sql_store_reopens_in_auto_and_cleans_up(native):
 async def test_package_table_is_recognized_reopened_and_dropped(native):
     asynchronous, setup, client = native
     table = "LCOWN_" + uuid.uuid4().hex[:12].upper()
-    # An unsupported server must not count as a passing VecDB case.
-    try:
-        _vecdb.native_selection(setup, table, "vecdb")
-    except ValueError as error:
-        pytest.skip(str(error))
+    check_native_backend(native_config("vecdb"), "vecdb", table)
     transport = _vecdb.NativeTransport(setup, _vecdb.parse_version(setup.version))
     transport.call(
         "create_vector_table",

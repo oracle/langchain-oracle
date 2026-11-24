@@ -520,11 +520,9 @@ async def test_native_vecdb_sql_identifiers_preserve_target(
         )
         backend = VecDBBackend(transport, target, DistanceStrategy.COSINE)
         if asynchronous:
-            await backend.run_async(
-                "prepare", columns={"ID", "DENSE_VECTOR", "CONTENT_METADATA"}
-            )
-            result = await backend.run_async(
-                "add", ["oracle target"], [[1, 0, 0]], [{}], ["added"], False
+            await backend.aprepare(columns={"ID", "DENSE_VECTOR", "CONTENT_METADATA"})
+            result = await backend.aadd(
+                ["oracle target"], [[1, 0, 0]], [{}], ["added"], False
             )
         else:
             backend.prepare(columns={"ID", "DENSE_VECTOR", "CONTENT_METADATA"})
@@ -720,9 +718,10 @@ async def test_broken_synonym_never_creates_a_table(
 @pytest.mark.parametrize("origin", ["library_sql", "current_vecdb_shape", "unrelated"])
 @pytest.mark.asyncio
 async def test_current_schema_does_not_inspect_login_users_table(
-    database_matrix, vecdb_enabled, asynchronous, origin
+    database_matrix, asynchronous, origin
 ):
     from langchain_oracledb.vectorstores._vecdb import (
+        VECDB_CAPABILITY_SQL,
         AsyncNativeTransport,
         NativeTransport,
         anative_selection,
@@ -733,7 +732,11 @@ async def test_current_schema_does_not_inspect_login_users_table(
     name = tables[origin]
     # The current schema has no such table. Selection follows the new-table
     # policy for this database, independently of the login user's object.
-    expected_backend = "vecdb" if vecdb_enabled else "sql"
+    # Selection checks package availability. Sparse-storage rejection is
+    # handled during creation, after selection, even when COMPATIBLE is low.
+    with connection.cursor() as cursor:
+        cursor.execute(VECDB_CAPABILITY_SQL)
+        expected_backend = "vecdb" if cursor.fetchone()[0] else "sql"
     client = await oracledb.connect_async(**config) if asynchronous else connection
     original = None
     try:

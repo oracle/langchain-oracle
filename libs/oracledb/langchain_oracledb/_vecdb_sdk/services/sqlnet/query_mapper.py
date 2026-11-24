@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Dict
 
 
 class SQLNetQueryMapper:
@@ -123,11 +123,9 @@ class SQLNetQueryMapper:
     }
 
     @classmethod
-    def get_query(cls, name: str, **format_values: Any) -> str:
+    def get_query(cls, name: str) -> str:
         try:
             query = cls._QUERIES[name]
         except KeyError as exc:
             raise KeyError(f"No SQLNet query mapping for {name!r}") from exc
-        if format_values:
-            query = query.format(**format_values)
         return " ".join(query.split())

@@ -93,8 +93,7 @@ async def run(native, name, method, *args):
     asynchronous, transport, _, _ = native
     backend = VecDBBackend(transport, name, DistanceStrategy.COSINE)
     if asynchronous:
-        return await backend.run_async(
-            method,
+        return await getattr(backend, "a" + method)(
             *args,
             **({"columns": set(native[3]["columns"])} if method == "prepare" else {}),
         )

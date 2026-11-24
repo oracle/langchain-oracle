@@ -826,17 +826,6 @@ def _with_async_native_backend_session(method: _NativeMethod) -> _NativeMethod:
     return cast(_NativeMethod, wrapped)
 
 
-@contextmanager
-def _hybrid_connection(client: Any) -> Iterator[Any]:
-    from ._vecdb_rest_sql import ORDSSQLConnection
-
-    if isinstance(client, ORDSSQLConnection):
-        yield client
-    else:
-        with _get_connection(client) as connection:
-            yield connection
-
-
 def _index_status_needs_catalog(error: oracledb.DatabaseError) -> bool:
     code = getattr(error.args[0], "code", None)
     return code == 1418 or (code == 904 and "INDEX_BUILD_STATUS" in str(error).upper())
@@ -869,7 +858,7 @@ class NativeTransport:
 
     @_with_native_session
     def discover(self, name: str, columns: Optional[set[str]] = None) -> _TableInfo:
-        with _hybrid_connection(self.client) as connection:
+        with _get_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 if columns is None:
                     columns = self.columns(name)
@@ -885,7 +874,7 @@ class NativeTransport:
     def _search_info(self, name: str) -> _TableInfo:
         info = self._table_info_cache.get(self._table_key(name))
         if info is None:
-            with _hybrid_connection(self.client) as connection:
+            with _get_connection(self.client) as connection:
                 with connection.cursor() as cursor:
                     info = _table_info(_vecdb_layout(cursor, name), None)
             self._remember_table(name, info)
@@ -893,7 +882,7 @@ class NativeTransport:
 
     def _refresh_layout(self, name: str) -> _TableInfo:
         previous = self._table_info_cache.get(self._table_key(name))
-        with _hybrid_connection(self.client) as connection:
+        with _get_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 columns = _vecdb_layout(cursor, name)
         _table_info(columns, None)
@@ -913,7 +902,7 @@ class NativeTransport:
             yield bound
 
     def columns(self, name: str) -> set[str]:
-        with _hybrid_connection(self.client) as connection:
+        with _get_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 return _inspect_columns(cursor, name)
 
@@ -985,7 +974,7 @@ class NativeTransport:
 
     @_with_native_session
     def describe_index(self, name: str, kind: str = "vector") -> dict:
-        with _hybrid_connection(self.client) as connection:
+        with _get_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 owner, binds = _catalog_target(name)
                 statement = index_status_query(owner, kind)
@@ -1043,7 +1032,7 @@ class NativeTransport:
     ) -> None:
         columns = self.columns(name)
         meta = "CONTENT_METADATA" if "CONTENT_METADATA" in columns else "METADATA"
-        with _hybrid_connection(self.client) as connection:
+        with _get_connection(self.client) as connection:
             with connection.cursor() as cursor:
                 statement, binds = _metadata_index_query(name, meta)
                 cursor.execute(statement, **binds)
@@ -1170,12 +1159,20 @@ class NativeTransport:
     @_with_native_session
     def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
         validate_hybrid_request(params)
-        with _hybrid_connection(self.client) as connection:
+        with _get_connection(self.client) as connection:
             info = self._table_info_cache.get(self._table_key(name))
             # VecDB conversion retains the table's metadata index name. The
             # caller's creation/retriever name need not be that physical name.
-            if info is None or info.hybrid_index is None:
+            if info is None:
                 info = self.discover(name)
+            elif info.hybrid_index is None:
+                info = self.discover(name, set(info.columns))
+                if info.hybrid_index is None:
+                    # A different pool session or external DDL may have moved
+                    # the index to the other metadata column since preparation.
+                    refreshed = self._refresh_layout(name)
+                    if refreshed.metadata_column != info.metadata_column:
+                        info = self.discover(name, set(refreshed.columns))
             for attempt in range(2):
                 index = info.hybrid_index
                 if index is None:
@@ -1275,21 +1272,9 @@ class RestTransport:
                 "OracleVS requires an ORDS-configured oracle-vecdb SDK client"
             )
         self.client = client
-        self._hybrid: Optional[NativeTransport] = None
-
-    def hybrid_transport(self) -> NativeTransport:
-        from ._vecdb_rest_sql import ORDSSQLConnection
-
-        if self._hybrid is None:
-            # These shared plans inspect actual columns; the version is only
-            # used as a default before that inspection, never for package calls.
-            self._hybrid = NativeTransport(
-                ORDSSQLConnection(self.client), CURRENT_VERSION
-            )
-        return self._hybrid
 
     def hybrid_search(self, name: str, params: dict, scores: bool) -> list:
-        return self.hybrid_transport().hybrid_search(name, params, scores)
+        raise ValueError("oracle-vecdb REST SDK does not support hybrid search")
 
     def call(self, operation: str, **params: Any) -> dict:
         method = "query" if operation == "search" else operation
@@ -1310,6 +1295,69 @@ def is_sdk_client(client: Any) -> bool:
         cls.__module__.startswith("oracle_vecdb.") and cls.__name__ == "OracleVecDB"
         for cls in type(client).__mro__
     )
+
+
+def _sql_selection(columns: set[str], backend: str) -> Optional[str]:
+    """Resolve ordinary or explicitly requested SQL before VecDB recognition."""
+    if {
+        "ID",
+        "EMBEDDING",
+        "METADATA",
+        "TEXT",
+    } <= columns and "DENSE_VECTOR" not in columns:
+        if backend == "vecdb":
+            raise ValueError(
+                "The VecDB backend cannot use an ordinary OracleVS table layout; "
+                "use backend='auto' or backend='sql'"
+            )
+        return "sql"
+    if backend == "sql":
+        if columns:
+            _layout(columns)
+            raise ValueError(
+                "Incompatible OracleVS table layout for backend='sql'; "
+                "expected ID, TEXT, METADATA, and EMBEDDING columns"
+            )
+        return "sql"
+    return None
+
+
+def _vecdb_selection(
+    name: str,
+    backend: str,
+    version: tuple[int, ...],
+    kind: str,
+    columns: set[str],
+) -> Optional[str]:
+    """Apply VecDB policy; None means a new table needs a capability probe."""
+    if kind == "sql":
+        return _sql_selection(SQL_COLUMNS, backend)
+    if kind == "missing" or (kind == "vecdb" and version < QUOTED_NAMES_VERSION):
+        name_error = _package_name_error(name, version)
+        if name_error:
+            if backend == "vecdb" or kind == "vecdb":
+                raise ValueError(name_error)
+            return "sql"
+    if version < LEGACY_VERSION:
+        if backend == "vecdb" or kind == "vecdb":
+            raise ValueError("VecDB requires Oracle Database 23.26.1+")
+        return "sql"
+    if kind == "missing":
+        return None
+    if kind == "vecdb" and version < CURRENT_VERSION and "CONTENT_METADATA" in columns:
+        raise ValueError(
+            "Current VecDB table layout cannot be used on a legacy database"
+        )
+    return "vecdb"
+
+
+def _creation_selection(backend: str, supported: Any) -> str:
+    """Resolve a new table's backend from the SEARCH capability result."""
+    if not supported:
+        if backend == "vecdb":
+            raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
+        return "sql"
+    return "vecdb"
 
 
 def native_selection(
@@ -1334,26 +1382,9 @@ def native_selection(
                 if sql_kind == "other"
                 else set()
             )
-        if {
-            "ID",
-            "EMBEDDING",
-            "METADATA",
-            "TEXT",
-        } <= columns and "DENSE_VECTOR" not in columns:
-            if backend == "vecdb":
-                raise ValueError(
-                    "The VecDB backend cannot use an ordinary OracleVS table layout; "
-                    "use backend='auto' or backend='sql'"
-                )
-            return "sql", version
-        if backend == "sql":
-            if columns:
-                _layout(columns)
-                raise ValueError(
-                    "Incompatible OracleVS table layout for backend='sql'; "
-                    "expected ID, TEXT, METADATA, and EMBEDDING columns"
-                )
-            return "sql", version
+        selected = _sql_selection(columns, backend)
+        if selected is not None:
+            return selected, version
         kind = _table_kind(
             columns,
             _is_vecdb_table(cursor, name, description=description)
@@ -1364,40 +1395,13 @@ def native_selection(
             columns = _vecdb_layout(cursor, name)
         if layout is not None:
             layout.update(columns)
-        if kind == "sql":
-            if backend == "vecdb":
-                raise ValueError(
-                    "The VecDB backend cannot use an ordinary OracleVS table layout; "
-                    "use backend='auto' or backend='sql'"
-                )
-            return "sql", version
-        if kind == "missing" or (kind == "vecdb" and version < QUOTED_NAMES_VERSION):
-            name_error = _package_name_error(name, version)
-            if name_error:
-                if backend == "vecdb" or kind == "vecdb":
-                    raise ValueError(name_error)
-                return "sql", version
-        if version < LEGACY_VERSION:
-            if backend == "vecdb" or kind == "vecdb":
-                raise ValueError("VecDB requires Oracle Database 23.26.1+")
-            return "sql", version
-        if kind == "missing":
-            # Choose a creation backend before DDL, including builds lacking SEARCH.
+        selected = _vecdb_selection(name, backend, version, kind, columns)
+        if selected is None:
+            # Only eligible new tables need the SEARCH capability probe.
             cursor.execute(VECDB_CAPABILITY_SQL)
             supported = cursor.fetchone()[0]
-            if not supported:
-                if backend == "vecdb":
-                    raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
-                return "sql", version
-        if (
-            kind == "vecdb"
-            and version < CURRENT_VERSION
-            and "CONTENT_METADATA" in columns
-        ):
-            raise ValueError(
-                "Current VecDB table layout cannot be used on a legacy database"
-            )
-        return "vecdb", version
+            selected = _creation_selection(backend, supported)
+        return selected, version
 
 
 class VecDBBackend:
@@ -1724,17 +1728,8 @@ class VecDBBackend:
             raise ValueError(f"oracle-vecdb REST SDK does not support {operation}")
         return self.transport
 
-    def hybrid_transport(self) -> NativeTransport:
-        if isinstance(self.transport, RestTransport):
-            return self.transport.hybrid_transport()
-        return self.transport
-
     def hybrid_search(self, params: dict, scores: bool) -> list[Document]:
-        return self.transport.hybrid_search(
-            self.quoted if isinstance(self.transport, RestTransport) else self.name,
-            params,
-            scores,
-        )
+        return self.transport.hybrid_search(self.name, params, scores)
 
     def create_text_index(self, index: str) -> None:
         self.native_transport("text index creation").create_text_index(self.name, index)
@@ -1746,11 +1741,9 @@ class VecDBBackend:
             raise ValueError("Index kind must be 'vector' or 'metadata'")
         if isinstance(self.transport, RestTransport):
             if kind == "metadata":
-                if job_name is not None:
-                    raise ValueError(
-                        "Metadata index status does not accept a vector job name"
-                    )
-                return self.hybrid_transport().describe_index(self.quoted, kind)
+                raise ValueError(
+                    "oracle-vecdb REST SDK does not support metadata index status"
+                )
             response = self.transport.call(
                 "describe_index_job" if job_name is not None else "describe_index",
                 **(
@@ -1977,122 +1970,174 @@ class VecDBBackend:
             return await self.transport.acall(operation, **params)
 
     @_with_async_native_backend_session
-    async def run_async(self, method: str, *args: Any, **kwargs: Any) -> Any:
+    async def adescribe_index(
+        self, kind: str = "vector", job_name: Optional[str] = None
+    ) -> dict:
         if not isinstance(self.transport, AsyncNativeTransport):
-            return await asyncio.to_thread(getattr(self, method), *args, **kwargs)
-        if method == "describe_index":
-            kind, job_name = args
-            if job_name is not None:
-                raise ValueError(
-                    "Native VecDB job status is unsupported; "
-                    "describe the physical index instead"
-                )
-            return await self.transport.adescribe_index(self.name, kind)
-        if method == "create_index":
-            mapped = self.index_params(args[0])
-            validate_operation_arguments("create_index", {"index_params": mapped})
-            exists = await self._avector_index_exists()
-            if exists and mapped is None:
-                return None
-            operation, request = self._index_request(mapped, exists)
-            return await self.transport.acall(operation, **request)
-        if method == "create_text_index":
-            await self.transport.acreate_text_index(self.name, args[0])
-            return
-        if method == "prepare":
-            columns = kwargs.get("columns")
-            description = kwargs.get("description")
-            if columns is None:
-                description = description if description is not None else {}
-                async with _aget_connection(self.transport.client) as connection:
-                    layout: set[str] = set()
-                    await anative_selection(
-                        connection,
-                        self._selection_name,
-                        "vecdb",
-                        description=description,
-                        layout=layout,
-                    )
-                columns = layout if description else set()
-            created = not columns
-            if created:
-                await self.transport.acall(
-                    "create_vector_table", **self._table_creation_params()
-                )
-                columns = _default_columns(self.transport.version)
-            elif self.managed_embeddings:
-                self._validate_embedding_config(
-                    description
-                    if description
-                    else await self.transport.acall(
-                        "describe_vector_table", name=self.name
-                    )
-                )
-            self.transport._remember_table(self.name, _table_info(columns, None))
-            if not created and self._constructor_index_requested:
-                if not await self._avector_index_exists():
-                    _, request = self._index_request(self._creation_index_params, False)
-                    validate_operation_arguments("create_index", request)
-                    await self.transport.acall("create_index", **request)
-            logger.info(
-                "Table %s %s...",
-                self.quoted,
-                "created successfully" if created else "already exists",
+            return await asyncio.to_thread(self.describe_index, kind, job_name)
+        if job_name is not None:
+            raise ValueError(
+                "Native VecDB job status is unsupported; "
+                "describe the physical index instead"
             )
-            return
-        if method == "add":
-            texts, vectors, metadatas, ids, mutate = args
-            records = self.records(texts, vectors, metadatas, ids)
-            if not records:
-                return []
-            if not mutate:
-                if vectors is None:
-                    raise ValueError("Managed VecDB embeddings require upsert writes")
-                inserted = await self.transport.ainsert(self.name, records)
-                logical_ids = {record["id"]: id_ for record, id_ in zip(records, ids)}
-                return [logical_ids[id_] for id_ in inserted]
-            await self.transport.acall(
-                "upsert_vectors", table_name=self.name, vectors=records
+        return await self.transport.adescribe_index(self.name, kind)
+
+    @_with_async_native_backend_session
+    async def acreate_index(self, params: Optional[dict]) -> Optional[dict]:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(self.create_index, params)
+        mapped = self.index_params(params)
+        validate_operation_arguments("create_index", {"index_params": mapped})
+        exists = await self._avector_index_exists()
+        if exists and mapped is None:
+            return None
+        operation, request = self._index_request(mapped, exists)
+        return await self.transport.acall(operation, **request)
+
+    @_with_async_native_backend_session
+    async def acreate_text_index(self, index: str) -> None:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(self.create_text_index, index)
+        await self.transport.acreate_text_index(self.name, index)
+        return
+
+    @_with_async_native_backend_session
+    async def aprepare(
+        self, *, columns: Optional[set[str]] = None, description: Optional[dict] = None
+    ) -> None:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(
+                self.prepare, columns=columns, description=description
             )
-            return ids
-        if method == "delete":
+        if columns is None:
+            description = description if description is not None else {}
+            async with _aget_connection(self.transport.client) as connection:
+                layout: set[str] = set()
+                await anative_selection(
+                    connection,
+                    self._selection_name,
+                    "vecdb",
+                    description=description,
+                    layout=layout,
+                )
+            columns = layout if description else set()
+        created = not columns
+        if created:
             await self.transport.acall(
-                "delete_vectors",
+                "create_vector_table", **self._table_creation_params()
+            )
+            columns = _default_columns(self.transport.version)
+        elif self.managed_embeddings:
+            self._validate_embedding_config(
+                description
+                if description
+                else await self.transport.acall("describe_vector_table", name=self.name)
+            )
+        self.transport._remember_table(self.name, _table_info(columns, None))
+        if not created and self._constructor_index_requested:
+            if not await self._avector_index_exists():
+                _, request = self._index_request(self._creation_index_params, False)
+                validate_operation_arguments("create_index", request)
+                await self.transport.acall("create_index", **request)
+        logger.info(
+            "Table %s %s...",
+            self.quoted,
+            "created successfully" if created else "already exists",
+        )
+        return
+
+    @_with_async_native_backend_session
+    async def aadd(
+        self,
+        texts: list[str],
+        vectors: Optional[list[list[float]]],
+        metadatas: list[dict],
+        ids: list[str],
+        mutate: bool,
+    ) -> list[str]:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(
+                self.add, texts, vectors, metadatas, ids, mutate
+            )
+        records = self.records(texts, vectors, metadatas, ids)
+        if not records:
+            return []
+        if not mutate:
+            if vectors is None:
+                raise ValueError("Managed VecDB embeddings require upsert writes")
+            inserted = await self.transport.ainsert(self.name, records)
+            logical_ids = {record["id"]: id_ for record, id_ in zip(records, ids)}
+            return [logical_ids[id_] for id_ in inserted]
+        await self.transport.acall(
+            "upsert_vectors", table_name=self.name, vectors=records
+        )
+        return ids
+
+    @_with_async_native_backend_session
+    async def adelete(self, ids: Optional[list[str]]) -> None:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(self.delete, ids)
+        await self.transport.acall(
+            "delete_vectors",
+            table_name=self.name,
+            ids=None if ids is None else [storage_id(id_) for id_ in ids],
+        )
+        return
+
+    @_with_async_native_backend_session
+    async def aget(self, ids: list[str]) -> list[Document]:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(self.get, ids)
+        result: list[Document] = []
+        for offset in range(0, len(ids), 100):
+            batch = [storage_id(id_) for id_ in ids[offset : offset + 100]]
+            response = await self.aquery(
+                "list_vectors",
                 table_name=self.name,
-                ids=None if args[0] is None else [storage_id(id_) for id_ in args[0]],
+                ids=batch,
+                limit=len(batch),
+                offset=0,
             )
-            return
-        if method == "get":
-            ids = args[0]
-            result: list[Document] = []
-            for offset in range(0, len(ids), 100):
-                batch = [storage_id(id_) for id_ in ids[offset : offset + 100]]
-                response = await self.aquery(
-                    "list_vectors",
-                    table_name=self.name,
-                    ids=batch,
-                    limit=len(batch),
-                    offset=0,
-                )
-                result.extend(document(row) for row in rows(response, "vectors"))
-            return result
-        if method == "search":
-            embedding, k, filter = args[:3]
-            include = args[3] if len(args) > 3 else False
-            request, fallback = self._search_request(
-                embedding, k, filter, include, kwargs
+            result.extend(document(row) for row in rows(response, "vectors"))
+        return result
+
+    @_with_async_native_backend_session
+    async def asearch(
+        self,
+        embedding: list[float],
+        k: int,
+        filter: Optional[dict],
+        include_vectors: bool = False,
+        **kwargs: Any,
+    ) -> list:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(
+                self.search, embedding, k, filter, include_vectors, **kwargs
             )
-            response = (
-                await self.transport.afilter_search(self.name, filter, request)
-                if fallback
-                else await self.aquery("search", **request)
-            )
-            return self.search_results(response, include)
-        if method == "hybrid_search":
-            return await self.transport.ahybrid_search(self.name, *args)
-        if method == "text_search":
-            return await self.transport.atext_search(self.name, *args)
-        raise ValueError("Unsupported async VecDB operation")
+        request, fallback = self._search_request(
+            embedding, k, filter, include_vectors, kwargs
+        )
+        if fallback:
+            # Only a filter requiring SQL translation can select this path.
+            assert filter is not None
+            response = await self.transport.afilter_search(self.name, filter, request)
+        else:
+            response = await self.aquery("search", **request)
+        return self.search_results(response, include_vectors)
+
+    @_with_async_native_backend_session
+    async def ahybrid_search(self, params: dict, scores: bool) -> list[Document]:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(self.hybrid_search, params, scores)
+        return await self.transport.ahybrid_search(self.name, params, scores)
+
+    @_with_async_native_backend_session
+    async def atext_search(
+        self, query: str, k: int, scores: bool = False
+    ) -> list[Document]:
+        if not isinstance(self.transport, AsyncNativeTransport):
+            return await asyncio.to_thread(self.text_search, query, k, scores)
+        return await self.transport.atext_search(self.name, query, k, scores)
 
 
 class AsyncNativeTransport(NativeTransport):
@@ -2404,8 +2449,14 @@ class AsyncNativeTransport(NativeTransport):
             info = self._table_info_cache.get(self._table_key(name))
             # VecDB conversion retains the table's metadata index name. The
             # caller's creation/retriever name need not be that physical name.
-            if info is None or info.hybrid_index is None:
+            if info is None:
                 info = await self.adiscover(name)
+            elif info.hybrid_index is None:
+                info = await self.adiscover(name, set(info.columns))
+                if info.hybrid_index is None:
+                    refreshed = await self._arefresh_layout(name)
+                    if refreshed.metadata_column != info.metadata_column:
+                        info = await self.adiscover(name, set(refreshed.columns))
             for attempt in range(2):
                 index = info.hybrid_index
                 if index is None:
@@ -2510,26 +2561,9 @@ async def anative_selection(
                 if sql_kind == "other"
                 else set()
             )
-        if {
-            "ID",
-            "EMBEDDING",
-            "METADATA",
-            "TEXT",
-        } <= columns and "DENSE_VECTOR" not in columns:
-            if backend == "vecdb":
-                raise ValueError(
-                    "The VecDB backend cannot use an ordinary OracleVS table layout; "
-                    "use backend='auto' or backend='sql'"
-                )
-            return "sql", version
-        if backend == "sql":
-            if columns:
-                _layout(columns)
-                raise ValueError(
-                    "Incompatible OracleVS table layout for backend='sql'; "
-                    "expected ID, TEXT, METADATA, and EMBEDDING columns"
-                )
-            return "sql", version
+        selected = _sql_selection(columns, backend)
+        if selected is not None:
+            return selected, version
         kind = _table_kind(
             columns,
             await _ais_vecdb_table(cursor, name, description=description)
@@ -2540,37 +2574,10 @@ async def anative_selection(
             columns = await _avecdb_layout(cursor, name)
         if layout is not None:
             layout.update(columns)
-        if kind == "sql":
-            if backend == "vecdb":
-                raise ValueError(
-                    "The VecDB backend cannot use an ordinary OracleVS table layout; "
-                    "use backend='auto' or backend='sql'"
-                )
-            return "sql", version
-        if kind == "missing" or (kind == "vecdb" and version < QUOTED_NAMES_VERSION):
-            name_error = _package_name_error(name, version)
-            if name_error:
-                if backend == "vecdb" or kind == "vecdb":
-                    raise ValueError(name_error)
-                return "sql", version
-        if version < LEGACY_VERSION:
-            if backend == "vecdb" or kind == "vecdb":
-                raise ValueError("VecDB requires Oracle Database 23.26.1+")
-            return "sql", version
-        if kind == "missing":
-            # Choose a creation backend before DDL, including builds lacking SEARCH.
+        selected = _vecdb_selection(name, backend, version, kind, columns)
+        if selected is None:
+            # Only eligible new tables need the SEARCH capability probe.
             await cursor.execute(VECDB_CAPABILITY_SQL)
             supported = (await cursor.fetchone())[0]
-            if not supported:
-                if backend == "vecdb":
-                    raise ValueError("DBMS_VECTOR_DATABASE.SEARCH is unavailable")
-                return "sql", version
-        if (
-            kind == "vecdb"
-            and version < CURRENT_VERSION
-            and "CONTENT_METADATA" in columns
-        ):
-            raise ValueError(
-                "Current VecDB table layout cannot be used on a legacy database"
-            )
-        return "vecdb", version
+            selected = _creation_selection(backend, supported)
+        return selected, version

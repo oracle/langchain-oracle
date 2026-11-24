@@ -315,10 +315,12 @@ class SQLNetAdapter:
 
 
 def validate_hybrid_request(params: dict) -> None:
-    """Validate query inputs with SDK helpers without narrowing future options.
+    """Validate query inputs while preserving SQL hybrid option forwarding.
 
-    The branch deliberately forwards new SEARCH options (e.g. aggregator_params).
-    Keep that behavior rather than applying its older option-name whitelist.
+    Both native execution paths bind the serialized request as JSON data rather
+    than interpolating options into SQL. An option allowlist is therefore not
+    needed to prevent client-side SQL injection here. The database SEARCH API
+    remains responsible for validating and interpreting the supplied options.
     """
     if not isinstance(params, dict):
         raise TypeError("Hybrid search parameters must be a dictionary")
@@ -410,8 +412,12 @@ def hybrid_search_request(name: str, params: dict) -> dict:
         query_by = {"text": value}
     query_kind, query_value = HybridSearch._hybrid_search_input(query_by)
     top_k = options.get("return", {}).get("topN", 4)
+    # Documents come from the table join; chunk fields are not consumed.
+    options.setdefault("return", {}).setdefault(
+        "values", ["rowid", "score", "vector_score", "text_score"]
+    )
     request = _LangChainHybridSearch()._hybrid_search_request(
-        name, query_kind, query_value, top_k, None, None, options
+        name, query_kind, query_value, top_k, options
     )
     # The generic SDK builder supplies both sections. Preserve a retriever's
     # single-mode request after those defaults have been applied.

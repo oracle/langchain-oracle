@@ -110,17 +110,18 @@ def _validate_parameters(
 
 
 def _preference_connection(client: Any) -> Any:
-    from ..vectorstores._vecdb import _hybrid_connection, is_sdk_client
-    from ..vectorstores._vecdb_rest_sql import ORDSSQLConnection
+    from ..vectorstores._vecdb import is_sdk_client
 
-    return _hybrid_connection(
-        ORDSSQLConnection(client) if is_sdk_client(client) else client
-    )
+    if is_sdk_client(client):
+        raise ValueError(
+            "oracle-vecdb REST SDK does not support vectorizer preferences"
+        )
+    return _get_connection(client)
 
 
 def _preference_client(store: OracleVS) -> Any:
     if store._vecdb is not None:
-        return store._vecdb.hybrid_transport().client
+        return store._vecdb.native_transport("vectorizer preferences").client
     return store.client
 
 
@@ -292,15 +293,6 @@ class OracleVectorizerPreference:
 
         Reference: https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/create_preference.html
         """
-        from ..vectorstores._vecdb import RestTransport
-
-        if vector_store._vecdb is not None and isinstance(
-            vector_store._vecdb.transport, RestTransport
-        ):
-            return await asyncio.to_thread(
-                cls.create_preference, vector_store, preference_name, params
-            )
-
         self = cls.__new__(cls)
         self.params = params
         self.vs = vector_store
@@ -332,13 +324,6 @@ class OracleVectorizerPreference:
 
     async def adrop_preference(self):
         """Async variant of drop_preference."""
-        from ..vectorstores._vecdb import RestTransport
-
-        if self.vs._vecdb is not None and isinstance(
-            self.vs._vecdb.transport, RestTransport
-        ):
-            await asyncio.to_thread(self.drop_preference)
-            return
         async with _aget_connection(_preference_client(self.vs)) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(
@@ -367,8 +352,9 @@ async def adrop_preference(connection, preference_name):
     from ..vectorstores._vecdb import is_sdk_client
 
     if is_sdk_client(connection):
-        await asyncio.to_thread(drop_preference, connection, preference_name)
-        return
+        raise ValueError(
+            "oracle-vecdb REST SDK does not support vectorizer preferences"
+        )
     async with _aget_connection(connection) as connection:
         async with connection.cursor() as cursor:
             await cursor.execute(
@@ -522,7 +508,9 @@ def _get_hybrid_index_ddl(
     if vectorizer_preference.vs._vecdb is not None:
         from langchain_oracledb.vectorstores._vecdb import CURRENT_VERSION
 
-        transport = vectorizer_preference.vs._vecdb.hybrid_transport()
+        transport = vectorizer_preference.vs._vecdb.native_transport(
+            "hybrid search and indexing"
+        )
         column = (
             "CONTENT_METADATA" if transport.version >= CURRENT_VERSION else "METADATA"
         )
@@ -611,7 +599,7 @@ def create_hybrid_index(
     if target is not None and target._vecdb is not None:
         from langchain_oracledb.vectorstores._vecdb import _is_native_pool
 
-        transport = target._vecdb.hybrid_transport()
+        transport = target._vecdb.native_transport("hybrid search and indexing")
         if _is_native_pool(transport.client):
             with transport.session() as bound:
                 store = _bound_vecdb_store(target, bound)
@@ -643,7 +631,9 @@ def create_hybrid_index(
     try:
         if vectorizer_preference.vs._vecdb is not None:
             backend = vectorizer_preference.vs._vecdb
-            backend.hybrid_transport().create_metadata_index(
+            backend.native_transport(
+                "hybrid search and indexing"
+            ).create_metadata_index(
                 backend.quoted,
                 idx_name,
                 hybrid=True,
@@ -704,7 +694,7 @@ async def acreate_hybrid_index(
             _is_native_pool,
         )
 
-        transport = target._vecdb.hybrid_transport()
+        transport = target._vecdb.native_transport("hybrid search and indexing")
         if isinstance(transport, AsyncNativeTransport) and _is_native_pool(
             transport.client, asynchronous=True
         ):
@@ -721,12 +711,12 @@ async def acreate_hybrid_index(
                     params=params,
                 )
         if not isinstance(
-            target._vecdb.hybrid_transport(),
+            transport,
             AsyncNativeTransport,
         ):
             await asyncio.to_thread(
                 create_hybrid_index,
-                target._vecdb.hybrid_transport().client,
+                transport.client,
                 idx_name,
                 vectorizer_preference,
                 vector_store,
@@ -919,13 +909,40 @@ class OracleHybridSearchRetriever(BaseRetriever):
             kwargs.get("params", {}),
         )
 
+    def _get_documents_query(self) -> str:
+        """Join a native JSON rowid array, avoiding CLOB bind conversion limits."""
+        table = _quote_indentifier(self.vector_store.table_name)
+        return (
+            "SELECT h.position, t.text, t.metadata "
+            "FROM JSON_TABLE(:rowids, '$[*]' COLUMNS "
+            "(position FOR ORDINALITY, rid VARCHAR2(128) PATH '$')) h "
+            f"JOIN {table} t ON t.ROWID = CHARTOROWID(h.rid) "
+            "ORDER BY h.position"
+        )
+
+    def _get_result_documents(
+        self, rows: list[tuple[Any, ...]], hits: list[dict[str, Any]]
+    ) -> List[Document]:
+        docs = []
+        for position, text, stored_metadata in rows:
+            # Ordinality preserves duplicate hits and score identity even if a
+            # document disappears between the search and this batched fetch.
+            hit = hits[int(position) - 1]
+            metadata = dict(stored_metadata)
+            doc_id = metadata.pop(INTERNAL_ID_KEY, None)
+            if self.return_scores:
+                for key in ("score", "text_score", "vector_score"):
+                    metadata[key] = hit[key]
+            docs.append(Document(page_content=text, metadata=metadata, id=doc_id))
+        return docs
+
     def _get_relevant_documents(self, query: str, **kwargs: Any) -> List[Document]:
         """Execute a synchronous hybrid search via DBMS_HYBRID_VECTOR.SEARCH.
 
         Uses the configured "search_mode" to decide whether to send vector, text,
         or both signals. The procedure returns a list of (rowid, score, text_score,
-        vector_score). For each rowid, the corresponding row is fetched from the
-        underlying OracleVS table and converted to a LangChain Document. When
+        vector_score). The corresponding documents are fetched in one batched
+        query in the search result order. When
         return_scores is True, overall and component scores are added to metadata.
 
         Args:
@@ -946,8 +963,6 @@ class OracleHybridSearchRetriever(BaseRetriever):
 
         search_params = self._get_search_params(query, **kwargs)
 
-        docs = []
-
         with _get_connection(self.vector_store.client) as connection:
             with connection.cursor() as cursor:
                 cursor.setinputsizes(search_params=oracledb.DB_TYPE_JSON)
@@ -958,41 +973,16 @@ class OracleHybridSearchRetriever(BaseRetriever):
                     ),
                     search_params=search_params,
                 )
-                res = cursor.fetchall()
-                res = json.loads(res[0][0])
-
-                rowids = []
-                scores = []
-                text_scores = []
-                vector_scores = []
-                for row in res:
-                    rowids.append((row["rowid"],))
-                    scores.append(row["score"])
-                    text_scores.append(row["text_score"])
-                    vector_scores.append(row["vector_score"])
-
-                res = []
+                hits = json.loads(cursor.fetchall()[0][0])
+                if not hits:
+                    return []
                 cursor.outputtypehandler = output_type_string_handler
-                for rid_tuple in rowids:
-                    rid = rid_tuple[0]
-                    cursor.execute(
-                        f"SELECT text, metadata FROM {self.vector_store.table_name} "
-                        "WHERE rowid = :1",
-                        [rid],
-                    )
-                    res.extend(cursor.fetchall())
-
-                for i, row in enumerate(res):
-                    metadata = row[1]
-                    doc_id = metadata.pop(INTERNAL_ID_KEY, None)
-                    if self.return_scores:
-                        metadata["score"] = scores[i]
-                        metadata["text_score"] = text_scores[i]
-                        metadata["vector_score"] = vector_scores[i]
-                    doc = Document(page_content=row[0], metadata=metadata, id=doc_id)
-                    docs.append(doc)
-
-        return docs
+                cursor.setinputsizes(rowids=oracledb.DB_TYPE_JSON)
+                cursor.execute(
+                    self._get_documents_query(),
+                    rowids=[hit["rowid"] for hit in hits],
+                )
+                return self._get_result_documents(cursor.fetchall(), hits)
 
     async def _aget_relevant_documents(
         self, query: str, **kwargs: Any
@@ -1011,12 +1001,10 @@ class OracleHybridSearchRetriever(BaseRetriever):
         """
         if self.vector_store._vecdb is not None:
             search_params = self._get_vecdb_search_params(query, **kwargs)
-            return await self.vector_store._vecdb.run_async(
-                "hybrid_search", search_params, bool(self.return_scores)
+            return await self.vector_store._vecdb.ahybrid_search(
+                search_params, bool(self.return_scores)
             )
         search_params = self._get_search_params(query, **kwargs)
-
-        docs = []
 
         async with _aget_connection(self.vector_store.client) as connection:
             async with connection.cursor() as cursor:
@@ -1028,38 +1016,13 @@ class OracleHybridSearchRetriever(BaseRetriever):
                     ),
                     search_params=search_params,
                 )
-                res = await cursor.fetchall()
-                res = json.loads(res[0][0])
-
-                rowids = []
-                scores = []
-                text_scores = []
-                vector_scores = []
-                for row in res:
-                    rowids.append((row["rowid"],))
-                    scores.append(row["score"])
-                    text_scores.append(row["text_score"])
-                    vector_scores.append(row["vector_score"])
-
+                hits = json.loads((await cursor.fetchall())[0][0])
+                if not hits:
+                    return []
                 cursor.outputtypehandler = output_type_string_handler
-                rows = []
-                for rid_tuple in rowids:
-                    rid = rid_tuple[0]
-                    await cursor.execute(
-                        f"SELECT text, metadata FROM {self.vector_store.table_name} "
-                        "WHERE rowid = :1",
-                        [rid],
-                    )
-                    rows.extend(await cursor.fetchall())
-
-                for i, row in enumerate(rows):
-                    metadata = row[1]
-                    doc_id = metadata.pop(INTERNAL_ID_KEY, None)
-                    if self.return_scores:
-                        metadata["score"] = scores[i]
-                        metadata["text_score"] = text_scores[i]
-                        metadata["vector_score"] = vector_scores[i]
-                    doc = Document(page_content=row[0], metadata=metadata, id=doc_id)
-                    docs.append(doc)
-
-        return docs
+                cursor.setinputsizes(rowids=oracledb.DB_TYPE_JSON)
+                await cursor.execute(
+                    self._get_documents_query(),
+                    rowids=[hit["rowid"] for hit in hits],
+                )
+                return self._get_result_documents(await cursor.fetchall(), hits)

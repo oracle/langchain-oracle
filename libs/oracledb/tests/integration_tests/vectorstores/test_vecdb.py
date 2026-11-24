@@ -258,7 +258,7 @@ def test_text_to_hybrid_generates_mvi_for_new_metadata_path(native_index_store):
 
 
 def test_rest_sdk_reports_unsupported_text_operations(vecdb_store):
-    """Standalone text operations remain unsupported; hybrid has SQL coverage."""
+    """Standalone metadata text operations remain unsupported for REST clients."""
     from langchain_oracledb.retrievers.text_search import (
         OracleTextSearchRetriever,
         create_text_index,
@@ -417,6 +417,9 @@ async def test_native_hybrid_explicit_index_and_discovery(
         # not to configure the retriever or choose its index name.
         actual_name, _ = metadata_index(connection, seed)
         sync_metadata_index(connection, actual_name)
+        # A fresh store knows the columns but must discover the physical index.
+        store = await OracleVS.acreate(**kwargs) if asynchronous else OracleVS(**kwargs)
+        store.embedding_function = seed.embedding_function
         # Reuse the requested creation name; callers need no catalog lookup.
         for name in ("MY_INDEX", '"MY_INDEX"'):
             retriever = OracleHybridSearchRetriever(
@@ -430,7 +433,7 @@ async def test_native_hybrid_explicit_index_and_discovery(
             assert [doc.id for doc in hits] == ["one"]
         params = {"text": {"search_text": "oracle"}, "search_fusion": "TEXT_ONLY"}
         hits = (
-            await store._vecdb.run_async("hybrid_search", params, False)
+            await store._vecdb.ahybrid_search(params, False)
             if asynchronous
             else store._vecdb.hybrid_search(params, False)
         )

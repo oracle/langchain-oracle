@@ -204,7 +204,7 @@ async def test_prepare_finds_active_vecdb_table_without_creation(schemas):
     asynchronous, _, cursor, _, transport = schemas
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     if asynchronous:
-        await backend.run_async("prepare")
+        await backend.aprepare()
     else:
         backend.prepare()
     assert cursor.execute.call_count == 3

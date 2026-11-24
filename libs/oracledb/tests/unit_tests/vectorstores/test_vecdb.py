@@ -770,13 +770,12 @@ async def test_async_hybrid_uses_database_query_embedding(store, mode):
         side_effect=AssertionError("sync embed")
     )
     expected = [Document(id="native", page_content="hello")]
-    store._vecdb.run_async = AsyncMock(return_value=expected)
+    store._vecdb.ahybrid_search = AsyncMock(return_value=expected)
     retriever = OracleHybridSearchRetriever(
         vector_store=store, idx_name="HVI", search_mode=mode
     )
     assert await retriever.ainvoke("hello") == expected
-    method, params, scores = store._vecdb.run_async.call_args.args
-    assert method == "hybrid_search"
+    params, scores = store._vecdb.ahybrid_search.call_args.args
     assert ("vector" in params) == (mode != "keyword")
     if mode != "keyword":
         assert params["vector"] == {"search_text": "hello"}
@@ -823,18 +822,6 @@ def test_native_hybrid_transport_binds_query_and_maps_database_scores():
     assert request["return"]["format"] == "JSON"
 
 
-def test_rest_hybrid_routes_to_shared_sql_transport(store, monkeypatch):
-    shared = store._vecdb.transport.hybrid_transport()
-    execute = MagicMock(return_value=[])
-    monkeypatch.setattr(shared, "hybrid_search", execute)
-    assert (
-        OracleHybridSearchRetriever(vector_store=store, idx_name="HVI").invoke("hello")
-        == []
-    )
-    assert execute.call_args.args[0] == '"DOCS"'
-    assert execute.call_args.args[1]["vector"]["search_text"] == "hello"
-
-
 @pytest.mark.parametrize("params", [{"rrf_k": 60}, {"fetch_k": 20}])
 def test_hybrid_rejects_previous_application_fusion_parameters(store, params):
     store._vecdb.transport = NativeTransport(object(), (23, 26, 4))
@@ -852,7 +839,7 @@ async def test_async_native_query_retries_once():
     )
     transport.amigrate = AsyncMock()
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
-    assert await backend.run_async("search", [1.0], 3, None) == []
+    assert await backend.asearch([1.0], 3, None) == []
     transport.amigrate.assert_awaited_once_with('"DOCS"')
     assert transport.acall.await_count == 2
 
@@ -933,10 +920,10 @@ async def test_native_async_crud_uses_async_driver_not_thread_wrapping():
     transport.acall = AsyncMock(return_value={"items": []})
     transport.ainsert = AsyncMock(return_value=[storage_id("a")])
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
-    assert await backend.run_async("add", ["x"], [[1.0]], [{}], ["a"], False) == ["a"]
+    assert await backend.aadd(["x"], [[1.0]], [{}], ["a"], False) == ["a"]
     transport.ainsert.assert_awaited_once()
-    assert await backend.run_async("get", ["a"]) == []
-    await backend.run_async("delete", ["a"])
+    assert await backend.aget(["a"]) == []
+    await backend.adelete(["a"])
     assert transport.acall.await_count == 2
 
 
@@ -1103,7 +1090,7 @@ async def test_async_native_hybrid_transport_returns_database_scores():
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     params = {"hybrid_index_name": "HVI", "vector": {"search_vector": [1.0, 0.0]}}
     with patch("langchain_oracledb.vectorstores._vecdb._aget_connection", get):
-        docs = await backend.run_async("hybrid_search", params, False)
+        docs = await backend.ahybrid_search(params, False)
     assert docs == [Document(id="a", page_content="hello", metadata={"tenant": "one"})]
     request = json.loads(cursor.execute.call_args.kwargs["search_params"])
     assert request["hybrid_index_name"] == '"HVI"'
@@ -1131,7 +1118,9 @@ def test_vecdb_hybrid_ddl_uses_metadata_column(store, version, column):
     assert "CREATE HYBRID VECTOR INDEX" in ddl
 
 
-@pytest.mark.parametrize("operation", ["text", "text_index"])
+@pytest.mark.parametrize(
+    "operation", ["text", "hybrid", "text_index", "hybrid_index", "preference"]
+)
 def test_rest_unsupported_operations_fail_without_native_fallback(store, operation):
     from langchain_oracledb.retrievers.hybrid_search import (
         OracleVectorizerPreference,
@@ -1166,7 +1155,9 @@ def test_rest_unsupported_operations_fail_without_native_fallback(store, operati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["text", "text_index"])
+@pytest.mark.parametrize(
+    "operation", ["text", "hybrid", "text_index", "hybrid_index", "preference"]
+)
 async def test_async_rest_unsupported_operations_fail_without_native_fallback(
     store, operation
 ):
@@ -1635,7 +1626,7 @@ async def test_text_retriever_preserves_provider_scores(
 ):
     expected = [Document(id="z", page_content="oracle", metadata={"score": 37})]
     store._vecdb.text_search = MagicMock(return_value=expected)
-    store._vecdb.run_async = AsyncMock(return_value=expected)
+    store._vecdb.atext_search = AsyncMock(return_value=expected)
     retriever = OracleTextSearchRetriever(
         vector_store=store, return_scores=return_scores
     )
@@ -1646,9 +1637,7 @@ async def test_text_retriever_preserves_provider_scores(
     )
     assert hits[0].metadata["score"] == 37
     if asynchronous:
-        store._vecdb.run_async.assert_awaited_once_with(
-            "text_search", '"oracle"', 4, return_scores
-        )
+        store._vecdb.atext_search.assert_awaited_once_with('"oracle"', 4, return_scores)
     else:
         store._vecdb.text_search.assert_called_once_with('"oracle"', 4, return_scores)
 
@@ -1792,9 +1781,7 @@ async def test_insert_only_returns_successful_logical_ids(asynchronous):
     transport.ainsert = AsyncMock(return_value=[storage_id("second")])
     backend = VecDBBackend(transport, "DOCS", DistanceStrategy.COSINE)
     args = (["one", "two"], [[1.0], [2.0]], [{}, {}], ["first", "second"], False)
-    result = (
-        await backend.run_async("add", *args) if asynchronous else backend.add(*args)
-    )
+    result = await backend.aadd(*args) if asynchronous else backend.add(*args)
     assert result == ["second"]
     call = transport.ainsert.call_args if asynchronous else transport.insert.call_args
     assert [r["id"] for r in call.args[1]] == [
@@ -1822,3 +1809,38 @@ def test_backend_rejects_reserved_logical_id_metadata():
     with pytest.raises(ValueError, match="reserved"):
         backend.add(["text"], [[1.0]], [{LOGICAL_ID_KEY: "spoofed"}], ["a"], True)
     transport.call.assert_not_called()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "operation", ["metadata_status", "drop_index", "drop_preference"]
+)
+@pytest.mark.asyncio
+async def test_rest_sql_maintenance_rejected_without_sdk_calls(
+    store, sdk, asynchronous, operation
+):
+    from langchain_oracledb.retrievers.hybrid_search import (
+        adrop_preference,
+        drop_preference,
+    )
+    from langchain_oracledb.vectorstores.utils import adrop_index, drop_index
+
+    sdk_calls = [value for value in vars(sdk).values() if isinstance(value, MagicMock)]
+    for method in sdk_calls:
+        method.reset_mock()
+    with pytest.raises(ValueError, match="oracle-vecdb REST SDK does not support"):
+        if asynchronous:
+            if operation == "metadata_status":
+                await store.adescribe_vecdb_index(kind="metadata")
+            elif operation == "drop_index":
+                await adrop_index(sdk, "IDX")
+            else:
+                await adrop_preference(sdk, "PREF")
+        elif operation == "metadata_status":
+            store.describe_vecdb_index(kind="metadata")
+        elif operation == "drop_index":
+            drop_index(sdk, "IDX")
+        else:
+            drop_preference(sdk, "PREF")
+    for method in sdk_calls:
+        method.assert_not_called()

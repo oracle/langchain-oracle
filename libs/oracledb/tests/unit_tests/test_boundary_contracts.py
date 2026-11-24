@@ -293,14 +293,6 @@ def test_hybrid_textcontains_requires_nonempty_array(value):
         HybridSearch._hybrid_json_textcontains(value)
 
 
-@pytest.mark.parametrize("value", [None, [], {}, 1])
-def test_hybrid_filter_expression_requires_nonempty_object(value):
-    from langchain_oracledb._vecdb_sdk.services.ords.hybrid_search import HybridSearch
-
-    with pytest.raises(ValueError, match="non-empty dictionaries"):
-        HybridSearch._hybrid_filter_expr(value)
-
-
 @pytest.mark.parametrize("operation", ["execute", "drop_table", ""])
 def test_sqlnet_adapter_rejects_unknown_operations(operation):
     with pytest.raises(ValueError, match="Unsupported VecDB operation"):
