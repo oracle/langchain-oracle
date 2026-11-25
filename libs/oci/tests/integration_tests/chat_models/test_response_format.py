@@ -572,10 +572,12 @@ def test_openai_shaped_json_schema_via_bind_tools(model_id: str):
 
     This is the call `create_agent` makes for its provider strategy.
     """
-    from langchain.agents.structured_output import ProviderStrategy
+    # `langchain` 1.x (agents) is not installed on the oldest supported Python.
+    structured_output = pytest.importorskip("langchain.agents.structured_output")
+    strategy = structured_output.ProviderStrategy(_CityWeather)
 
     llm = create_chat_model(model_id)
-    bound = llm.bind_tools([], **ProviderStrategy(_CityWeather).to_model_kwargs())
+    bound = llm.bind_tools([], **strategy.to_model_kwargs())
 
     response = bound.invoke("It is 21 degrees Celsius in Paris. Report the weather.")
 
@@ -589,15 +591,19 @@ def test_openai_shaped_json_schema_via_bind_tools(model_id: str):
 def test_create_agent_structured_response(model_id: str):
     """`create_agent(response_format=Schema)` picks the provider strategy for
     these model names and gets a structured response after a tool call."""
-    from langchain.agents import create_agent
     from langchain_core.tools import tool
+
+    # `langchain` 1.x (agents) is not installed on the oldest supported Python.
+    agents = pytest.importorskip("langchain.agents")
+    if not hasattr(agents, "create_agent"):
+        pytest.skip("langchain.agents.create_agent is not available")
 
     @tool
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"It is 21 degrees Celsius in {city}."
 
-    agent = create_agent(
+    agent = agents.create_agent(
         create_chat_model(model_id), tools=[get_weather], response_format=_CityWeather
     )
     result = agent.invoke(
