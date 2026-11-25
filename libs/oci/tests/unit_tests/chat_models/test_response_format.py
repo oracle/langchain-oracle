@@ -360,3 +360,149 @@ def test_empty_description_falls_back_to_name_cohere():
 
     tool = provider.convert_to_oci_tool(NoDocModel)
     assert getattr(tool, "description", ""), "Tool description should not be empty"
+
+
+_OPENAI_JSON_SCHEMA_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "Weather",
+        "description": "A weather report.",
+        "strict": True,
+        "schema": {
+            "title": "Weather",
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+                "address": {"$ref": "#/$defs/Address"},
+            },
+            "required": ["city", "address"],
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {"country": {"type": "string"}},
+                    "required": ["country"],
+                }
+            },
+        },
+    },
+}
+
+
+def _prepared_response_format(llm: Any, **kwargs: Any) -> Any:
+    request = llm._prepare_request(
+        [HumanMessage(content="Hello")], stop=None, stream=False, **kwargs
+    )
+    return request.chat_request.response_format
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize("via", ["bind_tools", "bind", "model_kwargs"])
+def test_openai_json_schema_response_format_is_converted_generic(via: str) -> None:
+    """The OpenAI-shaped dict `create_agent` sends becomes the OCI model."""
+    from oci.generative_ai_inference import models
+
+    model_id = "openai.gpt-4.1-mini"
+    if via == "model_kwargs":
+        llm = ChatOCIGenAI(
+            model_id=model_id,
+            model_kwargs={"response_format": _OPENAI_JSON_SCHEMA_FORMAT},
+            client=MagicMock(),
+        )
+        response_format = _prepared_response_format(llm)
+    else:
+        llm = ChatOCIGenAI(model_id=model_id, client=MagicMock())
+        bound = (
+            llm.bind_tools([], response_format=_OPENAI_JSON_SCHEMA_FORMAT)
+            if via == "bind_tools"
+            else llm.bind(response_format=_OPENAI_JSON_SCHEMA_FORMAT)
+        )
+        response_format = _prepared_response_format(llm, **cast(Any, bound).kwargs)
+
+    assert isinstance(response_format, models.JsonSchemaResponseFormat)
+    json_schema = response_format.json_schema
+    assert json_schema.name == "Weather"
+    assert json_schema.description == "A weather report."
+    assert json_schema.is_strict is True
+    # $ref / $defs are inlined because the service does not resolve them.
+    assert "$defs" not in json_schema.schema
+    assert json_schema.schema["properties"]["address"]["properties"] == {
+        "country": {"type": "string"}
+    }
+
+
+@pytest.mark.requires("oci")
+def test_openai_json_schema_response_format_is_converted_cohere() -> None:
+    from oci.generative_ai_inference import models
+
+    llm = ChatOCIGenAI(model_id="cohere.command-a-03-2025", client=MagicMock())
+    response_format = _prepared_response_format(
+        llm, response_format=_OPENAI_JSON_SCHEMA_FORMAT
+    )
+
+    assert isinstance(response_format, models.CohereResponseJsonFormat)
+    assert response_format.schema["properties"]["city"] == {"type": "string"}
+    assert "$defs" not in response_format.schema
+
+
+@pytest.mark.requires("oci")
+def test_openai_json_schema_response_format_defaults() -> None:
+    """Name and description fall back to the schema; strict defaults to off."""
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=MagicMock())
+    response_format = _prepared_response_format(
+        llm,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "schema": {
+                    "title": "Answer",
+                    "description": "The answer.",
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                }
+            },
+        },
+    )
+
+    assert response_format.json_schema.name == "Answer"
+    assert response_format.json_schema.description == "The answer."
+    assert response_format.json_schema.is_strict is False
+
+
+@pytest.mark.requires("oci")
+def test_openai_json_object_response_format_is_converted() -> None:
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=MagicMock())
+    assert _prepared_response_format(llm, response_format={"type": "json_object"}) == {
+        "type": "JSON_OBJECT"
+    }
+
+
+@pytest.mark.requires("oci")
+def test_oci_response_formats_are_left_unchanged() -> None:
+    from oci.generative_ai_inference import models
+
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=MagicMock())
+
+    native = models.JsonSchemaResponseFormat(
+        json_schema=models.ResponseJsonSchema(name="Answer", schema={"type": "object"})
+    )
+    assert _prepared_response_format(llm, response_format=native) is native
+
+    oci_shaped = {"type": "JSON_SCHEMA", "json_schema": {"name": "Answer"}}
+    assert _prepared_response_format(llm, response_format=oci_shaped) == oci_shaped
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize(
+    "response_format",
+    [
+        {"type": "json_schema"},
+        {"type": "json_schema", "json_schema": {"name": "Answer"}},
+        {"type": "json_schema", "json_schema": "Answer"},
+    ],
+)
+def test_openai_json_schema_response_format_without_schema_raises(
+    response_format: Any,
+) -> None:
+    llm = ChatOCIGenAI(model_id="meta.llama-3.3-70b-instruct", client=MagicMock())
+    with pytest.raises(ValueError, match="needs a 'json_schema' object"):
+        _prepared_response_format(llm, response_format=response_format)

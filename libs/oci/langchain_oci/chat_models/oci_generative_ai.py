@@ -301,6 +301,49 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
                 )
         return self._cached_provider_instance
 
+    def _normalize_response_format(self, response_format: Any) -> Any:
+        """Convert an OpenAI-shaped ``response_format`` dict to the OCI form.
+
+        LangChain agents (``create_agent`` with a provider strategy) and code
+        written against OpenAI-compatible models pass
+        ``{"type": "json_schema", "json_schema": {"name", "schema", "strict"}}``
+        or ``{"type": "json_object"}``. The service rejects those as sent, so
+        they are converted to what ``with_structured_output`` builds. Anything
+        else, including OCI model objects and OCI-shaped dicts, is returned
+        unchanged.
+        """
+        if not isinstance(response_format, dict):
+            return response_format
+
+        format_type = response_format.get("type")
+        if format_type == "json_object":
+            return {"type": "JSON_OBJECT"}
+        if format_type != "json_schema":
+            return response_format
+
+        json_schema = response_format.get("json_schema")
+        if not isinstance(json_schema, dict) or not isinstance(
+            json_schema.get("schema"), dict
+        ):
+            raise ValueError(
+                "response_format of type 'json_schema' needs a 'json_schema' "
+                "object with a 'schema', for example "
+                "{'type': 'json_schema', 'json_schema': {'name': 'Answer', "
+                "'schema': {...}}}."
+            )
+
+        # OCI doesn't support $ref and $defs, so inline them.
+        schema = OCIUtils.resolve_schema_refs(json_schema["schema"])
+        response_json_schema = self._provider.oci_response_json_schema(
+            name=json_schema.get("name") or schema.get("title", "response"),
+            description=json_schema.get("description") or schema.get("description", ""),
+            schema=schema,
+            is_strict=bool(json_schema.get("strict", False)),
+        )
+        return self._provider.oci_json_schema_response_format(
+            json_schema=response_json_schema
+        )
+
     def _prepare_request(
         self,
         messages: List[BaseMessage],
@@ -353,6 +396,11 @@ class ChatOCIGenAI(ChatOCIGenAIAsyncMixin, BaseChatModel, OCIGenAIBase):
             _model_kwargs[self._provider.stop_sequence_key] = stop
 
         chat_params = {**_model_kwargs, **kwargs, **oci_params}
+
+        if chat_params.get("response_format") is not None:
+            chat_params["response_format"] = self._normalize_response_format(
+                chat_params["response_format"]
+            )
 
         # Apply provider-specific parameter transformations
         # (e.g. OpenAIProvider maps max_tokens -> max_completion_tokens here)
