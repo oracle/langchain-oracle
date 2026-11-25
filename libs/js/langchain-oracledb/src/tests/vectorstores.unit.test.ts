@@ -177,3 +177,51 @@ describe("sparse vector element format (#297)", () => {
     expect(sv.numDimensions).toBe(3);
   });
 });
+
+describe("OracleVS getByIds", () => {
+  const makeStore = (client: OracleDBVSArgs["client"]) => {
+    const embeddings = {
+      embedDocuments: vi.fn(),
+      embedQuery: vi.fn(),
+    } as unknown as EmbeddingsInterface;
+
+    return new OracleVS(embeddings, {
+      client,
+      tableName: "GET_BY_IDS",
+      query: "test",
+    });
+  };
+
+  test("queries external IDs and maps the returned rows to documents", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      rows: [
+        ["doc-2", "Second document", { category: "second" }],
+        ["doc-1", null, null],
+      ],
+    });
+    const connection = {
+      execute,
+      close: vi.fn(),
+    } as unknown as oracledb.Connection;
+    const store = makeStore(connection);
+
+    const documents = await store.getByIds(["doc-1", "missing", "doc-2"]);
+
+    expect(execute).toHaveBeenCalledOnce();
+    const [sql, binds] = execute.mock.calls[0];
+    expect(sql).toMatch(/WHERE external_id IN \(:1,:2,:3\)/);
+    expect(binds).toEqual(["doc-1", "missing", "doc-2"]);
+    expect(documents).toEqual([
+      expect.objectContaining({
+        id: "doc-2",
+        pageContent: "Second document",
+        metadata: { category: "second" },
+      }),
+      expect.objectContaining({
+        id: "doc-1",
+        pageContent: "",
+        metadata: {},
+      }),
+    ]);
+  });
+});

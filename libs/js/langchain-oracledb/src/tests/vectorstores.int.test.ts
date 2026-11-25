@@ -357,6 +357,48 @@ describe("OracleVectorStore", () => {
     expect(results2).toHaveLength(1);
   });
 
+  test("get documents by external IDs", async () => {
+    oraclevs = new OracleVS(embedder, dbConfig);
+    await oraclevs.initialize();
+
+    const ids = ["doc-1", "doc-2"];
+    await oraclevs.addDocuments(
+      [
+        new Document({
+          pageContent: "First document",
+          metadata: { category: "first" },
+        }),
+        new Document({
+          pageContent: "Second document",
+          metadata: { category: "second" },
+        }),
+      ],
+      { ids }
+    );
+
+    const documents = await oraclevs.getByIds([
+      ids[1],
+      "missing-document",
+      ids[0],
+    ]);
+    const documentsById = new Map(
+      documents.map((document) => [document.id, document])
+    );
+
+    expect(documents).toHaveLength(2);
+    expect(documentsById.get(ids[0])).toMatchObject({
+      id: ids[0],
+      pageContent: "First document",
+      metadata: { category: "first" },
+    });
+    expect(documentsById.get(ids[1])).toMatchObject({
+      id: ids[1],
+      pageContent: "Second document",
+      metadata: { category: "second" },
+    });
+    expect(documentsById.has("missing-document")).toBe(false);
+  });
+
   test("Test vectorstore addDocuments upsert", async () => {
     let connection: oracledb.Connection | undefined;
 
@@ -1820,6 +1862,30 @@ describe("OracleVectorStore", () => {
       await connection?.close();
     }
   });
+
+  test("deletes documents by external IDs", async () => {
+    const store = new OracleVS(embedder, dbConfig);
+    await store.initialize();
+
+    const ids = ["doc-1", "doc-2"];
+    await store.addDocuments(
+      [
+        new Document({ pageContent: "Delete by external ID" }),
+        new Document({ pageContent: "Keep by external ID" }),
+      ],
+      { ids }
+    );
+
+    await store.delete({ ids: [ids[0]] });
+
+    const remaining = await store.getByIds(ids);
+    const remainingIds = remaining.map((document) => document.id);
+
+    expect(remainingIds).toHaveLength(1);
+    expect(remainingIds).toContain(ids[1]);
+    expect(remainingIds).not.toContain(ids[0]);
+  });
+
   test("buildVectorColumnDefinition uses embedding dimension when no override provided", async () => {
     const fallbackTable = `${tableName}_fallback_dim`;
     await dropTablePurge(connection as oracledb.Connection, fallbackTable);

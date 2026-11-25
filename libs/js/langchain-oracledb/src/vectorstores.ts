@@ -1186,8 +1186,56 @@ export class OracleVS extends VectorStore {
     }));
   }
 
+  async getByIds(ids: string[]): Promise<Document[]> {
+    let connection: oracledb.Connection | null = null;
+    const docs: Document[] = [];
+    try {
+      if (ids.length === 0) {
+        return [];
+      }
+
+      connection = await this.getConnection();
+
+      const placeholders = ids.map((_, index) => `:${index + 1}`).join(",");
+      const query = `SELECT external_id, text, metadata
+         FROM  ${this.tableName}
+         WHERE external_id IN (${placeholders})`;
+
+      const resultSet = await connection.execute(query, [...ids], {
+        outFormat: oracledb.OUT_FORMAT_ARRAY,
+        fetchInfo: {
+          TEXT: { type: oracledb.STRING },
+        },
+      });
+
+      if (Array.isArray(resultSet.rows) && resultSet.rows.length > 0) {
+        const rows = resultSet.rows as unknown[][];
+
+        for (let idx = 0; idx < resultSet.rows.length; idx += 1) {
+          const row = rows[idx];
+          const text = row[1] as string;
+          const metadata = row[2] as Metadata;
+          const document = new Document({
+            pageContent: text || "",
+            metadata: metadata || {},
+            id: row[0] as string,
+          });
+          docs.push(document);
+        }
+      }
+
+      return docs;
+    } catch (error: unknown) {
+      return handleError(error);
+    } finally {
+      if (connection) {
+        await this.retConnection(connection);
+      }
+    }
+  }
+
   public async delete(params: {
-    ids?: Buffer[];
+    ids?: (string | Buffer)[];
     deleteAll?: boolean;
   }): Promise<void> {
     let connection: oracledb.Connection | null = null;
@@ -1195,12 +1243,25 @@ export class OracleVS extends VectorStore {
       connection = await this.getConnection();
       const options = { autoCommit: true };
       if (params.ids && params.ids.length > 0) {
-        // Dynamically create placeholders
-        const placeholders = params.ids
-          .map((_, index) => `:${index + 1}`)
-          .join(",");
+        const conditions = params.ids.map((id, index) => {
+          if (Buffer.isBuffer(id)) {
+            return `id= :${index + 1}`;
+          }
+
+          if (typeof id === "string") {
+            return `external_id = :${index + 1}`;
+          }
+
+          return throwError(
+            ErrorCode.VALIDATION_INVALID_INPUT,
+            "IDs must be string or Buffers."
+          );
+        });
+
         // Prepare the query
-        const query = `DELETE FROM ${this.tableName} WHERE id IN (${placeholders})`;
+        const query = `DELETE FROM ${this.tableName} WHERE ${conditions.join(
+          " OR "
+        )}`;
         // Execute the query with the IDs as bind parameters
         await connection.execute(query, [...params.ids], options);
       } else if (params.deleteAll) {
