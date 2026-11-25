@@ -44,6 +44,11 @@ _OCI_PARAM_RENAME = {
 }
 
 
+# Lower-cased fragment of the 400 that newer OpenAI reasoning models return
+# when a chat-completions request combines function tools with reasoning.
+_FUNCTION_TOOLS_REASONING_MARKER = "function tools with reasoning_effort"
+
+
 def extract_unsupported_param(payload: Any) -> Tuple[Optional[str], Optional[str]]:
     """Extract ``(param, code)`` from an OCI 400 error payload.
 
@@ -114,6 +119,48 @@ def drop_unsupported_param(chat_request: Any, param: str) -> bool:
     return True
 
 
+def _get_request_field(chat_request: Any, attr: str, wire_name: str) -> Any:
+    if isinstance(chat_request, dict):
+        return chat_request.get(wire_name)
+    return getattr(chat_request, attr, None)
+
+
+def disable_reasoning_for_function_tools(error_payload: Any, chat_request: Any) -> bool:
+    """Turn reasoning off after a "function tools with reasoning_effort" 400.
+
+    Newer OpenAI reasoning models refuse function tools on chat completions
+    unless ``reasoning_effort`` is ``none``, and reason by default, so a plain
+    ``bind_tools`` call is rejected. When the request carries tools and
+    reasoning is not already off, set ``reasoning_effort`` to ``NONE`` so the
+    caller can retry. Returns True if the request changed.
+    """
+    if _FUNCTION_TOOLS_REASONING_MARKER not in str(error_payload).lower():
+        return False
+    if not _get_request_field(chat_request, "tools", "tools"):
+        return False
+    current = _get_request_field(chat_request, "reasoning_effort", "reasoningEffort")
+    if isinstance(current, str) and current.upper() == "NONE":
+        # Already off and still rejected: nothing left to adjust.
+        return False
+    if isinstance(chat_request, dict):
+        chat_request["reasoningEffort"] = "NONE"
+    elif hasattr(chat_request, "reasoning_effort"):
+        chat_request.reasoning_effort = "NONE"
+    else:
+        return False
+    was = f"'{current}'" if current else "the model default"
+    warnings.warn(
+        "This model does not accept function tools together with reasoning on "
+        f"chat completions; changed reasoning_effort from {was} to 'NONE' and "
+        "retrying the request. Set reasoning_effort='NONE' to avoid the extra "
+        "round trip, or use ChatOCIOpenAI (Responses API) to keep reasoning with "
+        "tools.",
+        UserWarning,
+        stacklevel=3,
+    )
+    return True
+
+
 def adjust_request_for_param_error(error_payload: Any, chat_request: Any) -> bool:
     """Fix the request in place after a parameter-compatibility 400.
 
@@ -122,6 +169,10 @@ def adjust_request_for_param_error(error_payload: Any, chat_request: Any) -> boo
     rejection (caller should re-raise).
     """
     param, code = extract_unsupported_param(error_payload)
+    if param == "reasoning_effort" and disable_reasoning_for_function_tools(
+        error_payload, chat_request
+    ):
+        return True
     if not param or code not in ("unsupported_value", "unsupported_parameter"):
         return False
     if not drop_unsupported_param(chat_request, param):

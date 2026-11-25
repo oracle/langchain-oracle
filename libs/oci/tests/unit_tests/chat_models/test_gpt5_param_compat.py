@@ -214,8 +214,9 @@ def test_sync_invoke_reraises_unfixable_400():
 ASYNC_ERROR_BODY = '{"error": {"param": "temperature", "code": "unsupported_value"}}'
 
 
-def _install_fake_chat_async(monkeypatch, calls):
+def _install_fake_chat_async(monkeypatch, calls, error_body=None):
     """chat_async that 400s the first call, then succeeds."""
+    error_body = error_body or ASYNC_ERROR_BODY
 
     def fake_chat_async(
         self, compartment_id, chat_request_dict, serving_mode_dict, stream
@@ -223,7 +224,7 @@ def _install_fake_chat_async(monkeypatch, calls):
         async def gen():
             calls.append(dict(chat_request_dict))
             if len(calls) == 1:
-                raise OCIAsyncRequestError(400, ASYNC_ERROR_BODY)
+                raise OCIAsyncRequestError(400, error_body)
             if stream:
                 yield {
                     "message": {
@@ -327,3 +328,130 @@ def test_extract_from_double_encoded_oci_envelope():
         '\\"code\\": \\"unsupported_value\\"\\n  }\\n}" }'
     )
     assert extract_unsupported_param(body) == ("temperature", "unsupported_value")
+
+
+# --------------- function tools with reasoning ---------------
+
+# The body newer OpenAI reasoning models return when a chat-completions
+# request combines function tools with reasoning (the model default).
+FUNCTION_TOOLS_REASONING_BODY = (
+    '{"error": {"message": "Function tools with reasoning_effort are not '
+    "supported for gpt-x in /v1/chat/completions. To use function tools, use "
+    "/v1/responses or set reasoning_effort to 'none'.\", "
+    '"type": "invalid_request_error", "param": "reasoning_effort", "code": null}}'
+)
+
+
+@pytest.mark.parametrize("current", [None, "LOW", "medium"])
+def test_function_tools_error_turns_reasoning_off_on_sdk_object(current):
+    req = SimpleNamespace(tools=[object()], reasoning_effort=current)
+    error = _service_error(message=FUNCTION_TOOLS_REASONING_BODY)
+
+    with pytest.warns(UserWarning, match="reasoning_effort") as caught:
+        assert adjust_request_for_param_error(error, req) is True
+
+    assert req.reasoning_effort == "NONE"
+    assert len(caught) == 1
+
+
+def test_function_tools_error_turns_reasoning_off_on_wire_dict():
+    req = {"tools": [{"name": "get_weather"}]}
+
+    with pytest.warns(UserWarning, match="reasoning_effort"):
+        assert adjust_request_for_param_error(FUNCTION_TOOLS_REASONING_BODY, req)
+
+    assert req["reasoningEffort"] == "NONE"
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        # Reasoning is already off: nothing left to adjust.
+        SimpleNamespace(tools=[object()], reasoning_effort="NONE"),
+        {"tools": [{"name": "get_weather"}], "reasoningEffort": "none"},
+        # No tools on the request: not this problem.
+        SimpleNamespace(tools=None, reasoning_effort="LOW"),
+        {"reasoningEffort": "LOW"},
+    ],
+)
+def test_function_tools_error_not_adjusted(req):
+    before = dict(req) if isinstance(req, dict) else dict(vars(req))
+    assert adjust_request_for_param_error(FUNCTION_TOOLS_REASONING_BODY, req) is False
+    assert (dict(req) if isinstance(req, dict) else dict(vars(req))) == before
+
+
+def test_other_reasoning_effort_errors_are_not_adjusted():
+    """Only the function-tools rejection turns reasoning off."""
+    body = (
+        '{"error": {"message": "Invalid reasoning_effort.", '
+        '"param": "reasoning_effort", "code": null}}'
+    )
+    req = SimpleNamespace(tools=[object()], reasoning_effort="LOW")
+    assert adjust_request_for_param_error(body, req) is False
+    assert req.reasoning_effort == "LOW"
+
+
+def _weather_tool():
+    from langchain_core.tools import tool
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return "sunny"
+
+    return get_weather
+
+
+@pytest.mark.requires("oci")
+def test_sync_invoke_with_tools_retries_with_reasoning_off():
+    oci_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="openai.gpt-5", client=oci_client)
+
+    seen_efforts = []
+
+    def chat(request):
+        seen_efforts.append(request.chat_request.reasoning_effort)
+        if len(seen_efforts) == 1:
+            raise _service_error(message=FUNCTION_TOOLS_REASONING_BODY)
+        return _mock_chat_response()
+
+    oci_client.chat.side_effect = chat
+
+    with pytest.warns(UserWarning, match="reasoning_effort"):
+        response = llm.bind_tools([_weather_tool()]).invoke("hi")
+
+    assert response.content == "ok"
+    assert seen_efforts == [None, "NONE"]
+
+
+@pytest.mark.requires("oci")
+def test_sync_invoke_with_tools_reraises_when_reasoning_off_is_not_enough():
+    """Some models still refuse; the original error surfaces after one retry."""
+    oci_client = MagicMock()
+    llm = ChatOCIGenAI(model_id="openai.gpt-5", client=oci_client)
+    oci_client.chat.side_effect = _service_error(message=FUNCTION_TOOLS_REASONING_BODY)
+
+    with pytest.warns(UserWarning, match="reasoning_effort"):
+        with pytest.raises(ServiceError, match="Function tools"):
+            llm.bind_tools([_weather_tool()]).invoke("hi")
+    assert oci_client.chat.call_count == 2
+
+
+@pytest.mark.requires("oci")
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_async_with_tools_retries_with_reasoning_off(monkeypatch, streaming):
+    calls: list = []
+    _install_fake_chat_async(monkeypatch, calls, FUNCTION_TOOLS_REASONING_BODY)
+    llm = _make_async_llm().bind_tools([_weather_tool()])
+
+    with pytest.warns(UserWarning, match="reasoning_effort"):
+        if streaming:
+            chunks = [c async for c in llm.astream("hi")]
+            assert any(c.content == "ok" for c in chunks)
+        else:
+            assert (await llm.ainvoke("hi")).content == "ok"
+
+    assert len(calls) == 2
+    assert "reasoningEffort" not in calls[0]
+    assert calls[1]["reasoningEffort"] == "NONE"
+    assert calls[1]["tools"]
