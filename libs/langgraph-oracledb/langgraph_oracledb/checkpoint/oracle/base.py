@@ -91,7 +91,11 @@ SELECT_PENDING_WRITES_SQL = """
     SELECT thread_id, checkpoint_ns, checkpoint_id, task_id, channel, type, blob 
     FROM checkpoint_writes 
     {where_clause}
-    ORDER BY task_id, idx
+    ORDER BY
+        CASE WHEN task_path = ' ' THEN 0 ELSE 1 END,
+        task_path,
+        task_id,
+        idx
 """
 
 SELECT_PENDING_SENDS_SQL = (
