@@ -56,11 +56,30 @@ For operations that should be independent of application transactions, use an `o
 
 This package includes a document loader for loading documents from different sources and file formats.
 
+### OracleDocLoader
+Loads documents from files, directories, or database tables
 ```typescript
 import {OracleDocLoader} from "@oracle/langchain-oracledb";
 
 const loader = new OracleDocLoader(conn, loader_params);
 const docs = await loader.load();
+```
+
+### OracleAutonomousDatabaseLoader
+Executes a SQL query against Oracle Database and creates one document for each returned row.
+
+```typescript
+import {OracleAutonomousDatabaseLoader,} from "@oracle/langchain-oracledb";
+
+const loader = new OracleAutonomousDatabaseLoader({
+  query: "SELECT * FROM documents",
+  user,
+  password,
+  connectString,
+  metadata: ["ID", "CATEGORY"],
+});
+
+const documents = await loader.load();
 ```
 
 ## Text Splitter

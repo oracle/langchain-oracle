@@ -6,7 +6,8 @@ import path from "node:path";
 import oracledb from "oracledb";
 import * as htmlparser2 from "htmlparser2";
 import { BaseDocumentLoader } from "@langchain/core/document_loaders/base";
-import { ErrorCode, throwError } from "./errors.js";
+import { ErrorCode, handleError, throwError } from "./errors.js";
+import type { BindParameters } from "oracledb";
 
 function* listDir(dir: string): Generator<string> {
   const files = fs.readdirSync(dir, { withFileTypes: true });
@@ -212,5 +213,122 @@ export class OracleDocLoader extends BaseDocumentLoader {
     parser.end();
 
     return [text, metadata];
+  }
+}
+
+export interface OracleADBLoaderParams {
+  query: string;
+  user: string;
+  password: string;
+
+  schema?: string;
+  connectString?: string;
+  configDir?: string;
+  walletLocation?: string;
+  walletPassword?: string;
+  metadata?: string[];
+  parameter?: BindParameters;
+}
+
+export class OracleAutonomousDatabaseLoader extends BaseDocumentLoader {
+  readonly query: string;
+  readonly user: string;
+  readonly password: string;
+
+  readonly schema?: string;
+  readonly connectString?: string;
+  readonly configDir?: string;
+  readonly walletLocation?: string;
+  readonly walletPassword?: string;
+  readonly metadata?: string[];
+  readonly parameter?: BindParameters;
+
+  constructor(options: OracleADBLoaderParams) {
+    super();
+
+    this.query = options.query;
+    this.user = options.user;
+    this.password = options.password;
+    this.schema = options.schema;
+    this.configDir = options.configDir;
+    this.walletLocation = options.walletLocation;
+    this.walletPassword = options.walletPassword;
+    this.metadata = options.metadata;
+    this.parameter = options.parameter;
+    this.connectString = options.connectString;
+  }
+
+  async _fetchRows(): Promise<Record<string, unknown>[]> {
+    let connection: oracledb.Connection | undefined = undefined;
+
+    const connectParams: oracledb.ConnectionAttributes = {
+      user: this.user,
+      password: this.password,
+      connectString: this.connectString,
+    };
+
+    if (this.configDir) {
+      connectParams.configDir = this.configDir;
+    }
+
+    if (this.walletLocation && this.walletPassword) {
+      connectParams.walletLocation = this.walletLocation;
+      connectParams.walletPassword = this.walletPassword;
+    }
+
+    try {
+      connection = await oracledb.getConnection(connectParams);
+      let data: Record<string, unknown>[] = [];
+      if (this.schema) {
+        connection.currentSchema = this.schema;
+      }
+
+      const result = await connection.execute(
+        this.query,
+        this.parameter ?? [],
+        { outFormat: oracledb.OUT_FORMAT_OBJECT }
+      );
+
+      data = (result.rows ?? []) as Record<string, unknown>[];
+
+      for (const row of data) {
+        for (const [column, value] of Object.entries(row)) {
+          if (
+            typeof value === "object" &&
+            value !== null &&
+            "getData" in value &&
+            typeof value.getData === "function"
+          ) {
+            row[column] = await value.getData();
+          }
+        }
+      }
+
+      return data;
+    } catch (error) {
+      return handleError(error);
+    } finally {
+      if (connection) {
+        await connection.close();
+      }
+    }
+  }
+
+  async load(): Promise<Document[]> {
+    const data = await this._fetchRows();
+    const metadataColumns = this.metadata ? this.metadata : [];
+    const metadataColumnSet = new Set(metadataColumns);
+
+    const documents = data.map(
+      (row: Record<string, unknown>) =>
+        new Document({
+          pageContent: JSON.stringify(row),
+          metadata: Object.fromEntries(
+            Object.entries(row).filter(([key]) => metadataColumnSet.has(key))
+          ),
+        })
+    );
+
+    return documents;
   }
 }
