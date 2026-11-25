@@ -863,7 +863,7 @@ describeIfOracle("Oracle checkpoint Python parity", () => {
     });
   });
 
-  test("returns pending writes in task path, task id, index order", async () => {
+  test("returns pending writes pathless first, then in task path, task id, index order", async () => {
     await withSaver(async (saver, trackThread) => {
       const id = trackThread(threadId("writes-task-path-order"));
       const saved = await saver.put(
@@ -884,11 +884,15 @@ describeIfOracle("Oracle checkpoint Python parity", () => {
         "~path, 2"
       );
       await saver.putWrites(saved, [["ch", "first"]], "z-task", "~path, 1");
-      // Writes stored without a task path sort ahead of every pathed write.
+      // Writes stored without a task path (graph input, for example) come
+      // first. They are stored as a single space, and a tab sorts before a
+      // space, so ordering by the stored value alone would put this path first.
+      await saver.putWrites(saved, [["ch", "tab-path"]], "b-task", "\tworker");
       await saver.putWrites(saved, [["ch", "no-path"]], "m-task");
 
       const expected = [
         ["m-task", "ch", "no-path"],
+        ["b-task", "ch", "tab-path"],
         ["z-task", "ch", "first"],
         ["a-task", "ch", "second"],
         ["a-task", "ch", "third"],

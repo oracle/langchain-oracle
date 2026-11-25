@@ -150,7 +150,11 @@ FROM ${tables.checkpoint_writes} cw
 WHERE cw.thread_id = :thread_id
   AND cw.checkpoint_ns = :checkpoint_ns
   AND cw.checkpoint_id = :checkpoint_id
-ORDER BY cw.task_path, cw.task_id, cw.idx`,
+ORDER BY
+  CASE WHEN cw.task_path = ' ' THEN 0 ELSE 1 END,
+  cw.task_path,
+  cw.task_id,
+  cw.idx`,
 
     SELECT_PENDING_SENDS_SQL: `SELECT
   cw.checkpoint_id,

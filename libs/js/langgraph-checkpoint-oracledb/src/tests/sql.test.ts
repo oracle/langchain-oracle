@@ -95,11 +95,13 @@ describe("Oracle SQL helpers", () => {
     );
   });
 
-  test("orders pending writes by task path, task id and index", () => {
+  test("orders pending writes pathless first, then by task path, task id and index", () => {
     // `writesSortKey` order: the order live execution applies a super-step's
     // tasks, and the one `getTuple`/`list` must return `pendingWrites` in.
+    // The empty task path is stored as a single space, so it is ranked first
+    // explicitly instead of relying on how that space collates.
     expect(getOracleSQLStatements().SELECT_CHECKPOINT_WRITES_SQL).toMatch(
-      /ORDER BY cw\.task_path, cw\.task_id, cw\.idx$/
+      /ORDER BY\s+CASE WHEN cw\.task_path = ' ' THEN 0 ELSE 1 END,\s+cw\.task_path,\s+cw\.task_id,\s+cw\.idx$/
     );
   });
 

@@ -787,7 +787,7 @@ def test_get_tuple_parent_config_root_namespace_normalized(saver_name: str) -> N
 
 @pytest.mark.parametrize("saver_name", ["base", "pool"])
 def test_pending_writes_are_ordered_by_task_path(saver_name: str) -> None:
-    """Pending writes come back in `(task_path, task_id, idx)` order.
+    """Pending writes come back pathless first, then by `(task_path, task_id, idx)`.
 
     The task ids are chosen to sort in the opposite order to the task paths, so
     ordering by `task_id` alone returns them reversed.
@@ -803,11 +803,15 @@ def test_pending_writes_are_ordered_by_task_path(saver_name: str) -> None:
             stored, [("ch", "second"), ("ch", "third")], "a-task", "~path, 2"
         )
         saver.put_writes(stored, [("ch", "first")], "z-task", "~path, 1")
-        # Writes stored without a task path sort ahead of every pathed write.
+        # Writes stored without a task path (graph input, for example) come
+        # first. They are stored as a single space, and a tab sorts before a
+        # space, so ordering by the stored value alone would put this path first.
+        saver.put_writes(stored, [("ch", "tab-path")], "b-task", "\tworker")
         saver.put_writes(stored, [("ch", "no-path")], "m-task")
 
         expected = [
             ("m-task", "ch", "no-path"),
+            ("b-task", "ch", "tab-path"),
             ("z-task", "ch", "first"),
             ("a-task", "ch", "second"),
             ("a-task", "ch", "third"),
