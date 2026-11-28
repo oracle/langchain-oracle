@@ -1186,9 +1186,16 @@ export class OracleVS extends VectorStore {
     }));
   }
 
+  /**
+   * Retrieves documents by their external IDs.
+   *
+   * Documents whose IDs do not exist are omitted from the result.
+   * The returned documents may not follow the order of the input IDs.
+   *
+   * @param ids - External document IDs.
+   */
   async getByIds(ids: string[]): Promise<Document[]> {
     let connection: oracledb.Connection | null = null;
-    const docs: Document[] = [];
     try {
       if (ids.length === 0) {
         return [];
@@ -1201,30 +1208,23 @@ export class OracleVS extends VectorStore {
          FROM  ${this.tableName}
          WHERE external_id IN (${placeholders})`;
 
-      const resultSet = await connection.execute(query, [...ids], {
+      const resultSet = await connection.execute<
+        [string, string | null, Metadata | null]
+      >(query, [...ids], {
         outFormat: oracledb.OUT_FORMAT_ARRAY,
         fetchInfo: {
           TEXT: { type: oracledb.STRING },
         },
       });
 
-      if (Array.isArray(resultSet.rows) && resultSet.rows.length > 0) {
-        const rows = resultSet.rows as unknown[][];
-
-        for (let idx = 0; idx < resultSet.rows.length; idx += 1) {
-          const row = rows[idx];
-          const text = row[1] as string;
-          const metadata = row[2] as Metadata;
-          const document = new Document({
-            pageContent: text || "",
-            metadata: metadata || {},
-            id: row[0] as string,
-          });
-          docs.push(document);
-        }
-      }
-
-      return docs;
+      return (resultSet.rows ?? []).map(
+        ([id, text, metadata]) =>
+          new Document({
+            id,
+            pageContent: text ?? "",
+            metadata: metadata ?? {},
+          })
+      );
     } catch (error: unknown) {
       return handleError(error);
     } finally {
@@ -1234,6 +1234,12 @@ export class OracleVS extends VectorStore {
     }
   }
 
+  /**
+   * Deletes documents by their IDs.
+   * String IDs identify documents using the external_id column.
+   * Buffer IDs identify documents using the internal RAW id column
+   * and are supported for backward compatibility.
+   */
   public async delete(params: {
     ids?: (string | Buffer)[];
     deleteAll?: boolean;
@@ -1243,27 +1249,41 @@ export class OracleVS extends VectorStore {
       connection = await this.getConnection();
       const options = { autoCommit: true };
       if (params.ids && params.ids.length > 0) {
-        const conditions = params.ids.map((id, index) => {
-          if (Buffer.isBuffer(id)) {
-            return `id= :${index + 1}`;
-          }
-
+        const externalIds: string[] = [];
+        const internalIds: Buffer[] = [];
+        for (const id of params.ids) {
           if (typeof id === "string") {
-            return `external_id = :${index + 1}`;
+            externalIds.push(id);
+          } else if (Buffer.isBuffer(id)) {
+            internalIds.push(id);
+          } else {
+            throwError(
+              ErrorCode.VALIDATION_INVALID_INPUT,
+              "IDs must be string or Buffers."
+            );
           }
+        }
 
-          return throwError(
-            ErrorCode.VALIDATION_INVALID_INPUT,
-            "IDs must be string or Buffers."
+        const conditions: string[] = [];
+        if (externalIds.length) {
+          const placeholders = externalIds.map((_, i) => `:${i + 1}`);
+          conditions.push(`external_id IN (${placeholders.join(", ")})`);
+        }
+        if (internalIds.length) {
+          const placeholders = internalIds.map(
+            (_, i) => `:${externalIds.length + i + 1}`
           );
-        });
+          conditions.push(`id IN (${placeholders.join(", ")})`);
+        }
 
-        // Prepare the query
         const query = `DELETE FROM ${this.tableName} WHERE ${conditions.join(
           " OR "
         )}`;
-        // Execute the query with the IDs as bind parameters
-        await connection.execute(query, [...params.ids], options);
+        await connection.execute(
+          query,
+          [...externalIds, ...internalIds],
+          options
+        );
       } else if (params.deleteAll) {
         await connection.execute(
           `TRUNCATE TABLE ${this.tableName}`,

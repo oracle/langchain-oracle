@@ -224,4 +224,50 @@ describe("OracleVS getByIds", () => {
       }),
     ]);
   });
+
+  test("returns an empty array without querying the database", async () => {
+    const execute = vi.fn();
+    const connection = {
+      execute,
+      close: vi.fn(),
+    } as unknown as oracledb.Connection;
+    const store = makeStore(connection);
+
+    await expect(store.getByIds([])).resolves.toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("OracleVS delete", () => {
+  const rawId = Buffer.alloc(16, 1);
+  function setup() {
+    const execute = vi.fn().mockResolvedValue({});
+    const store = new OracleVS(
+      { embedDocuments: vi.fn(), embedQuery: vi.fn() },
+      {
+        client: { execute, close: vi.fn() } as unknown as oracledb.Connection,
+        tableName: "DELETE_IDS",
+        query: "test",
+      }
+    );
+    return { execute, store };
+  }
+
+  test("validates all IDs before executing deletion", async () => {
+    const { store, execute } = setup();
+    await expect(
+      store.delete({ ids: ["a", rawId, 42] as (string | Buffer)[] })
+    ).rejects.toThrow(/IDs must be string or Buffers/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("handles large ID groups and preserves bind numbering", async () => {
+    const { store, execute } = setup();
+    const ids = Array.from({ length: 1001 }, (_, index) => `doc-${index}`);
+    await store.delete({ ids: [...ids, rawId] });
+    expect(execute).toHaveBeenCalledOnce();
+    const [sql, binds] = execute.mock.calls[0];
+    expect(sql).toContain(":1000, :1001) OR id IN (:1002)");
+    expect(binds).toEqual([...ids, rawId]);
+  });
 });
