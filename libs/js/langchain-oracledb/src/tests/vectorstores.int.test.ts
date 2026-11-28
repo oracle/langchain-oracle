@@ -147,6 +147,40 @@ describe("OracleVectorStore", () => {
     };
   });
 
+  async function createStoreWithDocuments({
+    count,
+    useProvidedIds = true,
+  }: {
+    count: number;
+    useProvidedIds?: boolean;
+  }) {
+    const store = new OracleVS(embedder, dbConfig);
+    await store.initialize();
+
+    const documents = Array.from(
+      { length: count },
+      (_, index) =>
+        new Document({
+          pageContent: `Document ${index}`,
+          metadata: { index },
+        })
+    );
+
+    const ids = await store.addDocuments(
+      documents,
+      useProvidedIds
+        ? { ids: documents.map((_, index) => `external-${index}`) }
+        : undefined
+    );
+
+    if (!ids) {
+      throw new Error("Expected addDocuments to return IDs");
+    }
+
+    expect(ids).toHaveLength(count);
+    return { store, documents, ids };
+  }
+
   test("createIndex builds HNSW vector index with custom parameters", async () => {
     const hnswTable = `${tableName}_hnsw_idx`;
     await dropTablePurge(connection as oracledb.Connection, hnswTable);
@@ -1779,47 +1813,189 @@ describe("OracleVectorStore", () => {
     expect(topics).toContain("cities");
   });
 
-  test("Delete document by id", async () => {
-    let connection: oracledb.Connection | undefined;
-
-    const documents = [
-      { pageContent: "Hello", metadata: { a: 1 } },
-      { pageContent: "Bye", metadata: { a: 2 } },
-      { pageContent: "FIFO", metadata: { a: 3 } },
-    ];
-
-    try {
-      connection = await pool.getConnection();
-      const oraclevs = new OracleVS(embedder, dbConfig);
-      await oraclevs.initialize();
-      await oraclevs.addDocuments(documents);
-
-      const getIds = async (): Promise<Buffer[]> => {
-        const res = await connection!.execute(`SELECT id FROM "${tableName}"`);
-        return (res.rows ?? []).map((row: unknown) => {
-          if (
-            !Array.isArray(row) ||
-            row.length === 0 ||
-            !Buffer.isBuffer(row[0])
-          ) {
-            throw new Error(`Unexpected row format: ${JSON.stringify(row)}`);
-          }
-          return row[0];
-        });
-      };
-
-      const [id1, id2, idKeep] = await getIds();
-      await oraclevs.delete({ ids: [id1, id2] });
-
-      const idsAfterDelete = await getIds();
-      expect(idsAfterDelete).toHaveLength(1);
-      expect(idsAfterDelete).toContainEqual(idKeep);
-      expect(idsAfterDelete).not.toContainEqual(id1);
-      expect(idsAfterDelete).not.toContainEqual(id2);
-    } finally {
-      await connection?.close();
+  test("getByIds returns documents for IDs returned by addDocuments", async () => {
+    const { store, documents, ids } = await createStoreWithDocuments({
+      count: 3,
+      useProvidedIds: false,
+    });
+    const results = await store.getByIds([ids[2], ids[0]]);
+    expect(results).toHaveLength(2);
+    for (const index of [0, 2]) {
+      expect(results).toContainEqual(
+        new Document({ ...documents[index], id: ids[index] })
+      );
     }
   });
+
+  test("getByIds returns documents for user-supplied IDs", async () => {
+    // createStoreWithDocuments supplies IDs named external-0, external-1, ...
+    const { store, documents, ids } = await createStoreWithDocuments({
+      count: 3,
+    });
+    const results = await store.getByIds([ids[2], ids[0]]);
+    expect(results).toHaveLength(2);
+    for (const index of [0, 2]) {
+      expect(results).toContainEqual(
+        new Document({ ...documents[index], id: ids[index] })
+      );
+    }
+  });
+
+  test("getByIds returns an empty array for nonexistent IDs", async () => {
+    const { store } = await createStoreWithDocuments({ count: 3 });
+    expect(await store.getByIds(["missing"])).toEqual([]);
+  });
+
+  test("getByIds returns only existing documents", async () => {
+    const { store, documents, ids } = await createStoreWithDocuments({
+      count: 3,
+    });
+    expect(await store.getByIds([ids[1], "missing"])).toEqual([
+      new Document({ ...documents[1], id: ids[1] }),
+    ]);
+  });
+
+  test("getByIds handles duplicate IDs", async () => {
+    const { store, documents, ids } = await createStoreWithDocuments({
+      count: 3,
+    });
+    expect(await store.getByIds([ids[1], ids[1]])).toEqual([
+      new Document({ ...documents[1], id: ids[1] }),
+    ]);
+  });
+
+  test("getByIds retrieves more than 1,000 documents", async () => {
+    const { store, documents, ids } = await createStoreWithDocuments({
+      count: 1001,
+    });
+    const results = await store.getByIds(ids);
+    expect(results).toHaveLength(ids.length);
+    // getByIds does not guarantee result order, so we sort both ID arrays
+    // before comparing
+    expect(results.map((document) => document.id).sort()).toEqual(
+      [...ids].sort()
+    );
+
+    const documentsById = new Map(
+      ids.map((id, index) => [id, documents[index]])
+    );
+
+    for (const result of results) {
+      const expected = documentsById.get(result.id!);
+
+      expect(result.pageContent).toBe(expected!.pageContent);
+      expect(result.metadata).toEqual(expected!.metadata);
+    }
+  });
+
+  test("delete removes documents by external string IDs", async () => {
+    const { store, ids } = await createStoreWithDocuments({ count: 3 });
+    await store.delete({ ids: [ids[0], ids[1]] });
+    const result = await connection!.execute<[string]>(
+      `SELECT external_id FROM "${tableName}"`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_ARRAY }
+    );
+    expect((result.rows ?? []).map(([id]) => id)).toEqual([ids[2]]);
+  });
+
+  test("delete preserves Buffer ID behavior", async () => {
+    const { store } = await createStoreWithDocuments({ count: 3 });
+    const result = await connection!.execute<[Buffer]>(
+      `SELECT id FROM "${tableName}"`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_ARRAY }
+    );
+
+    const [id1, id2, idToKeep] = (result.rows ?? []).map(([id]) => id);
+
+    await store.delete({ ids: [id1, id2] });
+
+    const remaining = await connection!.execute<[Buffer]>(
+      `SELECT id FROM "${tableName}"`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_ARRAY }
+    );
+
+    expect(remaining.rows).toHaveLength(1);
+    expect((remaining.rows ?? []).map(([id]) => id)).toEqual([idToKeep]);
+  });
+
+  test("delete handles mixed string and Buffer IDs", async () => {
+    const { store, ids } = await createStoreWithDocuments({ count: 3 });
+
+    const bufferIdresult = await connection!.execute<[Buffer]>(
+      `SELECT id FROM "${tableName}" WHERE external_id = :1`,
+      [ids[1]],
+      { outFormat: oracledb.OUT_FORMAT_ARRAY }
+    );
+
+    const bufferId = bufferIdresult.rows?.[0]?.[0];
+    if (!bufferId) {
+      throw new Error("Expected an internal Buffer ID");
+    }
+
+    await store.delete({ ids: [ids[0], bufferId] });
+
+    const result = await connection!.execute<[string]>(
+      `SELECT external_id FROM "${tableName}"`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_ARRAY }
+    );
+
+    expect((result.rows ?? []).map(([id]) => id)).toEqual([ids[2]]);
+  });
+
+  test("delete rejects invalid IDs without deleting rows", async () => {
+    const { store, ids } = await createStoreWithDocuments({ count: 3 });
+    for (const invalidId of [42, null, undefined, {}, true]) {
+      await expect(
+        store.delete({
+          ids: [ids[0], invalidId, ids[1]] as (string | Buffer)[],
+        })
+      ).rejects.toThrow(/IDs must be string or Buffers/);
+      const result = await connection!.execute<[string]>(
+        `SELECT external_id FROM "${tableName}"`,
+        [],
+        { outFormat: oracledb.OUT_FORMAT_ARRAY }
+      );
+      expect((result.rows ?? []).map(([id]) => id).sort()).toEqual(
+        [...ids].sort()
+      );
+    }
+  });
+
+  test("delete handles more than 1,000 IDs", async () => {
+    const { store, ids } = await createStoreWithDocuments({ count: 1002 });
+    await store.delete({ ids: ids.slice(0, 1001) });
+    const result = await connection!.execute<[string]>(
+      `SELECT external_id FROM "${tableName}"`,
+      [],
+      { outFormat: oracledb.OUT_FORMAT_ARRAY }
+    );
+    expect((result.rows ?? []).map(([id]) => id).sort()).toEqual([ids[1001]]);
+  });
+
+  test("delete ignores nonexistent IDs", async () => {
+    const { store, documents } = await createStoreWithDocuments({
+      count: 3,
+    });
+    await store.delete({ ids: ["missing", Buffer.alloc(16)] });
+    const result = await connection!.execute<[number]>(
+      `SELECT COUNT(*) FROM "${tableName}"`
+    );
+    expect(result.rows?.[0]?.[0]).toBe(documents.length);
+  });
+
+  test("deleteAll removes all documents", async () => {
+    const { store } = await createStoreWithDocuments({ count: 3 });
+    await store.delete({ deleteAll: true });
+    const result = await connection!.execute<[number]>(
+      `SELECT COUNT(*) FROM "${tableName}"`
+    );
+    expect(result.rows?.[0]?.[0]).toBe(0);
+  });
+
   test("buildVectorColumnDefinition uses embedding dimension when no override provided", async () => {
     const fallbackTable = `${tableName}_fallback_dim`;
     await dropTablePurge(connection as oracledb.Connection, fallbackTable);
